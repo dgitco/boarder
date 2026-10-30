@@ -35,7 +35,7 @@ export function clean(s: unknown, n?: number) {   // snapshot.clean
 }
 const MRK: [RegExp, string][] = [[/<([^|>]+)\|([^>]+)>/g, "$2"], [/<(https?:\/\/[^>]+)>/g, "$1"], [/[*`]+/g, ""], [new RegExp(`${WS}+`, "g"), " "]];
 export function plain(t: unknown, n = 180) {   // inbox.plain
-  let s = String(t || ""); for (const [rx, rep] of MRK) s = s.replace(rx, rep);
+  let s = String(t || "").replace(NODE_HEAD, ""); for (const [rx, rep] of MRK) s = s.replace(rx, rep);
   s = strip(s); const a = cp(s); return a.length <= n ? s : a.slice(0, n - 1).join("") + "…";
 }
 const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", heic: "image/heic", heif: "image/heif", svg: "image/svg+xml", bmp: "image/bmp", tif: "image/tiff", tiff: "image/tiff", ico: "image/vnd.microsoft.icon", avif: "image/avif", pdf: "application/pdf", txt: "text/plain", md: "text/markdown", csv: "text/csv", tsv: "text/tab-separated-values", json: "application/json", html: "text/html", htm: "text/html", xml: "application/xml", js: "text/javascript", css: "text/css", zip: "application/zip", tar: "application/x-tar", "7z": "application/x-7z-compressed", wav: "audio/x-wav", mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/aac", ogg: "audio/ogg", oga: "audio/ogg", opus: "audio/ogg", flac: "audio/flac", webm: "video/webm", mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", avi: "video/x-msvideo", mkv: "video/matroska", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ppt: "application/vnd.ms-powerpoint", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", hwp: "application/x-hwp", rtf: "application/rtf", yaml: "application/yaml", yml: "application/yaml", py: "text/x-python", sh: "application/x-sh", sql: "application/sql", eml: "message/rfc822" };
@@ -128,6 +128,7 @@ function textOf(m: R) {
 }
 const seenByPeople = (m: R) => HUMAN_SUBTYPES.has(has(m, "subtype") ? m.subtype : null) && !!(strip(String(or(m.text, ""))) || T(m.files) || T(m.blocks));
 
+const NODE_HEAD = /^\*\[(?:보던 )?노드 [^\]\n]{1,80}\]\*\s*/;
 function norm(m: R, rep: string, bf: Set<string>) {
   const fs = ((has(m, "files") ? m.files : []) || []).filter((f: R) => T(f?.id));
   const board = m.username === BOARD_NAME || (fs.length > 0 && fs.every((f: R) => bf.has(f.id)));
@@ -136,10 +137,10 @@ function norm(m: R, rep: string, bf: Set<string>) {
   const files = fs.map((f: R) => ({ id: f.id, name: or(f.title, f.name, "파일"), mime: or(f.mimetype, ""), size: or(f.size, 0), img: String(or(f.mimetype, "")).startsWith("image/") && f.mimetype !== "image/svg+xml" }));
   const gone = m.subtype === "tombstone";
   return {
-    ts: m.ts, thread: m.thread_ts ?? null, who, name, board, text: gone ? "이 글은 삭제됐어요" : textOf(m), buttons: gone ? [] : buttonsOf(m.blocks), files: gone ? [] : files.slice(0, 10),
+    ts: m.ts, thread: m.thread_ts ?? null, who, name, board, text: gone ? "이 글은 삭제됐어요" : who === "owner" ? textOf(m).replace(NODE_HEAD, "") : textOf(m), buttons: gone ? [] : buttonsOf(m.blocks), files: gone ? [] : files.slice(0, 10),
     replies: has(m, "reply_count") ? m.reply_count : 0, latest: m.latest_reply ?? null, rnames: ((T(m.reply_names) ? m.reply_names : []) as string[]).slice(0, 3),
     ...(gone ? { deleted: true } : {}), ...(T((T(m.edited) ? m.edited : {}).ts) && !gone ? { edited: true } : {}),
-    ...(who === "owner" && !gone ? { src: or(m.text, "") } : {}),
+    ...(who === "owner" && !gone ? { src: String(or(m.text, "")).replace(NODE_HEAD, "") } : {}),
     ...(who === "owner" && !gone && T(m.dlv_pane) ? { dlv: { pane: m.dlv_pane } } : {}),
     reactions: ((has(m, "reactions") ? m.reactions : []) as R[]).map(r => ({ name: r.name, count: has(r, "count") ? r.count : 0, mine: ((has(r, "users") ? r.users : []) as string[]).includes(rep) })),
   } as R;
@@ -295,10 +296,12 @@ const LEAD = /(^|\s)(총괄|primary|리드)$|^총괄|^Primary/i;
 const isChannelWindow = (t: string) => !t || t.startsWith("#") || LEAD.test(t) || /^[a-z0-9-]+$/.test(t);
 const TSX = /^\d{10}\.\d{6}$/;
 type Idx = { by_node: Map<string, { ts: string; ch: string | null; last: number }[]> };
-let nidx: { at: number; v: Idx } | null = null;
+let nidx: { at: number; tag: string; v: Idx } | null = null;
+let cfgTag = "";
 
 async function nodeIndex(db: D1Database, cfg: Cfg, now: number, cache: boolean): Promise<Idx> {
-  if (cache && nidx && Date.now() / 1000 - nidx.at < 60) return nidx.v;
+  const tag = cfgTag;
+  if (cache && nidx && nidx.tag === tag && Date.now() / 1000 - nidx.at < 60) return nidx.v;
   const since = now - 21 * 86400;
   const rs = await db.batch<R>([
     db.prepare("SELECT pane, win, max(at) AS at FROM wl_log WHERE pane LIKE '%%' AND win NOT LIKE '#%' AND win != '' GROUP BY pane, win ORDER BY pane, win"),
@@ -333,7 +336,7 @@ async function nodeIndex(db: D1Database, cfg: Cfg, now: number, cache: boolean):
   const byNode = new Map<string, { ts: string; ch: string | null; last: number }[]>();
   for (const [ts, x] of idx) for (const title of x.nodes.keys()) { const a = byNode.get(title) || []; a.push({ ts, ch: x.ch, last: Math.trunc(x.at) }); byNode.set(title, a); }
   const v = { by_node: byNode };
-  if (cache) nidx = { at: Date.now() / 1000, v };
+  if (cache) nidx = { at: Date.now() / 1000, tag, v };
   return v;
 }
 
@@ -367,7 +370,7 @@ async function fwdMarks(db: D1Database, cfg: Cfg, out: R[]) {
     const k = (await db.prepare(`SELECT kind, win FROM wl_log WHERE win = ? OR win LIKE ? ORDER BY id DESC LIMIT 50`).bind(node, "% " + node).all<R>()).results
       .find(r => nre.test(String(r.win || "")));
     m.fwd = { node, pane: String(h.pane || ""), chan: String(o.chan), ts: String(o.id), reply: T(o.thread) && o.thread !== o.id, who: n.who, name: n.name,
-      text: String(o.text || ""), at: Number(o.at), moved: Number(b.at), state: k ? STATES[String(k.kind)] || "" : "", files: n.files || [] };
+      text: String(o.text || "").replace(NODE_HEAD, ""), at: Number(o.at), moved: Number(b.at), state: k ? STATES[String(k.kind)] || "" : "", files: n.files || [] };
   }
 }
 async function nodeState(db: D1Database, node: string) {
@@ -558,6 +561,7 @@ export async function build(db: D1Database, cfg: Cfg | null, rt: Route, now = Da
 let cfgMemo: { etag: string; v: Cfg } | null = null;
 export async function cfgOf(get: () => Promise<{ body: string; etag: string } | null>) {
   const s = await get(); if (!s) return null;
+  cfgTag = s.etag.split(":")[0];
   if (cfgMemo?.etag !== s.etag) { try { cfgMemo = { etag: s.etag, v: JSON.parse(s.body) }; } catch { return null; } }
   return cfgMemo.v;
 }
