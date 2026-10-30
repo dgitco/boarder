@@ -1,0 +1,31 @@
+
+create table wl_art_folder (art TEXT PRIMARY KEY, folder TEXT NOT NULL, at REAL NOT NULL);
+create table wl_art_note (id INTEGER PRIMARY KEY, art TEXT NOT NULL, target TEXT NOT NULL, page TEXT NOT NULL DEFAULT '', who TEXT NOT NULL, text TEXT NOT NULL, at REAL NOT NULL, deleted_at REAL);
+create table wl_owner_inputs ( id INTEGER PRIMARY KEY, at REAL NOT NULL, channel TEXT, kind TEXT, area TEXT, text TEXT NOT NULL, agent_error TEXT, lesson TEXT, ref TEXT, msg TEXT);
+create table wl_card_reviews (item TEXT PRIMARY KEY, sig TEXT, verdict TEXT, kind TEXT, reason TEXT, evidence TEXT, route TEXT, shape TEXT, at REAL, by TEXT);
+create table wl_cards (ts TEXT PRIMARY KEY, channel TEXT, area TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT, title TEXT, state TEXT NOT NULL DEFAULT 'open', thread TEXT, replaced_by TEXT, note TEXT, by TEXT, posted_at REAL, answered_at REAL, closed_at REAL, updated_at REAL, slack_state TEXT, body TEXT, grp TEXT, rec TEXT, label TEXT, dup_of TEXT, shape TEXT, shaped_at REAL);
+create table wl_done_checks (item TEXT PRIMARY KEY, sig TEXT, verdict TEXT, evidence TEXT, why TEXT, at REAL);
+create table wl_log (id INTEGER PRIMARY KEY, at REAL NOT NULL, pane TEXT NOT NULL, win TEXT, kind TEXT NOT NULL, msg TEXT NOT NULL, cwd TEXT, read_by TEXT, read_at REAL, handled TEXT, handled_at REAL, ref TEXT);
+create table wl_questions (qid TEXT NOT NULL, area TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open', body TEXT NOT NULL, question TEXT NOT NULL, recommend TEXT, choices TEXT, source TEXT, asked_at REAL, answer TEXT, answered_at REAL, applied INTEGER NOT NULL DEFAULT 0, read_by TEXT, read_at REAL, handled TEXT, handled_at REAL, pos INTEGER, updated_at REAL, short TEXT, kind TEXT, pushed_at REAL, due TEXT, card_ts TEXT, PRIMARY KEY (area, qid));
+create table wl_talk_chan (id TEXT PRIMARY KEY, name TEXT NOT NULL, slack_channel TEXT, mirror TEXT NOT NULL DEFAULT 'on', lead TEXT);
+create table wl_talk_choice (msg TEXT NOT NULL, n INTEGER NOT NULL, label TEXT NOT NULL, value TEXT, style TEXT, PRIMARY KEY (msg, n));
+create table wl_talk_file (id TEXT PRIMARY KEY, msg TEXT, name TEXT, mime TEXT, size INTEGER, sha256 TEXT, path TEXT, transcript TEXT, slack_file TEXT);
+create table wl_talk_mirror (id INTEGER PRIMARY KEY, msg TEXT NOT NULL, op TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', slack_ts TEXT, tries INTEGER NOT NULL DEFAULT 0, error TEXT, at REAL NOT NULL, sent_at REAL, claimed_at REAL, next_at REAL);
+create table wl_talk_msg (id TEXT PRIMARY KEY, chan TEXT NOT NULL, thread TEXT, who TEXT NOT NULL, author TEXT, user TEXT, pane TEXT, text TEXT NOT NULL DEFAULT '', blocks TEXT, at REAL NOT NULL, edited_at REAL, deleted_at REAL, source TEXT NOT NULL, ref TEXT, slack_ts TEXT, subtype TEXT, raw TEXT);
+create table wl_talk_pick (id INTEGER PRIMARY KEY, msg TEXT NOT NULL, label TEXT NOT NULL, who TEXT NOT NULL, at REAL NOT NULL, source TEXT);
+create table wl_talk_reaction (msg TEXT NOT NULL, emoji TEXT NOT NULL, who TEXT NOT NULL, at REAL, removed_at REAL, source TEXT, PRIMARY KEY (msg, emoji, who));
+create table wl_talk_saved (who TEXT NOT NULL, msg TEXT NOT NULL, chan TEXT NOT NULL, thread TEXT NOT NULL DEFAULT '', at REAL NOT NULL, PRIMARY KEY (who, msg));
+create table wl_talk_seen (who TEXT NOT NULL, chan TEXT NOT NULL, thread TEXT NOT NULL DEFAULT '', last_id TEXT, at REAL, PRIMARY KEY (who, chan, thread));
+create index wl_log_pane_at on wl_log(pane, at);
+create index wl_questions_area on wl_questions(area, state, pos);
+create index wl_talk_msg_chan on wl_talk_msg(chan, thread, at);
+create index wl_talk_msg_thread on wl_talk_msg(thread, at);
+create index wl_talk_file_msg on wl_talk_file(msg);
+create index wl_talk_mirror_state on wl_talk_mirror(state, id);
+create index wl_art_note_art on wl_art_note(art, at);
+-- 사본이라 UNIQUE(slack_ts · slack_channel · slack_file)는 빼고 찾기용 색인만 — 줄 순서가 바뀌어 들어와도 막히지 않게(정본이 이미 지킴)
+create index wl_talk_msg_slack on wl_talk_msg(slack_ts);
+create index wl_cards_state on wl_cards(state, posted_at);
+create index wl_log_at on wl_log(at);
+create table wl_change (seq integer primary key autoincrement, tbl text not null, pk text not null, op text not null, at integer not null);
+create table f7_flag (name text primary key, on_at integer, note text);

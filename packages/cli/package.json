@@ -1,0 +1,19 @@
+{
+  "name": "boarder-cli",
+  "version": "0.1.3",
+  "private": true,
+  "description": "Boarder CLI — set up Boarder in your AI tools (Claude Code, Codex, Cursor, Gemini CLI) and report progress to your board.",
+  "type": "module",
+  "bin": {
+    "boarder": "bin/boarder.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "examples"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "FSL-1.1-ALv2"
+}

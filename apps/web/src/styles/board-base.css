@@ -1,0 +1,40 @@
+/* 보드 바탕 · 머리 단추 꼴(board.html · voice.css 그대로). base 레이어 — button 초기화 등이 Tailwind 유틸리티를 덮지 않게 */
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--f);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+:focus-visible{outline:1.5px solid var(--ink);outline-offset:2px;border-radius:6px}
+.wrap{padding-left:max(clamp(16px,2.4vw,40px),env(safe-area-inset-left,0px));padding-right:max(clamp(16px,2.4vw,40px),env(safe-area-inset-right,0px));padding-block:28px 64px}
+
+header{display:flex;align-items:center;gap:8px 20px;flex-wrap:wrap}
+header h1{font-size:15px;font-weight:600;margin:0}
+.tabs{display:flex;gap:2px;flex-wrap:wrap}
+.tabs button{padding:5px 10px;border-radius:6px;color:var(--muted);font-size:13px}
+.tabs button:hover{color:var(--ink)}
+.tabs button[aria-selected="true"]{color:var(--ink);background:var(--hover)}
+.tabs .sep{width:1px;background:var(--line);margin:4px 6px}
+.hr{margin-left:auto;display:flex;align-items:center;gap:12px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;padding:2px;font-size:12px}
+.seg button{padding:3px 8px;border-radius:5px;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--hover);color:var(--ink)}
+.stamp{font-size:12px;color:var(--muted);font-family:var(--mono)}
+.stamp[hidden]{display:none}
+.hrt{display:flex;align-items:center;gap:8px}
+#h-call{display:none}html.live #h-call{display:inline-flex}   /* 통화 단추 자리는 첫 화면부터(라이브만) — voice.js 가 붙을 때 머리가 밀리지 않게 */
+.themebtn{width:30px;height:30px;border:1px solid var(--line);border-radius:7px;display:grid;place-items:center;color:var(--soft);background:var(--surface)}
+.themebtn:hover{color:var(--ink);border-color:var(--muted)}
+.themebtn svg{width:15px;height:15px}
+.themebtn.on{color:var(--accent)}
+#pushp{position:fixed;top:56px;right:16px;z-index:60;width:min(300px,calc(100vw - 32px));background:var(--surface);border-radius:14px;box-shadow:0 8px 30px var(--shadow),0 0 0 1px var(--line);padding:14px 16px;font-size:14px;line-height:1.45;color:var(--ink)}
+#pushp .ps{font-weight:600}
+#pushp .ph{color:var(--muted);font-size:13px;margin-top:4px}
+#pushp .pb{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.hpill{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:999px;border:1px solid var(--line);font-size:12.5px;color:var(--soft);background:var(--surface);white-space:nowrap}
+.hpill:hover{border-color:var(--muted);color:var(--ink)}
+.hpill b{font-family:var(--mono);font-weight:500}
+.hpill.acc{border-color:var(--accent);color:var(--accent)}
+.hpill.acc:hover{background:var(--accent-soft)}
+.hpill .flag{width:12px;height:12px}
+.huddle{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--soft);font-size:12.5px;white-space:nowrap;flex:none}
+.huddle svg{width:14px;height:14px}
+.huddle:hover{color:var(--ink);border-color:var(--muted)}

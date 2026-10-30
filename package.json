@@ -1,0 +1,12 @@
+{
+  "name": "boarder",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "scripts": {
+    "dev": "pnpm --filter @boarder/web dev",
+    "build": "pnpm --filter @boarder/web build",
+    "typecheck": "pnpm --filter @boarder/web typecheck"
+  },
+  "license": "FSL-1.1-ALv2"
+}

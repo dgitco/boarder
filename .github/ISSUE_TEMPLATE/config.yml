@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/dgitco/boarder/security/advisories/new
+    about: Privately, not as an issue.
+  - name: Help with your Boarder account
+    url: https://boarder.dgit.co
+    about: Use support inside the product.

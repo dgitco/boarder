@@ -1,0 +1,22 @@
+Boarder
+Copyright (c) 2026 Donggyu Lee
+
+Boarder's source is licensed under the Functional Source License, Version 1.1, with an Apache 2.0 future license
+(FSL-1.1-ALv2, see LICENSE.md). You may use, copy, modify and redistribute it for any purpose other than a
+Competing Use, such as offering it, or something substantially similar, to others as a commercial product or
+service. Two years after each version is made available, that version is also licensed under the Apache License,
+Version 2.0.
+
+Trademarks: "Boarder" and the Boarder logo are trademarks of Boarder's owner, and the DGit name is a trademark of
+DGit. The licenses above do not grant any right to use them, except to say truthfully where the software came from.
+See TRADEMARKS.md.
+
+Boarder is run as a hosted service by DGit at https://boarder.dgit.co. This repository is published so people can
+read and check the code; running your own copy is not supported.
+
+Third-party software included in this repository, under its own license:
+- blobatar 2.7.0, copyright (c) 2026 Alain, MIT License, https://github.com/Alain00/blobatar
+  (apps/web/public/landing/blobatar.js, apps/web/worker/legacy/blobatar.js; the license is in each file's header)
+
+Dependencies installed by the package manager (React, Hono, better-auth, Radix UI, Tailwind CSS, Vite, Wrangler and
+others) come under their own licenses, listed in each package.

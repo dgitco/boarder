@@ -1,0 +1,114 @@
+{
+  "name": "boarder",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "boarder.dgit.co",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "FLAGS_OFF": "cli_profiles",
+    "OB_LIVE": "1",
+    "PUBLIC_URL": "https://boarder.dgit.co",
+    "SOURCE_URL": "https://github.com/dgitco/boarder",
+    "ALT_URLS": "https://boarder.dgit.workers.dev"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "boarder",
+      "database_id": "<your-d1-database-id>",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SNAP",
+        "class_name": "BoardSnap"
+      },
+      {
+        "name": "BRIDGE",
+        "class_name": "Bridge"
+      },
+      {
+        "name": "ENGINE",
+        "class_name": "Engine"
+      },
+      {
+        "name": "SEARCH",
+        "class_name": "Search"
+      },
+      {
+        "name": "PUSH",
+        "class_name": "Pusher"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "BoardSnap"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "Bridge"
+      ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": [
+        "Engine"
+      ]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": [
+        "Search"
+      ]
+    },
+    {
+      "tag": "v5",
+      "new_sqlite_classes": [
+        "Pusher"
+      ]
+    }
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "login@0bridge.dev"
+      ]
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "r2_buckets": [
+    {
+      "binding": "RESULTS",
+      "bucket_name": "boarder"
+    }
+  ],
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  }
+}

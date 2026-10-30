@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in Boarder doesn't work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw. Paste errors as text, and add a screenshot for anything on screen.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: Steps from a fresh page, or the CLI command you ran.
+      placeholder: |
+        1. Open …
+        2. Click …
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: Browser and OS, or the boarder CLI version and OS.
+  - type: markdown
+    attributes:
+      value: Security problems go to a private report instead (SECURITY.md). Don't paste tokens, passwords or other people's data.

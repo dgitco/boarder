@@ -1,0 +1,10 @@
+@import "tailwindcss";
+@import "./app/dgit.css";
+@import "./styles/board-tokens.css";
+@import "./styles/board-base.css" layer(base);
+@import "./styles/frame.css";
+
+.g{display:inline-block;vertical-align:middle}
+.g-spin{width:15px;height:15px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;opacity:.8}
+@media (prefers-reduced-motion:no-preference){.g-spin{animation:g-spin .9s linear infinite}}
+@keyframes g-spin{to{transform:rotate(360deg)}}
