@@ -12,6 +12,7 @@
   const I = {
     chat: lu('message-square'),
     node: lu('network'),
+    hash: lu('hash'),
     canvas: lu('layout-grid'),
     unread: lu('message-square-dot'),
     saved: lu('bookmark'),
@@ -95,7 +96,7 @@
     const tn = typeof attnCount === 'function' ? attnCount() : 0;
     const ib = it('turn', I.flag, '결정 · 할 일', cnt(tn, true), ibChat() === 'turn') + IBK.map(k => it(k, I[k], IBN[k], cnt(c[k], k === 'unread'), S.ib === k || ibChat() === k)).join('');
     const ch = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('');
-    const nd = myNodes().map(p => it('node:' + p.pane, blob(nameOf(p), 20), esc(nameOf(p)), nodeRows(p.pane).length ? '<i class="ud" aria-label="내 차례"></i>' : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
+    const nd = myNodes().map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), nodeRows(p.pane).length ? '<i class="ud" aria-label="내 차례"></i>' : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas');
     const body = '<div class="bx-sbsc">' + head + sec('ib', '모아 보기', ib) + (nd ? sec('nd', '채널', nd) : '') + sec('ch', '에이전트', ch) + (rc ? sec('rc', '최근 캔버스', rc) : '') + '</div>';
@@ -290,7 +291,7 @@
   const KIND = {decision: '결정', todo: '할 일', queue: '질문', choice: '결정'};
   function serverItems(r){
     const out = [];
-    for (const n of r.nodes || []) out.push({g: '노드', n: n.title, i: blob(n.title, 18), tag: n.turn, hot: /^내 차례/.test(n.turn || ''),
+    for (const n of r.nodes || []) out.push({g: '노드', n: n.title, i: I.hash, tag: n.turn, hot: /^내 차례/.test(n.turn || ''),
       sub: [n.line || (n.hit && n.hit.text), agoS(n.line_at || (n.hit && n.hit.at))].filter(Boolean).join(' · '), go: () => nodeGo(n.title)});
     for (const c of r.cards || []) out.push({g: '결정 · 할 일', n: c.title, i: I.flag, tag: c.state === 'open' ? (KIND[c.ckind] || '열림') : '닫힘', hot: c.state === 'open',
       sub: [c.text, c.node, agoS(c.at)].filter(Boolean).join(' · '), go: () => cardGo(c)});
@@ -309,8 +310,8 @@
     const sr = q && FS.r && q.startsWith(FS.r.q.toLowerCase()) ? FS.r : null;   // 서버 답(앞 글자가 같으면 새 답이 올 때까지 그대로 — 깜빡임 없게)
     if (sr) return out.concat(serverItems(sr)).slice(0, 60);
     const live = t => (t.panes || []).find(p => byPane[p]);
-    if (q) for (const t of (CS.T.topics || [])) { const p = t.state !== 'done' && live(t); if (p && (hit(t.title) || hit(t.id))) out.push({g: '노드', n: t.title || t.id, i: I.node, go: () => openAns({p})}); }
-    if (q) for (const n of (typeof D !== 'undefined' && D.archived || []).filter(hit).slice(0, 8)) out.push({g: '노드', n: n + ' · 보관', i: I.node, go: () => nodeGo(n)});
+    if (q) for (const t of (CS.T.topics || [])) { const p = t.state !== 'done' && live(t); if (p && (hit(t.title) || hit(t.id))) out.push({g: '노드', n: t.title || t.id, i: I.hash, go: () => openAns({p})}); }
+    if (q) for (const n of (typeof D !== 'undefined' && D.archived || []).filter(hit).slice(0, 8)) out.push({g: '노드', n: n + ' · 보관', i: I.hash, go: () => nodeGo(n)});
     const arts = Object.entries(ARTS || {}).map(([id, x]) => ({id, ...x})).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
     for (const r of (q ? arts.filter(r => hit(r.title) || hit(r.id)) : arts.slice(0, 5))) out.push({g: q ? '캔버스' : '최근 캔버스', n: r.title || r.id, i: `<i class="ki k-${esc(r.kind || 'doc')}"></i>`, go: () => ARTS[r.id] && openArt(r.id)});
     return out.slice(0, 40);
