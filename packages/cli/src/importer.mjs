@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, openSync, readSync, closeSync, realpathSync } from 'node:fs';
 import { dir, home, loadDevice, readJson, server, writeSecret } from './config.mjs';
 
 const host = () => os.hostname().split('.')[0].replace(/[^\w.-]/g, '').slice(0, 30) || 'host';
@@ -351,11 +351,14 @@ async function api(method, p, body) {
   return j;
 }
 
-export async function importOnce({ setup = false, days = 7, print = false, quiet = false, gh = true } = {}) {
+// background: 서비스 · 타이머가 부른 것 — 도는 사이 --stop 이 오면 올리지 않고, 이미 올렸으면 빈 목록으로 되돌림
+export async function importOnce({ setup = false, days = 7, print = false, quiet = false, gh = true, background = false } = {}) {
   const body = await collect({ days, setup, gh });
+  if (background && stopped()) return null;
   if (print) console.log(JSON.stringify(body, null, 2));
   const j = await api('POST', '/api/import', body);
-  writeSecret(path.join(dir(), 'import.json'), { at: Date.now(), days, nodes: j.nodes });   // 들여오기를 켠 기기 — 감시 타이머(watch)가 5분마다 이어서 들여옴
+  if (background && stopped()) { await api('POST', '/api/import', EMPTY()); return null; }
+  writeSecret(importMark(), { at: Date.now(), days, nodes: j.nodes });   // 들여오기를 켠 기기 — 감시 타이머(watch)가 5분마다 이어서 들여옴
   if (!quiet) {
     const by = Object.entries(j.states || {}).map(([k, n]) => `${({ turn: 'your turn', blocked: 'blocked', working: 'running', idle: 'idle', parked: 'parked', done: 'done' })[k] || k} ${n}`).join(' · ');
     const c = body.items.reduce((a, i) => ({ ...a, [i.kind]: (a[i.kind] || 0) + 1 }), {});
@@ -458,18 +461,33 @@ export async function drainOnce({ quiet = false } = {}) {
 
 export const IMPORT_HELP = `Bring your current work in (keeps your own harness)
   boarder import [--setup] [--days 7] [--print] [--no-gh]   windows · sessions · threads · to-dos → nodes on your board (--setup also reads your MCP servers and roles once)
-  boarder import --follow           keep it fresh (every minute) and carry out board commands: move to the Boarder engine · park · reopen · answers into the window`;
+  boarder import --follow           keep it fresh (every minute) and carry out board commands: move to the Boarder engine · park · reopen · answers into the window
+  boarder import --stop             stop importing from this machine and mark what it sent as gone on your board (also turns off the Boarder reader here; \`boarder setup\` turns it back on)`;
+
+const importMark = () => path.join(dir(), 'import.json');
+const stopped = () => !!readJson(importMark())?.stopped;
+const EMPTY = () => ({ host: host(), kinds: ['window', 'session', 'thread', 'todo', 'task'], items: [] });
+export async function importStop() {
+  const off = (await import('./view.mjs')).removeFollow();
+  writeSecret(importMark(), { stopped: Date.now() });
+  await api('POST', '/api/import', EMPTY());
+  console.log('✓ import stopped on this machine. What it sent is marked gone on your board; nodes left empty close on their own (6 hours by default, later if they still hold an open question). Parked windows and tasks stay. `boarder import` turns it back on.');
+  if (off.length) console.log('  The Boarder reader on this machine is off too, so board buttons no longer reach it. `boarder setup` turns it back on.');
+}
 
 export async function importCommand(flags) {
+  if (flags.stop) return importStop();
+  if (flags.follow && stopped()) return console.log('import is stopped on this machine — run `boarder import` once to turn it back on');
   const opt = { days: Number(flags.days) || 7, print: !!flags.print, gh: !flags['no-gh'] };
   if (!flags.follow) return importOnce({ ...opt, setup: !!flags.setup });
   let last = 0, first = true, watched = 0;
   for (;;) {
+    if (stopped()) return console.log('import stopped');   // boarder import --stop
     try {
       // 기기 상태(설정 › 기기)도 이 서비스가 5분마다 — 보기 전용 기본엔 따로 타이머가 없음
       if (Date.now() - watched > 300_000) { watched = Date.now(); try { const W = await import('./watch.mjs'); await W.sendMetrics(); } catch (e) { if (e.code === 'NO_DEVICE' || e.code === 'REVOKED') throw e; } }
       const n = await drainOnce();
-      if (first || n || Date.now() - last > 60_000) { await importOnce({ ...opt, setup: first && !!flags.setup, quiet: !first, print: false }); last = Date.now(); first = false; }
+      if (first || n || Date.now() - last > 60_000) { await importOnce({ ...opt, setup: first && !!flags.setup, quiet: !first, print: false, background: true }); last = Date.now(); first = false; }
     } catch (e) { if (e.code === 'NO_DEVICE' || e.code === 'REVOKED') throw e; console.error(e.message); }
     await sleep(5000);
   }
@@ -477,6 +495,6 @@ export async function importCommand(flags) {
 
 /** 감시 타이머(boarder watch --once) 끝에: 들여오기를 켠 기기만 이어서 들여오고 · 밀린 명령을 함. 실패해도 감시는 그대로 */
 export async function watchTick() {
-  const st = readJson(path.join(dir(), 'import.json')); if (!st) return;
-  try { await drainOnce({ quiet: true }); await importOnce({ quiet: true, days: st.days || 7 }); } catch (e) { console.error(`import: ${e.message}`); }
+  const st = readJson(importMark()); if (!st || st.stopped) return;
+  try { await drainOnce({ quiet: true }); await importOnce({ quiet: true, days: st.days || 7, background: true }); } catch (e) { console.error(`import: ${e.message}`); }
 }

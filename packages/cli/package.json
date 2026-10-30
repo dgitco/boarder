@@ -1,6 +1,6 @@
 {
   "name": "boarder-cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Boarder CLI — set up Boarder in your AI tools (Claude Code, Codex, Cursor, Gemini CLI) and report progress to your board.",
   "type": "module",

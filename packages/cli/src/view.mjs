@@ -25,6 +25,8 @@ function rmdirMade() { rmdirEmpty(madeList().filter(d => !path.resolve(d).starts
 
 /** 읽어 올리기 · 누른 것 넣기(boarder import --follow)를 늘 돌리는 서비스 하나 */
 export function installFollow() {
+  const mark = path.join(dir(), 'import.json');   // 다시 까는 것 = 다시 켜는 것(boarder import --stop 표시를 지움)
+  try { if (JSON.parse(readFileSync(mark, 'utf8')).stopped) rmSync(mark, { force: true }); } catch {}
   const node = process.execPath, env = Object.fromEntries(['HOME', 'BOARDER_HOME', 'BOARDER_URL', 'PATH'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
   try {
     if (process.platform === 'linux') {

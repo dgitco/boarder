@@ -53,13 +53,20 @@ Connect a service (Linear, Notion, GitHub, any MCP server)
 
 ${SESSION_HELP}`;
 
+const SECTION_HELP = { import: IMPORT_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, enable: VIEW_HELP, disable: VIEW_HELP, uninstall: VIEW_HELP };
+function wantsHelp(cmd, rest) {
+  if (cmd === 'engine' && rest[0] === 'verify') return false;
+  if (cmd === 'profile' && rest[0] === 'run') return rest[1] === '--help' || rest[1] === '-h';
+  return rest.some(a => a === '--help' || a === '-h');
+}
+
 function parse(rest) {
   const flags = {}, pos = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (!a.startsWith('--')) { pos.push(a); continue; }
     const k = a.slice(2);
-    if (['yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine'].includes(k)) { flags[k] = true; continue; }
+    if (['yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop'].includes(k)) { flags[k] = true; continue; }
     const v = rest[++i];
     if (['choice', 'evidence'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
   }
@@ -115,7 +122,9 @@ async function status() {
 export async function main(argv) {
   const [cmd, ...rest] = argv, { flags, pos } = parse(rest);
   try {
-    if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') return console.log(HELP);
+    if (!cmd || cmd === '--help' || cmd === '-h') return console.log(HELP);
+    if (cmd === 'help') return console.log(SECTION_HELP[pos[0]] || HELP);
+    if (wantsHelp(cmd, rest)) return console.log(SECTION_HELP[cmd] || HELP);
     if (cmd === '--version' || cmd === '-v' || cmd === 'version') return console.log(VERSION);
     if (cmd === 'profile') return await profileCommand(rest);
     if (cmd === 'connect') return connectCommand(pos, flags);
