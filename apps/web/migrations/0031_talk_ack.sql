@@ -1,0 +1,1 @@
+ALTER TABLE wl_talk_msg ADD COLUMN ack TEXT;

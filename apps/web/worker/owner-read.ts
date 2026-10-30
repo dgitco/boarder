@@ -54,7 +54,7 @@ export function route(path: string): Route | null {
 }
 
 // ── talk_db.as_slack · chat.norm ──
-const COLS = "m.id, m.thread, m.who, m.author, m.user, m.text, m.blocks, m.slack_ts, m.raw, m.edited_at, m.deleted_at, m.pane";
+const COLS = "m.id, m.thread, m.who, m.author, m.user, m.text, m.blocks, m.slack_ts, m.raw, m.edited_at, m.deleted_at, m.pane, m.ack";
 const LIVE_ROOT = "(m.deleted_at IS NULL OR EXISTS (SELECT 1 FROM wl_talk_msg r WHERE r.thread=m.id AND r.deleted_at IS NULL))";
 type Ex = { files: Map<string, R[]>; cnt: Map<string, { n: number; latest: number }>; names: Map<string, string[]>; rx: Map<string, [string, string][]> };
 
@@ -89,6 +89,7 @@ function asSlack(row: R, ex: Ex): R {
   const bl = T(blocks) ? loads(blocks) : null;
   if (Array.isArray(bl)) m.blocks = bl; else delete m.blocks;
   if (T(row.thread)) m.thread_ts = row.thread;
+  if (who === "owner" && T(row.ack)) m.ack = row.ack;
   if (who === "owner" && T(row.pane)) m.dlv_pane = row.pane;
   if (!T(m.files)) {
     const fs = ex.files.get(mid);
@@ -142,6 +143,7 @@ function norm(m: R, rep: string, bf: Set<string>) {
     ...(gone ? { deleted: true } : {}), ...(T((T(m.edited) ? m.edited : {}).ts) && !gone ? { edited: true } : {}),
     ...(who === "owner" && !gone ? { src: String(or(m.text, "")).replace(NODE_HEAD, "") } : {}),
     ...(who === "owner" && !gone && T(m.dlv_pane) ? { dlv: { pane: m.dlv_pane } } : {}),
+    ...(who === "owner" && !gone && T(m.ack) ? { ack: m.ack } : {}),
     reactions: ((has(m, "reactions") ? m.reactions : []) as R[]).map(r => ({ name: r.name, count: has(r, "count") ? r.count : 0, mine: ((has(r, "users") ? r.users : []) as string[]).includes(rep) })),
   } as R;
 }
