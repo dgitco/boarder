@@ -1179,6 +1179,11 @@ app.get("/manifest.webmanifest", c => {
   return c.body(body, 200, { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "public, max-age=3600" });
 });
 
+app.get("/art/_kit.js", async c => {
+  const o = await files.answer(c.env, "/art/_kit.js", {}).catch(() => null);
+  return o && o.status === 200 ? new Response(o.body as BodyInit, { status: 200, headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } }) : c.text("not found", 404);
+});
+
 async function filesFirst(c: Context<{ Bindings: Env }>, path: string, headers: Record<string, string>): Promise<files.Out | null> {
   const p = path.split("?")[0];
   if (chOf(c) !== "owner" || !files.FILE_PATH.test(p) || (files.isJsonPath(p) && cookieOf(c, "bx_w") && !(await ledger.f7On(c.env.DB, "write_art")))) return null;   // write_art 면 D1 이 정본이라 방금 쓴 사람도 D1
@@ -1396,6 +1401,14 @@ app.all("*", async c => {
     let r: [number, object] | null; const rid = queue.ridOfBody(b);
     try { r = await (url.pathname === "/api/artnote" ? ownerWrite.artnote(c.env, b, rid) : ownerWrite.artfolder(c.env, b, rid)); }
     catch { return rid ? queue.retrySafe(c) : c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503); }
+    if (r && r[0] < 400 && url.pathname === "/api/artnote" && !b.del && /^(?:📍\d+ \(|✅ 정함)/.test(String(b.text || "").trim()) && await files.isCanvas(c.env, String(b.art))) {
+      const cut = (v: unknown, n: number) => String(v ?? "").slice(0, n);
+      const sending = boardCall(c.env, chOf(c), { method: "POST", path: "/api/artpin", headers: { "content-type": "application/json", "x-hb": "1" }, body: new TextEncoder().encode(JSON.stringify({ art: cut(b.art, 40), target: cut(b.target, 200), page: cut(b.page, 200), text: cut(b.text, 4000), near: cut(b.near, 400) })) })
+        .then(x => (JSON.parse(new TextDecoder().decode(x.body)) as { sent?: string | null }).sent ?? null, () => null).catch(() => null);
+      c.executionCtx.waitUntil(sending);
+      const sent = await Promise.race([sending, new Promise<null>(ok => setTimeout(() => ok(null), 3000))]);
+      if (sent) r = [r[0], { ...r[1], sent }];
+    }
     if (r) { if (r[0] < 400) c.executionCtx.waitUntil(live.bumpLedger(c.env)); return c.json(r[1], r[0] as 200); }
     return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" });   // 색인 없음 — 쓰기 전이라 다시 보내도 됨
   }
