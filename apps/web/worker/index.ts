@@ -3,7 +3,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { METRICS_MAX_BYTES, putMetrics, listDevices, readCapped, tooSoon } from "./devices";
 import { legal } from "./legal";
-import { createAuth, allowed, isOwner, member, type Env as AuthEnv } from "./auth";
+import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
 import { installPrompt, BOARDER_SKILL, memberOnboard, type Bot } from "./install";
 import { landingPage } from "./landing";
 import { localTools } from "./local";
@@ -186,6 +186,13 @@ app.all("/ph/*", async c => {
   const r = await fetch(`https://${host}${rest}${u.search}`, { method: c.req.method, headers: h, body: ["GET", "HEAD"].includes(c.req.method) ? undefined : await c.req.arrayBuffer() });
   const out = new Headers(r.headers); out.delete("set-cookie");
   return new Response(r.body, { status: r.status, headers: out });
+});
+// 이메일 코드 보내기는 주소마다 상한(auth.ts otpSendOk). better-auth 안의 보내기 함수에서 던진 오류는 삼켜져 200 이 되므로 여기서 429
+app.post("/api/auth/email-otp/send-verification-otp", async (c, next) => {
+  const b = await c.req.raw.clone().json().catch(() => null) as { email?: unknown } | null;
+  const email = typeof b?.email === "string" ? b.email.trim().toLowerCase().slice(0, 320) : "";
+  if (email && !(await otpSendOk(c.env.DB, email))) return c.json({ code: "TOO_MANY_REQUESTS", message: "too many codes for this address" }, 429, { "retry-after": "600" });
+  await next();
 });
 app.on(["GET", "POST"], "/api/auth/*", c => createAuth(c.env).handler(c.req.raw));
 const lookAt = new Map<string, number[]>();
