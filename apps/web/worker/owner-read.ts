@@ -607,7 +607,7 @@ export async function respond(db: D1Database, get: () => Promise<{ body: string;
   try { o = await build(db, await cfgOf(get), rt, undefined, true, state); } catch { return null; }
   if (!o) return null;
   const b = JSON.stringify(o.body), h: Record<string, string> = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "d1" };
-  if (o.status === 200) { h.etag = await etagOf(b); if (inm && inm === h.etag) return new Response(null, { status: 304, headers: { etag: h.etag, "cache-control": "no-store", "x-f7": "d1" } }); }
+  if (o.status === 200) { const { read_at: _v, ...same } = o.body as R; h.etag = await etagOf(JSON.stringify(same)); if (inm && inm === h.etag) return new Response(null, { status: 304, headers: { etag: h.etag, "cache-control": "no-store", "x-f7": "d1" } }); }
   return new Response(b, { status: o.status, headers: h });
 }
 

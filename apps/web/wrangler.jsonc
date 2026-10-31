@@ -20,6 +20,9 @@
   "observability": {
     "enabled": true
   },
+  "placement": {
+    "region": "aws:ap-northeast-2"
+  },
   "vars": {
     "FLAGS_OFF": "cli_profiles",
     "OB_LIVE": "1",

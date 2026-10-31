@@ -148,7 +148,7 @@ app.use("*", async (c, next) => {
   capture(c.env, c.executionCtx, "boarder_request", rec.who || "anon", {
     path: np, method: c.req.method, status: c.res.status, total_ms: total, sample, ...(rid ? { rid } : {}),
     ...Object.fromEntries(Object.entries(rec.seg).map(([k, v]) => [`${k}_ms`, v])), ...meterProps(meter), ...(rec as { hit?: Record<string, number> }).hit,
-    colo: (c.req.raw as any).cf?.colo, country: (c.req.raw as any).cf?.country, $current_url: undefined,
+    colo: (c.req.raw as any).cf?.colo, entry: (c.req.header("cf-ray") || "").split("-")[1], country: (c.req.raw as any).cf?.country, $current_url: undefined,
   });
 });
 app.use("*", async (c, next) => {
@@ -1412,6 +1412,7 @@ app.all("*", async c => {
   const url = new URL(c.req.url);
   // React 꾸러미(/assets, 해시 이름)와 기본 봇 그림은 누구에게나 Boarder 것 — 주인이 /device 를 열어도 빈 화면이 안 되게(보드에는 /assets 가 없음)
   if (/^\/(assets|landing)\//.test(url.pathname) || url.pathname === "/icons/primary-blob.svg" || url.pathname === "/node-rules.md") return c.env.ASSETS.fetch(c.req.raw);
+  if (url.pathname.startsWith("/icons/")) { const a = await c.env.ASSETS.fetch(c.req.raw); if (a.status === 304) return a; if (a.ok && /^image\//.test(a.headers.get("content-type") || "")) { const h = new Headers(a.headers); h.set("cache-control", "public, max-age=86400"); return new Response(a.body, { status: 200, headers: h }); } }
   if (/^\/(assets|icons)\//.test(url.pathname) && !(await signedIn(c))) return c.env.ASSETS.fetch(c.req.raw);
   if (c.req.method === "GET" && (/^\/_blob\/[0-9a-f]{32}(\.[a-z0-9]{1,5})?$/.test(url.pathname) || /^\/art\/[A-Za-z0-9]{16,40}\/support\.js$/.test(url.pathname))) {
     const blobId = /^\/_blob\/([0-9a-f]{32})/.exec(url.pathname)?.[1];
@@ -1540,7 +1541,8 @@ app.all("*", async c => {
   const shadowRd = !!rd && await flag("shadow_" + rd.group);
   if (rd && !cookieOf(c, "bx_w") && await flag("read_" + rd.group) && await ledgerFresh(c.env)) {
     const st = rd.kind === "inbox" && await flag("write_state");
-    const res = await ownerRead.respond(c.env.DB, () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st);
+    const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;
+    const res = await ownerRead.respond(rdb, () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st);
     if (res) return res;
   }
   const headers: Record<string, string> = {};

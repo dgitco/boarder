@@ -12,7 +12,7 @@ const RID = /^[\w-]{6,64}$/;
 export const FAULT = { do: false, d1: false, d1after: false };   // d1after = batch 는 들어가고 응답만 잃음
 const ridOf = (env: QEnv, email: string) => {
   if (FAULT.do) throw new Error("DO 장애(시험)");
-  return env.SNAP.get(env.SNAP.idFromName(`rid:${isOwner(env, email) ? "owner" : email.trim().toLowerCase()}@wnam`), { locationHint: "wnam" });
+  return env.SNAP.get(env.SNAP.idFromName(`rid:${isOwner(env, email) ? "owner" : email.trim().toLowerCase()}@apac`), { locationHint: "apac" });
 };
 export const brokenDB = (db: D1Database) => new Proxy(db, { get: () => () => { throw new Error("D1 장애(시험)"); } }) as D1Database;
 export const lostDB = (db: D1Database) => new Proxy(db, { get: (t, k) => k === "batch" ? async (s: D1PreparedStatement[]) => { await t.batch(s); throw new Error("D1 응답 잃음(시험)"); } : (v => typeof v === "function" ? v.bind(t) : v)(Reflect.get(t, k)) }) as D1Database;
