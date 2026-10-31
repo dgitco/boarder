@@ -9,7 +9,7 @@ async function otpError(r: Response | null): Promise<AuthFailure> {
   if (!r) return fail("generic");
   if (r.status === 429) return fail("rate_limited", { retryAfterSeconds: Number(r.headers.get("retry-after")) || undefined });
   const j = await r.json().catch(() => ({})) as { code?: string };
-  return fail(({ INVALID_OTP: "code_invalid", OTP_EXPIRED: "code_expired", TOO_MANY_ATTEMPTS: "too_many_attempts" } as Record<string, AuthErrorCode>)[j.code || ""] || "generic");
+  return fail(({ INVALID_OTP: "code_invalid", OTP_EXPIRED: "code_expired", TOO_MANY_ATTEMPTS: "too_many_attempts", INVALID_EMAIL: "email_invalid" } as Record<string, AuthErrorCode>)[j.code || ""] || "generic");
 }
 
 export function SignIn({ onDone }: { onDone: () => void }) {

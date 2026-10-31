@@ -666,6 +666,9 @@ export function AuthFlow(props: AuthFlowProps) {
     const r = await props.sendCode(value, p);
     if (!live()) return;
     if (isFailure(r)) return fail(r);
+    // The address the code went to, not what the field holds now: anything typed
+    // while this was in flight would make the verify look up a code that doesn't exist.
+    setEmail(value);
     setPurpose(p);
     setCode("");
     go("code");
@@ -900,6 +903,7 @@ export function AuthFlow(props: AuthFlowProps) {
         placeholder={t.emailPlaceholder}
         autoComplete={on.passkey ? "username webauthn" : "username"}
         value={email}
+        readOnly={submitting}
         onChange={(e) => {
           setEmail(e.target.value);
           setSuggestion(null);
