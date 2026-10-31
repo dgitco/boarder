@@ -22,7 +22,7 @@ import settingsJs from "./legacy/settings.js?raw";
 import settingsCss from "./legacy/settings.css?raw";
 import blobJs from "./legacy/blobatar.js?raw";
 import botPickJs from "./legacy/botpick.js?raw";
-import { snippet, capture, type PH } from "./posthog";
+import { snippet, capture, phId, type PH } from "./posthog";
 import { mcp } from "./mcp/server";
 import { run as runTool, SCHEMAS } from "./mcp/tools";
 import { registry, view, dropCache, diff } from "./mcp/registry";
@@ -1351,8 +1351,8 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
 function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false) {
   return new HTMLRewriter()
       .on('meta[name="apple-mobile-web-app-title"]', { element: e => { e.setAttribute("content", "보더"); } })
-      .on("head", { element: e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|settings)/.test(location.hash)) history.replaceState(history.state, '', '#tree'); document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000)</script>", { html: true });
-        e.append(`<style>html.bx-boot body{visibility:hidden}</style><style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>` + snippet(c.env, email), { html: true }); } })
+      .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|settings)/.test(location.hash)) history.replaceState(history.state, '', '#tree'); document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000)</script>", { html: true });
+        e.append(`<style>html.bx-boot body{visibility:hidden}</style><style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>` + snippet(c.env, await phId(c.env, email)), { html: true }); } })
       .on("body", { element: e => { e.append(`<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script><script>document.documentElement.classList.remove('bx-boot')</script>`, { html: true }); } })
     .transform(res);
 }
@@ -1503,7 +1503,7 @@ app.all("*", async c => {
   let r; const t0 = Date.now();
   try { r = own ?? fr ?? await boardCall(c.env, chOf(c), { method: c.req.method === "HEAD" ? "GET" : c.req.method, path: url.pathname + url.search, headers, ...(body !== undefined ? { body } : {}) }); }
   catch (e) {
-    capture(c.env, c.executionCtx, "$exception", s.user.email, { $exception_list: [{ type: "BridgeError", value: String(e), mechanism: { handled: true } }], path: url.pathname, method: c.req.method });
+    capture(c.env, c.executionCtx, "$exception", s.user.email, { $exception_list: [{ type: "BridgeError", value: String(e).slice(0, 120), mechanism: { handled: true } }], path: normPath(url.pathname), method: c.req.method });
     return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, /릴레이 없음/.test(String(e)) ? { "x-retry-safe": "1" } : {});   // 보내지도 못한 요청 — 화면이 쓰기도 조용히 다시
   }
   if (c.req.method === "POST" && r.status < 400) REC.get(c.req.raw)?.cookies.push("bx_w=1; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=20");   // 방금 씀 — 20초 스냅숏 건너뜀
