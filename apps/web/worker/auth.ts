@@ -16,6 +16,17 @@ const codeMail = (code: string) => ({
   html: `<div style="font-family:system-ui,sans-serif;font-size:15px;color:#111113"><p>보더 로그인 코드</p><p style="font-size:28px;font-weight:600;letter-spacing:4px;font-family:ui-monospace,monospace">${code}</p><p style="color:#8b8b93">5분 안에 입력하세요. 요청하지 않았다면 이 메일은 무시해도 돼요.</p></div>`,
 });
 
+export const OTP_SEND_LIMITS = [[10 * 60_000, 5], [24 * 3600_000, 20]] as const;
+export async function otpSendOk(db: D1Database, email: string, now = Date.now()): Promise<boolean> {
+  const [[w1, n1], [w2, n2]] = OTP_SEND_LIMITS;
+  const [ins] = await db.batch([
+    db.prepare("INSERT INTO otp_send(email, at) SELECT ?, ? WHERE (SELECT count(*) FROM otp_send WHERE email = ? AND at > ?) < ? AND (SELECT count(*) FROM otp_send WHERE email = ? AND at > ?) < ?")
+      .bind(email, now, email, now - w1, n1, email, now - w2, n2),
+    db.prepare("DELETE FROM otp_send WHERE at < ?").bind(now - w2),
+  ]);
+  return !!ins.meta.changes;
+}
+
 export function createAuth(env: Env) {
   return betterAuth({
     database: env.DB,
@@ -24,6 +35,9 @@ export function createAuth(env: Env) {
     basePath: "/api/auth",
     trustedOrigins: [env.PUBLIC_URL, ...(env.ALT_URLS || "").split(",").filter(Boolean)],
     ...(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? { socialProviders: { google: { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, prompt: "select_account" as const } } } : {}),
+    rateLimit: { enabled: true },
+    disabledPaths: ["/email-otp/request-password-reset", "/forget-password/email-otp", "/email-otp/reset-password"],
+    advanced: { ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] } },
     account: { accountLinking: { enabled: true } },
     session: { expiresIn: 60 * 60 * 24 * 30, cookieCache: { enabled: true, maxAge: 5 * 60 } },   // 요청마다 D1 을 안 감(5분 서명 쿠키) — 나가기는 바로, 다른 기기 끊기는 최대 5분 늦음
     plugins: [
@@ -32,7 +46,8 @@ export function createAuth(env: Env) {
         expiresIn: 5 * 60,
         allowedAttempts: 5,
         disableSignUp: false,
-        async sendVerificationOTP({ email, otp }) {
+        async sendVerificationOTP({ email, otp, type }) {
+          if (type !== "sign-in") return;   // 로그인 코드만(다른 종류는 주소 상한 밖 길일 수 있음)
           if (!(await member(env, email))) return;   // 밖 주소: 조용히 아무것도 안 보냄(있는 주소인지 알려 주지 않음)
           await env.EMAIL.send({ to: email, from: { email: "login@0bridge.dev", name: "Boarder" }, ...codeMail(otp) } as any);
         },
