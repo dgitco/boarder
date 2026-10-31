@@ -119,3 +119,13 @@ test("회원 카드 답: 다 끝난 답을 같은 rid 로 또 보내도 그 창�
   assert.equal(again.status, 200); assert.equal((await again.json() as { already?: boolean }).already, true);
   assert.equal(sent.length, 1); assert.match(sent[0].text, /: B\. Continue/);
 });
+
+test("회원 카드 스레드: 이미 답한 글에 다른 글은 확정 실패(400), 같은 답을 다시 보내면 됨(200) — 409 면 화면이 보낸 것으로 보고 글을 잃음", async () => {
+  const { sent, post } = setup();
+  const th = { channel: "primary", thread: "1793300000.000001" };
+  assert.equal((await post("/api/chat", { ...th, text: "첫 답", rid: "rtest-card-0101" })).status, 200);
+  assert.equal(sent.length, 1);
+  assert.equal((await post("/api/chat", { ...th, text: "뒤따른 글", rid: "rtest-card-0102" })).status, 400);
+  assert.equal((await post("/api/chat", { ...th, text: "첫 답", rid: "rtest-card-0103" })).status, 200);
+  assert.equal(sent.length, 1, "같은 답은 창에 두 번 안 감");
+});

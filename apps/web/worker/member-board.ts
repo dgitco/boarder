@@ -204,7 +204,8 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     if (onCard && !b.react && b.edit === undefined && !b.delete && !(Array.isArray(b.files) && b.files.length)) {
       const said = String(b.label || b.text || "").trim();
       if (!said) return { error: "내용을 적어요", status: 400 };
-      return onCard.state === "open" ? post(db, me, "/api/answer", { item: "w" + onCard.n, text: said }) : { error: onCard.state === "closed" ? "닫힌 결정이에요" : "이미 답한 결정이에요", status: 409 };
+      if (onCard.state !== "open" && String(onCard.answer || "") === said) return { ok: { ok: true, state: "ok" } };   // 답을 잃은 뒤 같은 답을 다시 보낸 것 = 이미 됨
+      return onCard.state === "open" ? post(db, me, "/api/answer", { item: "w" + onCard.n, text: said }) : { error: onCard.state === "closed" ? "닫힌 결정이에요" : "이미 답한 결정이에요", status: 400 };   // 확정 실패 — 409 면 화면이 「올라갔나」를 확인하다 보낸 것으로 보고 글을 잃음
     }
     if (b.delete) {   // 내 글 지우기: 내가 쓴 줄만(ts = at 초 + id 뒤 여섯 자리)
       const [s, n] = String(b.ts || "").split(".");
