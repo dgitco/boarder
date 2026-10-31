@@ -5,7 +5,7 @@ type Env = { RESULTS: R2Bucket; DB: D1Database };
 
 const ID = /^[A-Za-z0-9]{16,40}$/, BLOB = /^[0-9a-f]{32}$/;
 const SYS = "art/_sys/";
-const SUPPORT_JS = "window.DCLogic = class {};\n";
+export const SUPPORT_JS = "window.DCLogic = class {};\n";
 const IMG: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" };
 const te = new TextEncoder(), td = new TextDecoder();
 
@@ -52,11 +52,12 @@ async function file(env: Env, ix: Index, key: string, html: boolean): Promise<Ou
 }
 
 // artview.serve(parts)
-async function art(env: Env, ix: Index, parts: string[]): Promise<Out | null> {
+async function art(env: Env, ix: Index, parts: string[], anon = false): Promise<Out | null> {
   if (parts.length === 1 && parts[0] === "_kit.js") { const o = await env.RESULTS.get(SYS + "kit.js"); return o ? { status: 200, headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" }, body: await bytes(o) } : null; }
   if (!parts.length || !ID.test(parts[0])) return text(404, "not found");
   const aid = parts[0], rest = parts.slice(1).filter(p => !["", ".", ".."].includes(p)), it = ix.arts[aid];
-  if (!it) return null;   // 색인에 없음 = 막 올린 것일 수 있음 → 다리(다리도 없으면 「no backup」)
+  if (!it) return null;
+  if (anon && (it.kind !== "canvas" || rest.length !== 1 || rest[0] !== "support.js")) return text(404, "not found");
   if (it.kind === "doc") {
     if (rest.length) return text(404, "not found");
     const o = await env.RESULTS.get(`${SYS}doc/${aid}.html`);   // 글(.md)은 릴레이가 artview._doc 그대로 그려 올림
@@ -110,8 +111,7 @@ async function json(v: unknown, inm: string | undefined): Promise<Out> {
   return { status: 200, headers: { "content-type": "application/json; charset=utf-8", etag, "cache-control": "no-store" }, body };
 }
 
-// 한 길 답하기: path = 경로 + 물음(다리에 넘기던 그대로), headers = 다리에 넘기던 머리(range · if-none-match …)
-export async function answer(env: Env, path: string, headers: Record<string, string>): Promise<Out | null> {
+export async function answer(env: Env, path: string, headers: Record<string, string>, anon = false): Promise<Out | null> {
   const q = path.indexOf("?"), p = q < 0 ? path : path.slice(0, q);
   const fm = /^\/api\/file\/(F[A-Z0-9]{6,20}|f_[0-9a-f]{16}_\d{10,20})(\?dl)?$/.exec(path);
   if (fm) return attach(env, fm[1], !!fm[2], headers.range);
@@ -142,7 +142,7 @@ export async function answer(env: Env, path: string, headers: Record<string, str
   const raw = unq(p); if (raw === null) return null;
   const parts = raw.split("/").filter(Boolean);
   const ix = await index(env); if (!ix) return null;
-  if (parts[0] === "art") return art(env, ix, parts.slice(1));
+  if (parts[0] === "art") return art(env, ix, parts.slice(1), anon);
   const h = parts.length === 2 ? parts[1] : "";   // artview.blob — 다리는 Referer 없이 불렀으니 모든 백업의 _assets 에서 처음 것
   if (!BLOB.test(h)) return text(404, "not found");
   return ix.blobs[h] ? file(env, ix, ix.blobs[h], false) : null;
