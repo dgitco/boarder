@@ -48,6 +48,7 @@ import { resolve as pushResolve, cardLoc } from "./push-do";
 import { hosted } from "./hosted";   // 호스팅 전용(ee/) — 공개 판에선 빈 확장
 import * as live from "./live";
 import * as queue from "./queue";
+import * as bxs from "./bxs";
 
 type Env = AuthEnv & PH & { SNAP: DurableObjectNamespace<import("./board").BoardSnap>; BRIDGE: DurableObjectNamespace<import("./bridge").Bridge>; RELAY_TOKEN: string; LEDGER_TOKEN?: string; ADMIN_TOKEN?: string; ENGINE: DurableObjectNamespace<Engine>; RESULTS: R2Bucket; CF_VERSION_METADATA: WorkerVersionMetadata; CONNECTOR_KEY?: string; SEARCH: DurableObjectNamespace<import("./search").Search>; AI: Ai; OB_EXPORT_SIGN_KEY?: string; OB_EXPORT_URL?: string; PUSH: DurableObjectNamespace<import("./push-do").Pusher>; VAPID_PRIVATE?: string; SOURCE_URL?: string; FAULT_OK?: string };
 const app = new Hono<{ Bindings: Env }>();
@@ -1312,11 +1313,60 @@ async function ownMisc(c: Context<{ Bindings: Env }>, url: URL): Promise<Respons
   if (p === "/api/push/key") return v.push_key ? j({ key: v.push_key }) : null;
   return j(v.drafts || {});
 }
-async function ownPage(env: Env) {
+// 첫 화면 큰 덩어리 캐시(bxs.ts): 틀은 ETag 마다 한 번 덩어리를 빼 둠(isolate 메모리) · 뺀 덩어리는 R2 bxs/ 에도(다른 isolate · 틀이 바뀐 사이에 온 요청이 받게)
+const bxStore = new bxs.Store(), bxSaved = new Set<string>();
+const bxPut = (sha: string, b: bxs.Block) => bxStore.set(sha, b);
+function bxSave(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, shas: string[]) {
+  const todo = shas.filter(s => !bxSaved.has(s)); if (!todo.length) return;
+  for (const s of todo) bxSaved.add(s);
+  ctx.waitUntil(Promise.all(todo.map(async s => {
+    const b = bxStore.get(s); if (!b) return;
+    const k = `bxs/${s}.${b.kind}`;
+    if (!(await env.RESULTS.head(k))) await env.RESULTS.put(k, b.body, { httpMetadata: { contentType: bxs.TYPE[b.kind] } });
+  })).catch(() => { for (const s of todo) bxSaved.delete(s); }));
+}
+// 틀(page 스냅숏) → 덩어리를 뺀 HTML. 값(약속 말고)만 남김 — 요청끼리 promise 를 나누지 않음. 못 빼면 원래 틀(전부 인라인)
+let bxTpl: { etag: string; html: string; shas: string[] } | null = null;
+async function tplHtml(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, pg: { body: string; etag: string }) {
+  if (bxTpl?.etag !== pg.etag) {
+    const raw = (JSON.parse(pg.body) as { html: string }).html, shas: string[] = [];
+    const x = await bxs.extract(raw, (sha, b) => { shas.push(sha); bxPut(sha, b); }, ["__BX_DATA__", "__BX_DTAG__"]).catch(() => null);
+    bxTpl = { etag: pg.etag, html: x?.html ?? raw, shas };
+  }
+  bxSave(env, ctx, bxTpl.shas);
+  return bxTpl.html;
+}
+// 껍데기(Worker 묶음) 덩어리 태그: isolate 마다 처음 한 번 해시. 못 만들면 null(인라인)
+let bxShell: { head: string; body: string; shas: string[] } | null = null;
+async function shellTags(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
+  if (!bxShell) {
+    const shas: string[] = [], put = (sha: string, b: bxs.Block) => { shas.push(sha); bxPut(sha, b); }, esc = (s: string) => s.replace(/<\//g, "<\\/");
+    const t = await Promise.all([bxs.pack([{ kind: "css", body: shellCss, id: "hbx-css" }, { kind: "css", body: settingsCss, id: "hbx-set-css" }], put),
+      bxs.pack([{ kind: "js", body: esc(shellJs) }, { kind: "js", body: esc(botPickJs) }, { kind: "js", body: esc(settingsJs) }], put)]).catch(() => null);
+    if (!t) return null;
+    bxShell = { head: t[0], body: t[1], shas };
+  }
+  bxSave(env, ctx, bxShell.shas);
+  return bxShell;
+}
+app.get("/bxs/:f", async c => {
+  const m = bxs.PATH.exec(new URL(c.req.url).pathname); if (!m) return c.text("not found", 404);
+  if (!(await signedIn(c))) return c.text("로그인", 401, { "cache-control": "no-store" });   // 주인 · 회원 둘 다(틀은 회원 화면도 같은 것)
+  const [, sha, kind] = m as unknown as [string, string, bxs.Kind];
+  let b = bxStore.get(sha);
+  if (!b) { await shellTags(c.env, c.executionCtx); b = bxStore.get(sha); }
+  if (!b) { const o = await c.env.RESULTS.get(`bxs/${sha}.${kind}`).catch(() => null); if (o) { b = { kind, body: await o.text() }; bxPut(sha, b); bxSaved.add(sha); } }
+  if (!b) { const pg = await snap(c.env).get("page").catch(() => null); if (pg) { await tplHtml(c.env, c.executionCtx, pg); b = bxStore.get(sha); } }
+  if (!b || b.kind !== kind) return c.text("not found", 404, { "cache-control": "no-store" });
+  const h = { "content-type": bxs.TYPE[kind], "cache-control": bxs.CACHE, etag: `"${sha}"`, "x-content-type-options": "nosniff" };
+  if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === h.etag) return new Response(null, { status: 304, headers: h });
+  return new Response(b.body, { headers: h });
+});
+async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
   const [pg, dt] = await Promise.all([snap(env).get("page"), snap(env).get("data")]);
   const fresh = (x: { at: number; checked: number }) => Date.now() - Math.max(x.at, x.checked || 0) < 15_000;
   if (!pg || !dt || !fresh(pg) || !fresh(dt)) return null;
-  const html = (JSON.parse(pg.body) as { html: string }).html
+  const html = (await tplHtml(env, ctx, pg))
     .replace("__BX_DATA__", () => dt.body.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(dt.etag));
   return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } as Record<string, string>, body: new TextEncoder().encode(html) };
 }
@@ -1324,7 +1374,7 @@ async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: strin
   const pg = await snap(c.env).get("page"); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
   await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
   const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot)), tag = await memberBoard.etag(d);
-  const html = (JSON.parse(pg.body) as { html: string }).html.replace("__BX_DATA__", () => d.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(tag));
+  const html = (await tplHtml(c.env, c.executionCtx, pg)).replace("__BX_DATA__", () => d.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(tag));
   // 회원 값: 채널은 Primary 하나(보드 CH) · 내 이름 · 메인 봇 이름. 영역 칸이 하나라 트리 줄을 한 칸으로
   const member = `<script>window.HB_CH = ["primary"]; window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name }).replace(/</g, "\\u003c")}</script><style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>`;
   const res = new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "frame-ancestors 'self'", "x-frame-options": "SAMEORIGIN", "x-boarder-src": "member" } });
@@ -1348,12 +1398,14 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   if (hop.log && !j.already) await c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), null, Date.now()).run().catch(e => console.error("노드 채팅 줄", e));
   return c.json({ ...j, ok: true, rid, state: "ok", channel: "primary" });
 }
-function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false) {
+async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false) {
+  // 큰 껍데기 css · js 는 /bxs 주소로(bxs.ts — 같은 차례, 고전 스크립트). 해시를 못 만들면 예전처럼 인라인
+  const bx = await shellTags(c.env, c.executionCtx).catch(() => null);
   return new HTMLRewriter()
       .on('meta[name="apple-mobile-web-app-title"]', { element: e => { e.setAttribute("content", "보더"); } })
       .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|settings)/.test(location.hash)) history.replaceState(history.state, '', '#tree'); document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000)</script>", { html: true });
-        e.append(`<style>html.bx-boot body{visibility:hidden}</style><style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>` + snippet(c.env, await phId(c.env, email)), { html: true }); } })
-      .on("body", { element: e => { e.append(`<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script><script>document.documentElement.classList.remove('bx-boot')</script>`, { html: true }); } })
+        e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>`) + snippet(c.env, await phId(c.env, email)), { html: true }); } })
+      .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script>`) + `<script>document.documentElement.classList.remove('bx-boot')</script>`, { html: true }); } })
     .transform(res);
 }
 app.all("*", async c => {
@@ -1498,7 +1550,7 @@ app.all("*", async c => {
   if (shadowRd) delete headers["if-none-match"];   // 그림자 대조는 다리 몸통이 있어야 함(304 는 아래에서 Worker 가)
   const body = c.req.method === "POST" ? new Uint8Array(await c.req.arrayBuffer()) : undefined;
   if (body && body.length > 25 * 1024 * 1024) return c.json({ ok: false, error: "25MB 까지 올릴 수 있어요" }, 413);
-  const own = url.pathname === "/" && c.req.method !== "POST" && chOf(c) === "owner" && await ledger.f7On(c.env.DB, "read_page") ? await ownPage(c.env).catch(() => null) : null;
+  const own = url.pathname === "/" && c.req.method !== "POST" && chOf(c) === "owner" && await ledger.f7On(c.env.DB, "read_page") ? await ownPage(c.env, c.executionCtx).catch(() => null) : null;
   const fr = !own && (c.req.method === "GET" || c.req.method === "HEAD") ? await filesFirst(c, url.pathname + url.search, headers) : null;
   let r; const t0 = Date.now();
   try { r = own ?? fr ?? await boardCall(c.env, chOf(c), { method: c.req.method === "HEAD" ? "GET" : c.req.method, path: url.pathname + url.search, headers, ...(body !== undefined ? { body } : {}) }); }
