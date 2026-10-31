@@ -11,6 +11,10 @@ export type PushApi = {
   key(): Promise<string>; subscribe(b: unknown): Promise<Res>; unsubscribe(b: unknown): Promise<Res>; trial(b: unknown, welcome?: boolean): Promise<Res>; ack(b: unknown): Promise<Res>;
   tickNow(): Promise<[string, P.Msg][]>; ensure(): Promise<boolean>; importData(b: unknown): Promise<{ ok: boolean; error?: string }>; stat(): Promise<unknown>;
 };
+// 회원 칸(이름 = 회원 메일, index.ts memberPusher): 늘 그 사람 메일(세션)을 첫 값으로 — 칸에 적힌 주인과 다르면 거절
+export type MemberPushApi = {
+  key(): Promise<string>; mSubscribe(me: string, b: unknown): Promise<Res>; mUnsubscribe(me: string, b: unknown): Promise<Res>; mTrial(me: string, b: unknown, welcome?: boolean): Promise<Res>; mAck(me: string, b: unknown): Promise<Res>; mNotify(me: string, card: { id: string; question: string }): Promise<Res>;
+};
 
 async function rows(db: D1Database) {
   const [c, u] = await db.batch([
@@ -141,6 +145,68 @@ export class Pusher extends DurableObject<Env> {
     try { await this.tickNow(); }
     catch (e) { this.log({ ev: "error", err: `${(e as Error)?.name}: ${(e as Error)?.message}`.slice(0, 200) }); }
     await this.ctx.storage.setAlarm(Date.now() + EVERY);
+  }
+
+  // ---------- 회원 칸(초대 계정, 이름 = 회원 메일) ----------
+  // 원천은 회원 카드를 만든 요청(mNotify)뿐 — wl_* · 주인 상태는 안 읽고, 알람을 안 걸음. 스위치 member_push 는 부르는 쪽(index.ts)이 봄
+  private member() { return this.ctx.storage.sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'member'").toArray()[0]?.v || null; }
+  // 이 칸의 주인 = 처음 부른 회원 메일(세션). 다른 메일이 부르면 거절 — 칸 이름이 메일이라 실제로는 안 생기지만 한 번 더
+  private bind(me: string) {
+    const ok = P.memberName(me); if (!ok || ok !== me) return false;
+    const cur = this.member(); if (cur) return cur === me;
+    if (this.ctx.storage.sql.exec("SELECT 1 FROM kv WHERE k = 'state'").toArray().length || this.subs().length) return false;   // 주인 칸 등 이미 쓰는 칸엔 안 붙음
+    this.ctx.storage.sql.exec("INSERT INTO kv(k, v) VALUES ('member', ?)", me);
+    return true;
+  }
+  private no(): Res { return [403, { ok: false, error: "no" }]; }
+  mSubscribe(me: string, body: Parameters<typeof P.subOf>[0]): Promise<Res> {
+    return this.lock(async () => {
+      if (!this.bind(me)) return this.no();
+      const s = P.subOf(body || {}); if (!s) return [400, { ok: false, error: "구독 꼴이 아님" }] as Res;
+      const isNew = !this.has(s.endpoint), sql = this.ctx.storage.sql;
+      sql.exec("INSERT INTO sub(endpoint, p256dh, auth, ua, at) VALUES (?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, ua = excluded.ua, at = excluded.at",
+        s.endpoint, s.p256dh, s.auth, s.ua, Date.now() / 1000);
+      this.log({ ev: "subscribe", host: P.hostOf(s.endpoint), ua: s.ua.slice(0, 80), new: isNew });
+      sql.exec("DELETE FROM sub WHERE endpoint NOT IN (SELECT endpoint FROM sub ORDER BY at DESC LIMIT ?)", P.M_SUBS);   // 기기 수 상한
+      return [200, { ok: true, n: sql.exec<{ n: number }>("SELECT count(*) n FROM sub").one().n, new: isNew }] as Res;
+    });
+  }
+  mUnsubscribe(me: string, body: { endpoint?: unknown }): Promise<Res> {
+    return this.lock(async () => {
+      if (!this.bind(me)) return this.no();
+      const r = this.ctx.storage.sql.exec("DELETE FROM sub WHERE endpoint = ?", String(body?.endpoint ?? ""));
+      this.log({ ev: "unsubscribe", found: r.rowsWritten > 0 });
+      return [200, { ok: true }] as Res;
+    });
+  }
+  // 「시험 알림」(주인 trial 과 같은 꼴): 이 기기에만, 그 회원의 가장 새 open 카드로
+  mTrial(me: string, body: { endpoint?: unknown }, welcome = false): Promise<Res> {
+    return this.lock(async () => {
+      if (!this.bind(me)) return this.no();
+      if (!(await this.vapid())) return [503, { ok: false, error: "푸시 키 없음" }] as Res;
+      const ep = String(body?.endpoint ?? "");
+      if (!this.has(ep)) return [404, { ok: false, error: "이 기기 구독이 없어요 · 알림 켜기부터" }] as Res;
+      const r = await this.env.DB.prepare("SELECT id, question FROM board_card WHERE owner = ? AND state = 'open' ORDER BY at DESC LIMIT 1").bind(me).first<{ id: string; question: string }>();
+      const m = r ? P.memberMsg(r) : { title: P.M_TITLE, body: "새 결정이 생기면 이렇게 와요", url: "./", tag: "card:test" };   // 열린 카드가 없어도 켜졌는지 볼 수 있게
+      Object.assign(m, { title: welcome ? "[시험] 알림이 켜졌어요" : "[시험] " + m.title, body: welcome ? m.title + " — " + m.body : m.body, tag: "test:" + (r?.id || "none") });
+      const res = await this.send(m, ep);
+      return [200, { ok: res.length > 0 && res.every(([, c]) => c === 200 || c === 201), res, card: r?.id ?? null }] as Res;
+    });
+  }
+  async mAck(me: string, body: Record<string, unknown>): Promise<Res> { return this.bind(me) ? this.ack(body) : this.no(); }
+  // 새 카드 한 장: 카드를 만든 요청이 그 자리에서 부름. 구독이 없으면 할 일 없음(이 칸은 알람을 안 씀)
+  mNotify(me: string, card: { id: string; question: string }): Promise<Res> {
+    return this.lock(async () => {
+      if (!this.bind(me)) return this.no();
+      if (!this.subs().length || !(await this.vapid())) return [200, { ok: true, sent: 0 }] as Res;
+      const sql = this.ctx.storage.sql, cur = sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'burst'").toArray()[0]?.v;
+      const { state, msg } = P.memberBurst(cur ? JSON.parse(cur) : null, Date.now(), P.memberMsg(card));
+      sql.exec("INSERT INTO kv(k, v) VALUES ('burst', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", JSON.stringify(state));
+      let res = await this.send(msg);
+      // 알람이 없어 일시 실패는 여기서 한 번만 다시(같은 tag 라 받은 기기에는 두 통이 안 됨)
+      if (res.some(([, c]) => typeof c !== "number" || c === 429 || c >= 500)) { await new Promise(r => setTimeout(r, 4000)); res = await this.send(msg); }
+      return [200, { ok: true, sent: res.length }] as Res;
+    });
   }
 
   // ---------- 옮기기 · 보기(릴레이 토큰 길) ----------

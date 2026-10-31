@@ -473,7 +473,7 @@
       bpEl.addEventListener('bxb-pick', e => commit(e.detail));
     }
     el.onclick = async e => {
-      if (e.target.closest('[data-out]') && await confirmBox('로그아웃할까요?', '로그아웃')){ await fetch('api/auth/sign-out', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: '{}'}); location.href = '/'; } };
+      if (e.target.closest('[data-out]') && await confirmBox('로그아웃할까요?', '로그아웃')){ await window.bxPushOff?.(); await fetch('api/auth/sign-out', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: '{}'}); location.href = '/'; } };
   };
   const ago = t => { if (!t) return '보낸 적 없음'; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? '방금' : m < 60 ? `${m}분 전` : m < 1440 ? `${Math.round(m / 60)}시간 전` : `${Math.round(m / 1440)}일 전`; };
   const kst = s => { if (!s) return '—'; const d = new Date(s), t = d.toLocaleTimeString('ko-KR', {hour: '2-digit', minute: '2-digit', hour12: false}); return new Date().toDateString() === d.toDateString() ? t : `${d.getMonth() + 1}/${d.getDate()} ${t}`; };

@@ -61,6 +61,7 @@ const chOf = (c: Context<{ Bindings: Env }>) => /(?:^|;\s*)bx-ch=test(?:;|$)/.te
 const snap = (env: Env) => env.SNAP.get(env.SNAP.idFromName(live.OWNER_SNAP), { locationHint: "apac" });
 const search = (env: Env) => env.SEARCH.get(env.SEARCH.idFromName("owner@wnam"), { locationHint: "wnam" });
 const pusher = (env: Env) => env.PUSH.get(env.PUSH.idFromName("owner"), { locationHint: "apac" }) as unknown as import("./push-do").PushApi;
+const memberPusher = (env: Env, me: string) => { const n = PU.memberName(me); return n ? env.PUSH.get(env.PUSH.idFromName(n), { locationHint: "apac" }) as unknown as import("./push-do").MemberPushApi : null; };
 let pushKick = 0;   // 알람 처음 걸기(배포 뒤 · DO 비움 뒤): isolate 마다 1분에 한 번 — 릴레이 sync(10초마다)가 부름
 const kickPush = (env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) => { if (Date.now() - pushKick < 60_000) return; pushKick = Date.now(); ctx.waitUntil(pusher(env).ensure().catch(() => { pushKick = 0; })); };
 
@@ -461,7 +462,7 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
       return `${c.env.PUBLIC_URL}/api/agent/result/${id}`;
     },
     owner,
-    ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane) } : {}),
+    ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card))) } : {}),
     host: who.host, win: who.win || who.pane,
     conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
   };
@@ -1040,7 +1041,7 @@ app.post("/api/admin/test-session", async c => {
 app.post("/api/admin/f7-flag", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ name?: string; on?: boolean; note?: string }>().catch(() => ({} as { name?: string; on?: boolean; note?: string }));
-  if (!/^(read|write|shadow)_[a-z]{2,20}$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_<묶음>" }, 400);
+  if (!/^(read|write|shadow|member)_[a-z]{2,20}$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음>" }, 400);
   await ledger.setFlag(c.env.DB, b.name!, !!b.on, String(b.note || "").slice(0, 200));
   return c.json({ ok: true, flags: (await c.env.DB.prepare("SELECT name, on_at, note FROM f7_flag ORDER BY name").all()).results });
 });
@@ -1388,7 +1389,7 @@ async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: strin
   const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot)), tag = await memberBoard.etag(d);
   const html = (await tplHtml(c.env, c.executionCtx, pg)).replace("__BX_DATA__", () => d.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(tag));
   // 회원 값: 채널은 Primary 하나(보드 CH) · 내 이름 · 메인 봇 이름. 영역 칸이 하나라 트리 줄을 한 칸으로
-  const member = `<script>window.HB_CH = ["primary"]; window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name }).replace(/</g, "\\u003c")}</script><style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>`;
+  const member = `<script>window.HB_CH = ["primary"]; window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name, push: await ledger.f7On(c.env.DB, "member_push").catch(() => false) }).replace(/</g, "\\u003c")}</script><style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>`;
   const res = new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "frame-ancestors 'self'", "x-frame-options": "SAMEORIGIN", "x-boarder-src": "member" } });
   return boardShell(c, res, me, member, await ledger.f7On(c.env.DB, "write_queue"));
 }
@@ -1490,6 +1491,8 @@ app.all("*", async c => {
     {
       const me = s.user.email.toLowerCase();
       if (url.pathname === "/api/events" || url.pathname === "/api/push/stream") return c.json({ error: "다리 밖" }, 503);   // 주인과 같게: 화면이 20초 폴링으로
+      // 회원 웹 푸시(member_push 켜짐): 주인과 같은 /sw.js · /api/push/* 꼴 — 그 사람 칸(memberPusher)에만. 꺼지면 아래 빈 키(화면이 푸시를 조용히 끔) 그대로
+      if ((url.pathname.startsWith("/api/push/") || url.pathname === "/sw.js") && await ledger.f7On(c.env.DB, "member_push")) return memberPushRoute(c, me, url);
       if (c.req.method === "GET" || c.req.method === "HEAD") {
         const ans = /^\/api\/answer\/([\w-]{1,64})$/.exec(url.pathname);
         if (ans) {   // 그 rid 의 쓰기가 됐는지(rid 칸) — 늘 ok 이던 것(X1)
@@ -1632,6 +1635,42 @@ async function pushRoute(c: Context<{ Bindings: Env }>, url: URL) {
   } else if (p === "/api/push/unsubscribe") r = await pu.unsubscribe(b);
   else if (p === "/api/push/test") r = await pu.trial(b);
   else r = await pu.ack(b);
+  return c.json(r[1], r[0] as 200);
+}
+
+const memberCardPush = async (env: Env, me: string, card: { id: string; question: string }) => {
+  try { if (await ledger.f7On(env.DB, "member_push")) await memberPusher(env, me)?.mNotify(me.toLowerCase(), card); } catch (e) { console.log(JSON.stringify({ ev: "member_push", error: String(e).slice(0, 200) })); }
+};
+// 회원 웹 푸시(pushRoute 와 같은 답 꼴): 칸 = 세션 메일 · 원천 = 그 사람 board_card. POST 는 주인 길과 같은 x-hb 문 + 회원 쓰기와 같은 sameSite(다른 사이트 폼 · 링크 막기)
+async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: URL) {
+  const p = url.pathname, pu = memberPusher(c.env, me);
+  if (!pu) return c.json({ error: "no" }, 403);
+  if (c.req.method === "GET" || c.req.method === "HEAD") {
+    if (p === "/sw.js") return new Response(c.req.method === "HEAD" ? null : PU.SW, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff" } });
+    if (p === "/api/push/key") return c.json({ key: await pu.key() }, 200, { "cache-control": "no-store" });
+    let d = p; try { d = decodeURIComponent(p); } catch {}
+    const m = /^\/api\/push\/resolve\/([\w:.-]{1,80})$/.exec(d);   // 회원 카드는 바뀌지 않음 — 그 사람 카드면 그 글 자리(Primary 채팅의 카드 글)
+    if (m) {
+      const r = await c.env.DB.prepare("SELECT state FROM board_card WHERE id = ? AND owner = ?").bind(m[1], me).first<{ state: string }>().catch(() => null);
+      return c.json({ ts: m[1], loc: r ? { c: "primary", t: m[1], m: m[1], state: r.state } : null }, 200, { "cache-control": "no-store" });
+    }
+    return c.json({ error: "not found" }, 404);
+  }
+  const fn = ({ "/api/push/subscribe": 1, "/api/push/unsubscribe": 1, "/api/push/test": 1, "/api/push/ack": 1 } as Record<string, number>)[p];
+  if (c.req.method !== "POST" || !fn) return c.json({ error: "not found" }, 404);
+  if (c.req.header("x-hb") !== "1" || !sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
+  const raw = new Uint8Array(await c.req.arrayBuffer());
+  let b: Record<string, unknown>;
+  try { b = raw.length > 20000 ? null! : JSON.parse(new TextDecoder().decode(raw) || "{}"); } catch { b = null!; }
+  if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
+  let r: [number, Record<string, unknown>];
+  if (p === "/api/push/subscribe") {
+    r = await pu.mSubscribe(me, b);
+    const ep = String(((b.sub || {}) as { endpoint?: unknown }).endpoint ?? "");
+    if (r[1].new) c.executionCtx.waitUntil(pu.mTrial(me, { endpoint: ep }, true).catch(() => null));   // 새로 켠 기기엔 바로 시험 알림 1건(주인과 같게)
+  } else if (p === "/api/push/unsubscribe") r = await pu.mUnsubscribe(me, b);
+  else if (p === "/api/push/test") r = await pu.mTrial(me, b);
+  else r = await pu.mAck(me, b);
   return c.json(r[1], r[0] as 200);
 }
 

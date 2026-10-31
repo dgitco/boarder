@@ -159,6 +159,29 @@ test("구독 꼴 검사", () => {
   assert.equal(P.subOf({ sub: { endpoint: "https://a.b/x", keys: { p256dh: "", auth: "b" } } }), null);
 });
 
+// ---------- 회원(초대 계정) 규칙 ----------
+// 회원 D1 board_card 꼴(at = ms) + 같은 차례(고르기 → settle)
+test("회원: 알림 꼴 — 제목 「내 차례」 · 주인과 같은 주소 · Owner 글자 없음", () => {
+  const m = P.memberMsg({ id: "1793241001.123456", question: "  어느 안으로 할까요  " });
+  assert.equal(m.title, "내 차례"); assert.equal(m.url, "./?open=card:1793241001.123456"); assert.equal(m.tag, "card:1793241001.123456"); assert.equal(m.body, "어느 안으로 할까요");
+  assert.ok(!/Owner/.test(JSON.stringify(m)));
+});
+test("회원: 1분에 셋 넘으면 같은 tag 로 한 통, 1분 지나면 다시 따로", () => {
+  let st: { t: number; n: number } | null = null; const t0 = 1_000_000, msgs: P.Msg[] = [];
+  for (let i = 0; i < 5; i++){ const r = P.memberBurst(st, t0 + i * 1000, P.memberMsg({ id: "1793241001.00000" + i, question: "q" })); st = r.state; msgs.push(r.msg); }
+  assert.deepEqual(msgs.map(m => m.tag), ["card:1793241001.000000", "card:1793241001.000001", "card:1793241001.000002", "cards", "cards"]);
+  assert.match(msgs[4].body!, /^새 카드 5개/);
+  assert.equal(P.memberBurst(st, t0 + 70_000, P.memberMsg({ id: "x", question: "q" })).msg.tag, "card:x");
+});
+test("회원: 칸 이름 = 메일만(주인 칸 owner · 꼴이 틀린 값으로 못 감)", () => {
+  assert.equal(P.memberName(" Kim@Example.com "), "kim@example.com");
+  for (const x of ["owner", "", null, undefined, "a@b", "a b@c.d", "a@b.c/../owner", "x@y.z@w.v", "a".repeat(250) + "@b.co"]) assert.equal(P.memberName(x), null, String(x));
+});
+
+test("회원 규칙을 더해도 주인 글은 그대로", () => {
+  assert.deepEqual(P.cardMsg({ ts: "1.2", area: "company", kind: "choice", title: null, label: "x", shape: null }), { title: "회사 · 결정", body: "x", url: "./?open=card:1.2", tag: "card:1.2" });
+});
+
 // ---------- push.py 와 대조(PUSH_FIXTURE) ----------
 const FX = process.env.PUSH_FIXTURE ? JSON.parse(readFileSync(process.env.PUSH_FIXTURE, "utf8")) : null;
 type Tick = { cards: P.Card[]; urg: P.Urg[]; now: number; before: P.State; picked: P.Todo[]; res: [string, P.Code][][]; after: P.State };

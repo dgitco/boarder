@@ -1,3 +1,6 @@
+window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in navigator)) return;
+  try { const reg = await navigator.serviceWorker.getRegistration(), sub = await reg?.pushManager.getSubscription(); if (!sub) return;
+    await fetch('api/push/unsubscribe', {method: 'POST', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({endpoint: sub.endpoint})}).catch(() => {}); await sub.unsubscribe(); } catch (e) {} };
 (() => {
   if (!window.HB_LIVE || !window.show) return;
   const MOBILE_ON = true;
@@ -264,7 +267,7 @@
     if (k === 'copy'){ meClose(); closeDr(); try { const r = await fetch('api/install/prompt', {credentials: 'include'}); if (!r.ok) throw 0; await navigator.clipboard.writeText(await r.text()); mtoast('복사했어요 — AI 도구에 붙여넣어요'); } catch { mtoast('일시적인 오류가 발생했어요'); } }
     if (k === 'invite'){ meClose(); closeDr(); window.BXSettings?.enter('invite-box'); }
     if (k === 'feedback'){ meClose(); closeDr(); window.BXSettings?.enter('feedback'); }
-    if (k === 'out'){ await mpost('api/auth/sign-out'); location.reload(); }
+    if (k === 'out'){ await window.bxPushOff(); await mpost('api/auth/sign-out'); location.reload(); }
   });
   document.addEventListener('click', e => { if (!mp.hidden && !e.target.closest('.bx-mpop, [data-me]')) meClose(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !mp.hidden){ e.stopImmediatePropagation(); meClose(); } }, true);
