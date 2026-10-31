@@ -40,6 +40,7 @@ import * as files from "./files";
 import * as ownerRead from "./owner-read";
 import * as OS from "./owner-state";
 import * as memberBoard from "./member-board";
+import { newMeter, meterEnv, meterProps, sampleOf } from "./perf";
 import * as PU from "./push";
 import { resolve as pushResolve, cardLoc } from "./push-do";
 import { hosted } from "./hosted";   // 호스팅 전용(ee/) — 공개 판에선 빈 확장
@@ -89,11 +90,11 @@ async function signedIn(c: Context<{ Bindings: Env }>): Promise<Sess | null> {
   let s: Sess | null = null;
   const rec = REC.get(c.req.raw);
   if (m && +m[2] > Date.now() && sameToken(m[3], await hmac(c.env, `bx_s|${m[1]}|${m[2]}|${th}`))) {
-    s = { user: { email: m[1] } };
+    s = { user: { email: m[1] } }; hit(c.req.raw, "auth", true);
     // 미리 갈기: 5분 안에 끝나면 D1 확인을 기다리지 않고 띄워 두고, 응답 낼 때(타이밍 미들웨어) 끝나 있으면 새 bx_s — 30초마다 다시 읽는 화면은 0.9초를 안 만남
     if (+m[2] - Date.now() < 300_000 && rec && !rec.renew) { const r: Renew = { th, email: m[1] }; rec.renew = r; c.executionCtx.waitUntil(dbCheck(c, th).then(e => { r.done = e; }, () => { r.done = null; })); }   // 이 요청 안에서 끝냄(못 맞추면 캐시에 남아 다음 요청이 바로)
   } else {
-    const e = await dbCheck(c, th);
+    const e = await dbCheck(c, th); hit(c.req.raw, "auth", false);
     if (e) { s = { user: { email: e } }; rec?.cookies.push(await bxCookie(c, e, th)); }
   }
   seg(c.req.raw, "auth", Date.now() - t0);
@@ -102,7 +103,8 @@ async function signedIn(c: Context<{ Bindings: Env }>): Promise<Sess | null> {
 }
 
 type Renew = { th: string; email: string; done?: string | null };   // 미리 갈기(signedIn → 타이밍 미들웨어)
-const REC = new WeakMap<Request, { seg: Record<string, number>; who?: string; dev?: string; cookies: string[]; renew?: Renew }>();
+const REC = new WeakMap<Request, { seg: Record<string, number>; who?: string; dev?: string; cookies: string[]; renew?: Renew; hit?: Record<string, number> }>();
+const hit = (req: Request, name: string, yes: boolean) => { const r = REC.get(req); if (r) (r.hit ||= {})[`cache_${name}`] = yes ? 1 : 0; };   // 캐시 맞음 1 · 빗나감 0 — PostHog boarder_request
 function seg(req: Request, name: string, ms: number) { const r = REC.get(req); if (r) r.seg[name] = (r.seg[name] || 0) + Math.max(0, ms); }
 function who(req: Request, id: string) { const r = REC.get(req); if (r) r.who = id; }
 function bridgeSeg(req: Request, total: number, h: Record<string, string>) {
@@ -113,8 +115,9 @@ function bridgeSeg(req: Request, total: number, h: Record<string, string>) {
 const normPath = (p: string) => p.replace(/\/\d{10}\.\d{6}/g, "/:ts").replace(/\/[0-9a-f]{32}(\.[a-z0-9]+)?/g, "/:hash").replace(/\/(?:%25|%)\d+/g, "/:pane")
   .replace(/\/[A-Za-z0-9_-]{16,}/g, "/:id").replace(/\/[^/]+\.dc\.html$/, "/:board.dc.html").replace(/\/[^/]+\.[A-Za-z0-9]{1,5}$/, "/:file").slice(0, 80);
 app.use("*", async (c, next) => {
-  const t0 = Date.now(), rec = { seg: {} as Record<string, number>, who: undefined as string | undefined, dev: undefined as string | undefined, cookies: [] as string[] };
+  const t0 = Date.now(), rec = { seg: {} as Record<string, number>, who: undefined as string | undefined, dev: undefined as string | undefined, cookies: [] as string[] }, meter = newMeter();
   REC.set(c.req.raw, rec);
+  c.env = meterEnv(c.env, meter);   // D1 · DO · R2 시간 · 횟수(perf.ts) — 재기만 함
   await next();
   // 미리 갈기(signedIn): D1 확인이 이미 끝났고 같은 사람이면 새 bx_s(안 끝났으면 기다리지 않음 — 다음 요청이 60초 캐시로 받음)
   const rn = (rec as { renew?: Renew }).renew;
@@ -122,7 +125,7 @@ app.use("*", async (c, next) => {
   const lw = rec.who && /^[^@\s:%]+@[^@\s:%]+$/.test(rec.who) ? rec.who : rec.dev;
   if (lw && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && !isOwner(c.env, lw) && !/^\/api\/(relay\/|device\/metrics)/.test(c.req.path))
     c.executionCtx.waitUntil(live.bumpMember(c.env, lw));
-  const total = Date.now() - t0, st = [...Object.entries(rec.seg).map(([k, v]) => `${k};dur=${v}`), `total;dur=${total}`].join(", ");
+  const total = Date.now() - t0, st = [...Object.entries(rec.seg).map(([k, v]) => `${k};dur=${v}`), ...(meter.d1rn ? [`d1r;dur=${meter.d1r};desc=${meter.d1rn}`] : []), ...(meter.d1wn ? [`d1w;dur=${meter.d1w};desc=${meter.d1wn}`] : []), ...(meter.dobn ? [`dob;dur=${meter.dob};desc=${meter.dobn}`] : []), ...(meter.r2n ? [`r2m;dur=${meter.r2};desc=${meter.r2n}`] : []), `total;dur=${total}`].join(", ");
   if (c.res.status === 101 || (c.res as any).webSocket) { }
   else {
     try { c.res.headers.set("server-timing", st); }
@@ -132,13 +135,16 @@ app.use("*", async (c, next) => {
   const url = new URL(c.req.url);
   if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method) && url.pathname.startsWith("/api/") && c.res.status < 400 && (!url.pathname.startsWith("/api/relay/") || url.pathname === "/api/relay/write"))
     console.log(JSON.stringify({ ev: "api_write", path: normPath(url.pathname), method: c.req.method, status: c.res.status, ms: total, ...rec.seg }));
+  if (url.pathname === "/api/relay/write" && c.res.status < 400) { if (Math.random() < 0.1) capture(c.env, c.executionCtx, "boarder_request", "relay", { path: "/api/relay/write", method: c.req.method, status: c.res.status, total_ms: total, sample: 10, ...Object.fromEntries(Object.entries(rec.seg).map(([k, v]) => [`${k}_ms`, v])), ...meterProps(meter), colo: (c.req.raw as any).cf?.colo }); return; }
   if (url.pathname.startsWith("/api/relay/") || url.pathname.startsWith("/ph/") || url.pathname === "/api/health") return;
   const rid = (c.req.header("x-request-id") || "").slice(0, 40);   // 화면이 붙인 요청 id(R5) — 보드 errors.jsonl · 화면 boarder_error 와 같은 값
   if (c.res.status >= 400 && url.pathname.startsWith("/api/")) console.log(JSON.stringify({ ev: "api_error", rid, path: normPath(url.pathname), method: c.req.method, status: c.res.status, ms: total, ...rec.seg }));   // Workers Logs(observability)
   if (!rec.who && c.res.status < 500) return;
+  const np = normPath(url.pathname), sample = sampleOf(np, c.req.method, c.res.status);
+  if (sample > 1 && Math.random() >= 1 / sample) return;
   capture(c.env, c.executionCtx, "boarder_request", rec.who || "anon", {
-    path: normPath(url.pathname), method: c.req.method, status: c.res.status, total_ms: total, ...(rid ? { rid } : {}),
-    ...Object.fromEntries(Object.entries(rec.seg).map(([k, v]) => [`${k}_ms`, v])),
+    path: np, method: c.req.method, status: c.res.status, total_ms: total, sample, ...(rid ? { rid } : {}),
+    ...Object.fromEntries(Object.entries(rec.seg).map(([k, v]) => [`${k}_ms`, v])), ...meterProps(meter), ...(rec as { hit?: Record<string, number> }).hit,
     colo: (c.req.raw as any).cf?.colo, country: (c.req.raw as any).cf?.country, $current_url: undefined,
   });
 });
@@ -1295,8 +1301,8 @@ app.all("*", async c => {
     const blobId = /^\/_blob\/([0-9a-f]{32})/.exec(url.pathname)?.[1];
     if (blobId) {
       // 내용 해시 주소라 바뀌지 않음 — 입구 캐시 먼저(R2 버킷은 아시아라 미국 입구에서 멂)
-      const ck = new Request(`${url.origin}/_blob/${blobId}`), tc = Date.now(), hit = await edgeCache().match(ck); seg(c.req.raw, "cache", Date.now() - tc);
-      if (hit) return hit;
+      const ck = new Request(`${url.origin}/_blob/${blobId}`), tc = Date.now(), cached = await edgeCache().match(ck); seg(c.req.raw, "cache", Date.now() - tc); hit(c.req.raw, "blob", !!cached);
+      if (cached) return cached;
       const t1 = Date.now(), o = await c.env.RESULTS.get(`blobs/${blobId}`); seg(c.req.raw, "r2", Date.now() - t1);
       if (o) {
         const res = new Response(o.body, { headers: { "content-type": o.httpMetadata?.contentType || "application/octet-stream", "x-content-type-options": "nosniff", "content-security-policy": "sandbox", "cache-control": "public, max-age=86400", etag: o.httpEtag } });
@@ -1379,6 +1385,7 @@ app.all("*", async c => {
   const sk = c.req.method === "GET" && !url.search && chOf(c) === "owner" && !cookieOf(c, "bx_w") ? ({ "/api/data": "data", "/api/topics": "topics" } as Record<string, string>)[url.pathname] : undefined;
   if (sk) {
     const ts = Date.now(), sn = await snap(c.env).get(sk); seg(c.req.raw, "snap", Date.now() - ts);
+    hit(c.req.raw, "snap", !!sn && Date.now() - Math.max(sn.at, sn.checked || 0) < 15_000);
     if (sn && Date.now() - Math.max(sn.at, sn.checked || 0) < 15_000) {
       const h = { etag: sn.etag, "cache-control": "private, no-cache", "x-content-type-options": "nosniff", "x-snap-age": String(Date.now() - Math.max(sn.at, sn.checked || 0)) };
       if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === sn.etag) return new Response(null, { status: 304, headers: h });

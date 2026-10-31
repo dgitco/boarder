@@ -507,25 +507,54 @@
 (() => {
   if (!window.HB_LIVE) return;
   const PCQ = matchMedia('(min-width: 861px)');
-  const send = (action, ms) => { try { window.posthog?.capture('boarder_ui', {action, ms: Math.round(ms), mobile: !PCQ.matches}); } catch {} };
+  const net = () => { const n = navigator.connection; return n ? {net: n.effectiveType, net_type: n.type, rtt: n.rtt} : {}; };
+  const send = (action, ms, x) => { try { window.posthog?.capture('boarder_ui', {action, ms: Math.round(ms), mobile: !PCQ.matches, pwa: matchMedia('(display-mode: standalone)').matches, ...net(), ...x}); } catch {} };
+  window.BX_UI = send;   // 다시 연결(LiveES) 도 같은 꼴로
   const paint = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));   // 그린 다음 프레임까지
-  const wrap = (name, action, until) => {
+  const wrap = (name, action, until, every = 1) => {
     const f = window[name]; if (typeof f !== 'function') return;
     window[name] = function (...a){
-      const t = performance.now(), out = f.apply(this, a);
-      Promise.resolve(out).then(() => until ? until(a) : paint()).then(() => send(typeof action === 'function' ? action(a) : action, performance.now() - t), () => {});
+      if (every > 1 && Math.random() >= 1 / every) return f.apply(this, a);   // 자주 도는 것은 고르게 덜어 냄 — 무료 한도
+      const t = performance.now(), hid = document.hidden, out = f.apply(this, a);
+      Promise.resolve(out).then(() => until ? until(a) : paint()).then(() => { if (!hid && !document.hidden) send(typeof action === 'function' ? action(a) : action, performance.now() - t, every > 1 ? {sample: every} : undefined); }, () => {});
       return out;
     };
   };
   // 첫 화면: 보드 데이터는 페이지에 실려 와 이 스크립트 전에 그려짐 — 이 다음 그림 때(탐색 시작부터). 서버 첫 바이트(ttfb)도 따로
+  const hid0 = document.hidden;
   paint().then(() => {
+    if (hid0 || document.hidden) return;
     send('first_screen', performance.now());
     const n = performance.getEntriesByType('navigation')[0]; if (n) send('ttfb', n.responseStart - n.startTime);
   });
+  // 첫 그림 · 상호작용 가능 · 다 읽힘: 이 스크립트는 문서 끝을 읽는 중에 돌아 아직 값이 없음 — load 뒤에(큰 첫 HTML 이라 그 차가 곧 내려받기 시간)
+  const late = () => paint().then(() => {
+    if (hid0 || document.hidden) return;
+    const n = performance.getEntriesByType('navigation')[0], fp = performance.getEntriesByName('first-contentful-paint')[0];
+    if (fp) send('first_paint', fp.startTime);
+    if (n?.domInteractive) send('interactive', n.domInteractive - n.startTime);
+    if (n?.loadEventStart) send('page_load', n.loadEventStart - n.startTime);
+  });
+  if (document.readyState === 'complete') late(); else addEventListener('load', late, {once: true});
   wrap('openAns', 'card_open');
   wrap('openChan', 'channel_open');
   wrap('openThread', 'thread_open');
-  wrap('chatSend', 'send_visible');
+  wrap('chatSend', 'send_settled');   // 올리기 · 전달 확인까지 끝난 때(재시도 · 답 확인 포함) — 말풍선은 바로 뜸, 서버 왕복은 send_roundtrip
+  wrap('chatReact', 'reaction');
+  wrap('chatLoad', 'chat_load', undefined, 10);   // 30초마다 · 바뀜 알림마다 — 10번에 1번
+  // 노드 트리 그리기: 바뀔 때마다 도니 10번에 1번만(고르게)
+  { const f = window.redraw; if (typeof f === 'function') window.redraw = function (...a){ if (Math.random() >= 0.1) return f.apply(this, a); const t = performance.now(), out = f.apply(this, a); send('tree_draw', performance.now() - t, {sample: 10}); return out; }; }
+  // 찾기 · 글 보내기 왕복: 서버 답까지(화면에 보인 때는 send_visible)
+  { const f0 = window.fetch; window.fetch = function (u, o){
+      const s = typeof u === 'string' ? u : u?.url || '', m = (o?.method || 'GET').toUpperCase(), body = typeof o?.body === 'string' ? o.body : '';
+      // POST api/chat 는 읽음 · 반응 · 고치기 · 지우기도 탐 — 글 보내기(text 가 있고 나머지 표 없음)만
+      let sendMsg = false; if (m === 'POST' && /(^|\/)api\/chat$/.test(s)) { try { const b = JSON.parse(body); sendMsg = !!b.text && !b.seen && !b.edit && !b.delete; } catch {} }
+      const name = /(^|\/)api\/search\?/.test(s) ? 'search' : sendMsg ? 'send_roundtrip' : '';
+      if (!name) return f0.apply(this, arguments);
+      const t = performance.now(), p = f0.apply(this, arguments);
+      p.then(r => send(name, performance.now() - t, {status: r.status}), () => {});
+      return p;
+    }; }
   wrap('show', a => 'view_' + String(a[0] || '').replace(/[^a-z]/g, '').slice(0, 12));
   wrap('openArt', 'canvas_open', () => new Promise(res => {
     const f = document.querySelector('#mview iframe'); if (!f) return res();
@@ -556,7 +585,7 @@
       if (this.closed || this.ws) return;
       clearTimeout(this.t.re);
       let ws; try { ws = this.ws = new WebSocket(wsUrl()); } catch (e) { this.ws = null; return this.retry(); }
-      ws.onopen = () => { if (this.ws !== ws) return; note('open'); this.wsUp = true; this.openAt = now(); this.okAt = now(); clearTimeout(this.t.poll); this.catchUp(); this.up(); this.ping(); };
+      ws.onopen = () => { if (this.ws !== ws) return; note('open'); if (this.lostAt) { window.BX_UI?.('reconnect', now() - this.lostAt); this.lostAt = 0; } this.wsUp = true; this.openAt = now(); this.okAt = now(); clearTimeout(this.t.poll); this.catchUp(); this.up(); this.ping(); };
       ws.onmessage = e => { if (this.ws !== ws) return;
         if (e.data === 'pong'){ this.pongAt = now(); this.okAt = now(); return; }
         let j; try { j = JSON.parse(e.data); } catch (x) { return; }
@@ -565,7 +594,7 @@
       ws.onclose = e => this.gone(ws, e.code);
     }
     gone(ws, code){   // 끊김(닫힘 · 답 없음): 곧바로 폴링 + 다시 붙기
-      if (this.ws !== ws) return; note('close', code); this.ws = null; const was = this.wsUp; this.wsUp = false; clearInterval(this.t.ping); clearTimeout(this.t.pong);
+      if (this.ws !== ws) return; note('close', code); this.ws = null; const was = this.wsUp; if (was && !document.hidden) this.lostAt = now(); this.wsUp = false; clearInterval(this.t.ping); clearTimeout(this.t.pong);
       if (this.closed) return;
       if (was && now() - this.openAt > 10000) this.back = 500;   // 오래 붙어 있던 연결이 끊김(배포 · DO 나감) — 바로 다시
       this.poll(true); this.retry();

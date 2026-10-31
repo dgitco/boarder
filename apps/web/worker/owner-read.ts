@@ -230,9 +230,7 @@ async function channel(db: D1Database, cfg: Cfg, key: string, before: string | u
   const nodeTs = new Set(Object.values(cfg.node_topics || {}).flatMap(xs => Array.isArray(xs) ? xs.map(x => x?.ts) : []).filter(Boolean));
   for (const r of rs[8].results) if (!isChannelWindow(String(r.node))) nodeTs.add(r.ts);
   const shown = cfg.dm_node_roots ? out : out.filter(m => !nodeTs.has(m.ts));
-  await dlvNames(db, shown);
-  await fwdMarks(db, cfg, shown);
-  await splitMarks(db, shown);
+  await Promise.all([dlvNames(db, shown), fwdMarks(db, cfg, shown), splitMarks(db, shown)]);   // 서로 다른 칸만 채움 — 차례로 기다리면 태평양 왕복만 늚
   return { status: 200, body: { channel: key, messages: shown, more, cursor: msgs.length ? msgs[msgs.length - 1].ts : null, read_at: Math.floor(now), stale_min: 0 } };
 }
 
@@ -364,21 +362,24 @@ async function fwdMarks(db: D1Database, cfg: Cfg, out: R[]) {
     db.prepare(`SELECT ts, node, pane FROM wl_card_home WHERE ts IN ${IN}`).bind(JSON.stringify(refs))]);
   const ex = exOf(await db.batch<R>(exStmts(db, refs)));
   const og = new Map(orig.results.map(r => [String(r.id), r])), hm = new Map(home.results.map(r => [String(r.ts), r]));
+  const nodes = [...new Set(boxes.map(b => hm.get(String(b.ref))?.node).filter(T).map(String))];
+  const st = await nodeStates(db, nodes);
   for (const m of out) {
     const b = boxes.find(x => x.id === m.ts || x.slack_ts === m.ts), o = b && og.get(String(b.ref)), h = b && hm.get(String(b.ref));
     if (!b || !o || !h || !T(h.node)) continue;   // 되돌렸거나(unmove) 원글이 없음 — 상자는 그냥 글로
     const n = norm(asSlack(o, ex), cfg.rep || REP, new Set(cfg.board_files || []));
-    const node = String(h.node), nre = new RegExp("^(?:\\d+ )?" + node.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$");
-    const k = (await db.prepare(`SELECT kind, win FROM wl_log WHERE win = ? OR win LIKE ? ORDER BY id DESC LIMIT 50`).bind(node, "% " + node).all<R>()).results
-      .find(r => nre.test(String(r.win || "")));
+    const node = String(h.node);
     m.fwd = { node, pane: String(h.pane || ""), chan: String(o.chan), ts: String(o.id), reply: T(o.thread) && o.thread !== o.id, who: n.who, name: n.name,
-      text: String(o.text || "").replace(NODE_HEAD, ""), at: Number(o.at), moved: Number(b.at), state: k ? STATES[String(k.kind)] || "" : "", files: n.files || [] };
+      text: String(o.text || "").replace(NODE_HEAD, ""), at: Number(o.at), moved: Number(b.at), state: st.get(node) || "", files: n.files || [] };
   }
 }
-async function nodeState(db: D1Database, node: string) {
-  const nre = new RegExp("^(?:\\d+ )?" + node.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$");
-  const k = (await db.prepare(`SELECT kind, win FROM wl_log WHERE win = ? OR win LIKE ? ORDER BY id DESC LIMIT 50`).bind(node, "% " + node).all<R>()).results.find(r => nre.test(String(r.win || "")));
-  return k ? STATES[String(k.kind)] || "" : "";
+async function nodeStates(db: D1Database, nodes: string[]) {
+  if (!nodes.length) return new Map<string, string>();
+  const rs = await db.batch<R>(nodes.map(n => db.prepare(`SELECT kind, win FROM wl_log WHERE win = ? OR win LIKE ? ORDER BY id DESC LIMIT 50`).bind(n, "% " + n)));
+  return new Map(nodes.map((n, i) => {
+    const nre = new RegExp("^(?:\\d+ )?" + n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$"), k = rs[i].results.find(r => nre.test(String(r.win || "")));
+    return [n, k ? STATES[String(k.kind)] || "" : ""] as const;
+  }));
 }
 async function splitMarks(db: D1Database, msgs: R[]) {
   const ts = msgs.map(m => m.ts).filter(T);
@@ -386,10 +387,9 @@ async function splitMarks(db: D1Database, msgs: R[]) {
   const rows = (await db.prepare(`SELECT s.id, s.ref, s.at, h.node, h.pane FROM wl_talk_msg s LEFT JOIN wl_card_home h ON h.ts = s.id
     WHERE s.source = 'node-split' AND s.deleted_at IS NULL AND (s.ref IN ${IN} OR s.id IN ${IN})`).bind(JSON.stringify(ts), JSON.stringify(ts)).all<R>()).results;
   if (!rows.length) return;
-  const byRef = new Map<string, R[]>(), byPost = new Map<string, string>(), st = new Map<string, string>();
+  const byRef = new Map<string, R[]>(), byPost = new Map<string, string>(), st = await nodeStates(db, [...new Set(rows.map(r => String(r.node || "")).filter(Boolean))]);
   for (const r of rows) {
     const node = String(r.node || "");
-    if (node && !st.has(node)) st.set(node, await nodeState(db, node));
     const a = byRef.get(String(r.ref)) || []; a.push({ node, pane: String(r.pane || ""), post: String(r.id), at: Number(r.at), state: st.get(node) || "" }); byRef.set(String(r.ref), a);
     byPost.set(String(r.id), String(r.ref));
   }
