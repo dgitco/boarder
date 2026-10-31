@@ -44,6 +44,8 @@ or a screenshot for anything on screen).
 
 1. **CLA** signed (the bot's check is green).
 2. **Scope**: one change per pull request, and it fits "What we take" above.
+Note on `apps/web/board-template/page.html`: this is the board page, generated from our hosted build with hosted-only parts removed (voice calls, internal views). You can send pull requests against it; we apply them to the source by hand.
+
 3. **Review**: a DGit maintainer reviews correctness, tests and fit. Expect questions; small style points may be
    fixed by us on merge instead of asked of you.
 4. **Merge**: this repository is published from DGit's internal repository. When we accept your pull request we
