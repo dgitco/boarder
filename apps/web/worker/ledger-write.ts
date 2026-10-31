@@ -189,7 +189,8 @@ function changedOf(chg: D1Result<{ seq: number; tbl: string; pk: string }>, rowR
 
 const MAX_STMTS = 300;   // batch 에는 문장마다 결과 줄 하나 더 + 앞뒤 · 바뀐 줄 읽기. 넘으면 부른 쪽이 나누지 않고 예전 길(원자성)
 // D1 오류 가르기: 같은 키 등 → constraint(부른 쪽 IntegrityError), 문장 자체가 틀림 → sql(예전 길), 그 밖(망 · 시간 초과 · 내부) → 들어갔는지 모름 → 503(같은 꼬리표로 다시)
-const kindOf = (m: string) => /constraint/i.test(m) ? "constraint" : /no such|syntax error|ambiguous|misuse|has no column|mismatch|too many|wrong number|not authorized|parse/i.test(m) ? "sql" : "transient";
+// D1 한도 넘음(SQLITE_TOOBIG: 문장 100KB · 값 2MB)도 sql — 다시 보내도 똑같이 실패하고 batch 는 통째로 안 들어감(시험 ledger-write-limits)
+const kindOf = (m: string) => /constraint/i.test(m) ? "constraint" : /no such|syntax error|ambiguous|misuse|has no column|mismatch|too many|wrong number|not authorized|parse|SQLITE_TOOBIG/i.test(m) ? "sql" : "transient";
 
 function resultsOf(r: D1Result<{ i: number; n: number; id: number | null }>, n: number) {
   const out: (Res | null)[] = Array(n).fill(null);

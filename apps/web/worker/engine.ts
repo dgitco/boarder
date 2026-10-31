@@ -57,6 +57,8 @@ type Pend = { id: string; text: string; at: number };
 export const sysLine = (db: D1Database, owner: string, text: string, wid?: string) =>
   db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(owner, "보더", "sys", text, "primary", Date.now(), wid ?? null).run();
 
+// deliver 와 reopen 이 서로 부르니 답 꼴을 적어 둠(추론이 돌아 TS7023)
+type Delivered = { sent?: boolean; reopened?: boolean; queued?: boolean };
 export class Engine extends DurableObject<EngEnv> {
   wait = new Map<string, Wait>();
   constructor(ctx: DurableObjectState, env: EngEnv) {
@@ -174,7 +176,7 @@ export class Engine extends DurableObject<EngEnv> {
     if (r) await sysLine(db, owner, "메인 봇이 이 기기에서 시작했어요", r.id);
     return r?.id || null;
   }
-  async deliver(id: string, text: string) {
+  async deliver(id: string, text: string): Promise<Delivered> {
     const w = await this.row(id); if (!w) throw new EngineError(4, "없는 창");
     if (w.state === "closed" || w.state === "failed") throw new EngineError(4, "닫힌 창이에요");
     if (w.state === "parked" || w.state === "gone") return this.reopen(id, text);
@@ -251,7 +253,7 @@ export class Engine extends DurableObject<EngEnv> {
     await this.env.DB.prepare("UPDATE engine_window SET state = 'parked', state_at = ?, handle = ?, note = ? WHERE id = ?").bind(Date.now(), JSON.stringify({ ...old, ...(r?.handle || {}), argv: undefined }), why || null, id).run();
     return { ok: true };
   }
-  async reopen(id: string, text = "") {
+  async reopen(id: string, text = ""): Promise<Delivered> {
     const w = await this.row(id); if (!w) throw new EngineError(4, "없는 창");
     const h = (() => { try { return JSON.parse(w.handle || "{}"); } catch { return {}; } })();
     if (!h.session_id) throw new EngineError(1, "다시 열 손잡이가 없어요");
@@ -260,7 +262,15 @@ export class Engine extends DurableObject<EngEnv> {
     if (!claim.meta.changes) { if (text && LIVE.includes((await this.row(id))?.state || "")) return this.pend({ id, text, at: Date.now() }); throw new EngineError(1, "다시 열 수 없는 창이에요"); }
     const cfg = await ownerCfg(this.env.DB, w.owner);
     try { await this.cmd("reopen", { id, handle: { ...h, perm: cfg.perm }, text: text || `[Boarder] This window was parked and is open again. Continue from your last board line.` }); }
-    catch (e) { await this.env.DB.prepare("UPDATE engine_window SET state = ?, state_at = ?, note = ? WHERE id = ?").bind(w.state, Date.now(), String((e as Error).message).slice(0, 200), id).run(); throw e; }
+    catch (e) {
+      const st = await this.cmd("state", { id }).catch(() => null), s = String(st?.state || "");
+      if (/^(busy|idle|waiting|background|starting)$/.test(s)) {
+        await this.env.DB.prepare("UPDATE engine_window SET state = ?, state_at = ? WHERE id = ? AND state = 'starting'").bind(s, Date.now(), id).run();
+        // 이번 답이 없었으면 이 글이 그 창의 첫 메시지로 들어갔을 수 있음 — 다시 안 넣음. 기기가 「이미 떠 있음」으로 거절했으면 이 글은 안 들어감 — 넣음
+        return (e as Error).message === "엔진 답 없음" || !text ? { reopened: true } : this.deliver(id, text);
+      }
+      await this.env.DB.prepare("UPDATE engine_window SET state = ?, state_at = ?, note = ? WHERE id = ?").bind(w.state, Date.now(), String((e as Error).message).slice(0, 200), id).run(); throw e;
+    }
     return { reopened: true };
   }
   async close(id: string) {

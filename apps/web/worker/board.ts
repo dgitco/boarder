@@ -75,7 +75,7 @@ export class BoardSnap extends DurableObject<object> {
     if (!lazy) {
       this.dirty.delete(key);
       this.ctx.storage.sql.exec("INSERT INTO snap(key,body,etag,at,checked) VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body, etag=excluded.etag, at=excluded.at, checked=excluded.checked", key, body, etag, now, now);
-      if (this.lazyMarked && !this.dirty.size && !this.persistT) { this.ctx.storage.sql.exec("DELETE FROM snap WHERE key='__lazy'"); this.lazyMarked = false; }   // 늦은 칸이 다 디스크에 — 표 지움(그 뒤에 쓰므로 표가 지워졌으면 앞 쓰기도 확정)
+      if (this.lazyMarked && !this.dirty.size && !this.persistT && this.diskSettled()) { this.ctx.storage.sql.exec("DELETE FROM snap WHERE key='__lazy'"); this.lazyMarked = false; }   // 늦은 칸이 다 디스크에 — 표 지움(그 뒤에 쓰므로 표가 지워졌으면 앞 쓰기도 확정)
       return;
     }
     if (!this.lazyMarked) { this.ctx.storage.sql.exec("INSERT INTO snap(key,body,etag,at,checked) VALUES('__lazy','1','',?,?) ON CONFLICT(key) DO NOTHING", now, now); this.lazyMarked = true; }   // 이 DO 에서 처음 한 번만(쓰기 확정 한 번)
@@ -83,6 +83,10 @@ export class BoardSnap extends DurableObject<object> {
     if (!this.dirtySince) this.dirtySince = now;
     if (this.persistT) clearTimeout(this.persistT);
     this.persistT = setTimeout(() => this.persist(), Math.max(0, Math.min(1500, this.dirtySince + 10_000 - now)));
+  }
+  diskSettled() {
+    if (!this.diskMaybeStale) return true;
+    return this.ctx.storage.sql.exec<{ key: string }>("SELECT key FROM snap WHERE key != '__lazy'").toArray().every(r => this.mem.get(r.key)?.fresh);
   }
   persist() {
     this.persistT = null; this.dirtySince = 0;
