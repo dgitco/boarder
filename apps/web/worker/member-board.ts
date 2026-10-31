@@ -36,7 +36,7 @@ async function load(db: D1Database, me: string) {
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, device_id, gone_at FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
     db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? ORDER BY at DESC LIMIT 600").bind(me),
-    db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
+    db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
     db.prepare("SELECT rowid AS n, id, name, brief, at FROM (SELECT rowid, id, name, brief, created_at AS at FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 30)").bind(me),
     db.prepare("SELECT id, kind, name, state, state_at, note, created_at, closed_at FROM engine_window WHERE owner = ? AND (state NOT IN ('closed','failed','gone') OR state_at > ?) ORDER BY created_at DESC LIMIT 60").bind(me, Date.now() - 12 * 3600_000),
     db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
@@ -95,7 +95,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   for (const c of L.cards) {
     const id = "w" + c.n, ch = json<string[]>(c.choices, []).map(x => cut(x, 90));
     if (c.state === "open") decisions.push({ id, src: "wlog", pane: toPane(c.win), win: c.win, area: "primary", title: cut(c.question, 200), body: cut(c.body || "", 600), choices: c.recommend && ch.includes(c.recommend) ? [c.recommend, ...ch.filter(x => x !== c.recommend)] : ch, ago: ago(c.at), kind: "결정" });
-    cardlist.push({ ts: "w:" + c.n, ref: "w:" + c.n, thread: null, channel: "primary", kind: "decision", area: "primary", state: c.state === "open" ? "open" : "answered", title: cut(c.question, 80), at: c.at / 1000 });
+    cardlist.push({ ts: CARD_TS.test(String(c.id)) ? c.id : "w:" + c.n, ref: "w:" + c.n, thread: null, channel: "primary", kind: "decision", area: "primary", state: c.state === "open" ? "open" : "answered", title: cut(c.question, 80), at: c.at / 1000 });
   }
   for (const d of L.drafts) {
     const n = 1_000_000_000 + d.n;
@@ -114,6 +114,17 @@ function msg(r: R, me: string, mainName: string) {
   const mine = r.win === ME || r.kind === "me";   // me = 노드 채팅에서 내가 그 창에 넣은 글
   return { ts: tsOf(r.at, r.id), thread: null, who: mine ? "owner" : "agent", name: mine ? "Owner" : r.win === "보더" ? "보더" : mainName, board: false, text: String(r.text || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null, ...(mine ? { src: String(r.text || "") } : {}) };
 }
+const CARD_TS = /^\d{10}\.\d{6}$/;
+const replyTs = (c: R) => tsOf(Number(c.answered_at || c.at), Number(c.n));
+function cardMsg(c: R, said: R[] = []) {   // said = 에이전트가 그 카드 스레드에 쓴 줄(boarder say · log)
+  const buttons = [...json<string[]>(c.choices, []).map(label => ({ label })), ...(OWN.test(String(c.win)) ? [] : [{ label: "기타", other: true }])];   // 들여오기 질문은 고르기만
+  const last = said.reduce((a, r) => Math.max(a, Number(r.at)), 0), ans = c.answer ? Number(c.answered_at || c.at) : 0;
+  const latest = !said.length && !ans ? null : ans >= last ? replyTs(c) : tsOf(last, Number(said.find(r => Number(r.at) === last)!.id));
+  return { ts: String(c.id), thread: null, who: "agent", name: String(c.win), board: false, text: [c.question, c.body].filter(Boolean).join("\n\n"), buttons, files: [], replies: said.length + (c.answer ? 1 : 0), latest, rnames: c.answer ? ["Owner"] : [], reactions: [], owner: null, ...(c.state !== "open" ? { picked: String(c.answer || "·") } : {}) };
+}
+const cardReply = (c: R) => ({ ts: replyTs(c), thread: String(c.id), who: "owner", name: "Owner", board: false, text: String(c.answer || ""), src: String(c.answer || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null });
+const cardBy = (db: D1Database, me: string, ts: string) => db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>();
+
 // 들여온 대화 한 줄 → 노드 채팅 글. 세션 = 그 사람이 처음 물은 한 줄(들여오기가 보낸 것만 — 대화 내용은 안 옴), 스레드 · 이슈 = 제목.
 // 어디서 왔는지는 노드 채널 옮긴 글과 같은 「↪ #… 에서 옮겨 옴」(moved) 줄로
 const ORIGIN: Record<string, string> = { claude: "Claude Code", codex: "Codex", slack: "Slack", gh: "GitHub", linear: "Linear" };
@@ -153,7 +164,13 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?$/.exec(p);
   if (m) {
     if (m[1] !== "primary") return j({ channel: m[1], messages: [], more: false, cursor: null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
-    if (m[2]) {   // 회원 채팅엔 스레드가 없음 — 뿌리 글 하나
+    if (m[2]) {
+      const card = await cardBy(db, me, m[2]);
+      if (card) {
+        const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, m[2]).all<R>()).results;
+        const replies = [...said.map(r => ({ at: Number(r.at), m: { ...msg(r, me, String(r.win)), thread: m![2] } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch: "primary" }));
+        return j({ channel: "primary", root: m[2], owner: null, messages: [{ ...cardMsg(card, said), ch: "primary" }, ...replies] });
+      }
       const rows = await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary' AND id % 1000000 = ? AND at >= ? AND at < ?").bind(me, Number(m[2].split(".")[1]), Number(m[2].split(".")[0]) * 1000, Number(m[2].split(".")[0]) * 1000 + 1000).all<R>();
       return j({ channel: "primary", root: m[2], owner: null, messages: rows.results.map(r => msg(r, me, mainName)) });
     }
@@ -164,8 +181,13 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     const raw = String(url.searchParams.get("w") || "").trim(), t = raw.replace(/^\d+\s+/, "").trim();
     if (!t) return j({ error: "노드 이름" }, 400);
     const L = await load(db, me), n = L.nodes.find(x => x.name === raw) || L.nodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
-    const rows = L.logs.filter(r => r.thread !== "primary" && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n || (r.kind === "me" && r.win === n.name) : ew ? r.win === ew.name : false)).slice(0, 300).reverse();
-    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...msg(r, me, r.win), ch: "primary" } })), ...(n ? n.convos.map(i => ({ at: convoAt(i), m: convoMsg(i, mainName) })) : [])]
+    const inCard = (r: R) => CARD_TS.test(String(r.thread || ""));   // 카드 스레드 줄은 그 카드 글 아래로
+    const rows = L.logs.filter(r => r.thread !== "primary" && !inCard(r) && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n || (r.kind === "me" && r.win === n.name) : ew ? r.win === ew.name : false)).slice(0, 300).reverse();
+    // 카드 글은 답하거나 닫혀도 채널에 남음 — 할 일 목록(load)과 따로 읽음
+    const cards = (await db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results
+      .filter(c => CARD_TS.test(String(c.id)) && (n ? L.nodeOfWin(String(c.win)) === n : ew ? c.win === ew.name : false));
+    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...msg(r, me, r.win), ch: "primary" } })), ...(n ? n.convos.map(i => ({ at: convoAt(i), m: convoMsg(i, mainName) })) : []),
+      ...cards.map(c => ({ at: Number(c.at), m: { ...cardMsg(c, L.logs.filter(r => r.thread === c.id)), ch: "primary" } }))]
       .sort((a, b) => a.at - b.at).slice(-300).map(x => x.m);
     return j({ channel: "n:" + t, messages: out, stale_min: 0, more: false });
   }
@@ -176,6 +198,13 @@ export type Hop = { path: string; body: unknown; log?: { win: string; text: stri
 export async function post(db: D1Database, me: string, path: string, b: R): Promise<Hop> {
   if (path === "/api/chat") {
     if (b.seen) return { ok: { ok: true, state: "ok", seen: false } };   // 읽음 표는 아직 없음(보드가 열 때마다 부름 — 오류로 띄우지 않음)
+    // 카드 글의 단추 · 그 스레드에 쓴 글 = 카드 답
+    const onCard = CARD_TS.test(String(b.thread || "")) ? await cardBy(db, me, String(b.thread)) : null;
+    if (onCard && !b.react && b.edit === undefined && !b.delete && !(Array.isArray(b.files) && b.files.length)) {
+      const said = String(b.label || b.text || "").trim();
+      if (!said) return { error: "내용을 적어요", status: 400 };
+      return onCard.state === "open" ? post(db, me, "/api/answer", { item: "w" + onCard.n, text: said }) : { error: onCard.state === "closed" ? "닫힌 결정이에요" : "이미 답한 결정이에요", status: 409 };
+    }
     if (b.react || b.edit !== undefined || b.delete || b.label || (Array.isArray(b.files) && b.files.length)) return { error: "아직 안 돼요", status: 400 };
     const text = String(b.text || "").trim(); if (!text) return { error: "내용을 적어요", status: 400 };
     const bk = /^w:(\d+)$/.exec(String((b.blocker as R | undefined)?.ref || ""));
