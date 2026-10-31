@@ -40,6 +40,7 @@ import * as files from "./files";
 import * as ownerRead from "./owner-read";
 import * as OS from "./owner-state";
 import * as memberBoard from "./member-board";
+import * as emoji from "./emoji";
 import { newMeter, meterEnv, meterProps, sampleOf } from "./perf";
 import * as PU from "./push";
 import { resolve as pushResolve, cardLoc } from "./push-do";
@@ -917,6 +918,51 @@ app.get("/api/me/invites", async c => {
   return c.json((await c.env.DB.prepare("SELECT email, at FROM invite ORDER BY at DESC").all()).results);
 });
 
+let stdNames: { at: number; v: Set<string> } | null = null;
+async function emojiStd(env: Env) {   // 표준 이름(emoji.json 스냅숏) — 같은 이름 막기용, isolate 에 10분
+  if (stdNames && Date.now() - stdNames.at < 600_000) return stdNames.v;
+  const e = await snap(env).get("emoji").catch(() => null), v = new Set<string>();
+  try { for (const x of (JSON.parse(e?.body || "{}").e || []) as [string, string[]][]) for (const n of x[1]) v.add(n); } catch {}
+  if (v.size) stdNames = { at: Date.now(), v };
+  return v;
+}
+app.get("/api/emoji/custom", async c => {
+  const s = await signedIn(c);
+  if (!s && !relayOk(c)) return c.json({ error: "로그인" }, 401);
+  const me = s ? s.user.email.toLowerCase() : null;
+  return c.json(await emoji.list(c.env, me, !!me && isOwner(c.env, me)), 200, { "cache-control": "no-store" });
+});
+app.post("/api/emoji/custom", async c => {
+  if (!sameSite(c)) return c.json({ ok: false, error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ ok: false, error: "로그인" }, 401);
+  if (Number(c.req.header("content-length") || 0) > emoji.MAX) return c.json({ ok: false, error: "그림이 너무 커요" }, 413);
+  let name = ""; try { name = decodeURIComponent(c.req.header("x-emoji-name") || ""); } catch {}
+  const rd = c.req.raw.body?.getReader(), parts: Uint8Array[] = []; let n = 0;
+  if (rd) for (;;) { const { done, value } = await rd.read(); if (done) break; n += value.byteLength; if (n > emoji.MAX) { await rd.cancel().catch(() => {}); return c.json({ ok: false, error: "그림이 너무 커요" }, 413); } parts.push(value); }
+  const body = new Uint8Array(n); let o = 0; for (const x of parts) { body.set(x, o); o += x.byteLength; }
+  const [st, j] = await emoji.add(c.env, s.user.email.toLowerCase(), name, (c.req.header("content-type") || "").split(";")[0].trim(), body.buffer, await emojiStd(c.env));
+  return c.json(j, st as 200);
+});
+app.post("/api/emoji/custom/delete", async c => {
+  if (!sameSite(c)) return c.json({ ok: false, error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ ok: false, error: "로그인" }, 401);
+  const b = await c.req.json<{ name?: string }>().catch(() => ({} as { name?: string })), me = s.user.email.toLowerCase();
+  const [st, j] = await emoji.remove(c.env, me, isOwner(c.env, me), String(b.name || ""));
+  return c.json(j, st as 200);
+});
+app.post("/api/emoji/bot", async c => {
+  if (!sameSite(c)) return c.json({ ok: false, error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ ok: false, error: "로그인" }, 401);
+  const me = s.user.email.toLowerCase(); if (!isOwner(c.env, me)) return c.json({ ok: false, error: "관리자만 바꿀 수 있어요" }, 403);
+  const b = await c.req.json<{ bot?: string; on?: boolean }>().catch(() => ({} as { bot?: string; on?: boolean }));
+  const [st, j] = await emoji.bot(c.env, me, String(b.bot || ""), !!b.on);
+  return c.json(j, st as 200);
+});
+app.get("/emoji/i/:file", async c => {
+  if (!(await signedIn(c))) return c.text("", 401);
+  return (await emoji.image(c.env, c.req.param("file"))) || c.text("", 404);
+});
+
 const admin = (c: Context<{ Bindings: Env }>) => !!c.env.ADMIN_TOKEN && sameToken((c.req.header("authorization") || "").replace(/^Bearer\s+/i, ""), c.env.ADMIN_TOKEN);
 hosted.admin?.(app, { admin, invite });
 app.post("/api/admin/agent-tokens", async c => {
@@ -1435,11 +1481,11 @@ app.all("*", async c => {
     return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" });   // 색인 없음 — 쓰기 전이라 다시 보내도 됨
   }
   const rd = c.req.method === "GET" && chOf(c) === "owner" ? ownerRead.route(url.pathname + url.search) : null;
-  const shadowRd = !!rd && await ledger.f7On(c.env.DB, "shadow_" + rd.group);
-  if (rd && !cookieOf(c, "bx_w") && await ledger.f7On(c.env.DB, "read_" + rd.group) && await ledgerFresh(c.env)) {
-    const st = rd.kind === "inbox" && await ledger.f7On(c.env.DB, "write_state") ? await OS.get(c.env.DB, "drafts").catch(() => null) : null;
-    const cfgGet = st ? async () => { const cf = await snap(c.env).get("cfg"); return cf && { body: JSON.stringify({ ...JSON.parse(cf.body), drafts: st.v }), etag: `${cf.etag}:${st.ver}` }; } : () => snap(c.env).get("cfg");
-    const res = await ownerRead.respond(c.env.DB, cfgGet, rd, c.req.header("if-none-match"));
+  const flag = (n: string) => rd?.kind === "inbox" ? ledger.f7Peek(c.env.DB, n, peekWait(c)) : ledger.f7On(c.env.DB, n);
+  const shadowRd = !!rd && await flag("shadow_" + rd.group);
+  if (rd && !cookieOf(c, "bx_w") && await flag("read_" + rd.group) && await ledgerFresh(c.env)) {
+    const st = rd.kind === "inbox" && await flag("write_state");
+    const res = await ownerRead.respond(c.env.DB, () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st);
     if (res) return res;
   }
   const headers: Record<string, string> = {};

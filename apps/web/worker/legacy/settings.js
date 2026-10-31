@@ -3,7 +3,7 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
   const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
   const OFF = new Set(window.BX_FLAGS_OFF || []);
-  const MENU0 = [['계정', [['profile', '프로필'], ['look', '모양'], ['devices', '기기']]], ['연결', [['connectors', '커넥터'], ['sessions', '세션'], ['profiles', 'CLI 프로필']]], ['에이전트', [['nodes', '노드']]], ['관리', [['invite', '사람 초대']]]];
+  const MENU0 = [['계정', [['profile', '프로필'], ['look', '모양'], ['devices', '기기']]], ['연결', [['connectors', '커넥터'], ['sessions', '세션'], ['profiles', 'CLI 프로필']]], ['에이전트', [['nodes', '노드']]], ['관리', [['emoji', '이모지'], ['invite', '사람 초대']]]];
   let OWNER = true;   // 관리 묶음은 관리자(주인)만 — api/me 의 owner 로 확인, 아니면 숨김
   let MENU = [];
   const buildMenu = () => { MENU = MENU0.map(([g, xs]) => [g, xs.filter(([k]) => !(k === 'profiles' && OFF.has('cli_profiles')) && !(k === 'invite' && !OWNER))]).filter(([, xs]) => xs.length); };
@@ -48,7 +48,7 @@
     devices: lu('monitor'),
     look: svg('<circle cx="10" cy="10" r="6.25"/><path d="M10 3.75v12.5"/><path d="M10 3.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor" stroke="none"/>'),   // 모양(테마)
     nodes: lu('network'),
-    install: lu('download'), sessions: lu('history'),
+    install: lu('download'), sessions: lu('history'), emoji: lu('smile'),
   };
   const api = async (method, p, body) => {
     const r = await fetch(p, {method, credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: body === undefined ? undefined : JSON.stringify(body)});
@@ -69,6 +69,7 @@
   function enter(tab = 'connectors'){
     if (tab === 'feedback') return feedbackBox();   // 피드백은 설정 칸이 아니라 보내기 창
     if (tab === 'invite-box') return inviteBox();   // 아바타 메뉴 「초대」 = 그 자리 창(설정 › 관리 › 사람 초대 칸은 그대로)
+    if (tab === 'emoji-add') return emojiBox();
     if (!on()){ backTo = /^#settings/.test(location.hash) ? '#tree' : (location.hash || '#tree'); try { sessionStorage.setItem('bx-set-back', backTo); } catch {} }
     go('#settings' + (PC.matches || tab ? '/' + (tab || 'connectors') : ''));
   }
@@ -680,6 +681,128 @@
       if (!e.target.closest('[data-ig]')) return;
       const i = el.querySelector('[data-ie]'), v = i.value.trim(); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return toast('메일 주소를 넣어요');
       try { await api('POST', 'api/me/invites', {email: v}); toast(v + ' 을 초대했어요'); i.value = ''; } catch (err) { toast(err.message); }
+    };
+  };
+
+  const HE = () => window.HB_EMOJI;
+  const cimg = (u, n, s) => `<img class="cem" src="${esc(u)}" alt=":${esc(n)}:" width="${s}" height="${s}" draggable="false">`;
+  const EMO_RE = /^[a-z0-9가-힣_-]{2,40}$/;
+  const emoName = f => String(f || '').normalize('NFC').replace(/\.[a-z0-9]+$/i, '').toLowerCase().replace(/[\s.]+/g, '-').replace(/[^a-z0-9가-힣_-]/g, '').slice(0, 40);
+  const emoDay = t => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()}`; };
+  // 128×128 로 맞춤(가운데 맞춰 담기, 투명 바탕) — GIF 는 움직임 그대로 원본
+  async function emoFit(f){
+    if (f.type === 'image/gif') return {blob: f, type: 'image/gif'};
+    const u = URL.createObjectURL(f);
+    try {
+      const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = u; });
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const k = Math.min(128 / im.naturalWidth, 128 / im.naturalHeight), w = im.naturalWidth * k, h = im.naturalHeight * k;
+      c.getContext('2d').drawImage(im, (128 - w) / 2, (128 - h) / 2, w, h);
+      const blob = await new Promise(ok => c.toBlob(ok, 'image/png'));
+      return blob ? {blob, type: 'image/png'} : null;
+    } catch { return null; } finally { URL.revokeObjectURL(u); }
+  }
+  function emojiForm(host, {phone, done, cancel}){
+    let pic = null, url = '';
+    host.innerHTML = `<div class="bxs-emf">${phone ? '' : `<div class="bxs-row between"><b style="font-size:17px">이모지 추가</b><button type="button" class="bxs-icon" data-no aria-label="닫기">${IC.x}</button></div>`}
+      <div data-epv></div>${phone ? `<div class="bxs-row">${btn(lu('images', 16) + '사진 보관함', 'data-epick', 'sm')}${btn(lu('camera', 16) + '찍기', 'data-ecam', 'sm')}</div>` : ''}
+      <label class="bxs-f"><span>이름</span><div class="bxs-nm"><span>:</span><input data-en autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40" aria-label="이모지 이름"><span>:</span></div><span class="bxs-mut" data-eh>한글 · 영문 소문자 · 숫자 · - _ (같은 이름이 있으면 알려 줘요)</span></label>
+      <div class="bxs-row end">${phone ? '' : btn('취소', 'data-no', 'ghost')}${btn('저장', 'data-esave', 'pri')}</div>
+      <input type="file" accept="image/png,image/gif,image/jpeg,image/webp" hidden data-ef><input type="file" accept="image/*" capture="environment" hidden data-ec></div>`;
+    const $ = q => host.querySelector(q), name = $('[data-en]'), hint = $('[data-eh]'), HINT = hint.textContent;
+    const pv = () => { $('[data-epv]').innerHTML = pic
+      ? `<div class="bxs-pvw">${cimg(url, name.value, 56)}<div class="bxs-pvr"><span>반응 <span class="bxs-rc">${cimg(url, name.value, 16)}<b>1</b></span></span>${phone ? '<span class="bxs-mut">128×128 로 맞췄어요</span>' : `<span>글 안 &nbsp;배포 끝 ${cimg(url, name.value, 20)}</span>`}</div></div>${phone ? '' : `<div class="bxs-row between"><span class="bxs-mut">${esc(pic.name)} · 128×128 로 맞췄어요</span><button type="button" class="bxs-link" data-epick>다른 그림</button></div>`}`
+      : (phone ? '' : `<button type="button" class="bxs-drop" data-epick>${lu('image-plus', 24)}<b>그림 고르기</b><span>PNG · GIF · JPG · 끌어 놓거나 붙여 넣어도 돼요</span></button>`); };
+    const take = async f => {
+      if (!f || !/^image\//.test(f.type)) return;
+      const r = await emoFit(f); if (!r) return toast('일시적인 오류가 발생했어요');
+      if (url) URL.revokeObjectURL(url);
+      pic = {name: f.name, ...r}; url = URL.createObjectURL(r.blob);
+      if (!name.value) name.value = emoName(f.name);
+      pv(); name.focus();
+    };
+    pv();
+    host.addEventListener('click', e => {
+      if (e.target.closest('[data-no]')) return cancel?.();
+      if (e.target.closest('[data-epick]')) return $('[data-ef]').click();
+      if (e.target.closest('[data-ecam]')) return $('[data-ec]').click();
+    });
+    $('[data-ef]').onchange = e => take(e.target.files[0]); $('[data-ec]').onchange = e => take(e.target.files[0]);
+    host.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); });
+    host.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); take(e.dataTransfer?.files?.[0]); });
+    host.addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])][0]; if (f){ e.preventDefault(); take(f); } });
+    name.addEventListener('input', () => { hint.textContent = HINT; hint.classList.remove('bad'); if (pic) pv(); });
+    $('[data-esave]').onclick = async () => {
+      const v = name.value.trim().toLowerCase().replace(/^:|:$/g, ''), bad = t => { hint.textContent = t; hint.classList.add('bad'); name.focus(); };
+      if (!pic) return toast('그림을 골라요');
+      if (!EMO_RE.test(v)) return bad('한글 · 영문 소문자 · 숫자 · - _ 로 2–40자예요');
+      if (HE()?.get().by[v]) return bad('같은 이름이 있어요 — 바꿔 주세요');
+      const b = $('[data-esave]'); b.disabled = true; const was = b.innerHTML; b.innerHTML = spin;
+      try {
+        const r = await fetch('api/emoji/custom', {method: 'POST', credentials: 'include', headers: {'x-hb': '1', 'content-type': pic.type, 'x-emoji-name': encodeURIComponent(v)}, body: pic.blob});
+        const j = await r.json().catch(() => ({}));
+        if (r.status >= 400 && r.status < 500 && j.error){ b.disabled = false; b.innerHTML = was; return bad(j.error); }   // 이름 · 그림 문제는 그 칸 아래
+        if (!r.ok || !j.ok) throw new Error();
+        await HE()?.load(true); toast(`:${v}: 을 추가했어요`); done?.(v);
+      } catch { b.disabled = false; b.innerHTML = was; toast('일시적인 오류가 발생했어요'); }
+    };
+    return () => { if (url) URL.revokeObjectURL(url); };
+  }
+  function emojiBox(after){
+    closePops();
+    const d = mk('div', 'bxs-dlg', '<div class="bxs-dlgc bxs-emd" role="dialog" aria-modal="true" aria-label="이모지 추가"></div>'), box = d.firstChild;
+    document.body.append(d);
+    let free = () => {};
+    const close = () => { free(); d.remove(); };
+    free = emojiForm(box, {done: v => { close(); after?.(v); }, cancel: close});
+    d.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') close(); });
+    d.addEventListener('click', e => { if (e.target === d) close(); });
+    box.querySelector('[data-epick]')?.focus();
+  }
+  PAGES.emoji = async (el, id, live) => {
+    if (id === 'add' && !PC.matches){   // 폰: 「추가」는 따로 쪽(‹ 이모지)
+      const bk = main.querySelector('.bxs-ptop [data-to]'); if (bk){ bk.dataset.to = '#settings/emoji'; bk.querySelector('span').textContent = '이모지'; }
+      el.innerHTML = header('이모지 추가') + '<div data-eform></div>';
+      emojiForm(el.querySelector('[data-eform]'), {phone: true, done: () => go('#settings/emoji', true)});
+      return;
+    }
+    const he = HE(); if (!he){ el.innerHTML = '<p class="bxs-err">일시적인 오류가 발생했어요</p>'; return; }
+    await he.load(true); if (!live()) return;
+    if (he.get().err){ el.innerHTML = header('이모지') + '<p class="bxs-err">일시적인 오류가 발생했어요</p>'; return; }
+    let q = '';
+    const draw = () => {
+      const C = he.get(), hit = n => !q || n.includes(q), org = C.org.filter(x => hit(x.name)), blobs = he.blobs();
+      const row = x => `<div class="bxs-li"><div class="bxs-erow">${cimg(x.url, x.name, 28)}<div><b><code>:${esc(x.name)}:</code></b><span>${esc(x.by)} · ${emoDay(x.at)}</span></div></div>${x.mine ? `<button type="button" class="bxs-more" data-emore="${esc(x.name)}" aria-label="더 보기">${IC.more}</button>` : ''}</div>`;
+      const grp = ([k, bn]) => { const xs = blobs.filter(b => b.g === k && (hit(b.n) || b.l.includes(q))); if (q && !xs.length) return ''; const off = C.off.includes(k);
+        return `<div class="bxs-grp"><div class="bxs-gh"><b>${esc(bn)}</b>${sw(!off, `data-ebot="${k}"${C.admin ? '' : ' disabled title="관리자만 바꿀 수 있어요"'}`, bn + ' 블롭')}</div><div class="bxs-faces${off ? ' off' : ''}">${xs.map(b => `<span title=":${esc(b.n)}: · ${esc(b.l)}">${cimg(b.u, b.n, 30)}</span>`).join('')}</div></div>`; };
+      el.querySelector('[data-ebody]').innerHTML = `<div class="bxs-sech">우리 조직 · ${org.length}</div>`
+        + (org.length ? `<div class="bxs-list">${org.map(row).join('')}</div>` : empty({ic: 'smile', t: q ? '찾는 이모지가 없어요' : '아직 올린 이모지가 없어요', p: q ? '다른 이름으로 찾아 보세요.' : '그림 하나와 이름이면 반응 · 글에 바로 써요.', act: q ? '' : btn('이모지 추가', 'data-eadd', 'pri sm'), sm: true}, '<div class="bxs-empty"><b>아직 없어요</b></div>'))
+        + `<div class="bxs-sech">기본 세트 · 블롭 얼굴 <span class="bxs-mut" style="display:inline">— 봇마다 끌 수 있어요</span></div><div class="bxs-list">${he.BOTS.map(grp).join('')}</div>`;
+    };
+    el.innerHTML = header('이모지', '조직 사람 모두가 반응 · 글에 쓰는 이모지예요. 글에 <code>:이름:</code> 으로 불러요.', btn(PC.matches ? '이모지 추가' : '추가', 'data-eadd', 'pri' + (PC.matches ? '' : ' sm')))
+      + '<input class="bxs-in sm" type="search" placeholder="찾기 — 이름" aria-label="이모지 찾기" data-eq><div data-ebody></div>';
+    draw();
+    el.querySelector('[data-eq]').addEventListener('input', e => { q = e.target.value.trim().toLowerCase().replace(/^:|:$/g, ''); draw(); });
+    el.onclick = async e => {
+      if (e.target.closest('[data-eadd]')) return PC.matches ? emojiBox(() => live() && draw()) : go('#settings/emoji/add');
+      const bs = e.target.closest('[data-ebot]');
+      if (bs && !bs.disabled){   // 누르면 바로(공용 낙관 길) — 못 바꾸면 되돌리고 한 줄
+        const k = bs.dataset.ebot, C = he.get(), on = C.off.includes(k);
+        const set = v => { C.off = v ? C.off.filter(x => x !== k) : [...C.off, k]; he.reindex(); draw(); };
+        return window.optDo({key: 'ebot:' + k, apply: () => set(on), send: () => api('POST', 'api/emoji/bot', {bot: k, on}), undo: () => set(!on)});
+      }
+      const m = e.target.closest('[data-emore]'); if (!m) return;
+      document.querySelector('.bxs-pop')?.remove();
+      const n = m.dataset.emore, pop = mk('div', 'bxs-pop', '<button type="button" class="danger" data-edel>지우기</button>'), r = m.getBoundingClientRect();
+      pop.style.top = (r.bottom + 6) + 'px'; pop.style.left = Math.max(8, r.right - 190) + 'px'; document.body.append(pop);
+      const close = ev => { if (!pop.contains(ev.target)){ pop.remove(); removeEventListener('pointerdown', close, true); } }; setTimeout(() => addEventListener('pointerdown', close, true));
+      pop.querySelector('[data-edel]').onclick = async () => {
+        pop.remove();
+        if (!await confirmBox(`<b>:${esc(n)}:</b> 을 지울까요? 이미 단 반응 · 글에는 <code>:${esc(n)}:</code> 글자로 남아요.`, '지우기')) return;
+        const C = he.get(), keep = C.org;
+        window.optDo({key: 'edel:' + n, apply: () => { C.org = keep.filter(x => x.name !== n); he.reindex(); draw(); },
+          send: () => api('POST', 'api/emoji/custom/delete', {name: n}), undo: () => { C.org = keep; he.reindex(); draw(); }});
+      };
     };
   };
 

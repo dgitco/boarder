@@ -446,35 +446,62 @@ async function nodechat(db: D1Database, cfg: Cfg, raw: string, now: number, cach
   return { status: 200, body: { channel: "n:" + t, messages: msgs.slice(-300), stale_min: 0, more: false } };
 }
 
-// ── 모아 보기(inbox.unread · drafts · saved · saved_ids) ──
-async function cardThread(db: D1Database, item: string): Promise<R | null> {
-  const at = async (ts: string) => { const r = await db.prepare("SELECT chan, thread FROM wl_talk_msg WHERE id = ?").bind(ts).first<R>(); return r && T(r.chan) ? { chan: r.chan, thread: or(r.thread, ts) } : null; };
+const DKEYS = "dk(key) AS (SELECT value FROM json_each(?1) UNION SELECT substr(k, 8) FROM owner_state WHERE ?2 AND k > 'drafts:' AND k < 'drafts;')";
+// cardThread 가 갈 수 있는 곳: 씨앗(키 끝 「|」 뒤) · w 숫자면 w: 일지 · ref 로 하나만 맞는 카드 · replaced_by / dup_of 를 8단까지. 일지 글의 「스레드 」 뒤 ts 후보 전부
+const CARD_SQL = `WITH RECURSIVE ${DKEYS},
+  item(item) AS (SELECT replace(r, rtrim(r, replace(r, '|', '')), '') FROM (SELECT substr(key, 6) r FROM dk WHERE substr(key, 1, 5) = 'card:' AND substr(key, -1) != '|')),
+  hit(item, ts) AS (SELECT i.item, max(c.ts) FROM item i JOIN wl_cards c ON c.ref LIKE '%:' || i.item WHERE i.item != '' GROUP BY i.item HAVING count(*) = 1),
+  node(ts, d) AS (SELECT item, 0 FROM item UNION SELECT 'w:' || substr(item, 2), 0 FROM item WHERE substr(item, 1, 1) = 'w' UNION SELECT ts, 0 FROM hit
+    UNION SELECT c.replaced_by, n.d + 1 FROM node n JOIN wl_cards c ON c.ts = n.ts WHERE n.d < 8 AND c.replaced_by != ''
+    UNION SELECT c.dup_of, n.d + 1 FROM node n JOIN wl_cards c ON c.ts = n.ts WHERE n.d < 8 AND c.dup_of != ''),
+  nts(ts) AS (SELECT DISTINCT ts FROM node WHERE ts != ''),
+  card AS (SELECT c.ts, c.thread, c.replaced_by, c.dup_of FROM nts JOIN wl_cards c ON c.ts = nts.ts),
+  lg(ts, msg) AS (SELECT nts.ts, l.msg FROM nts JOIN wl_log l ON l.id = substr(nts.ts, 3) WHERE substr(nts.ts, 1, 2) = 'w:'),
+  occ(rest) AS (SELECT msg FROM lg UNION ALL SELECT substr(rest, instr(rest, '스레드 ') + 4) FROM occ WHERE instr(rest, '스레드 ') > 0),
+  m1(id) AS (SELECT ts FROM nts UNION SELECT thread FROM card UNION SELECT substr(rest, 1, instr(rest, '.') + 6) FROM occ UNION SELECT substr(key, 4) FROM dk WHERE substr(key, 1, 3) = 'th:'),
+  mid(id) AS (SELECT id FROM m1 UNION SELECT t.thread FROM m1 JOIN wl_talk_msg t ON t.id = m1.id)
+  SELECT 'c' AS k, ts AS a, thread AS b, replaced_by AS c, dup_of AS d FROM card
+  UNION ALL SELECT 'h', item, ts, NULL, NULL FROM hit
+  UNION ALL SELECT 'l', ts, msg, NULL, NULL FROM lg
+  UNION ALL SELECT 'm', t.id, t.chan, t.thread, t.text FROM mid JOIN wl_talk_msg t ON t.id = mid.id`;
+type Pre = { msg: Map<string, R>; card: Map<string, R>; hit: Map<string, string>; log: Map<string, string> };
+function preOf(rows: R[]): Pre {
+  const p: Pre = { msg: new Map(), card: new Map(), hit: new Map(), log: new Map() };
+  for (const r of rows) {
+    if (r.k === "c") p.card.set(r.a, { thread: r.b, replaced_by: r.c, dup_of: r.d });
+    else if (r.k === "h") p.hit.set(r.a, r.b);
+    else if (r.k === "l") p.log.set(r.a, r.b);
+    else p.msg.set(r.a, { chan: r.b, thread: r.c, text: r.d });
+  }
+  return p;
+}
+function cardThread(p: Pre, item: string): R | null {
+  const at = (ts: string) => { const r = p.msg.get(ts); return r && T(r.chan) ? { chan: r.chan, thread: or(r.thread, ts) } : null; };
   const todo: string[] = [...(/^w\p{Nd}+$/u.test(item) ? ["w:" + item.slice(1)] : []), item], seen = new Set<string>();
   while (todo.length && seen.size < 8) {
     const ts = todo.shift()!;
     if (!ts || seen.has(ts)) continue;
     seen.add(ts);
     let m: R | null;
-    if (/^\p{Nd}{10}\.\p{Nd}{6}\n?$/u.test(ts) && (m = await at(ts))) return m;
-    const r = await db.prepare("SELECT thread, replaced_by, dup_of FROM wl_cards WHERE ts = ?").bind(ts).first<R>();
+    if (/^\p{Nd}{10}\.\p{Nd}{6}\n?$/u.test(ts) && (m = at(ts))) return m;
+    const r = p.card.get(ts);
     if (!r) {
-      if (ts === item) { const hit = (await db.prepare("SELECT ts FROM wl_cards WHERE ref LIKE ? LIMIT 2").bind("%:" + item).all<R>()).results.map(x => x.ts); if (hit.length === 1) todo.push(...hit); }
+      if (ts === item && p.hit.has(item)) todo.push(p.hit.get(item)!);   // ref 로 맞는 카드가 하나뿐일 때만
       continue;
     }
-    if (T(r.thread) && (m = await at(r.thread))) return m;
+    if (T(r.thread) && (m = at(r.thread))) return m;
     todo.push(...[r.replaced_by, r.dup_of].filter(T));
-    if (ts.startsWith("w:")) {
-      const lr = await db.prepare("SELECT msg FROM wl_log WHERE id = ?").bind(ts.slice(2)).first<R>();
-      const th = lr && /스레드 (\p{Nd}+\.\p{Nd}{6})/u.exec(String(or(lr.msg, "")));
-      if (th && (m = await at(th[1]))) return m;
+    if (ts.startsWith("w:") && p.log.has(ts)) {
+      const th = /스레드 (\p{Nd}+\.\p{Nd}{6})/u.exec(String(or(p.log.get(ts), "")));
+      if (th && (m = at(th[1]))) return m;
     }
   }
   return null;
 }
 
-async function inbox(db: D1Database, cfg: Cfg, now: number): Promise<Out> {
-  const lim = 200, ulim = 1000, cutAt = now - 3 * 86400, d = cfg.drafts || {};   // 읽지 않음 상한 = inbox.UNREAD_LIMIT(목록 = 뱃지 = 사이드바 수)
-  const thKeys = Object.keys(d).filter(k => k.startsWith("th:")).map(k => k.slice(3));
+// state = 초안 정본이 D1 owner_state(스위치 write_state) — 「올렸음」 줄이 없거나 못 풀면 cfg 초안(server.py 파일)
+async function inbox(db: D1Database, cfg: Cfg, now: number, state = false): Promise<Out> {
+  const lim = 200, ulim = 1000, cutAt = now - 3 * 86400;   // 읽지 않음 상한 = inbox.UNREAD_LIMIT(목록 = 뱃지 = 사이드바 수)
   const rs = await db.batch<R>([
     db.prepare(`SELECT r.chan AS chan, r.thread AS th, r.id AS mid, r.who AS who, r.author AS author, r.pane AS pane, r.text AS text, r.at AS at,
       (SELECT t.text FROM wl_talk_msg t WHERE t.id = r.thread) AS root,
@@ -497,8 +524,9 @@ async function inbox(db: D1Database, cfg: Cfg, now: number): Promise<Out> {
     db.prepare(`SELECT s.msg AS msg, s.chan AS chan, s.thread AS th, s.at AS sat, m.who AS who, m.author AS author, m.pane AS pane, m.text AS text, m.at AS at,
       m.deleted_at AS gone, (SELECT t.text FROM wl_talk_msg t WHERE t.id = s.thread) AS root
       FROM wl_talk_saved s LEFT JOIN wl_talk_msg m ON m.id = s.msg WHERE s.who = 'owner' ORDER BY s.at DESC LIMIT ?`).bind(lim),
-    db.prepare(`SELECT id, chan, text FROM wl_talk_msg WHERE id IN ${IN}`).bind(JSON.stringify(thKeys)),
     db.prepare("SELECT DISTINCT msg FROM wl_talk_saved WHERE who = 'owner'"),
+    db.prepare(CARD_SQL).bind(JSON.stringify(Object.keys(cfg.drafts || {})), state ? 1 : 0),
+    ...(state ? [db.prepare("SELECT at, ver FROM owner_state WHERE k = 'drafts'"), db.prepare("SELECT k, v FROM owner_state WHERE k > 'drafts:' AND k < 'drafts;' ORDER BY ord, k")] : []),
   ]);
   const unread: R[] = [], ths = new Set<string>();
   for (const r of rs[0].results) {
@@ -510,8 +538,10 @@ async function inbox(db: D1Database, cfg: Cfg, now: number): Promise<Out> {
   unread.sort((a, b) => b.at - a.at);
   const saved = rs[2].results.map(r => ({ chan: r.chan, thread: or(r.th, ""), ts: r.msg, who: or(r.who, ""), author: or(r.author, ""), pane: or(r.pane, ""),
     text: T(r.gone) || r.who === null ? "지운 글" : plain(r.text), root: T(r.th) ? plain(r.root, 80) : "", at: or(r.at, r.sat), saved_at: r.sat }));
-  const savedIds = rs[4].results.map(r => r.msg as string);
-  const th = new Map(rs[3].results.map(r => [r.id, r]));
+  const savedIds = rs[3].results.map(r => r.msg as string);
+  const pre = preOf(rs[4].results);
+  let d = cfg.drafts || {};
+  if (state && rs[5].results.length) { try { d = Object.fromEntries(rs[6].results.map(r => [String(r.k).slice(7), JSON.parse(r.v)])); } catch { /* 못 풀면 cfg 초안(OS.get 실패와 같음) */ } }
   const drafts: R[] = [];
   for (const [key, v] of Object.entries(d)) {
     const text = String(or((T(v) ? v : {}).text, ""));
@@ -519,14 +549,14 @@ async function inbox(db: D1Database, cfg: Cfg, now: number): Promise<Out> {
     const i = key.indexOf(":"), kind = i < 0 ? key : key.slice(0, i), rest = i < 0 ? "" : key.slice(i + 1);
     const it: R = { key, text: plain(text, 240), at: Number(or(v.at, 0)) / 1000, chan: "", thread: "", card: "", place: "" };
     if (kind === "chan") Object.assign(it, { chan: rest, place: "" });
-    else if (kind === "th") { const r = th.get(rest); Object.assign(it, { thread: rest, chan: r ? r.chan : "", place: r ? plain(r.text, 80) : "" }); }
+    else if (kind === "th") { const r = pre.msg.get(rest); Object.assign(it, { thread: rest, chan: r ? r.chan : "", place: r ? plain(r.text, 80) : "" }); }
     else if (kind === "card") {
       if (rest.endsWith("|")) continue;
       Object.assign(it, { card: rest, place: "" });
-      const g = await cardThread(db, rest.split("|").pop()!);
+      const g = cardThread(pre, rest.split("|").pop()!);
       if (g) {
         it.goto = g;
-        if (!it.place) { const r = await db.prepare("SELECT text FROM wl_talk_msg WHERE id = ?").bind(g.thread).first<R>(); it.place = r ? plain(r.text, 80) : ""; }
+        if (!it.place) { const r = pre.msg.get(g.thread); it.place = r ? plain(r.text, 80) : ""; }
       }
     } else continue;
     drafts.push(it);
@@ -546,11 +576,11 @@ async function artnotes(db: D1Database, art: string): Promise<Out> {   // artnot
 }
 
 // 답 하나 만들기. cfg 가 필요한 길(채팅 · 노드 · 모아 보기)인데 없으면 null(→ 다리로)
-export async function build(db: D1Database, cfg: Cfg | null, rt: Route, now = Date.now() / 1000, cache = true): Promise<Out | null> {
+export async function build(db: D1Database, cfg: Cfg | null, rt: Route, now = Date.now() / 1000, cache = true, state = false): Promise<Out | null> {
   if (rt.kind === "frequent") return frequent(db);
   if (rt.kind === "artnotes") return artnotes(db, rt.a!);
   if (!cfg || !cfg.channels) return null;
-  if (rt.kind === "inbox") return inbox(db, cfg, now);
+  if (rt.kind === "inbox") return inbox(db, cfg, now, state);
   if (!has(cfg.channels, rt.a || "") && rt.kind !== "nodechat") return null;
   if (rt.kind === "channel") return channel(db, cfg, rt.a!, rt.b, now);
   if (rt.kind === "thread") { const [t] = await threads(db, cfg, [{ key: rt.a!, ts: rt.b! }]); const { raw: _r, ...body } = t; void _r;
@@ -571,9 +601,10 @@ export async function cfgOf(get: () => Promise<{ body: string; etag: string } | 
 async function etagOf(b: string) { return '"' + [...new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(b)))].slice(0, 8).map(x => x.toString(16).padStart(2, "0")).join("") + '"'; }
 
 // 화면에 보낼 답(보드 _send 와 같은 머리: ETag · 같으면 빈 304 · no-store). 못 만들면 null(→ 다리로)
-export async function respond(db: D1Database, get: () => Promise<{ body: string; etag: string } | null>, rt: Route, inm?: string) {
+// state = 모아 보기 초안을 D1 owner_state 에서(write_state) — 같은 batch 에서 읽음
+export async function respond(db: D1Database, get: () => Promise<{ body: string; etag: string } | null>, rt: Route, inm?: string, state = false) {
   let o: Out | null;
-  try { o = await build(db, await cfgOf(get), rt); } catch { return null; }
+  try { o = await build(db, await cfgOf(get), rt, undefined, true, state); } catch { return null; }
   if (!o) return null;
   const b = JSON.stringify(o.body), h: Record<string, string> = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "d1" };
   if (o.status === 200) { h.etag = await etagOf(b); if (inm && inm === h.etag) return new Response(null, { status: 304, headers: { etag: h.etag, "cache-control": "no-store", "x-f7": "d1" } }); }

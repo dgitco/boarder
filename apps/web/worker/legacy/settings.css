@@ -209,3 +209,29 @@ html.bx-acc[data-theme="dark"]{--accent-ink:var(--bx-accent-ink-d);--accent-mark
 .bxs-list:has(> .hbe){box-shadow:none;background:none;border-radius:0}
 .bxs-res > .hbe{padding-top:14px}
 .hbe .act .bxs-row{justify-content:center;flex-wrap:wrap}
+/* 이모지(E2, 시안 A — 보드 /art/hbkpDBged6VZoeu19M7Hx3qf): 목록 줄 · 블롭 얼굴 · 추가 대화창(미리보기 · :이름: 칸 · 그림 고르기) */
+.bxs-erow{display:flex;align-items:center;gap:12px;min-width:0}
+.bxs-erow .cem{flex:none;object-fit:contain}
+.bxs-erow code{font-size:13px}
+.bxs-faces{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 14px}
+.bxs-faces .cem{display:block}
+.bxs-faces.off{opacity:.35}
+.bxs-sw:disabled{cursor:default;opacity:.6}
+.bxs-emd{width:min(440px,100%)}
+.bxs-emf{display:flex;flex-direction:column;gap:14px}
+.bxs-pvw{display:flex;align-items:center;gap:16px;padding:10px 12px;border-radius:12px;background:var(--sunk);font-size:13.5px}
+.bxs-pvw > .cem{object-fit:contain;flex:none}
+.bxs-pvr{display:flex;flex-direction:column;gap:6px}
+.bxs-pvr .cem{display:inline-block;vertical-align:-5px;object-fit:contain}
+.bxs-rc{display:inline-flex;gap:4px;align-items:center;border:1px solid var(--accent);border-radius:999px;padding:1px 8px;min-height:24px;font-size:12px;background:var(--accent-soft);vertical-align:middle}
+.bxs-rc b{font-weight:500;font-family:var(--mono);font-size:11px;color:var(--accent)}
+.bxs-rc .cem{vertical-align:0}
+.bxs-nm{display:flex;align-items:center;border-radius:10px;box-shadow:0 0 0 1px var(--line);height:40px;padding:0 12px;gap:2px;font-family:var(--mono);font-size:14px;background:var(--surface)}
+.bxs-nm:focus-within{box-shadow:0 0 0 1.5px var(--accent)}
+.bxs-nm > span{color:var(--muted)}
+.bxs-nm input{border:0;outline:0;font:inherit;flex:1;min-width:0;background:none;color:var(--ink)}
+.bxs-mut.bad{color:#dc2626}
+.bxs-drop{border-radius:14px;border:1.5px dashed color-mix(in srgb,var(--ink) 22%,transparent);background:var(--sunk);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;color:var(--soft);font-size:13px;padding:18px;width:100%}
+.bxs-drop svg{color:var(--muted)}
+.bxs-drop b{color:var(--ink);font-weight:600;font-size:14px}
+.bxs-btn svg{vertical-align:-3px;margin-right:4px}
