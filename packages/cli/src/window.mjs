@@ -41,6 +41,7 @@ export function windowKey() {
 
 /** 이 창의 토큰(없거나 서버가 거절하면 기기 토큰으로 새로 받음) */
 export async function windowToken({ fresh = false } = {}) {
+  if (process.env.BOARDER_TOKEN?.trim()) return { token: process.env.BOARDER_TOKEN.trim(), ...windowKey() };
   const dev = loadDevice();
   if (!dev?.token) { const e = new Error('This machine is not set up for Boarder yet — run `boarder setup --yes`.'); e.code = 'NO_DEVICE'; throw e; }
   const w = windowKey();

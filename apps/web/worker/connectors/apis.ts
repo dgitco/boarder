@@ -283,6 +283,13 @@ const slimMessage = (m: any) => ({
 });
 const cursorOf = (j: any) => (j.hasNext && j.nextCursor ? { nextCursor: j.nextCursor } : {});
 
+/** 주소의 ?뒤 값 가림(웹훅 주소의 token 등 키) — 이름만 남김 */
+const hideQuery = (u: string) => u.replace(/([?&][^=&#\s"]+)=[^&#\s"]*/g, "$1=…");
+/** 결과 글 전체(오류 글 포함)의 주소 키 가림 */
+const hidden = (r: CallResult): CallResult => ({ ...r, content: r.content.map(c => ({ ...c, text: hideQuery(c.text) })) });
+/** 채널톡 웹훅을 옮겨도 되는 곳 */
+const WEBHOOK_HOMES = ["https://boarder.dgit.co", "https://0bridge.dev"];
+
 const CHANNEL_TALK_TOOLS: ApiTool[] = [
   {
     name: "get_channel",
@@ -404,6 +411,37 @@ const CHANNEL_TALK_TOOLS: ApiTool[] = [
         body: { blocks: [{ type: "text", value: String(a.text) }] },
       });
       return asResult(res, (j) => (j.message ? slimMessage(j.message) : j));
+    },
+  },
+  {
+    name: "list_webhooks",
+    description: "Webhooks set up in the channel (where Channel Talk sends events): id, name, the address with its key hidden, which events.",
+    inputSchema: { type: "object", properties: {} },
+    annotations: { readOnlyHint: true },
+    run: async (call) => asResult(await call("/open/webhooks", { query: { limit: 500 } }), (j) => (j.webhooks ?? []).map((w: any) => ({
+      id: w.id, name: w.name, url: hideQuery(String(w.url ?? "")), scopes: w.scopes, keywords: w.keywords, blocked: w.blocked,
+    }))),
+  },
+  {
+    name: "move_webhook",
+    description:
+      "Point a webhook at another server: keeps its path and key (?token=…) and changes only the address before the path (e.g. https://boarder.dgit.co). The key never shows.",
+    inputSchema: { type: "object", properties: { webhookId: { type: "string" }, origin: { type: "string", description: "https://host, no path" } }, required: ["webhookId", "origin"] },
+    annotations: { destructiveHint: true, openWorldHint: true },
+    async run(call, a) {
+      let to: URL;
+      try { to = new URL(String(a.origin)); } catch { return text("origin is not an address.", true); }
+      if (to.protocol !== "https:" || to.pathname.replace(/\/+$/, "") || to.search) return text("origin is https://host only.", true);
+      if (!WEBHOOK_HOMES.includes(to.origin)) return text(`origin must be one of ${WEBHOOK_HOMES.join(", ")}.`, true);
+      const id = encodeURIComponent(String(a.webhookId));
+      const got = await call(`/open/webhooks/${id}`);
+      if (!got.ok) return hidden(await asResult(got));
+      const w = (await got.json() as any).webhook;
+      if (!w?.url) return text("webhook has no address.", true);
+      let now: URL;
+      try { now = new URL(String(w.url)); } catch { return text("webhook address does not parse.", true); }
+      const res = await call(`/open/webhooks/${id}`, { method: "PATCH", body: { url: `${to.origin}${now.pathname}${now.search}` } });
+      return hidden(await asResult(res, (j) => ({ id: j.webhook?.id, name: j.webhook?.name, url: String(j.webhook?.url ?? ""), from: String(w.url) })));
     },
   },
 ];

@@ -48,7 +48,7 @@ export const SCHEMAS = {
   inbox_status: z.object({ text: line(40) }),
   inbox_cards: z.object({ query: safe(80).optional(), limit: z.number().int().min(1).max(30).default(15) }),
   hook_events: z.object({ hook: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/).optional(), limit: z.number().int().min(1).max(50).default(20) }),
-  hook_event: z.object({ event_id: z.string().regex(/^ev_[\w-]{8,40}$/) }),
+  hook_event: z.object({ event_id: z.string().regex(/^(ev|he)_[\w-]{8,40}$/) }),
   session_search: z.object({ query: safe(80).optional(), limit: z.number().int().min(1).max(30).default(10) }),
   session_handoff: z.object({ session_id: z.string().regex(/^[\w-]{3,20}:[\w.-]{6,120}$/), last: z.number().int().min(1).max(80).default(30) }),
   chat_say: z.object({ text: safe(3000, true) }),

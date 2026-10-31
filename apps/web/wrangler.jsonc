@@ -23,6 +23,7 @@
   "vars": {
     "FLAGS_OFF": "cli_profiles",
     "OB_LIVE": "1",
+    "OB_MOVED": "",
     "PUBLIC_URL": "https://boarder.dgit.co",
     "SOURCE_URL": "https://github.com/dgitco/boarder",
     "ALT_URLS": "https://boarder.dgit.workers.dev"

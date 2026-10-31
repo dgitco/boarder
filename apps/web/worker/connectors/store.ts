@@ -51,8 +51,14 @@ async function mark(env: Env, id: string, status: Row["status"], error: string |
 const refreshing = new Map<string, Promise<Auth>>();
 const clientOf = (env: Env, row: Row, a: Auth) => a.hosted ? (hostedApp(env, row.service) || { client_id: a.client_id! }) : { client_id: a.client_id!, client_secret: a.client_secret };
 
+export function obLive(env: Env, row: Pick<Row, "source">): boolean {
+  if (env.OB_LIVE !== "1" || !row.source?.startsWith("0b:")) return false;
+  const who = row.source.slice(3).split("/")[0];
+  return !String(env.OB_MOVED || "").split(",").map(x => x.trim()).filter(Boolean).includes(who);
+}
+
 async function doRefresh(env: Env, row: Row, a: Auth): Promise<Auth> {
-  if (env.OB_LIVE === "1" && row.source?.startsWith("0b:")) throw new Error("옮겨 오기 전 서비스가 아직 같은 토큰을 써요 — 옮기기를 마칠 때 새로 받아요");
+  if (obLive(env, row)) throw new Error("옮겨 오기 전 서비스가 아직 같은 토큰을 써요 — 옮기기를 마칠 때 새로 받아요");
   const running = refreshing.get(row.id); if (running) return running;
   const p = (async () => {
     try {
@@ -121,7 +127,7 @@ export async function call(env: Env, row: Row, tool: string, args: Record<string
     const a = await apiAuth(env, row); if (!a.spec) throw new Error("이 API 는 다시 만들어요");
     const r = await runApi(a.spec, a.spec.auth.type === "oauth" ? await googleKey(env, row) : a.key, tool, args);
     const dead = r.isError && (a.spec.preset === "slack" && /^Slack: (token_expired|invalid_auth|token_revoked|account_inactive)/.test(r.content[0]?.text || "") || a.spec.preset === "github-app" && /^401 /.test(r.content[0]?.text || ""));
-    if (dead && !(env.OB_LIVE === "1" && row.source?.startsWith("0b:"))) await mark(env, row.id, "expired", "다시 연결이 필요해요");
+    if (dead && !obLive(env, row)) await mark(env, row.id, "expired", "다시 연결이 필요해요");
     return r;
   }
   return withAuth(env, row, r => rpc(r, "tools/call", { name: tool, arguments: args }));
@@ -136,7 +142,7 @@ async function googleKey(env: Env, row: Row): Promise<string | undefined> {
   const provider = a.api?.auth.type === "oauth" ? a.api.auth.provider : null, slack = provider === "slack", github = provider === "github";
   const app = a.api ? (slack ? slackApp(env, a.api.auth) : github ? githubApp(env, a.api.auth) : googleApp(env, a.api.auth)) : null;
   if (!a.refresh_token || !app || !a.expires_at || a.expires_at > Date.now() + 60_000) return a.key;
-  if ((slack || github) && env.OB_LIVE === "1" && row.source?.startsWith("0b:")) return a.key;
+  if ((slack || github) && obLive(env, row)) return a.key;
   const running = refreshing.get(row.id); if (running) return (await running).key;
   const p = (async () => {
     try {
