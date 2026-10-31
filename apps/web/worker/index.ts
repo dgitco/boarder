@@ -780,15 +780,18 @@ app.post("/api/me/cards/:id/answer", async c => {
   let choice = "";
   try {
   const r = await c.env.DB.prepare("SELECT choices FROM board_card WHERE id = ? AND owner = ? AND state = 'open'").bind(id, me).first<{ choices: string }>();
-  if (!r) return rid && await queue.ridSeen(c.env.DB, rid) ? c.json({ ok: true, already: true }) : c.json({ error: "없는 카드" }, 404);
+  if (!r) { if (!rid || !(await queue.ridSeen(c.env.DB, rid))) return c.json({ error: "없는 카드" }, 404); if (await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true }); }
+  else {
   choice = String(ch ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, " ").trim().slice(0, 2000);
   const freeOk = !!free && !!choice && !(await c.env.DB.prepare("SELECT 1 FROM imp_proposal WHERE card_id = ? AND owner = ?").bind(id, me).first());
   if (!(JSON.parse(r.choices) as string[]).includes(choice) && !freeOk) return c.json({ error: "없는 선택지" }, 400);
-  if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("UPDATE board_card SET state = 'answered', answer = ?, answered_at = ? WHERE id = ? AND owner = ? AND state = 'open'").bind(String(choice), Date.now(), id, me)], p => c.executionCtx.waitUntil(p)))) return c.json({ ok: true, already: true });
+  if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("UPDATE board_card SET state = 'answered', answer = ?, answered_at = ? WHERE id = ? AND owner = ? AND state = 'open'").bind(String(choice), Date.now(), id, me)], p => c.executionCtx.waitUntil(p))) && await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true });
+  }
   } catch (e) { if (rid) return queue.retrySafe(c); throw e; }
   await onCardAnswered(c.env as never, me, id).catch(e => console.error("들여오기 카드 답", e));
-  const card = await c.env.DB.prepare("SELECT wid, question FROM board_card WHERE id = ? AND owner = ?").bind(id, me).first<{ wid: string | null; question: string }>().catch(() => null);   // 답은 이미 씀 — 못 읽어도 오류로 돌리지 않음
-  if (card?.wid) c.executionCtx.waitUntil(deliverTo(c.env, me, card.wid, `[Boarder] The person answered your card ${id} ("${card.question.slice(0, 120)}"): ${String(choice)}. Continue with that.`).catch(() => {}));
+  const card = await c.env.DB.prepare("SELECT wid, question, answer FROM board_card WHERE id = ? AND owner = ?").bind(id, me).first<{ wid: string | null; question: string; answer: string | null }>().catch(() => null);   // 답은 이미 씀 — 못 읽어도 오류로 돌리지 않음
+  const sent = card?.wid ? deliverTo(c.env, me, card.wid, `[Boarder] The person answered your card ${id} ("${card.question.slice(0, 120)}"): ${String(card.answer ?? choice)}. Continue with that.`).catch(() => {}) : Promise.resolve();
+  c.executionCtx.waitUntil(sent.then(() => rid ? queue.markSent(c.env.DB, rid) : null).catch(() => {}));
   return c.json({ ok: true });
 });
 mountImport(app as never, {
@@ -862,9 +865,9 @@ app.post("/api/me/chat", async c => {
   const { text, rid: rid0 } = await c.req.json<{ text?: string; rid?: string }>().catch(() => ({} as { text?: string; rid?: string }));
   const t = String(text || "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").trim().slice(0, 4000), rid = queue.ridOfBody({ rid: rid0 });
   if (!t) return c.json({ ok: false, error: "내용을 적어요" }, 400);
-  try { if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "나", "chat", t, "primary", Date.now())], p => c.executionCtx.waitUntil(p)))) return c.json({ ok: true, already: true }); }
+  try { if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "나", "chat", t, "primary", Date.now())], p => c.executionCtx.waitUntil(p))) && await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true }); }
   catch (e) { if (rid) return queue.retrySafe(c); throw e; }
-  try { const r = await chatToMain(c.env, me, t); if ((r as { offline?: boolean })?.offline) await sysLine(c.env.DB, me, "엔진이 켜진 기기가 없어 메인 봇에게 아직 못 전했어요 — 기기에서 boarder engine setup 을 돌려요"); return c.json({ ok: true, ...(r as object || {}) }); }
+  try { const r = await chatToMain(c.env, me, t); if (rid) c.executionCtx.waitUntil(queue.markSent(c.env.DB, rid).catch(() => {})); if ((r as { offline?: boolean })?.offline) await sysLine(c.env.DB, me, "엔진이 켜진 기기가 없어 메인 봇에게 아직 못 전했어요 — 기기에서 boarder engine setup 을 돌려요"); return c.json({ ok: true, ...(r as object || {}) }); }
   catch (e) { return engErr(c, e); }
 });
 app.post("/api/me/drafts/:id/:act", async c => {

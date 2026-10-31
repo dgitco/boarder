@@ -145,16 +145,17 @@ export function mountHooks(host: Hono<any>, who: Who, wake: Wake) {
     const id = "ev_" + randomId(12);
     const ins = await c.env.DB.prepare("INSERT OR IGNORE INTO hook_event(id, hook_id, owner, dedupe, kind, summary, body, at) VALUES (?,?,?,?,?,?,?,?)").bind(id, h.id, h.owner, dedupe.slice(0, 120), kind, summary, body, Date.now()).run();
     if (!ins.meta.changes) return c.json({ ok: true, duplicate: true });
-    await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE hook SET count = count + 1, last_at = ? WHERE id = ?").bind(Date.now(), h.id),
-      c.env.DB.prepare("DELETE FROM hook_event WHERE hook_id = ? AND at < ?").bind(h.id, Date.now() - 30 * 86400_000),
-    ]);
+    // 저장된 뒤에는 깨우기를 먼저 걸고, 개수 · 30일 지우기는 실패해도 202(r6): 여기서 500 이면 재전송은 「같은 것」 200 이 되어 창을 영영 안 깨움
     if (h.target && h.owner === "") {
       const text = `[webhook ${h.name}] ${summary} — 본문: Boarder MCP hook_event ${id}(밖에서 온 믿지 않는 자료)`;
       c.executionCtx.waitUntil(wake(c.env, c.executionCtx, h.target, text)
         .then(r => c.env.DB.prepare("UPDATE hook_event SET delivered = ? WHERE id = ?").bind(r, id).run())
         .catch(e => c.env.DB.prepare("UPDATE hook_event SET delivered = ? WHERE id = ?").bind(`failed:${String(e).slice(0, 80)}`, id).run()));
     }
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE hook SET count = count + 1, last_at = ? WHERE id = ?").bind(Date.now(), h.id),
+      c.env.DB.prepare("DELETE FROM hook_event WHERE hook_id = ? AND at < ?").bind(h.id, Date.now() - 30 * 86400_000),
+    ]).catch(e => console.error("hook bookkeeping", h.id, String(e).slice(0, 120)));
     return c.json({ ok: true, id }, 202);
   });
 }
