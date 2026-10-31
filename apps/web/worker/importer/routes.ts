@@ -1,6 +1,7 @@
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { group, pickUnit, type Item, type Unit } from "./group";
+import { engineOf } from "../engine";
 import { proposalFrom, applyProposal, imported, PROPOSAL_CHOICES, IMPORT_WIN } from "./proposal";
 
 type Env = { DB: D1Database; PUBLIC_URL: string; [k: string]: unknown };
@@ -254,9 +255,13 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
       if (f && !f.engine && ["move", "park", "reopen"].includes(b.verb!) && w.engine !== "tmux") continue;
       if (b.verb === "move" && w.engine === "tmux") continue;   // 이미 우리 엔진
       if (w.engine === "herdr-own" && !["send", "focus"].includes(b.verb!)) continue;
-      if (b.verb === "send") { out.push(await queue(env(c), me, w.device_id, "send", { item: w.key, engine: w.engine, handle: json(w.handle, null), title: w.title, text })); continue; }
+      if (b.verb === "send") {
+        out.push(await queue(env(c), me, w.device_id, "send", { item: w.key, engine: w.engine, handle: json(w.handle, null), title: w.title, text, post: true }));
+        c.executionCtx.waitUntil((engineOf(env(c) as never, w.device_id) as unknown as { drainCmds(): Promise<unknown> }).drainCmds().catch(() => null));
+        continue;
+      }
       const dup = await DB.prepare("SELECT 1 FROM engine_cmd WHERE owner = ? AND state IN ('queued','taken') AND verb = ? AND args LIKE ?").bind(me, b.verb, `%"item":${JSON.stringify(k)}%`).first();
-      if (b.verb === "reopen" && text) { out.push(await queue(env(c), me, w.device_id, dup ? "send" : "reopen", { item: w.key, engine: w.engine, handle: json(w.handle, null), title: w.title, text })); continue; }
+      if (b.verb === "reopen" && text) { out.push(await queue(env(c), me, w.device_id, dup ? "send" : "reopen", { item: w.key, engine: w.engine, handle: json(w.handle, null), title: w.title, text, post: true })); continue; }
       if (dup) continue;   // 같은 명령이 이미 대기
       out.push(await queue(env(c), me, w.device_id, b.verb!, { item: w.key, engine: w.engine, handle: json(w.handle, null), title: w.title }));
     }
@@ -287,6 +292,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     const DB = env(c).DB, t = now();
     // 가져가고 3분 넘게 결과가 없으면 다시 줌(기기가 중간에 죽은 것)
     await DB.prepare("UPDATE engine_cmd SET state = 'queued' WHERE device_id = ? AND state = 'taken' AND taken_at < ?").bind(d.id, t - 180_000).run();
+    await DB.prepare("UPDATE engine_cmd SET state = 'failed', result = '오래돼 안 넣음', done_at = ? WHERE device_id = ? AND state = 'queued' AND verb IN ('send', 'reopen') AND at < ? AND args LIKE '%\"post\":true%'").bind(t, d.id, t - 6 * 3600_000).run();
     const rs = ((await DB.prepare("UPDATE engine_cmd SET state = 'taken', taken_at = ? WHERE id IN (SELECT id FROM engine_cmd WHERE device_id = ? AND state = 'queued' ORDER BY at LIMIT 10) AND state = 'queued' RETURNING id, verb, args, at").bind(t, d.id).all()).results as { id: string; verb: string; args: string; at: number }[]).sort((a, b) => a.at - b.at);
     return c.json({ cmds: rs.map(r => ({ ...r, args: json(r.args, {}) })) }, 200, { "cache-control": "no-store" });
   });

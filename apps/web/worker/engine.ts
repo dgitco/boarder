@@ -125,6 +125,7 @@ export class Engine extends DurableObject<EngEnv> {
         for (const w of mine) await this.close(w.id).catch(() => null);
       } else await this.ensureMain(owner, device);
       await this.flush();   // 꺼져 있던 동안 쌓인 채팅 · 카드 답
+      this.ctx.waitUntil(this.drainCmds().catch(() => null));
       this.ctx.waitUntil(bumpMember(this.env as never, owner));
       return;
     }
@@ -138,6 +139,7 @@ export class Engine extends DurableObject<EngEnv> {
       }
       await db.prepare("UPDATE device SET engine_at = ? WHERE id = ?").bind(now, device).run();
       if (list.some((w: any) => w.state === "idle")) await this.flush();   // 쉬게 된 창에 밀린 글
+      if (list.length) this.ctx.waitUntil(this.drainCmds().catch(() => null));   // 바빠서 못 넣은 사람 글 다시
       if (list.length) this.ctx.waitUntil(bumpMember(this.env as never, owner));
     }
   }
@@ -186,6 +188,44 @@ export class Engine extends DurableObject<EngEnv> {
       if (code === 5) { await this.cmd("close", { id }).catch(() => null); await this.env.DB.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ?").bind(Date.now(), id).run(); return this.reopen(id, text); }
       throw e;
     }
+  }
+  draining = false; drainAgain = false;
+  async drainCmds() {
+    if (this.draining) { this.drainAgain = true; return { started: false }; }
+    this.ctx.waitUntil(this.drainRun().catch(e => console.log(JSON.stringify({ ev: "engine_drain", error: String(e).slice(0, 200) }))));
+    return { started: true };
+  }
+  private async drainRun() {
+    if (this.draining || !this.online()) return;
+    this.draining = true;
+    try {
+      const { device } = await this.who(), db = this.env.DB; if (!device) return;
+      await db.prepare("UPDATE engine_cmd SET state = 'failed', result = '오래돼 안 넣음', done_at = ? WHERE device_id = ? AND state = 'queued' AND verb IN ('send', 'reopen') AND at < ? AND json_extract(args, '$.post') = 1").bind(Date.now(), device, Date.now() - 6 * 3600_000).run();
+      do {
+        this.drainAgain = false;
+        const rows = (await db.prepare(`SELECT id, args FROM engine_cmd c WHERE device_id = ? AND state = 'queued' AND verb = 'send' AND json_extract(args, '$.post') = 1
+          AND json_extract(args, '$.engine') NOT LIKE '%-own' AND json_extract(args, '$.handle.id') IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM engine_cmd r WHERE r.device_id = c.device_id AND r.verb = 'reopen' AND r.state IN ('queued', 'taken') AND json_extract(r.args, '$.item') = json_extract(c.args, '$.item'))
+          ORDER BY at LIMIT 20`).bind(device).all<{ id: string; args: string }>()).results;
+        const held = new Set<string>();
+        for (const r of rows) {
+          const a = JSON.parse(r.args) as { engine: string; handle: { id: string }; text?: string }, id = a.handle.id;
+          if (!a.text || held.has(id)) continue;
+          const w = await this.row(id).catch(() => null);
+          if (w && (w.state === "opening" || w.state === "starting")) { held.add(id); continue; }
+          if (!await db.prepare("UPDATE engine_cmd SET state = 'sending', taken_at = ? WHERE id = ? AND state = 'queued' RETURNING id").bind(Date.now(), r.id).first()) continue;
+          try {
+            await this.cmd("send", { id, engine: a.engine, text: a.text });
+            await db.prepare("UPDATE engine_cmd SET state = 'done', done_at = ? WHERE id = ?").bind(Date.now(), r.id).run();
+          } catch (e) {
+            const err = e as EngineError, off = err.message === "엔진이 꺼져 있어요", busy = err.code === 2;
+            await db.prepare("UPDATE engine_cmd SET state = ?, result = ?, done_at = ? WHERE id = ?").bind(busy || off ? "queued" : "failed", String(err.message || err).slice(0, 300), busy || off ? null : Date.now(), r.id).run();
+            if (off) return;
+            if (busy) held.add(id);
+          }
+        }
+      } while (this.drainAgain);
+    } finally { this.draining = false; }
   }
   /** 밀린 글: 그 창이 쉬는 중일 때만 넣음(뜨는 중엔 입력칸이 없어 글이 사라짐) */
   async flush() {

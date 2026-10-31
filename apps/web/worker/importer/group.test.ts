@@ -281,3 +281,16 @@ test("역할 읽기: 아는 역할 이름도 세션 제목에선 첫 질문이�
   assert.equal(roleOf("팀장한테 보낼 메일 써줘", ["팀장"], true), "");
   assert.equal(roleOf("팀장 세션입니다", ["팀장"], true), "팀장");
 });
+
+test("역할이 시킨 일 창이 세션 제목에 역할을 달고 있어도 주 창은 그 역할 이름의 창", async () => {
+  const items = [
+    it({ key: "window:a", kind: "window", title: "#2736 온보딩 끝까지", win: "a", session: "session:claude:s1", state: "working" }),
+    it({ key: "session:claude:s1", kind: "session", title: "[팀장 → 새 작업] 온보딩" }),
+    it({ key: "window:b", kind: "window", title: "팀장", win: "b", state: "working" }),
+    it({ key: "window:c", kind: "window", title: "CLO", win: "c", state: "idle" }),
+    it({ key: "window:d", kind: "window", title: "CTO", win: "d", state: "idle" }),
+  ];
+  const r = await group({ items, logs: [], cards: [], prev: [], prevNodes: [], now, unit: "agent", agents: ["팀장", "CLO", "CTO"] });
+  assert.equal(r.nodes.find(n => n.name === "팀장")!.counts.main, "window:b");
+});
+

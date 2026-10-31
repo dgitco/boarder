@@ -35,7 +35,7 @@ async function load(db: D1Database, me: string) {
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, device_id, gone_at FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
-    db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? ORDER BY at DESC LIMIT 600").bind(me),
+    db.prepare("SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ORDER BY at DESC LIMIT 600").bind(me),
     db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
     db.prepare("SELECT rowid AS n, id, name, brief, at FROM (SELECT rowid, id, name, brief, created_at AS at FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 30)").bind(me),
     db.prepare("SELECT id, kind, name, state, state_at, note, created_at, closed_at FROM engine_window WHERE owner = ? AND (state NOT IN ('closed','failed','gone') OR state_at > ?) ORDER BY created_at DESC LIMIT 60").bind(me, Date.now() - 12 * 3600_000),
@@ -181,12 +181,13 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     const raw = String(url.searchParams.get("w") || "").trim(), t = raw.replace(/^\d+\s+/, "").trim();
     if (!t) return j({ error: "노드 이름" }, 400);
     const L = await load(db, me), n = L.nodes.find(x => x.name === raw) || L.nodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
-    const inCard = (r: R) => CARD_TS.test(String(r.thread || ""));   // 카드 스레드 줄은 그 카드 글 아래로
+    const inCard = (r: R) => CARD_TS.test(String(r.thread || ""));
+    const stuck = new Map(((await db.prepare("SELECT id, state, at FROM engine_cmd WHERE owner = ? AND verb IN ('send','reopen') AND state IN ('queued','taken','sending','failed')").bind(me).all<R>()).results).filter(c => c.state === "failed" || Date.now() - Number(c.at) > 60_000).map(c => ["cmd:" + c.id, true]));
     const rows = L.logs.filter(r => r.thread !== "primary" && !inCard(r) && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n || (r.kind === "me" && r.win === n.name) : ew ? r.win === ew.name : false)).slice(0, 300).reverse();
     // 카드 글은 답하거나 닫혀도 채널에 남음 — 할 일 목록(load)과 따로 읽음
     const cards = (await db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results
       .filter(c => CARD_TS.test(String(c.id)) && (n ? L.nodeOfWin(String(c.win)) === n : ew ? c.win === ew.name : false));
-    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...msg(r, me, r.win), ch: "primary" } })), ...(n ? n.convos.map(i => ({ at: convoAt(i), m: convoMsg(i, mainName) })) : []),
+    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...msg(r, me, r.win), ch: "primary", ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })), ...(n ? n.convos.map(i => ({ at: convoAt(i), m: convoMsg(i, mainName) })) : []),
       ...cards.map(c => ({ at: Number(c.at), m: { ...cardMsg(c, L.logs.filter(r => r.thread === c.id)), ch: "primary" } }))]
       .sort((a, b) => a.at - b.at).slice(-300).map(x => x.m);
     return j({ channel: "n:" + t, messages: out, stale_min: 0, more: false });
@@ -205,7 +206,16 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
       if (!said) return { error: "내용을 적어요", status: 400 };
       return onCard.state === "open" ? post(db, me, "/api/answer", { item: "w" + onCard.n, text: said }) : { error: onCard.state === "closed" ? "닫힌 결정이에요" : "이미 답한 결정이에요", status: 409 };
     }
-    if (b.react || b.edit !== undefined || b.delete || b.label || (Array.isArray(b.files) && b.files.length)) return { error: "아직 안 돼요", status: 400 };
+    if (b.delete) {   // 내 글 지우기: 내가 쓴 줄만(ts = at 초 + id 뒤 여섯 자리)
+      const [s, n] = String(b.ts || "").split(".");
+      if (!/^\d{10}$/.test(s || "") || !/^\d{6}$/.test(n || "")) return { error: "요청 모양이 틀림", status: 400 };
+      const r = await db.prepare("DELETE FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? AND (kind = 'me' OR win = ?) RETURNING wid").bind(me, Number(n), Number(s) * 1000, (Number(s) + 1) * 1000, ME).all<R>();
+      if (!r.results.length) return { error: "내 글이 아니에요", status: 404 };
+      const cmd = /^cmd:(.+)$/.exec(String(r.results[0].wid || ""));
+      if (cmd) await db.prepare("UPDATE engine_cmd SET state = 'failed', result = '글을 지움' WHERE id = ? AND owner = ? AND state = 'queued'").bind(cmd[1], me).run();   // 아직 안 넣은 글은 나중에 들어가지 않게
+      return { ok: { ok: true, state: "ok" } };
+    }
+    if (b.react || b.edit !== undefined || b.label || (Array.isArray(b.files) && b.files.length)) return { error: "아직 안 돼요", status: 400 };
     const text = String(b.text || "").trim(); if (!text) return { error: "내용을 적어요", status: 400 };
     const bk = /^w:(\d+)$/.exec(String((b.blocker as R | undefined)?.ref || ""));
     if (bk) return post(db, me, "/api/answer", { item: "w" + bk[1], text });

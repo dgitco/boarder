@@ -102,7 +102,7 @@ function mainWindow(its: Item[], name: string, isRole: boolean, known: string[])
   const open = its.filter(openWindow).sort((a, b) => (a.key < b.key ? -1 : 1));
   if (!isRole) return open[0]?.key;
   const titles = new Map(its.filter(i => i.kind === "session").map(i => [i.key, i.title || ""]));
-  return open.find(i => roleOf(i.title || "", known) === name || roleOf(titles.get(i.session || "") || "", known, true) === name)?.key;
+  return (open.find(i => roleOf(i.title || "", known) === name) || open.find(i => roleOf(titles.get(i.session || "") || "", known, true) === name))?.key;
 }
 /** 들여오기 때 고르기: 역할 이름이 셋 이상이면 에이전트마다 채널, 아니면 일마다 채널 */
 export function pickUnit(items: Pick<Item, "title" | "kind">[], known: string[] = []): Unit {

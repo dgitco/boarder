@@ -1044,6 +1044,18 @@ app.post("/api/admin/f7-flag", async c => {
   await ledger.setFlag(c.env.DB, b.name!, !!b.on, String(b.note || "").slice(0, 200));
   return c.json({ ok: true, flags: (await c.env.DB.prepare("SELECT name, on_at, note FROM f7_flag ORDER BY name").all()).results });
 });
+app.post("/api/admin/engine/drain", async c => {   // 그 기기 엔진 칸에 밀린 사람 글을 넣게 함 — { device }. 옛 코드 칸이면 오류 글로 알 수 있음
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ device?: string }>().catch(() => ({} as { device?: string }));
+  if (!/^[A-Za-z0-9_-]{6,40}$/.test(b.device || "")) return c.json({ error: "device" }, 400);
+  try { return c.json({ ok: true, ...(await (engineOf(c.env, b.device!) as unknown as { drainCmds(): Promise<object> }).drainCmds()) }); } catch (e) { return c.json({ ok: false, error: String(e).slice(0, 200) }, 500); }
+});
+app.post("/api/admin/regroup", async c => {   // 그 사람 노드를 지금 표로 다시 묶음(묶는 규칙을 고친 뒤) — { email }
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ email?: string }>().catch(() => ({} as { email?: string }));
+  const me = String(b.email || "").trim().toLowerCase(); if (!me.includes("@")) return c.json({ error: "email" }, 400);
+  await regroup(c.env as never, me); return c.json({ ok: true });
+});
 app.post("/api/admin/live/drop", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ who?: string; abort?: boolean; old?: boolean }>().catch(() => ({} as { who?: string; abort?: boolean; old?: boolean }));
@@ -1395,7 +1407,7 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   const r = await app.fetch(new Request(new URL(hop.path, url), { method: "POST", headers: h, body: JSON.stringify({ ...(hop.body as object), ...(rid ? { rid } : {}) }) }), c.env, c.executionCtx);   // rid 도 넘김(안쪽 쓰기가 한 번만)
   const j = await r.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
   if (!r.ok || j.ok === false) return c.json({ ok: false, rid, error: typeof j.error === "string" ? j.error : "일시적인 오류가 발생했어요" }, (r.ok ? 400 : r.status) as 400, r.headers.get("x-retry-safe") === "1" ? { "x-retry-safe": "1" } : {});
-  if (hop.log && !j.already) await c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), null, Date.now()).run().catch(e => console.error("노드 채팅 줄", e));
+  if (hop.log && !j.already) await c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), null, Date.now(), Array.isArray(j.cmds) && j.cmds[0] ? `cmd:${j.cmds[0]}` : null).run().catch(e => console.error("노드 채팅 줄", e));
   return c.json({ ...j, ok: true, rid, state: "ok", channel: "primary" });
 }
 async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false) {
