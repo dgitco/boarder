@@ -705,14 +705,14 @@
   function emojiForm(host, {phone, done, cancel}){
     let pic = null, url = '';
     host.innerHTML = `<div class="bxs-emf">${phone ? '' : `<div class="bxs-row between"><b style="font-size:17px">이모지 추가</b><button type="button" class="bxs-icon" data-no aria-label="닫기">${IC.x}</button></div>`}
-      <div data-epv></div>${phone ? `<div class="bxs-row">${btn(lu('images', 16) + '사진 보관함', 'data-epick', 'sm')}${btn(lu('camera', 16) + '찍기', 'data-ecam', 'sm')}</div>` : ''}
-      <label class="bxs-f"><span>이름</span><div class="bxs-nm"><span>:</span><input data-en autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40" aria-label="이모지 이름"><span>:</span></div><span class="bxs-mut" data-eh>한글 · 영문 소문자 · 숫자 · - _ (같은 이름이 있으면 알려 줘요)</span></label>
-      <div class="bxs-row end">${phone ? '' : btn('취소', 'data-no', 'ghost')}${btn('저장', 'data-esave', 'pri')}</div>
-      <input type="file" accept="image/png,image/gif,image/jpeg,image/webp" hidden data-ef><input type="file" accept="image/*" capture="environment" hidden data-ec></div>`;
-    const $ = q => host.querySelector(q), name = $('[data-en]'), hint = $('[data-eh]'), HINT = hint.textContent;
-    const pv = () => { $('[data-epv]').innerHTML = pic
-      ? `<div class="bxs-pvw">${cimg(url, name.value, 56)}<div class="bxs-pvr"><span>반응 <span class="bxs-rc">${cimg(url, name.value, 16)}<b>1</b></span></span>${phone ? '<span class="bxs-mut">128×128 로 맞췄어요</span>' : `<span>글 안 &nbsp;배포 끝 ${cimg(url, name.value, 20)}</span>`}</div></div>${phone ? '' : `<div class="bxs-row between"><span class="bxs-mut">${esc(pic.name)} · 128×128 로 맞췄어요</span><button type="button" class="bxs-link" data-epick>다른 그림</button></div>`}`
-      : (phone ? '' : `<button type="button" class="bxs-drop" data-epick>${lu('image-plus', 24)}<b>그림 고르기</b><span>PNG · GIF · JPG · 끌어 놓거나 붙여 넣어도 돼요</span></button>`); };
+      <div data-empv></div>${phone ? `<div class="bxs-row">${btn(lu('images', 16) + '사진 보관함', 'data-empick', 'sm')}${btn(lu('camera', 16) + '찍기', 'data-emshoot', 'sm')}</div>` : ''}
+      <label class="bxs-f"><span>이름</span><div class="bxs-nm"><span>:</span><input data-emname autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40" aria-label="이모지 이름"><span>:</span></div><span class="bxs-mut" data-emhint>한글 · 영문 소문자 · 숫자 · - _ (같은 이름이 있으면 알려 줘요)</span></label>
+      <div class="bxs-row end">${phone ? '' : btn('취소', 'data-no', 'ghost')}${btn('저장', 'data-emsave', 'pri')}</div>
+      <input type="file" accept="image/png,image/gif,image/jpeg,image/webp" hidden data-emfile><input type="file" accept="image/*" capture="environment" hidden data-emcam></div>`;
+    const $ = q => host.querySelector(q), name = $('[data-emname]'), hint = $('[data-emhint]'), HINT = hint.textContent;
+    const pv = () => { $('[data-empv]').innerHTML = pic
+      ? `<div class="bxs-pvw">${cimg(url, name.value, 56)}<div class="bxs-pvr"><span>반응 <span class="bxs-rc">${cimg(url, name.value, 16)}<b>1</b></span></span>${phone ? '<span class="bxs-mut">128×128 로 맞췄어요</span>' : `<span>글 안 &nbsp;배포 끝 ${cimg(url, name.value, 20)}</span>`}</div></div>${phone ? '' : `<div class="bxs-row between"><span class="bxs-mut">${esc(pic.name)} · 128×128 로 맞췄어요</span><button type="button" class="bxs-link" data-empick>다른 그림</button></div>`}`
+      : (phone ? '' : `<button type="button" class="bxs-drop" data-empick>${lu('image-plus', 24)}<b>그림 고르기</b><span>PNG · GIF · JPG · 끌어 놓거나 붙여 넣어도 돼요</span></button>`); };
     const take = async f => {
       if (!f || !/^image\//.test(f.type)) return;
       const r = await emoFit(f); if (!r) return toast('일시적인 오류가 발생했어요');
@@ -724,20 +724,20 @@
     pv();
     host.addEventListener('click', e => {
       if (e.target.closest('[data-no]')) return cancel?.();
-      if (e.target.closest('[data-epick]')) return $('[data-ef]').click();
-      if (e.target.closest('[data-ecam]')) return $('[data-ec]').click();
+      if (e.target.closest('[data-empick]')) return $('[data-emfile]').click();
+      if (e.target.closest('[data-emshoot]')) return $('[data-emcam]').click();
     });
-    $('[data-ef]').onchange = e => take(e.target.files[0]); $('[data-ec]').onchange = e => take(e.target.files[0]);
+    $('[data-emfile]').onchange = e => take(e.target.files[0]); $('[data-emcam]').onchange = e => take(e.target.files[0]);
     host.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); });
     host.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); take(e.dataTransfer?.files?.[0]); });
     host.addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])][0]; if (f){ e.preventDefault(); take(f); } });
     name.addEventListener('input', () => { hint.textContent = HINT; hint.classList.remove('bad'); if (pic) pv(); });
-    $('[data-esave]').onclick = async () => {
+    $('[data-emsave]').onclick = async () => {
       const v = name.value.trim().toLowerCase().replace(/^:|:$/g, ''), bad = t => { hint.textContent = t; hint.classList.add('bad'); name.focus(); };
       if (!pic) return toast('그림을 골라요');
       if (!EMO_RE.test(v)) return bad('한글 · 영문 소문자 · 숫자 · - _ 로 2–40자예요');
       if (HE()?.get().by[v]) return bad('같은 이름이 있어요 — 바꿔 주세요');
-      const b = $('[data-esave]'); b.disabled = true; const was = b.innerHTML; b.innerHTML = spin;
+      const b = $('[data-emsave]'); b.disabled = true; const was = b.innerHTML; b.innerHTML = spin;
       try {
         const r = await fetch('api/emoji/custom', {method: 'POST', credentials: 'include', headers: {'x-hb': '1', 'content-type': pic.type, 'x-emoji-name': encodeURIComponent(v)}, body: pic.blob});
         const j = await r.json().catch(() => ({}));
@@ -757,13 +757,13 @@
     free = emojiForm(box, {done: v => { close(); after?.(v); }, cancel: close});
     d.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') close(); });
     d.addEventListener('click', e => { if (e.target === d) close(); });
-    box.querySelector('[data-epick]')?.focus();
+    box.querySelector('[data-empick]')?.focus();
   }
   PAGES.emoji = async (el, id, live) => {
     if (id === 'add' && !PC.matches){   // 폰: 「추가」는 따로 쪽(‹ 이모지)
       const bk = main.querySelector('.bxs-ptop [data-to]'); if (bk){ bk.dataset.to = '#settings/emoji'; bk.querySelector('span').textContent = '이모지'; }
-      el.innerHTML = header('이모지 추가') + '<div data-eform></div>';
-      emojiForm(el.querySelector('[data-eform]'), {phone: true, done: () => go('#settings/emoji', true)});
+      el.innerHTML = header('이모지 추가') + '<div data-emform></div>';
+      emojiForm(el.querySelector('[data-emform]'), {phone: true, done: () => go('#settings/emoji', true)});
       return;
     }
     const he = HE(); if (!he){ el.innerHTML = '<p class="bxs-err">일시적인 오류가 발생했어요</p>'; return; }
@@ -772,31 +772,31 @@
     let q = '';
     const draw = () => {
       const C = he.get(), hit = n => !q || n.includes(q), org = C.org.filter(x => hit(x.name)), blobs = he.blobs();
-      const row = x => `<div class="bxs-li"><div class="bxs-erow">${cimg(x.url, x.name, 28)}<div><b><code>:${esc(x.name)}:</code></b><span>${esc(x.by)} · ${emoDay(x.at)}</span></div></div>${x.mine ? `<button type="button" class="bxs-more" data-emore="${esc(x.name)}" aria-label="더 보기">${IC.more}</button>` : ''}</div>`;
+      const row = x => `<div class="bxs-li"><div class="bxs-erow">${cimg(x.url, x.name, 28)}<div><b><code>:${esc(x.name)}:</code></b><span>${esc(x.by)} · ${emoDay(x.at)}</span></div></div>${x.mine ? `<button type="button" class="bxs-more" data-emmore="${esc(x.name)}" aria-label="더 보기">${IC.more}</button>` : ''}</div>`;
       const grp = ([k, bn]) => { const xs = blobs.filter(b => b.g === k && (hit(b.n) || b.l.includes(q))); if (q && !xs.length) return ''; const off = C.off.includes(k);
-        return `<div class="bxs-grp"><div class="bxs-gh"><b>${esc(bn)}</b>${sw(!off, `data-ebot="${k}"${C.admin ? '' : ' disabled title="관리자만 바꿀 수 있어요"'}`, bn + ' 블롭')}</div><div class="bxs-faces${off ? ' off' : ''}">${xs.map(b => `<span title=":${esc(b.n)}: · ${esc(b.l)}">${cimg(b.u, b.n, 30)}</span>`).join('')}</div></div>`; };
-      el.querySelector('[data-ebody]').innerHTML = `<div class="bxs-sech">우리 조직 · ${org.length}</div>`
-        + (org.length ? `<div class="bxs-list">${org.map(row).join('')}</div>` : empty({ic: 'smile', t: q ? '찾는 이모지가 없어요' : '아직 올린 이모지가 없어요', p: q ? '다른 이름으로 찾아 보세요.' : '그림 하나와 이름이면 반응 · 글에 바로 써요.', act: q ? '' : btn('이모지 추가', 'data-eadd', 'pri sm'), sm: true}, '<div class="bxs-empty"><b>아직 없어요</b></div>'))
+        return `<div class="bxs-grp"><div class="bxs-gh"><b>${esc(bn)}</b>${sw(!off, `data-embot="${k}"${C.admin ? '' : ' disabled title="관리자만 바꿀 수 있어요"'}`, bn + ' 블롭')}</div><div class="bxs-faces${off ? ' off' : ''}">${xs.map(b => `<span title=":${esc(b.n)}: · ${esc(b.l)}">${cimg(b.u, b.n, 30)}</span>`).join('')}</div></div>`; };
+      el.querySelector('[data-embody]').innerHTML = `<div class="bxs-sech">우리 조직 · ${org.length}</div>`
+        + (org.length ? `<div class="bxs-list">${org.map(row).join('')}</div>` : empty({ic: 'smile', t: q ? '찾는 이모지가 없어요' : '아직 올린 이모지가 없어요', p: q ? '다른 이름으로 찾아 보세요.' : '그림 하나와 이름이면 반응 · 글에 바로 써요.', act: q ? '' : btn('이모지 추가', 'data-emadd', 'pri sm'), sm: true}, '<div class="bxs-empty"><b>아직 없어요</b></div>'))
         + `<div class="bxs-sech">기본 세트 · 블롭 얼굴 <span class="bxs-mut" style="display:inline">— 봇마다 끌 수 있어요</span></div><div class="bxs-list">${he.BOTS.map(grp).join('')}</div>`;
     };
-    el.innerHTML = header('이모지', '조직 사람 모두가 반응 · 글에 쓰는 이모지예요. 글에 <code>:이름:</code> 으로 불러요.', btn(PC.matches ? '이모지 추가' : '추가', 'data-eadd', 'pri' + (PC.matches ? '' : ' sm')))
-      + '<input class="bxs-in sm" type="search" placeholder="찾기 — 이름" aria-label="이모지 찾기" data-eq><div data-ebody></div>';
+    el.innerHTML = header('이모지', '조직 사람 모두가 반응 · 글에 쓰는 이모지예요. 글에 <code>:이름:</code> 으로 불러요.', btn(PC.matches ? '이모지 추가' : '추가', 'data-emadd', 'pri' + (PC.matches ? '' : ' sm')))
+      + '<input class="bxs-in sm" type="search" placeholder="찾기 — 이름" aria-label="이모지 찾기" data-emq><div data-embody></div>';
     draw();
-    el.querySelector('[data-eq]').addEventListener('input', e => { q = e.target.value.trim().toLowerCase().replace(/^:|:$/g, ''); draw(); });
+    el.querySelector('[data-emq]').addEventListener('input', e => { q = e.target.value.trim().toLowerCase().replace(/^:|:$/g, ''); draw(); });
     el.onclick = async e => {
-      if (e.target.closest('[data-eadd]')) return PC.matches ? emojiBox(() => live() && draw()) : go('#settings/emoji/add');
-      const bs = e.target.closest('[data-ebot]');
+      if (e.target.closest('[data-emadd]')) return PC.matches ? emojiBox(() => live() && draw()) : go('#settings/emoji/add');
+      const bs = e.target.closest('[data-embot]');
       if (bs && !bs.disabled){   // 누르면 바로(공용 낙관 길) — 못 바꾸면 되돌리고 한 줄
-        const k = bs.dataset.ebot, C = he.get(), on = C.off.includes(k);
+        const k = bs.dataset.embot, C = he.get(), on = C.off.includes(k);
         const set = v => { C.off = v ? C.off.filter(x => x !== k) : [...C.off, k]; he.reindex(); draw(); };
         return window.optDo({key: 'ebot:' + k, apply: () => set(on), send: () => api('POST', 'api/emoji/bot', {bot: k, on}), undo: () => set(!on)});
       }
-      const m = e.target.closest('[data-emore]'); if (!m) return;
+      const m = e.target.closest('[data-emmore]'); if (!m) return;
       document.querySelector('.bxs-pop')?.remove();
-      const n = m.dataset.emore, pop = mk('div', 'bxs-pop', '<button type="button" class="danger" data-edel>지우기</button>'), r = m.getBoundingClientRect();
+      const n = m.dataset.emmore, pop = mk('div', 'bxs-pop', '<button type="button" class="danger" data-emdel>지우기</button>'), r = m.getBoundingClientRect();
       pop.style.top = (r.bottom + 6) + 'px'; pop.style.left = Math.max(8, r.right - 190) + 'px'; document.body.append(pop);
       const close = ev => { if (!pop.contains(ev.target)){ pop.remove(); removeEventListener('pointerdown', close, true); } }; setTimeout(() => addEventListener('pointerdown', close, true));
-      pop.querySelector('[data-edel]').onclick = async () => {
+      pop.querySelector('[data-emdel]').onclick = async () => {
         pop.remove();
         if (!await confirmBox(`<b>:${esc(n)}:</b> 을 지울까요? 이미 단 반응 · 글에는 <code>:${esc(n)}:</code> 글자로 남아요.`, '지우기')) return;
         const C = he.get(), keep = C.org;
