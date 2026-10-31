@@ -308,12 +308,16 @@
     for (const k of CH) if (hit(AREA_NAME[k]) || hit(k)) out.push({g: '에이전트', n: AREA_NAME[k], i: blob(AREA_NAME[k], 18), go: () => openChan(k)});
     for (const k of IBK) if (q && hit(IBN[k])) out.push({g: '모아 보기', n: IBN[k], i: I[k], go: () => FEED(k) ? (ibClose(), window.HBInbox.openFeed(k)) : ibOpen(k)});
     const sr = q && FS.r && q.startsWith(FS.r.q.toLowerCase()) ? FS.r : null;   // 서버 답(앞 글자가 같으면 새 답이 올 때까지 그대로 — 깜빡임 없게)
-    if (sr) return out.concat(serverItems(sr)).slice(0, 60);
+    if (sr && !window.HB_MEMBER) return out.concat(serverItems(sr)).slice(0, 60);
     const live = t => (t.panes || []).find(p => byPane[p]);
     if (q) for (const t of (CS.T.topics || [])) { const p = t.state !== 'done' && live(t); if (p && (hit(t.title) || hit(t.id))) out.push({g: '노드', n: t.title || t.id, i: I.hash, go: () => openAns({p})}); }
     if (q) for (const n of (typeof D !== 'undefined' && D.archived || []).filter(hit).slice(0, 8)) out.push({g: '노드', n: n + ' · 보관', i: I.hash, go: () => nodeGo(n)});
     const arts = Object.entries(ARTS || {}).map(([id, x]) => ({id, ...x})).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
     for (const r of (q ? arts.filter(r => hit(r.title) || hit(r.id)) : arts.slice(0, 5))) out.push({g: q ? '캔버스' : '최근 캔버스', n: r.title || r.id, i: `<i class="ki k-${esc(r.kind || 'doc')}"></i>`, go: () => ARTS[r.id] && openArt(r.id)});
+    if (sr){
+      const sv = serverItems(sr), names = new Set(sv.filter(r => r.g === '노드').map(r => r.n)), G = ['에이전트', '모아 보기', '노드', '결정 · 할 일', '대화', '캔버스', '최근 캔버스'];
+      return out.filter(r => r.g !== '노드' || !names.has(r.n)).concat(sv).map((r, i) => [r, i]).sort((a, b) => G.indexOf(a[0].g) - G.indexOf(b[0].g) || a[1] - b[1]).map(x => x[0]).slice(0, 60);
+    }
     return out.slice(0, 40);
   }
   function hl(t, q){   // 찾은 낱말 굵게(글은 먼저 esc)
@@ -332,7 +336,6 @@
     fl.querySelector('[aria-selected="true"]')?.scrollIntoView({block: 'nearest'});
   }
   async function fsearch(q, sem){
-    if (window.HB_MEMBER) return fsFail(q, sem);   // 서버 색인은 주인 것만(/api/search 주인만 · 회원은 403) — 회원은 이 화면이 가진 것으로만 찾음
     const n = ++FS.n, t0 = performance.now();
     try {
       const r = await fetch('api/search?q=' + encodeURIComponent(q) + (sem ? '&sem=1' : ''), {cache: 'no-store', credentials: 'same-origin'});
@@ -352,7 +355,7 @@
     fsel = 0; const q = fin.value.trim();
     if (!q) FS.r = null;
     findDraw(); clearTimeout(FS.t);
-    if (q){ fsearch(q, false); FS.t = setTimeout(() => fsearch(q, true), 300); }
+    if (q){ fsearch(q, false); if (!window.HB_MEMBER) FS.t = setTimeout(() => fsearch(q, true), 300); }   // 회원 찾기(자기 D1)는 뜻 찾기가 없어 한 번만
   }
   function findOpen(){ closeDr(); fin.value = ''; fsel = 0; FS.r = null; fd.hidden = false; findDraw(); fin.focus(); }
   function findClose(){ fd.hidden = true; }

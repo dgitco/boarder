@@ -41,6 +41,7 @@ import * as ownerRead from "./owner-read";
 import * as OS from "./owner-state";
 import * as memberBoard from "./member-board";
 import * as emoji from "./emoji";
+import * as memberSearch from "./member-search";
 import { newMeter, meterEnv, meterProps, sampleOf } from "./perf";
 import * as PU from "./push";
 import { resolve as pushResolve, cardLoc } from "./push-do";
@@ -402,9 +403,11 @@ app.get("/api/relay/search", async c => {
   return c.json(c.req.query("ids") ? { ...(await search(c.env).state()), ids: await search(c.env).ids() } : await search(c.env).state());
 });
 app.get("/api/search", async c => {
-  const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401); if (!isOwner(c.env, sb.user.email)) return c.json({ error: "no" }, 403);
+  const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401);
   const q = (c.req.query("q") || "").slice(0, 100), t0 = Date.now();
-  const r = await search(c.env).query(q, c.req.query("sem") === "1", c.req.query("dbg") === "1");   // dbg = 노드 점수 나눔(주인만, 순위 고칠 때)
+  // 회원(boarder-internal#4)은 자기 D1 만(member-search.ts) — 주인 색인(DO)은 주인만. 회원은 뜻 찾기가 없어 sem=1 은 같은 답
+  const r = await memberSearch.route({ owner: isOwner(c.env, sb.user.email), me: sb.user.email, q, db: c.env.DB,
+    ownerSearch: () => search(c.env).query(q, c.req.query("sem") === "1", c.req.query("dbg") === "1") });   // dbg = 노드 점수 나눔(주인만, 순위 고칠 때)
   seg(c.req.raw, "search", Date.now() - t0);
   return c.json({ ...r, ms: { ...r.ms, worker: Date.now() - t0 } }, 200, { "cache-control": "private, no-store" });
 });
