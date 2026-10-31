@@ -30,8 +30,8 @@ export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: str
 }
 
 async function load(db: D1Database, me: string) {
-  const [nd, mi, it, tk, lg, cd, dr, ew] = await db.batch([
-    db.prepare("SELECT id, name, pinned_name, state, why, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
+  const [nd, mi, it, tk, lg, cd, dr, ew, ns] = await db.batch([
+    db.prepare("SELECT id, name, pinned_name, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, device_id, gone_at FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
@@ -39,6 +39,7 @@ async function load(db: D1Database, me: string) {
     db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
     db.prepare("SELECT rowid AS n, id, name, brief, at FROM (SELECT rowid, id, name, brief, created_at AS at FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 30)").bind(me),
     db.prepare("SELECT id, kind, name, state, state_at, note, created_at, closed_at FROM engine_window WHERE owner = ? AND (state NOT IN ('closed','failed','gone') OR state_at > ?) ORDER BY created_at DESC LIMIT 60").bind(me, Date.now() - 12 * 3600_000),
+    db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
   ]);
   const items = new Map((it.results as R[]).map(r => [String(r.key), r]));
   const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(r.win, r.pane);
@@ -53,11 +54,13 @@ async function load(db: D1Database, me: string) {
     if (i && (i.kind === "session" || i.kind === "thread") && i.title) n.convos.push(i);   // 들여온 대화 — 노드 채팅에 글로(convoMsg)
     const w = i ? i.win : item.startsWith("win:") ? item.slice(4) : null; if (w) n.wins.add(w);
   }
+  const mains = new Map((nd.results as R[]).map(n => [String(n.id), json<{ main?: string }>(n.counts, {}).main || ""]));
+  for (const n of nodes) { const m = mains.get(n.id); if (m) n.windows.sort((a, b) => Number(b.key === m) - Number(a.key === m)); }
   const nodeOfWin = (win: string) => { const k = keyOfWin.get(win) || win, item = itemOfWin.get(k) || `win:${k}`; return byId.get(nodeOfItem.get(item) || "") || null; };
   // 엔진 창(역할 · 메인): 노드에 안 묶인 역할 창은 제 이름으로 한 노드
   const mainWin = (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
   const engineNodes = (ew.results as R[]).filter(w => w.kind === "role" && !nodes.some(n => n.name === w.name || n.wins.has(w.name)));
-  return { nodes, byId, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes };
+  return { nodes, byId, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes };
 }
 
 const STATE: Record<string, string> = { working: "일하는 중", busy: "일하는 중", starting: "일하는 중", opening: "일하는 중", background: "뒤 작업 중" };
@@ -181,7 +184,9 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     if (pane && pane !== PRIMARY) {
       const L = await load(db, me), n = L.nodes.find(x => x.pane === pane);
       if (n) {
-        const w = n.windows[0]; if (!w) return { error: "이 노드엔 글을 넣을 창이 없어요", status: 404 };
+        // 에이전트마다 채널은 일 창이 여럿 — 주 창이 닫혔으면 아무 일 창에나 넣지 않음
+        const w = L.agentUnit ? n.windows.find(x => x.key === L.mains.get(n.id)) : n.windows[0];
+        if (!w) return { error: "이 노드엔 글을 넣을 창이 없어요", status: 404 };
         const log = { win: String(w.win || n.name), text };
         return { path: "/api/me/nodes/cmd", body: { verb: w.state === "parked" ? "reopen" : "send", item: w.key, text }, log };
       }

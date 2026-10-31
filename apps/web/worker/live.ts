@@ -2,11 +2,12 @@ import { isOwner, type Env as AuthEnv } from "./auth";
 import type { BoardSnap } from "./board";
 
 type LEnv = AuthEnv & { SNAP: DurableObjectNamespace<BoardSnap> };
+export const OWNER_SNAP = "owner@apac";
 
 /** 그 사용자의 화면 칸 — 주인 메일(ALLOW_EMAILS)은 다 주인 보드 하나 */
 export const liveOf = (env: LEnv, email: string) => {
-  const name = isOwner(env, email) ? "owner@wnam" : `live:${email.trim().toLowerCase()}@wnam`;
-  return env.SNAP.get(env.SNAP.idFromName(name), { locationHint: "wnam" });
+  const name = isOwner(env, email) ? OWNER_SNAP : `live:${email.trim().toLowerCase()}@apac`;
+  return env.SNAP.get(env.SNAP.idFromName(name), { locationHint: "apac" });
 };
 /** 바뀐 칸 알리기(실패는 삼킴 — 화면은 폴링 · 다시 붙기로 따라잡음) */
 export const bump = (env: LEnv, email: string, t: Record<string, string>) => liveOf(env, email).bump(t).catch(() => 0);

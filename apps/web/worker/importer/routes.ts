@@ -1,6 +1,6 @@
 import type { Context, Hono } from "hono";
 import { z } from "zod";
-import { group, type Item } from "./group";
+import { group, pickUnit, type Item, type Unit } from "./group";
 import { proposalFrom, applyProposal, imported, PROPOSAL_CHOICES, IMPORT_WIN } from "./proposal";
 
 type Env = { DB: D1Database; PUBLIC_URL: string; [k: string]: unknown };
@@ -33,12 +33,21 @@ const ImportIn = z.object({
 });
 
 const now = () => Date.now();
+const UNIT_Q = "노드를 어떻게 묶을까요?";
+const UNIT_CHOICE: Record<Unit, string> = { agent: "에이전트마다 채널 · 일은 스레드", goal: "일마다 채널" };
+export async function setUnit(env: Env, owner: string, unit: Unit, by: "auto" | "me") {
+  const r = await env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner).first<{ data: string }>();
+  const data = JSON.stringify({ ...json<Record<string, unknown>>(r?.data, {}), unit, unit_by: by });
+  await env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at").bind(owner, data, now()).run();
+  // 사람이 정했으면 남은 질문을 닫음 — 나중에 옛 질문에 답해 뒤집히지 않게
+  if (by === "me") await env.DB.prepare("UPDATE board_card SET state = 'closed', done = ? WHERE owner = ? AND win = ? AND question = ? AND state = 'open'").bind(UNIT_CHOICE[unit], owner, IMPORT_WIN, UNIT_Q).run();
+}
 const rid = () => crypto.randomUUID().replace(/-/g, "").slice(0, 20);
 const json = <T>(v: string | null | undefined, d: T): T => { try { return v ? JSON.parse(v) as T : d; } catch { return d; } };
 
 export async function regroup(env: Env, owner: string) {
   const t = now();
-  const [it, lg, cd, mp, nd, wn, ns] = await env.DB.batch([
+  const [it, lg, cd, mp, nd, wn, ns, rl] = await env.DB.batch([
     env.DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at FROM imp_item WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR thread != 'primary') AND kind != 'me' ORDER BY at DESC LIMIT 400").bind(owner),
     env.DB.prepare("SELECT id, win, state, question, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 200").bind(owner),
@@ -46,6 +55,7 @@ export async function regroup(env: Env, owner: string) {
     env.DB.prepare("SELECT id, name, pinned_name, area, state, why, counts, created_at, updated_at, archived_at FROM mnode WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(owner),
     env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner),
+    env.DB.prepare("SELECT name FROM role WHERE owner = ? UNION SELECT name FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed','gone')").bind(owner, owner),
   ]);
   const items = (it.results as (Item & { refs: string })[]).map(r => ({ ...r, refs: json<string[]>(r.refs as unknown as string, []) }));
   const winNames = Object.fromEntries((wn.results as { pane: string; win: string }[]).map(r => [r.pane, r.win]));
@@ -53,8 +63,8 @@ export async function regroup(env: Env, owner: string) {
   const own = (w: string) => w === IMPORT_WIN || /(^|:)boarder(-|:)import$/.test(w);
   const logs = (lg.results as { win: string }[]).filter(l => !own(l.win)).map(l => ({ ...l, win: keyOf(l.win) }));
   const cards = (cd.results as { win: string }[]).filter(c => !own(c.win)).map(c => ({ ...c, win: keyOf(c.win) }));
-  const archiveH = json<{ archive_h?: number }>((ns.results[0] as { data?: string } | undefined)?.data, {}).archive_h ?? 6;
-  const r = await group({ items, logs: logs as never, cards: cards as never, prev: mp.results as never, prevNodes: nd.results as never, winNames, now: t, archiveH });
+  const set = json<{ archive_h?: number; unit?: Unit }>((ns.results[0] as { data?: string } | undefined)?.data, {}), archiveH = set.archive_h ?? 6;
+  const r = await group({ items, logs: logs as never, cards: cards as never, prev: mp.results as never, prevNodes: nd.results as never, winNames, now: t, archiveH, unit: set.unit, agents: (rl.results as { name: string }[]).map(x => x.name) });
   const keep = new Set(r.nodes.map(n => n.id));
   const was = new Map((mp.results as { item: string; node: string; how: string }[]).map(m => [m.item, m]));
   const st: D1PreparedStatement[] = [];
@@ -63,7 +73,7 @@ export async function regroup(env: Env, owner: string) {
   for (let i = 0; i < gone.length; i += 80) st.push(env.DB.prepare(`DELETE FROM mnode_item WHERE owner = ? AND item IN (${gone.slice(i, i + 80).map(() => "?").join(",")})`).bind(owner, ...gone.slice(i, i + 80)));
   const old = new Map((nd.results as { id: string; name: string; area: string; state: string; why: string; counts: string; updated_at: number; archived_at: number | null }[]).map(n => [n.id, n]));
   for (const n of r.nodes) {
-    const o = old.get(n.id), counts = JSON.stringify(n.counts), arch = n.archived ? (o?.archived_at || t) : null;
+    const o = old.get(n.id), counts = JSON.stringify(n.counts), arch = n.archived ? (o?.archived_at || (set.unit ? Math.min(t, n.updated_at || t) : t)) : null;   // 고른 사람은 보관 시각 = 마지막 움직임 — 옛 세션 수십 개가 「끝난 노드」 목록에 하루 동안 쌓이지 않게
     if (o && o.name === n.name && o.area === n.area && o.state === n.state && o.why === n.why && o.counts === counts && o.updated_at === n.updated_at && (o.archived_at ?? null) === arch) continue;
     st.push(env.DB.prepare(
       "INSERT INTO mnode(owner, id, name, area, state, why, counts, created_at, updated_at, archived_at) VALUES (?,?,?,?,?,?,?,?,?,?) " +
@@ -71,7 +81,7 @@ export async function regroup(env: Env, owner: string) {
       .bind(owner, n.id, n.name, n.area, n.state, n.why, counts, n.created_at, n.updated_at, arch));
   }
   // 다 빠진 노드는 보관(지우지 않음 — 이름 · 기록이 남게)
-  for (const o of old.values()) if (!keep.has(o.id) && !o.archived_at) st.push(env.DB.prepare("UPDATE mnode SET archived_at = ?, state = 'done' WHERE owner = ? AND id = ?").bind(t, owner, o.id));
+  for (const o of old.values()) if (!keep.has(o.id) && !o.archived_at) st.push(env.DB.prepare("UPDATE mnode SET archived_at = ?, state = 'done' WHERE owner = ? AND id = ?").bind(set.unit ? Math.min(t, o.updated_at || t) : t, owner, o.id));
   st.push(env.DB.prepare("INSERT INTO imp_audit(owner, at, data) VALUES (?,?,?)").bind(owner, t, JSON.stringify(r.audit)));
   st.push(env.DB.prepare("DELETE FROM imp_audit WHERE owner = ? AND at < ?").bind(owner, t - 48 * 3600_000));
   for (let i = 0; i < st.length; i += 90) await env.DB.batch(st.slice(i, i + 90));   // D1 batch 한 번에 너무 많지 않게
@@ -87,6 +97,12 @@ export async function onCardAnswered(env: Env, owner: string, cardId: string) {
   const p = await env.DB.prepare("SELECT payload FROM imp_proposal WHERE card_id = ? AND owner = ? AND state = 'open'").bind(cardId, owner).first<{ payload: string }>();
   const card = await env.DB.prepare("SELECT id, win, question, answer FROM board_card WHERE id = ? AND owner = ?").bind(cardId, owner).first<{ id: string; win: string; question: string; answer: string }>();
   if (!card) return;
+  if (card.win === IMPORT_WIN && card.question === UNIT_Q) {
+    const u = (Object.keys(UNIT_CHOICE) as Unit[]).find(k => UNIT_CHOICE[k] === card.answer);
+    if (u) { await setUnit(env, owner, u, "me"); await regroup(env, owner); }
+    await env.DB.prepare("UPDATE board_card SET state = 'closed', done = ? WHERE id = ? AND owner = ?").bind(card.answer, cardId, owner).run();
+    return;
+  }
   if (p) { await applyProposal(env, owner, cardId, json(p.payload, { connectors: [], roles: [] }), card.answer); return; }
   const tok = await env.DB.prepare("SELECT pane FROM agent_token WHERE owner = ? AND win = ? ORDER BY created_at DESC LIMIT 1").bind(owner, card.win).first<{ pane: string }>();
   const w = await env.DB.prepare("SELECT key, device_id, state, handle, engine FROM imp_item WHERE owner = ? AND win IN (?, ?) AND kind = 'window' AND gone_at IS NULL ORDER BY seen_at DESC LIMIT 1").bind(owner, tok?.pane || card.win, card.win).first<{ key: string; device_id: string; state: string; handle: string | null; engine: string }>();
@@ -128,7 +144,16 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     for (let i = 0; i < goneKeys.length; i += 80) st.push(DB.prepare(`UPDATE imp_item SET gone_at = ?, state = 'gone' WHERE owner = ? AND device_id = ? AND key IN (${goneKeys.slice(i, i + 80).map(() => "?").join(",")})`).bind(t, owner, d.id, ...goneKeys.slice(i, i + 80)));
     st.push(DB.prepare("DELETE FROM imp_item WHERE owner = ? AND gone_at < ?").bind(owner, t - 7 * 86400_000));
     for (let i = 0; i < st.length; i += 90) await DB.batch(st.slice(i, i + 90));
+    const set = await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner).first<{ data: string }>();
+    const fresh = items.length && !json<{ unit?: Unit }>(set?.data, {}).unit && !(await DB.prepare("SELECT 1 FROM mnode WHERE owner = ? LIMIT 1").bind(owner).first());
+    const picked = fresh ? pickUnit(items, (b.roles || []).map(x => x.name)) : null;
+    if (picked) await setUnit(env(c), owner, picked, "auto");
     const r = await regroup(env(c), owner);
+    if (picked) {
+      const other: Unit = picked === "agent" ? "goal" : "agent", id = `${Math.floor(t / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
+      const body = picked === "agent" ? "쓰던 에이전트가 여럿이라 에이전트마다 채널로 묶었어요. 일은 그 채널의 대화로 들어가요." : "일마다 채널로 묶었어요.";
+      await DB.prepare("INSERT INTO board_card(id, owner, win, question, choices, recommend, body, at) VALUES (?,?,?,?,?,?,?,?)").bind(id, owner, IMPORT_WIN, UNIT_Q, JSON.stringify([UNIT_CHOICE[picked], UNIT_CHOICE[other]]), UNIT_CHOICE[picked], `${body} 설정 › 노드에서도 바꿀 수 있어요.`, t).run();
+    }
     let proposal: string | null = null;
     if ((b.connectors?.length || b.roles?.length)) proposal = await proposalFrom(env(c), owner, d.name, b.connectors || [], b.roles || []);
     const by = r.nodes.filter(n => !n.archived).reduce((a, n) => ({ ...a, [n.state]: (a[n.state] || 0) + 1 }), {} as Record<string, number>);
@@ -195,6 +220,16 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
       await DB.prepare("UPDATE mnode_item SET node = ?, how = 'pin' WHERE owner = ? AND node = ?").bind(b.to, me, b.node).run();
       await regroup(env(c), me);
       return c.json({ ok: true, node: b.to });
+    }
+    if (b.op === "reopen") {   // 보관함 다시 열기 — 사람이 정한 것이라 다시 묶어도 안 내려감(pinned_name)
+      const n = await DB.prepare("SELECT name FROM mnode WHERE owner = ? AND id = ?").bind(me, b.node || "").first<{ name: string }>();
+      if (!n) return c.json({ error: "없는 노드" }, 404);
+      const set = await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>();
+      if (!json<{ unit?: Unit }>(set?.data, {}).unit) return c.json({ error: "다시 열 수 없어요" }, 409);   // 고르기 전엔 보관함이 없음(예전 그대로)
+      if (!(await DB.prepare("SELECT 1 FROM mnode_item m JOIN imp_item i ON i.owner = m.owner AND i.key = m.item WHERE m.owner = ? AND m.node = ? AND i.gone_at IS NULL LIMIT 1").bind(me, b.node).first())) return c.json({ error: "다시 열 수 없어요" }, 409);
+      await DB.prepare("UPDATE mnode SET archived_at = NULL, pinned_name = COALESCE(pinned_name, ?), updated_at = ? WHERE owner = ? AND id = ?").bind(n.name, now(), me, b.node).run();
+      await regroup(env(c), me);
+      return c.json({ ok: true, node: b.node });
     }
     return c.json({ error: "op" }, 400);
   });

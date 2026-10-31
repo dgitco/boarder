@@ -31,7 +31,7 @@ import { mountHooks } from "./connectors/hooks";
 import * as sessions from "./connectors/sessions";
 import { catalog } from "./connectors/store";
 import { open as unseal, seal } from "./connectors/seal";
-import { mountImport, onCardAnswered } from "./importer/routes";
+import { mountImport, onCardAnswered, regroup, setUnit } from "./importer/routes";
 import * as ledger from "./ledger";
 import * as ownerWrite from "./owner-write";
 import * as ledgerWrite from "./ledger-write";
@@ -55,7 +55,7 @@ const boardCall = async (env: Env, ch: string, r: { method: string; path: string
 // 에이전트 도구(받은편지함 · 감시 줄 · 웹훅 깨우기)도 같은 스위치로 — 실행기가 bridge.mjs 와 같은 명령 · 같은 인자 검사(relay-tools.mjs)
 const boardTool = async (env: Env, ch: string, name: string, args: Record<string, unknown>, agent: string) => (hosted.exec && await hosted.exec.on(env.DB)) ? hosted.exec.tool(env, ch, name, args, agent) : bridge(env, ch).tool(name, args, agent);
 const chOf = (c: Context<{ Bindings: Env }>) => /(?:^|;\s*)bx-ch=test(?:;|$)/.test(c.req.header("cookie") || "") ? "test" : "owner";
-const snap = (env: Env) => env.SNAP.get(env.SNAP.idFromName("owner@wnam"), { locationHint: "wnam" });
+const snap = (env: Env) => env.SNAP.get(env.SNAP.idFromName(live.OWNER_SNAP), { locationHint: "apac" });
 const search = (env: Env) => env.SEARCH.get(env.SEARCH.idFromName("owner@wnam"), { locationHint: "wnam" });
 const pusher = (env: Env) => env.PUSH.get(env.PUSH.idFromName("owner"), { locationHint: "apac" }) as unknown as import("./push-do").PushApi;
 let pushKick = 0;   // 알람 처음 걸기(배포 뒤 · DO 비움 뒤): isolate 마다 1분에 한 번 — 릴레이 sync(10초마다)가 부름
@@ -716,12 +716,24 @@ app.get("/api/me/nodeset", async c => {
     const j = await r.json().catch(() => null) as Record<string, unknown> | null; if (!j) return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503);
     return c.json({ ...j, values: v }, 200, { "cache-control": "no-store" });
   }
-  return c.json({ values: await memberNodeVals(c.env, s.user.email.toLowerCase()), defaults: NODE_DEF, limits: NODE_LIM, archive: [] }, 200, { "cache-control": "no-store" });
+  const me = s.user.email.toLowerCase();
+  const [rawSet, arch] = await c.env.DB.batch([
+    c.env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
+    c.env.DB.prepare("SELECT n.id, n.name, n.why, n.archived_at, EXISTS(SELECT 1 FROM mnode_item m JOIN imp_item i ON i.owner = m.owner AND i.key = m.item WHERE m.owner = n.owner AND m.node = n.id AND i.gone_at IS NULL) open FROM mnode n WHERE n.owner = ? AND n.archived_at IS NOT NULL ORDER BY n.archived_at DESC LIMIT 300").bind(me),
+  ]);
+  const unit = (() => { try { return (JSON.parse((rawSet.results[0] as { data?: string } | undefined)?.data || "{}") as { unit?: string }).unit || null; } catch { return null; } })();
+  const archive = (arch.results as { id: string; name: string; why: string | null; archived_at: number; open: number }[]).map(n => ({ id: n.id, name: n.name, at: n.archived_at / 1000, msg: n.why || "", reopen: !!n.open && !!unit }));
+  return c.json({ values: await memberNodeVals(c.env, me), defaults: NODE_DEF, limits: NODE_LIM, archive, unit }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/nodeset", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  const b = await c.req.json<{ values?: unknown }>().catch(() => ({} as { values?: unknown }));
+  const b = await c.req.json<{ values?: unknown; unit?: string }>().catch(() => ({} as { values?: unknown; unit?: string }));
+  if (!isOwner(c.env, s.user.email) && (b.unit === "goal" || b.unit === "agent")) {   // 채널 묶는 단위 — 회원만(주인은 노드 = 채널 그대로)
+    const me = s.user.email.toLowerCase();
+    await setUnit(c.env as never, me, b.unit, "me"); await regroup(c.env as never, me);
+    return c.json({ ok: true, unit: b.unit });
+  }
   if (!b.values || typeof b.values !== "object") return c.json({ ok: false, error: "값" }, 400);
   if (isOwner(c.env, s.user.email)) {
     if (chOf(c) === "owner" && await ledger.f7On(c.env.DB, "write_state")) {   // D1 이 정본 — 못 쓰면 실행기 말고 503(실행기는 파일에 써서 D1 과 갈라짐)
@@ -731,7 +743,9 @@ app.post("/api/me/nodeset", async c => {
     return toBoard(c, "POST", "/api/nodeset", { values: b.values });
   }
   const me = s.user.email.toLowerCase(), values = nodeVals(b.values, await memberNodeVals(c.env, me));
-  await c.env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at").bind(me, JSON.stringify(values), Date.now()).run();
+  const was = await c.env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>();   // 숫자 칸만 바꿈 — 묶는 단위(unit)는 그대로
+  let keep: Record<string, unknown> = {}; try { keep = JSON.parse(was?.data || "{}"); } catch {}
+  await c.env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at").bind(me, JSON.stringify({ ...keep, ...values }), Date.now()).run();
   return c.json({ ok: true, values });
 });
 app.post("/api/me/nodereopen", async c => {
@@ -982,8 +996,9 @@ app.post("/api/admin/f7-flag", async c => {
 });
 app.post("/api/admin/live/drop", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
-  const b = await c.req.json<{ who?: string; abort?: boolean }>().catch(() => ({} as { who?: string; abort?: boolean }));
+  const b = await c.req.json<{ who?: string; abort?: boolean; old?: boolean }>().catch(() => ({} as { who?: string; abort?: boolean; old?: boolean }));
   if (!/^[^@\s]{1,80}@[^@\s]{1,120}$/.test(b.who || "")) return c.json({ error: "who = 메일" }, 400);
+  if (b.old) return c.json({ ok: true, closed: await c.env.SNAP.get(c.env.SNAP.idFromName(isOwner(c.env, b.who!) ? "owner@wnam" : `live:${b.who!.trim().toLowerCase()}@wnam`), { locationHint: "wnam" }).drop(!!b.abort) });
   return c.json({ ok: true, closed: await live.liveOf(c.env, b.who!).drop(!!b.abort) });
 });
 app.post("/api/admin/owner-engine/device", async c => {
