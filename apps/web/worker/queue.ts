@@ -29,6 +29,9 @@ export async function ridBatch(db: D1Database, rid: string, st: D1PreparedStatem
   if (wait && Math.random() < 0.02) wait(db.prepare("DELETE FROM f7_rid WHERE at < ?").bind(Date.now() - 2 * 86_400_000).run().catch(() => {}));
   return true;
 }
+const sentKey = (rid: string) => rid + ".sent";
+export const sentSeen = (db: D1Database, rid: string) => ridSeen(db, sentKey(rid));
+export const markSent = (db: D1Database, rid: string) => db.prepare("INSERT OR IGNORE INTO f7_rid(rid, at) VALUES (?, ?)").bind(sentKey(rid), Date.now()).run();
 export const retrySafe = (c: Context) => c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" });
 
 // 답에 표(x-rid): new = 이번에 처리 · replay = 남긴 답 · busy = 하는 중 · nostore = rid 칸 못 부름(안 씀). 표가 없는 5xx 는 Worker 밖(입구 장애) — 화면이 「확인 필요」로 다시
