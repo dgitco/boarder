@@ -91,8 +91,9 @@ export const maskText = (s: string) => PII.reduce((v, [re, f]) => v.replace(re, 
 
 function deep(v: unknown, mask: boolean): unknown {
   if (typeof v === "string") { const m = mask ? maskText(v) : v; return m.length > MAX_STR ? `${m.slice(0, MAX_STR)}…(${m.length - MAX_STR}자 줄임)` : m; }
+  if (typeof v === "number" && mask) { const s = String(v), m = maskText(s); return m === s ? v : m; }
   if (Array.isArray(v)) return v.map(x => deep(x, mask));
-  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [k, deep(x, mask)]));
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [mask ? maskText(k) : k, deep(x, mask)]));
   return v;
 }
 export function shape(name: string, out: unknown, mask: boolean): unknown {

@@ -1,7 +1,7 @@
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { group, pickUnit, type Item, type Unit } from "./group";
-import { engineOf } from "../engine";
+import { engineOf, widPane } from "../engine";
 import { proposalFrom, applyProposal, imported, PROPOSAL_CHOICES, IMPORT_WIN } from "./proposal";
 
 type Env = { DB: D1Database; PUBLIC_URL: string; [k: string]: unknown };
@@ -323,7 +323,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     if (cmd.verb === "move" && ni?.key) await DB.prepare(
       "INSERT INTO imp_item(owner, key, device_id, kind, engine, title, cwd, session, win, state, state_at, seen_at) VALUES (?,?,?, 'window', 'tmux', ?, ?, ?, ?, 'working', ?, ?) ON CONFLICT(owner, key) DO NOTHING")
       .bind(d.owner, String(ni.key).slice(0, 200), d.id, String(ni.title || a.title || "").slice(0, 140), String(ni.cwd || "").slice(0, 300), String(ni.session || "").slice(0, 200), String(ni.win || "").slice(0, 120), t, t).run();
-    if (cmd.verb === "move" && ni?.key && /^ew_[a-z0-9]{6,30}$/.test(String(ni.id || ""))) {
+    if (cmd.verb === "move" && ni?.key && /^ew_[a-z0-9]{6,30}$/.test(String(ni.id || "")) && !widPane(String(ni.id))) {
       try {
         await DB.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, state_at, handle, created_at) VALUES (?,?,?, 'role', ?, 'busy', ?, ?, ?) ON CONFLICT(id) DO NOTHING")
           .bind(String(ni.id), d.owner, d.id, String(ni.title || a.title || "").slice(0, 80), t, JSON.stringify(ni.handle || { engine: "tmux", id: ni.id, session_id: String(ni.session || "").split(":").pop(), cwd: ni.cwd }), t).run();

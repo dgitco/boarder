@@ -1268,12 +1268,12 @@ app.get("/art/_kit.js", async c => {
   return o && o.status === 200 ? new Response(o.body as BodyInit, { status: 200, headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } }) : c.text("not found", 404);
 });
 
-async function filesFirst(c: Context<{ Bindings: Env }>, path: string, headers: Record<string, string>): Promise<files.Out | null> {
+async function filesFirst(c: Context<{ Bindings: Env }>, path: string, headers: Record<string, string>, anon = false): Promise<files.Out | null> {
   const p = path.split("?")[0];
   if (chOf(c) !== "owner" || !files.FILE_PATH.test(p) || (files.isJsonPath(p) && cookieOf(c, "bx_w") && !(await ledger.f7On(c.env.DB, "write_art")))) return null;   // write_art 면 D1 이 정본이라 방금 쓴 사람도 D1
   if (!(await ledger.f7On(c.env.DB, "read_files"))) return null;
   const t = Date.now();
-  try { const o = await files.answer(c.env, path, headers); return o ? { ...o, src: "r2" } : null; }
+  try { const o = await files.answer(c.env, path, headers, anon); return o ? { ...o, src: "r2" } : null; }
   catch (e) { capture(c.env, c.executionCtx, "$exception", "f7", { $exception_list: [{ type: "F7FilesError", value: String(e).slice(0, 300), mechanism: { handled: true } }], path: normPath(p) }); return null; }
   finally { seg(c.req.raw, "r2", Date.now() - t); }
 }
@@ -1441,7 +1441,8 @@ app.all("*", async c => {
       }
     }
     try {
-      const fr = await filesFirst(c, url.pathname, {});
+      if (url.pathname.startsWith("/art/")) return new Response(files.SUPPORT_JS, { headers: { "content-type": "text/javascript", "x-content-type-options": "nosniff", "content-security-policy": "sandbox", "cache-control": "private, max-age=86400" } });
+      const fr = await filesFirst(c, url.pathname, {}, true);
       const t1 = Date.now(), r = fr ?? await boardCall(c.env, "owner", { method: "GET", path: url.pathname, headers: { "accept-encoding": "gzip" } }); if (!fr) { bridgeSeg(c.req.raw, Date.now() - t1, r.headers); filesShadow(c, url.pathname, {}, r, "anon"); }
       const h = new Headers({ "x-content-type-options": "nosniff", "content-security-policy": "sandbox", "cache-control": r.status === 200 ? "private, max-age=86400" : "no-store" });
       for (const k of ["content-type", "content-encoding", "etag"]) if (r.headers[k]) h.set(k, r.headers[k]);
