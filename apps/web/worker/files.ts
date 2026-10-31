@@ -43,6 +43,12 @@ const suffix = (name: string) => { const b = name.slice(name.lastIndexOf("/") + 
 // Python urllib.parse.quote(name)(safe='/') 와 같은 꼴
 const pyQuote = (s: string) => encodeURIComponent(s).replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase()).replace(/%2F/g, "/");
 const unq = (s: string) => { try { return decodeURIComponent(s); } catch { return null; } };
+export const NAME_MAX = 600;
+function nameOf(s: string) {
+  const v = unq(s); if (v !== null || s.length < NAME_MAX) return v;
+  for (let i = 1; i <= 12; i++) { const w = unq(s.slice(0, -i)); if (w) return w; }
+  return null;
+}
 
 async function file(env: Env, ix: Index, key: string, html: boolean): Promise<Out | null> {
   const o = await env.RESULTS.get(key); if (!o) return null;
@@ -86,7 +92,7 @@ async function attach(env: Env, id: string, full: boolean, range: string | undef
   let head = await env.RESULTS.head(`files/${id}${full ? ".full" : ""}`), key = `files/${id}${full ? ".full" : ""}`;
   if (!head && full && id.startsWith("f_")) { key = `files/${id}`; head = await env.RESULTS.head(key); }   // 대화 DB 첨부는 미리보기 = 원본
   if (!head) return null;
-  const mime = head.httpMetadata?.contentType || "application/octet-stream", name = unq(head.customMetadata?.name || "") || id, n = head.size;
+  const mime = head.httpMetadata?.contentType || "application/octet-stream", name = nameOf(head.customMetadata?.name || "") || id, n = head.size;
   const img = mime.startsWith("image/") && mime !== "image/svg+xml";
   if (mime.startsWith("video/")) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(range || ""), r = m && (m[1] || m[2]) ? m : null;

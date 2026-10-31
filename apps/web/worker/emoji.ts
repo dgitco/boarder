@@ -33,12 +33,12 @@ export async function add(env: Env, me: string, rawName: string, mime: string, b
   const ext = MIME[mime]; if (!ext) return [400, { ok: false, error: "PNG · GIF · JPG · WEBP 그림만 돼요" }];
   if (!body.byteLength || body.byteLength > MAX) return [400, { ok: false, error: "그림이 너무 커요" }];
   if (await env.DB.prepare("SELECT 1 FROM emoji WHERE name = ?").bind(name).first()) return [409, { ok: false, error: "같은 이름이 있어요" }];
-  const nh = hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(name))).slice(0, 16);
+  const nh = hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(name + "\n" + crypto.randomUUID()))).slice(0, 16);
   const key = `emoji/${hex(await crypto.subtle.digest("SHA-256", body))}-${nh}.${ext}`;
   await env.RESULTS.put(key, body, { httpMetadata: { contentType: mime } });
-  // 동시에 같은 이름 둘 — 기본 키 충돌이면 나중 것이 「같은 이름」(그림은 내용 해시라 남아도 무해)
+  // 동시에 같은 이름 둘 — 기본 키 충돌이면 나중 것이 「같은 이름」(그 그림 키는 이 요청만 씀 — 지움)
   const r = await env.DB.prepare("INSERT INTO emoji(name, key, mime, by_email, at) VALUES (?,?,?,?,?) ON CONFLICT(name) DO NOTHING").bind(name, key, mime, me, Date.now()).run();
-  if (!r.meta.changes) return [409, { ok: false, error: "같은 이름이 있어요" }];
+  if (!r.meta.changes) { await env.RESULTS.delete(key).catch(() => {}); return [409, { ok: false, error: "같은 이름이 있어요" }]; }
   return [200, { ok: true, name, url: url({ name, key, mime, by_email: me, at: 0 }) }];
 }
 
@@ -48,7 +48,7 @@ export async function remove(env: Env, me: string, admin: boolean, rawName: stri
   if (!r) return [404, { ok: false, error: "없는 이모지예요" }];
   if (!admin && r.by_email !== me) return [403, { ok: false, error: "올린 사람 · 관리자만 지울 수 있어요" }];
   await env.DB.prepare("DELETE FROM emoji WHERE name = ?").bind(name).run();
-  // 그림 키는 이름마다 따로(add) — 같은 이름을 바로 다시 올린 줄이 이 키를 쓰면 그림은 둠
+  // 그림 키는 올리기마다 따로(add) — 예전 키(이름 해시 꼬리)를 다시 쓴 줄이 있으면 그림은 둠
   if (!(await env.DB.prepare("SELECT 1 FROM emoji WHERE key = ?").bind(r.key).first())) await env.RESULTS.delete(r.key).catch(() => {});
   return [200, { ok: true }];
 }
@@ -63,6 +63,6 @@ export async function bot(env: Env, me: string, b: string, on: boolean): Promise
 export async function image(env: Env, file: string) {
   if (!/^[0-9a-f]{64}-[0-9a-f]{16}\.(png|gif|jpg|webp)$/.test(file)) return null;
   const o = await env.RESULTS.get("emoji/" + file); if (!o) return null;
-  // 키 = 내용 · 이름 해시라 영영 같음
+  // 키 = 내용 해시 + 올리기마다 새 꼬리라 영영 같음
   return new Response(o.body, { headers: { "content-type": o.httpMetadata?.contentType || "application/octet-stream", "cache-control": "private, max-age=31536000, immutable", "x-content-type-options": "nosniff" } });
 }

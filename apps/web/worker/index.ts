@@ -338,7 +338,7 @@ app.put("/api/relay/file", async c => {
   const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].map(x => x.toString(16).padStart(2, "0")).join("");
   if (c.req.header("x-sha256") && c.req.header("x-sha256") !== sha) return c.json({ error: "sha 다름" }, 400);
   await c.env.RESULTS.put(key, b, { httpMetadata: { contentType: c.req.header("content-type") || "application/octet-stream" },
-    customMetadata: { sha256: sha, name: (c.req.header("x-file-name") || "").slice(0, 600), mtime: (c.req.header("x-mtime") || "").slice(0, 30) } });
+    customMetadata: { sha256: sha, name: (c.req.header("x-file-name") || "").slice(0, files.NAME_MAX), mtime: (c.req.header("x-mtime") || "").slice(0, 30) } });
   return c.json({ ok: true, size: b.length, sha256: sha });
 });
 app.delete("/api/relay/file", async c => {
