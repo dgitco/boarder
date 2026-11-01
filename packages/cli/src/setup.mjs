@@ -203,7 +203,13 @@ async function login(srv, tools, { browser, deviceAuth }) {
     if (got.error === 'denied') throw new Error('The sign-in was declined in the browser. Run `boarder setup --yes` again if that was a mistake.');
     if (got.error) throw new Error('The request expired before it was approved. Run `boarder setup --yes` again.');
     if (got.state !== state) throw new Error('The browser answered for a different request — run `boarder setup --yes` again.');
-    const j = await tokenOf({ code: got.code, code_verifier: verifier });
+    let j;
+    for (let wait = 1000; ; wait = Math.min(wait * 2, 8000)) {
+      const p = await fetch(`${srv}/api/device/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device_code: c.device_code, code: got.code, code_verifier: verifier }), signal: AbortSignal.timeout(20000) }).catch(() => null);
+      if (p && p.status < 500 && p.status !== 429) { j = await p.json().catch(() => ({})); break; }
+      if (Date.now() + wait >= until) { j = { error: p ? `server answered ${p.status}` : 'could not reach the server' }; break; }
+      await sleep(wait);
+    }
     if (j.state === 'approved') return save(j);
     throw new Error(`Sign-in failed: ${j.error || j.state || 'unknown'}`);
   }

@@ -78,7 +78,6 @@ export function pending(st: State, now: number, cards: Map<string, Card>, urg: M
       const r = cards.get(k.slice(5))!;
       const fp = `${py(r.kind)}|${py(r.ref)}|${py(r.label || r.title)}`;
       if (!KINDS.includes(r.kind) || r.state !== "open" || (r.posted_at || 0) < now - MAX_AGE) continue;
-      // t0 = 0 은 settle 이 다시 보내라고 둔 줄 — 한 통(아래)은 고를 때 fps 를 미리 적으니, 그것을 「같은 내용 보냄」으로 보면 일시 실패한 한 통이 영영 안 감(r9)
       if (chainSent(r.ts) || (t0 !== 0 && fps.has(fp))) { notified.add(k); continue; }
       out.push([k, cardMsg(r), [k], fp]);
     } else {

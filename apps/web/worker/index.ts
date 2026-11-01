@@ -142,7 +142,7 @@ app.use("*", async (c, next) => {
     console.log(JSON.stringify({ ev: "api_write", path: normPath(url.pathname), method: c.req.method, status: c.res.status, ms: total, ...rec.seg }));
   if (url.pathname === "/api/relay/write" && c.res.status < 400) { if (Math.random() < 0.1) capture(c.env, c.executionCtx, "boarder_request", "relay", { path: "/api/relay/write", method: c.req.method, status: c.res.status, total_ms: total, sample: 10, ...Object.fromEntries(Object.entries(rec.seg).map(([k, v]) => [`${k}_ms`, v])), ...meterProps(meter), colo: (c.req.raw as any).cf?.colo }); return; }
   if (url.pathname.startsWith("/api/relay/") || url.pathname.startsWith("/ph/") || url.pathname === "/api/health") return;
-  const rid = (c.req.header("x-request-id") || "").slice(0, 40);   // 화면이 붙인 요청 id(R5) — 보드 errors.jsonl · 화면 boarder_error 와 같은 값
+  const rid = (c.req.header("x-request-id") || "").slice(0, 40);
   if (c.res.status >= 400 && url.pathname.startsWith("/api/")) console.log(JSON.stringify({ ev: "api_error", rid, path: normPath(url.pathname), method: c.req.method, status: c.res.status, ms: total, ...rec.seg }));   // Workers Logs(observability)
   if (!rec.who && c.res.status < 500) return;
   const np = normPath(url.pathname), sample = sampleOf(np, c.req.method, c.res.status);
@@ -653,7 +653,14 @@ app.post("/api/device/approve", async c => {
     if (r?.callback) return c.json({ ok: true, redirect: `${r.callback}?state=${encodeURIComponent(r.cb_state || "")}&${grant ? `code=${grant}` : "error=denied"}` });
     return c.json({ ok: true });
   }
-  const r = await c.env.DB.prepare("SELECT state, expires_at FROM device_code WHERE user_code = ?").bind(uc).first<{ state: string; expires_at: number }>();
+  const r = await c.env.DB.prepare("SELECT state, expires_at, owner, callback, cb_state FROM device_code WHERE user_code = ?").bind(uc).first<{ state: string; expires_at: number; owner: string | null; callback: string | null; cb_state: string | null }>();
+  if (r && r.owner === s.user.email.toLowerCase() && r.expires_at > now && r.state === (b.allow ? "approved" : "denied")) {
+    if (!r.callback) return c.json({ ok: true });
+    if (!b.allow) return c.json({ ok: true, redirect: `${r.callback}?state=${encodeURIComponent(r.cb_state || "")}&error=denied` });
+    const g = rand(32);
+    const u2 = await c.env.DB.prepare("UPDATE device_code SET grant_hash = ? WHERE user_code = ? AND state = 'approved' AND owner = ?").bind(await sha(g), uc, r.owner).run();
+    if (u2.meta.changes) return c.json({ ok: true, redirect: `${r.callback}?state=${encodeURIComponent(r.cb_state || "")}&code=${g}` });
+  }
   return c.json({ error: !r ? "unknown" : r.state !== "pending" ? "done" : "expired" }, 400);
 });
 app.get("/api/device/me", async c => {
@@ -761,10 +768,10 @@ app.post("/api/me/nodeset", async c => {
     }
     return toBoard(c, "POST", "/api/nodeset", { values: b.values });
   }
-  const me = s.user.email.toLowerCase(), values = nodeVals(b.values, await memberNodeVals(c.env, me));
-  const was = await c.env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>();   // 숫자 칸만 바꿈 — 묶는 단위(unit)는 그대로
-  let keep: Record<string, unknown> = {}; try { keep = JSON.parse(was?.data || "{}"); } catch {}
-  await c.env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at").bind(me, JSON.stringify({ ...keep, ...values }), Date.now()).run();
+  const me = s.user.email.toLowerCase(), patch = nodeVals(b.values, {});
+  const row = await c.env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner) DO UPDATE SET data = json_patch(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, excluded.data), updated_at = excluded.updated_at RETURNING data")
+    .bind(me, JSON.stringify(patch), Date.now()).first<{ data: string }>();
+  let values = nodeVals(patch); try { values = nodeVals(JSON.parse(row?.data || "{}")); } catch {}
   return c.json({ ok: true, values });
 });
 app.post("/api/me/nodereopen", async c => {

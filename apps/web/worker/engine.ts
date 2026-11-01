@@ -59,6 +59,7 @@ export const sysLine = (db: D1Database, owner: string, text: string, wid?: strin
 
 // deliver 와 reopen 이 서로 부르니 답 꼴을 적어 둠(추론이 돌아 TS7023)
 type Delivered = { sent?: boolean; reopened?: boolean; queued?: boolean };
+const lostAnswer = (e: unknown) => (e as Error)?.message === "엔진 답 없음";   // cmd 가 보낸 뒤 답을 못 받음 — 기기는 했을 수 있음
 export class Engine extends DurableObject<EngEnv> {
   wait = new Map<string, Wait>();
   constructor(ctx: DurableObjectState, env: EngEnv) {
@@ -179,14 +180,13 @@ export class Engine extends DurableObject<EngEnv> {
   async deliver(id: string, text: string, ordered = true): Promise<Delivered> {
     const w = await this.row(id); if (!w) throw new EngineError(4, "없는 창");
     if (w.state === "closed" || w.state === "failed") throw new EngineError(4, "닫힌 창이에요");
-    // 그 창에 밀린 글이 있으면 뒤에 줄 섬(점검 r11: 다시 붙은 직후 · 바쁨 뒤에 새 글이 앞 글을 앞지름). ordered=false 는 flush 안 다시 열기 길(그 글이 이미 줄 맨 앞)
     if (ordered && ((await this.ctx.storage.get<Pend[]>("pending")) || []).some(p => p.id === id)) { const r = await this.pend({ id, text, at: Date.now() }); await this.flush().catch(() => null); return r; }
     if (w.state === "parked" || w.state === "gone") return this.reopen(id, text);
     if (w.state === "opening" || w.state === "starting" || !this.online()) return this.pend({ id, text, at: Date.now() });
     try { await this.cmd("send", { id, text }); return { sent: true }; }
     catch (e) {
       const code = (e as EngineError).code;
-      if (code === 2 || !this.online()) return this.pend({ id, text, at: Date.now() });
+      if (code === 2 || (!this.online() && !lostAnswer(e))) return this.pend({ id, text, at: Date.now() });
       if (code === 4) { await this.env.DB.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ? AND state NOT IN ('closed','failed','parked')").bind(Date.now(), id).run(); return this.reopen(id, text); }
       // 글 넣기가 없는 엔진(caps 에 send 없음, 16쪽 ②): 닫고 같은 손잡이로 그 글과 함께 새로 돌림
       if (code === 5) { await this.cmd("close", { id }).catch(() => null); await this.env.DB.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ?").bind(Date.now(), id).run(); return this.reopen(id, text); }
@@ -251,6 +251,7 @@ export class Engine extends DurableObject<EngEnv> {
       if (w.state !== "idle") { wait(p); continue; }
       try { await this.cmd("send", { id: p.id, text: p.text }); }
       catch (e) {
+        if (lostAnswer(e)) { await sysLine(db, w.owner, `「${w.name}」 창에 글이 들어갔는지 확인하지 못했어요: ${p.text.replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null); continue; }
         if ((e as EngineError).code !== 4) { wait(p); continue; }
         await db.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ? AND state NOT IN ('closed','failed','parked')").bind(Date.now(), p.id).run();
         try { await this.reopen(p.id, p.text); } catch { wait(p); }

@@ -37,9 +37,8 @@ const now = () => Date.now();
 const UNIT_Q = "노드를 어떻게 묶을까요?";
 const UNIT_CHOICE: Record<Unit, string> = { agent: "에이전트마다 채널 · 일은 스레드", goal: "일마다 채널" };
 export async function setUnit(env: Env, owner: string, unit: Unit, by: "auto" | "me") {
-  const r = await env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner).first<{ data: string }>();
-  const data = JSON.stringify({ ...json<Record<string, unknown>>(r?.data, {}), unit, unit_by: by });
-  await env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at").bind(owner, data, now()).run();
+  await env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?, json_object('unit', ?2, 'unit_by', ?3), ?4) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.unit', ?2, '$.unit_by', ?3), updated_at = excluded.updated_at")
+    .bind(owner, unit, by, now()).run();
   // 사람이 정했으면 남은 질문을 닫음 — 나중에 옛 질문에 답해 뒤집히지 않게
   if (by === "me") await env.DB.prepare("UPDATE board_card SET state = 'closed', done = ? WHERE owner = ? AND win = ? AND question = ? AND state = 'open'").bind(UNIT_CHOICE[unit], owner, IMPORT_WIN, UNIT_Q).run();
 }

@@ -1,3 +1,5 @@
+// node --test packages/cli/src/reliability.test.mjs
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import http from 'node:http';
@@ -77,4 +79,9 @@ test('wait: 잠깐 끊김(503)은 다시 시도해 답을 받음', async () => {
     assert.equal(r.code, 0, r.err);
     assert.equal(JSON.parse(r.out).state, 'answered');
   });
+});
+
+test('session save --file takes a path', () => {
+  const r = spawnSync(process.execPath, [new URL('../bin/boarder.mjs', import.meta.url).pathname, 'session', 'save', '--file', '/nonexistent/transcript.jsonl'], { encoding: 'utf8', env: { ...process.env, BOARDER_TOKEN: 'bxa_test', BOARDER_URL: 'http://127.0.0.1:9' } });
+  assert.doesNotMatch(r.stderr + r.stdout, /must be of type string/);
 });
