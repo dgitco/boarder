@@ -188,8 +188,7 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     const w = await who(c); if (!w) return c.redirect("/", 302);
     const p = await c.env.DB.prepare("DELETE FROM connection_pending WHERE state = ? RETURNING *").bind(state).first<{ owner: string; service: string; label: string; url: string; auth: string; back: string; bind: string; expires_at: number }>();
     if (!p || p.expires_at < Date.now()) return back("#settings/connectors", "error", "연결 시간이 지났어요 — 다시 눌러요");
-    const oc = cookieOf(c, `bx_oc_${state.slice(0, 12).replace(/[^A-Za-z0-9]/g, "x")}`);
-    if (p.owner !== w.owner || !oc || (await sha(oc)) !== p.bind) return back(p.back, "error", "이 브라우저에서 시작한 연결이 아니에요");
+    if (p.owner !== w.owner) return back(p.back, "error", "이 연결을 시작한 사람이 아니에요");
     if (q.get("error")) return back(p.back, "error", `${p.service}: ${q.get("error_description") || q.get("error")}`.slice(0, 200));
     const g = await openSecret<{ google?: boolean; spec?: ApiSpec; redirect_uri?: string }>(c.env, p.owner, PEND(state), p.auth);
     if (g.google && g.spec) {   // 구글 로그인 API: 코드 → 토큰(그 API 의 구글 앱), 계정은 그 API 에 물음

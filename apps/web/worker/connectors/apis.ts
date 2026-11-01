@@ -586,6 +586,17 @@ const SLACK_TOOLS: ApiTool[] = [
       return slackResult(res, () => ({ ok: true }));
     },
   },
+  {
+    name: "delete_message",
+    title: "Delete a Slack message you sent",
+    description: "Delete a message the user sent, by the channel and the message ts (works for DMs too). Slack only lets the user delete their own messages, and a deleted message cannot be restored.",
+    inputSchema: { type: "object", properties: { channel: channelArg, ts: { type: "string", description: "The message's ts" } }, required: ["channel", "ts"] },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    async run(call, a) {
+      const res = await call("chat.delete", { method: "POST", body: { channel: a.channel, ts: a.ts } });
+      return slackResult(res, (j) => ({ ok: true, channel: j.channel, ts: j.ts }));
+    },
+  },
 ];
 
 export const SLACK_APP = {
