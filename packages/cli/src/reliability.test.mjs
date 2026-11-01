@@ -81,6 +81,31 @@ test('wait: 잠깐 끊김(503)은 다시 시도해 답을 받음', async () => {
   });
 });
 
+test('wait: 창 토큰 받기가 영구 실패(404)면 시간 한도까지 되풀이하지 않고 바로 실패', async () => {
+  await withServer((req, res) => {
+    if (req.url === '/api/device/window') return json(res, 404, { error: 'not found' });
+    json(res, 200, { state: 'answered', answer: 'A' });
+  }, async ({ cli, hits }) => {
+    const r = await cli(['wait', 'c_1', '--timeout', '120'], 25000);
+    assert.notEqual(r.sig, 'SIGKILL', `wait kept retrying a 404 window token (${hits.filter(h => h.url === '/api/device/window').length} tries in ${r.ms}ms)`);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /404/);
+    assert.equal(hits.filter(h => h.url === '/api/device/window').length, 1);
+  });
+});
+
+test('wait: 창 토큰 받기가 잠깐 실패(503)면 다시 시도해 답을 받음', async () => {
+  let n = 0;
+  await withServer((req, res) => {
+    if (req.url === '/api/device/window') return n++ === 0 ? json(res, 503, { error: 'busy' }) : json(res, 200, { token: 'w' });
+    json(res, 200, { state: 'answered', answer: 'A' });
+  }, async ({ cli }) => {
+    const r = await cli(['wait', 'c_1', '--timeout', '120'], 25000);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(JSON.parse(r.out).state, 'answered');
+  });
+});
+
 test('session save --file takes a path', () => {
   const r = spawnSync(process.execPath, [new URL('../bin/boarder.mjs', import.meta.url).pathname, 'session', 'save', '--file', '/nonexistent/transcript.jsonl'], { encoding: 'utf8', env: { ...process.env, BOARDER_TOKEN: 'bxa_test', BOARDER_URL: 'http://127.0.0.1:9' } });
   assert.doesNotMatch(r.stderr + r.stdout, /must be of type string/);

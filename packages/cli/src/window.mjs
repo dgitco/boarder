@@ -49,7 +49,7 @@ export async function windowToken({ fresh = false, timeoutMs = 20000 } = {}) {
   if (saved?.token) return { token: saved.token, ...w };
   const r = await fetch(`${dev.server}/api/device/window`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${dev.token}` }, body: JSON.stringify({ key: w.key, name: w.name }), signal: AbortSignal.timeout(timeoutMs) });
   if (r.status === 401) { const e = new Error('This device was revoked or signed out — run `boarder setup --yes` again.'); e.code = 'REVOKED'; throw e; }
-  if (!r.ok) throw new Error(`Boarder server answered ${r.status}`);
+  if (!r.ok) throw Object.assign(new Error(`Boarder server answered ${r.status}`), { status: r.status });
   const { token } = await r.json();
   saveWindow(w.key, { token, name: w.name, at: Date.now() });
   return { token, ...w };

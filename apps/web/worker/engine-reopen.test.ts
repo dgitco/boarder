@@ -66,7 +66,8 @@ function setup() {
     setWebSocketAutoResponse() {},
     getWebSockets: () => [ws],
     waitUntil: (p: Promise<unknown>) => { waits.push(Promise.resolve(p).catch(() => {})); },
-    storage: { get: async (k: string) => store.get(k), put: async (k: string, v: unknown) => { store.set(k, v); }, delete: async (k: string) => store.delete(k), setAlarm: async () => {}, deleteAlarm: async () => {} },
+    storage: { get: async (k: string) => structuredClone(store.get(k)), put: async (k: string, v: unknown) => { store.set(k, structuredClone(v)); },
+    delete: async (k: string) => store.delete(k), setAlarm: async () => {}, deleteAlarm: async () => {} },
   };
   store.set("who", { device: DEV, owner: MEMBER, harness: false });
   eng = new (Engine as any)(ctx, { DB: D1, PUBLIC_URL: "https://example.test", ALLOW_EMAILS: "owner@example.test", SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) } });
@@ -112,4 +113,22 @@ test("같은 소켓에서 다시 열기 답만 잃음(60초 넘김) — 다음 �
   assert.ok(dev.got.some(g => g.verb === "send" && g.text === "[Boarder chat] 두 번째 글"), "두 번째 글이 그 창에 들어가야 함");
   assert.equal(dev.got.filter(g => g.text === "[Boarder chat] 첫 글").length, 1, "첫 글은 다시 열기의 첫 메시지로 한 번만");
   assert.notEqual(stateOf(), "parked");
+});
+
+test("flush 다시 열기가 「이미 떠 있음」 · 바쁨이면 — 그 창 밀린 글 순서 그대로", async () => {
+  const { db, dev, eng } = setup();
+  dev.open.add(WID);   // 앞선 다시 열기는 기기에 창을 열었고 그 답만 잃어 줄은 parked 로 되돌아감
+  const realCmd = (eng as any).cmd.bind(eng);
+  // 창은 일하는 중: 상태 = busy, 글 넣기 = 바쁨(code 2)
+  (eng as any).cmd = (verb: string, args: any, ms?: number) => verb === "state" ? Promise.resolve({ id: args.id, state: "busy" })
+    : verb === "send" ? Promise.reject(Object.assign(new Error("busy"), { code: 2 })) : realCmd(verb, args, ms);
+  await eng.ctx.storage.put("pending", [{ id: WID, text: "글 1", at: Date.now() - 2000, k: "k1" }, { id: WID, text: "글 2", at: Date.now() - 1000, k: "k2" }]);
+  await eng.flush();
+  assert.deepEqual(((await eng.ctx.storage.get("pending")) as { text: string }[]).map(p => p.text), ["글 1", "글 2"], "밀린 글 순서가 뒤집히면 안 됨");
+  // 창이 쉬게 되면 그 순서대로 들어감
+  (eng as any).cmd = realCmd;
+  db.prepare("UPDATE engine_window SET state = 'idle' WHERE id = ?").run(WID);
+  await eng.flush();
+  assert.deepEqual(dev.got.filter(g => g.verb === "send" && g.id === WID).map(g => g.text), ["글 1", "글 2"]);
+  assert.deepEqual((await eng.ctx.storage.get("pending")) as unknown[], []);
 });
