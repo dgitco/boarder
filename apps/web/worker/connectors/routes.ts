@@ -86,7 +86,7 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     const m = await me(c); if (m.err) return m.err;
     return c.json({
       services: Object.entries(PRESETS).map(([service, url]) => ({ service, title: TITLES[service] || service, url, needs_app: PREREGISTERED.has(service) && !hostedApp(c.env as unknown as Record<string, unknown>, service) })),
-      apis: Object.entries(API_PRESETS).map(([service, p]) => { const x = m.rd(service); return { service, title: p.title, url: p.spec.baseUrl, keys: keyNames(p.spec.auth), ready: x.ready, soon: !!x.soon, oauth: !!x.oauth, note: x.note || "", ...(p.plain ? { plain: p.plain } : {}), ...(p.hints ? { hints: p.hints } : {}), ...(x.via ? { via: x.via } : {}) }; }),
+      apis: Object.entries(API_PRESETS).map(([service, p]) => { const x = m.rd(service); return { service, title: p.title, url: p.spec.baseUrl, keys: keyNames(p.spec.auth), ready: x.ready, soon: !!x.soon, oauth: !!x.oauth, note: x.note || "", ...(p.plain ? { plain: p.plain } : {}), ...(p.hints ? { hints: p.hints } : {}), ...(p.app ? { app: p.app } : {}), ...(x.via ? { via: x.via } : {}) }; }),
     });
   });
 

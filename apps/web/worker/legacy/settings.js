@@ -195,6 +195,7 @@
       const s = cat.apis.find(x => x.service === svc), label = add.querySelector('[data-label]')?.value.trim() || '';
       add.innerHTML = `<div class="bxs-card"><div class="bxs-row between"><h2>${esc(s.title)} 연결</h2><button type="button" class="bxs-icon" data-close aria-label="닫기">${IC.x}</button></div>`
         + (s.note ? `<p class="bxs-mut">${esc(s.note)}</p>` : '')
+        + (s.app ? `<p class="bxs-mut">Slack 앱에 설정된 권한(사용자): ${esc(s.app.userScopes.join(' · '))}</p>` : '')
         + keyFields(s, 'ak', i => i === 0 && pre ? pre : '')
         + `<label class="bxs-f"><span>라벨(선택)</span><input class="bxs-in" data-al value="${esc(label)}" placeholder="둘째 계정이면 이름" aria-label="라벨"></label>`
         + `<div class="bxs-row end">${btn('취소', 'data-close', 'ghost')}${btn('연결', `data-ago="${esc(svc)}"`, 'pri')}</div><p class="bxs-mut">키는 봉해 두고 다시 보여 주지 않아요. 맞는지는 처음 부를 때 ${esc(s.title)} 이 답해요.</p></div>`;

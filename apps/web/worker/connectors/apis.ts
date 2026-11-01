@@ -588,6 +588,14 @@ const SLACK_TOOLS: ApiTool[] = [
   },
 ];
 
+export const SLACK_APP = {
+  name: "Boarder",
+  id: "",
+  workspace: "",
+  bot: false,
+  tokenRotation: true,
+  userScopes: ["canvases:read", "canvases:write", "channels:history", "channels:read", "channels:write", "chat:write", "emoji:read", "files:read", "files:write", "groups:history", "groups:read", "groups:write", "im:history", "im:read", "im:write", "lists:read", "lists:write", "mpim:history", "mpim:read", "mpim:write", "reactions:read", "reactions:write", "search:read.files", "search:read.im", "search:read.mpim", "search:read.private", "search:read.public", "search:read.users", "users:read", "users:read.email"],
+} as const;
 const SLACK_USER_SCOPES = ["search:read.public", "search:read.private", "search:read.im", "search:read.mpim", "channels:read", "groups:read", "im:read", "mpim:read", "channels:history", "groups:history", "im:history", "mpim:history", "users:read", "users:read.email", "chat:write", "reactions:write"];
 
 const GITHUB_API = "https://api.github.com";
@@ -632,7 +640,7 @@ export async function githubAppToken(client: { client_id: string; client_secret:
 }
 
 const GMAIL_VIA_IMAP = "메일(IMAP)로 연결해요 — 서버 imap.gmail.com · 구글 앱 비밀번호(구글 계정 › 보안 › 2단계 인증 › 앱 비밀번호)";
-export const API_PRESETS: Record<string, { title: string; spec: ApiSpec; tools: ApiTool[]; ready: boolean; note?: string; plain?: number; hints?: string[] }> = {
+export const API_PRESETS: Record<string, { title: string; spec: ApiSpec; tools: ApiTool[]; ready: boolean; note?: string; plain?: number; hints?: string[]; app?: typeof SLACK_APP }> = {
   channeltalk: { title: "채널톡", ready: true, spec: { preset: "channeltalk", baseUrl: CHANNEL_TALK, auth: { type: "headers", names: ["x-access-key", "x-access-secret"] }, headers: { "Channel-Version": "2026-06-01" } }, tools: CHANNEL_TALK_TOOLS,
     note: "채널 데스크 › 설정 › API 키 관리의 키 두 개" },
   "google-calendar": { title: "구글 캘린더", ready: false, spec: { preset: "google-calendar", baseUrl: CAL,
@@ -646,7 +654,7 @@ export const API_PRESETS: Record<string, { title: string; spec: ApiSpec; tools: 
   imap: { title: "메일(IMAP)", ready: true, spec: { preset: "imap", baseUrl: "imaps://mail", auth: { type: "imap" } }, tools: IMAP_TOOLS, plain: 2,
     hints: ["imap.gmail.com", "me@gmail.com", "구글 앱 비밀번호 16자"],
     note: "Gmail 은 서버 imap.gmail.com + 구글 앱 비밀번호(구글 계정 › 보안 › 2단계 인증 › 앱 비밀번호) · 읽기만" },
-  slack: { title: "Slack", ready: false, spec: { preset: "slack", baseUrl: SLACK, auth: { type: "oauth", provider: "slack", scope: SLACK_USER_SCOPES.join(",") } }, tools: SLACK_TOOLS, note: "Slack 로그인 앱 준비 중" },
+  slack: { title: "Slack", ready: false, spec: { preset: "slack", baseUrl: SLACK, auth: { type: "oauth", provider: "slack", scope: SLACK_USER_SCOPES.join(",") } }, tools: SLACK_TOOLS, note: `Slack 로그인 앱 준비 중 — Slack 앱 ${SLACK_APP.name}`, app: SLACK_APP },
 };
 export const toolsFor = (spec: ApiSpec): ApiTool[] => (spec.preset && API_PRESETS[spec.preset]?.tools) || requestTools(spec.baseUrl);
 const fixedHeaders = (spec: ApiSpec): Record<string, string> => (spec.preset && API_PRESETS[spec.preset]?.spec.headers) || spec.headers || {};
