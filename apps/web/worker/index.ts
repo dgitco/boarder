@@ -22,6 +22,9 @@ import settingsJs from "./legacy/settings.js?raw";
 import settingsCss from "./legacy/settings.css?raw";
 import blobJs from "./legacy/blobatar.js?raw";
 import botPickJs from "./legacy/botpick.js?raw";
+import eaJs from "./legacy/ea.js?raw";
+import eaCss from "./legacy/ea.css?raw";
+import eaSecretJs from "./legacy/ea-secret.js?raw";
 import { snippet, capture, phId, type PH } from "./posthog";
 import { mcp } from "./mcp/server";
 import { run as runTool, hasTool, addTools } from "./mcp/tools";
@@ -34,6 +37,7 @@ import { openSecret, sealSecret } from "./vault/secret";
 import { envelopeOn, forgetFlags, openBlob, sealBlob, type VaultEnv } from "./vault/index";
 import * as vmig from "./vault/migrate";
 import { mountImport, onCardAnswered, regroup, setUnit } from "./importer/routes";
+import { mountSecrets, onCardAnswered as secretCardAnswered } from "./secrets";
 import * as ledger from "./ledger";
 import * as ownerWrite from "./owner-write";
 import * as ledgerWrite from "./ledger-write";
@@ -794,6 +798,10 @@ app.post("/api/me/cards/:id/answer", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const me = s.user.email.toLowerCase(), id = c.req.param("id"), { choice: ch, free, rid: rid0 } = await c.req.json<{ choice?: string; free?: boolean; rid?: string }>().catch(() => ({} as { choice?: string; free?: boolean; rid?: string }));
+  if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) {
+    const secret = await c.env.DB.prepare("SELECT 1 FROM secret_request WHERE card_id = ? AND owner = ?").bind(id, me).first();
+    if (secret) return c.json({ error: "로그인" }, 401);
+  }
   const rid = queue.ridOfBody({ rid: rid0 });
   let choice = "";
   try {
@@ -814,6 +822,7 @@ app.post("/api/me/cards/:id/answer", async c => {
   }
   } catch (e) { if (rid) return queue.retrySafe(c); throw e; }
   await onCardAnswered(c.env as never, me, id).catch(e => console.error("들여오기 카드 답", e));
+  await secretCardAnswered(c.env as never, me, id).catch(e => console.error("비밀 요청 카드 답", String(e).slice(0, 200)));
   const card = await c.env.DB.prepare("SELECT wid, question, answer FROM board_card WHERE id = ? AND owner = ?").bind(id, me).first<{ wid: string | null; question: string; answer: string | null }>().catch(() => null);   // 답은 이미 씀 — 못 읽어도 오류로 돌리지 않음
   const sent = card?.wid ? deliverTo(c.env, me, card.wid, `[Boarder] The person answered your card ${id} ("${card.question.slice(0, 120)}"): ${String(card.answer ?? choice)}. Continue with that.`).catch(() => {}) : Promise.resolve();
   c.executionCtx.waitUntil(sent.then(() => rid ? queue.markSent(c.env.DB, rid) : null).catch(() => {}));
@@ -823,6 +832,25 @@ mountImport(app as never, {
   device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
   member: async c => { const s = await signedIn(c as never); return s && !isOwner(c.env as never, s.user.email) ? s.user.email.toLowerCase() : null; },
   sameSite: c => sameSite(c as never),
+});
+mountSecrets(app as never, {
+  human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s ? { email: s.user.email, owner: isOwner(c.env as never, s.user.email) } : null; },
+  sameSite: c => sameSite(c as never),
+  agent: async c => {
+    const w = await bound(c.env as never, (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "")); if (!w) return null;
+    const t = await (c.env as unknown as Env).DB.prepare("SELECT device_id FROM agent_token WHERE hash = ?").bind(w.hash).first<{ device_id: string | null }>();
+    return { owner: w.owner || "", device_id: t?.device_id ?? null, win: w.win || w.pane, tok: w.hash.slice(0, 32) };
+  },
+  // 기기 토큰 → 비밀 줄 owner: 주인 메일 = '', 회원 = 메일(초대가 빠지면 없음). scope 는 secrets.ts 가 가림(회원 full 만 · 주인은 묶인 기기면 무엇이든)
+  device: async (env, tok) => {
+    if (!/^bxd_[A-Za-z0-9_-]{30,80}$/.test(tok)) return null;
+    const e = env as unknown as Env, d = await e.DB.prepare("SELECT id, owner, scope FROM device WHERE token_hash = ? AND revoked_at IS NULL").bind(await sha(tok)).first<{ id: string; owner: string; scope: string }>();
+    if (!d) return null;
+    if (isOwner(e, d.owner)) return { id: d.id, key: "", scope: d.scope };
+    return await member(e, d.owner) ? { id: d.id, key: d.owner.toLowerCase(), scope: d.scope } : null;
+  },
+  admin: c => admin(c as never),
+  card: (env, owner, card) => void memberCardPush(env as never, owner, card),
 });
 const memberBot = (env: Env, me: string) => env.DB.prepare("SELECT seed, hue, name, photo, icon, fav FROM member_bot WHERE owner = ?").bind(me).first<Bot>();
 const BLOB_ID = /^[0-9a-f]{32}$/;
@@ -1422,14 +1450,15 @@ async function tplHtml(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, 
   return bxTpl.html;
 }
 // 껍데기(Worker 묶음) 덩어리 태그: isolate 마다 처음 한 번 해시. 못 만들면 null(인라인)
-let bxShell: { head: string; body: string; shas: string[] } | null = null;
+let bxShell: { head: string; body: string; eaHead: string; eaBody: string; shas: string[] } | null = null;
 async function shellTags(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
   if (!bxShell) {
     const shas: string[] = [], put = (sha: string, b: bxs.Block) => { shas.push(sha); bxPut(sha, b); }, esc = (s: string) => s.replace(/<\//g, "<\\/");
     const t = await Promise.all([bxs.pack([{ kind: "css", body: shellCss, id: "hbx-css" }, { kind: "css", body: settingsCss, id: "hbx-set-css" }], put),
-      bxs.pack([{ kind: "js", body: esc(shellJs) }, { kind: "js", body: esc(botPickJs) }, { kind: "js", body: esc(settingsJs) }], put)]).catch(() => null);
+      bxs.pack([{ kind: "js", body: esc(shellJs) }, { kind: "js", body: esc(botPickJs) }, { kind: "js", body: esc(settingsJs) }], put),
+      bxs.pack([{ kind: "css", body: eaCss, id: "hbx-ea-css" }], put), bxs.pack([{ kind: "js", body: esc(eaJs) }, { kind: "js", body: esc(eaSecretJs) }], put)]).catch(() => null);   // 비서(/es) 덩어리는 따로 — / 몸통 바이트 그대로
     if (!t) return null;
-    bxShell = { head: t[0], body: t[1], shas };
+    bxShell = { head: t[0], body: t[1], eaHead: t[2], eaBody: t[3], shas };
   }
   bxSave(env, ctx, bxShell.shas);
   return bxShell;
@@ -1485,14 +1514,15 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   if (hop.log && !j.already) await queue.ridBatch(c.env.DB, qrid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), null, Date.now(), Array.isArray(j.cmds) && j.cmds[0] ? `cmd:${j.cmds[0]}` : null)]).catch(e => console.error("노드 채팅 줄", e));
   return c.json({ ...j, ok: true, rid, state: "ok", channel: "primary" });
 }
-async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false) {
+async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false, ea = false) {
   // 큰 껍데기 css · js 는 /bxs 주소로(bxs.ts — 같은 차례, 고전 스크립트). 해시를 못 만들면 예전처럼 인라인
   const bx = await shellTags(c.env, c.executionCtx).catch(() => null);
   return new HTMLRewriter()
       .on('meta[name="apple-mobile-web-app-title"]', { element: e => { e.setAttribute("content", "보더"); } })
       .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|settings)/.test(location.hash)) history.replaceState(history.state, '', '#tree'); document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000)</script>", { html: true });
-        e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>`) + snippet(c.env, await phId(c.env, email)), { html: true }); } })
-      .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script>`) + `<script>document.documentElement.classList.remove('bx-boot')</script>`, { html: true }); } })
+        if (ea) e.prepend("<script>window.BX_EA=1</script>", { html: true });
+        e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>`) + (ea ? (bx ? bx.eaHead : `<style id="hbx-ea-css">${eaCss}</style>`) : "") + snippet(c.env, await phId(c.env, email)), { html: true }); } })
+      .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script>`) + (ea ? (bx ? bx.eaBody : `<script>${eaJs.replace(/<\//g, "<\\/")}</script><script>${eaSecretJs.replace(/<\//g, "<\\/")}</script>`) : "") + `<script>document.documentElement.classList.remove('bx-boot')</script>`, { html: true }); } })
     .transform(res);
 }
 app.all("*", async c => {
@@ -1541,6 +1571,8 @@ app.all("*", async c => {
       return new Response(r.body as unknown as BodyInit, { status: r.status, headers: h, ...(h.get("content-encoding") ? { encodeBody: "manual" as const } : {}) });
     } catch { return c.json({ error: "일시적인 오류가 발생했어요" }, 503); }
   }
+  // 비서(/es): 보드 스크립트가 상대 주소(api/… · art/…)를 써서 /ea/ 면 깨짐 — 끝 「/」 없는 주소로
+  if (url.pathname === "/es/" && (c.req.method === "GET" || c.req.method === "HEAD")) return c.redirect("/es" + url.search, 301);
   const s = await signedIn(c);
   if (!s) {
     if (url.pathname.startsWith("/api/")) return c.json({ error: "로그인" }, 401);
@@ -1557,6 +1589,7 @@ app.all("*", async c => {
   }
   if (!isOwner(c.env, s.user.email)) {
     if (/^\/(assets|icons)\//.test(url.pathname)) return c.env.ASSETS.fetch(c.req.raw);
+    if (url.pathname === "/es") return c.redirect("/", 302);   // 비서 화면은 주인만 — 회원은 자기 보드로
     if (url.pathname === "/" && c.req.method === "GET") {
       const bot = await memberBot(c.env, s.user.email.toLowerCase()), js = { blob: blobJs, pick: botPickJs };
       if (!bot) return c.html(memberOnboard(s.user.email, js), 200, { ...NOFRAME, "cache-control": "no-store" });
@@ -1584,6 +1617,9 @@ app.all("*", async c => {
     if (docNav(c, url)) return c.redirect("/#nf", 302);
     return c.json({ error: "no" }, 403);
   }
+  // 비서(/es, 주인): / 와 같은 길(첫 화면 · 틀 · 캐시 지우기)로 — 받는 path 만 「/」, 틀에 BX_EA 를 더 얹음
+  const ea = url.pathname === "/es" && (c.req.method === "GET" || c.req.method === "HEAD");
+  if (ea) url.pathname = "/";
   if (url.pathname === "/api/events" || url.pathname === "/api/push/stream") return c.json({ error: "다리 밖" }, 503);
   if (chOf(c) === "owner" && (url.pathname.startsWith("/api/push/") || url.pathname === "/sw.js") && await ledger.f7On(c.env.DB, "write_push")) return pushRoute(c, url);
   const ee = await hosted.route?.(c, url, chOf(c), { req: PASS_REQ, res: PASS_RES }, (k, ms) => seg(c.req.raw, k, ms));
@@ -1672,7 +1708,7 @@ app.all("*", async c => {
   if (url.pathname === "/" && (r.headers["content-type"] || "").includes("text/html")) {
     if (!cookieOf(c, "bx_cc1")) { out.set("clear-site-data", '"cache"'); REC.get(c.req.raw)?.cookies.push("bx_cc1=1; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=31536000"); }
     out.set("content-security-policy", "frame-ancestors 'self'"); out.set("x-frame-options", "SAMEORIGIN");
-    return boardShell(c, new Response(unzip(), { status: r.status, headers: out }), s.user.email, "", await ledger.f7On(c.env.DB, "write_queue"));
+    return boardShell(c, new Response(unzip(), { status: r.status, headers: out }), s.user.email, "", await ledger.f7On(c.env.DB, "write_queue"), ea);
   }
   if (canvasShell && r.status === 200 && (r.headers["content-type"] || "").includes("text/html")) {
     const t = await artTok(c.env, shell![1], Date.now() + 2 * 3600_000);

@@ -11,6 +11,7 @@ import { connectCommand } from './connect.mjs';
 import { importCommand, IMPORT_HELP } from './importer.mjs';
 import { engineCommand, ENGINE_HELP } from './engine/cmd.mjs';
 import { enable, disable, uninstall, VIEW_HELP } from './view.mjs';
+import { secretCommand, SECRET_HELP } from './secret.mjs';
 
 const VERSION = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version;
 const KIND = { 시작: 'start', 진행: 'progress', 막힘: 'blocked', 끝: 'done', 결정: 'decision', 장애: 'incident', 마감: 'deadline' };
@@ -48,12 +49,14 @@ ${WATCH_HELP}
 
 ${ENGINE_HELP}
 
+${SECRET_HELP}
+
 Connect a service (Linear, Notion, GitHub, any MCP server)
   boarder connect <service|https MCP URL> [--label <second account>] [--open]
 
 ${SESSION_HELP}`;
 
-const SECTION_HELP = { import: IMPORT_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, enable: VIEW_HELP, disable: VIEW_HELP, uninstall: VIEW_HELP };
+const SECTION_HELP = { import: IMPORT_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, secret: SECRET_HELP, enable: VIEW_HELP, disable: VIEW_HELP, uninstall: VIEW_HELP };
 function wantsHelp(cmd, rest) {
   if (cmd === 'engine' && rest[0] === 'verify') return false;
   if (cmd === 'profile' && rest[0] === 'run') return rest[1] === '--help' || rest[1] === '-h';
@@ -137,6 +140,7 @@ export async function main(argv) {
     if (cmd === 'watch') return await watchCommand(pos[0], flags);
     if (cmd === 'import') return await importCommand(flags);   // 들여오기 · 경우 (가)(A-2 · A-3 · A-4)
     if (cmd === 'restore') return await restore(pos[0]);
+    if (cmd === 'secret') return await secretCommand(pos[0], pos.slice(1), flags);   // 비밀 넣기(값은 안 찍음)
     if (cmd === 'mcp') return await mcp();
     if (cmd === 'status' && !pos.length) return await status();
     if (cmd === 'headers') { const w = await windowToken(); return console.log(JSON.stringify({ Authorization: `Bearer ${w.token}` })); }
