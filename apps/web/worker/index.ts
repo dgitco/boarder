@@ -1090,9 +1090,11 @@ app.post("/api/admin/vault", async c => {
   const scope = vscope(b.scope); if (!scope) return c.json({ error: `scope = ${vmig.scopes().join(" · ")}` }, 400);
   if (b.action !== "run" && b.action !== "back") return c.json({ error: "action = run · back" }, 400);
   const env = c.env as unknown as vmig.MEnv, owner = vowner(b.owner), on = await envelopeOn(env, owner ?? null);
+  // codec 표(account = better-auth 토큰)는 봉투 스위치와 상관없음: 봉한 꼴 · 평문 둘 다 읽히니 언제 옮겨도 됨(되돌리기는 encryptOAuthTokens 를 끄기 전에)
+  const gate = vmig.envelopeScope(scope);
   const sw = owner === undefined ? "envelope" : owner.startsWith("x:") ? "envelope(x: 주인은 모두 스위치)" : `envelope 또는 envelope:${owner || "owner"}`;
-  if (!b.dryRun && b.action === "run" && !on) return c.json({ error: `스위치 ${sw} 가 꺼져 있어요(DATA_KEK_CUR · f7_flag) — 켠 뒤 옮겨요` }, 409);
-  if (!b.dryRun && b.action === "back" && on) return c.json({ error: `스위치 ${sw} 가 켜져 있어요 — 끈 뒤 되돌려요` }, 409);
+  if (gate && !b.dryRun && b.action === "run" && !on) return c.json({ error: `스위치 ${sw} 가 꺼져 있어요(DATA_KEK_CUR · f7_flag) — 켠 뒤 옮겨요` }, 409);
+  if (gate && !b.dryRun && b.action === "back" && on) return c.json({ error: `스위치 ${sw} 가 켜져 있어요 — 끈 뒤 되돌려요` }, 409);
   const o = { page: Number(b.page) || undefined, dryRun: !!b.dryRun, owner };
   return c.json(b.action === "run" ? await vmig.run(env, scope, o) : await vmig.back(env, scope, o), 200, { "cache-control": "no-store" });
 });

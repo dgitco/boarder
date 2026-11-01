@@ -2,9 +2,10 @@ import { seal as v1seal } from "../connectors/seal";
 import { engineOf, flagOwner } from "../engine";
 import { dekOwner, RB, ridCell } from "../queue";
 import { hosted } from "../hosted";
+import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { escapeField, openBlob, openField, sealBlob, sealField, unescapeField, type VaultEnv } from "./index";
 
-export type MEnv = VaultEnv & { RESULTS: R2Bucket; ENGINE?: unknown; SNAP?: unknown; ALLOW_EMAILS?: string };
+export type MEnv = VaultEnv & { RESULTS: R2Bucket; ENGINE?: unknown; SNAP?: unknown; ALLOW_EMAILS?: string; BETTER_AUTH_SECRET?: string };
 export type Scope = string;   // scopes() 에 든 이름
 export type Counts = { plain: number; v1: number; v2: number; empty: number };
 export type Result = { scope: Scope; done: number; skipped: number; changed: number; failed: { key: string; error: string }[]; dryRun?: boolean };
@@ -23,12 +24,30 @@ const res = (scope: Scope, dryRun?: boolean): Result => ({ scope, done: 0, skipp
 // ── D1 칸(등록표) ───────────────────────────────────────────────────
 // secret = JSON 을 담은 커넥터 비밀(옛 꼴 v1), text = 평문 글(옛 꼴 평문). 줄 키(AAD pk)는 쓰는 길과 같게.
 // genPk = AAD pk 칸이 비어 있을 수 있는 표(AUTOINCREMENT id 대신 쓰는 칸): 봉할 때 make() 로 채워 같은 CAS UPDATE 에서 씀.
-// whoSql = 사람별 옮기기(owner)의 WHERE 조각(값 하나 바인드) — 기본 "owner = ?"
-export type D1ScopeSpec = { key: string; cols: string[]; kind: "secret" | "text"; owner: (r: R) => string; pk: (r: R) => string | null; whoSql?: string; genPk?: { col: string; make: () => string } };
+// whoSql = 사람별 옮기기(owner)의 WHERE 조각(값 하나 바인드) — 기본 "owner = ?". who = 바인드 값이 여럿이거나 바꿔야 할 때(whoSql 대신)
+// codec = vault(DEK) 가 아닌 다른 봉투 — 꼴 · 봉하기 · 열기를 그 표가 정함(봉투 스위치와 상관없음, envelopeScope = false)
+export type Codec = { form: (v: unknown) => keyof Counts; seal: (env: MEnv, pt: string) => Promise<string>; open: (env: MEnv, v: string) => Promise<string> };
+export type D1ScopeSpec = { key: string; cols: string[]; kind: "secret" | "text"; owner: (r: R) => string; pk: (r: R) => string | null; whoSql?: string; who?: (env: MEnv, who: string) => { sql: string; args: unknown[] }; genPk?: { col: string; make: () => string }; codec?: Codec };
+
+// better-auth 토큰(account.accessToken · refreshToken, auth.ts encryptOAuthTokens): better-auth 와 같은 꼴 — BETTER_AUTH_SECRET(글월)로 symmetricEncrypt = 짝수 길이 hex.
+// 꼴 가리기도 better-auth 의 isLikelyEncrypted 와 같게("$ba$" 또는 짝수 hex = 봉함 — 그렇게 보이는 평문은 better-auth 도 풀려다 실패하므로 안 건드림 · back 에서도 안 씀)
+const baSealed = (s: string) => s.startsWith("$ba$") || (s.length % 2 === 0 && /^[0-9a-f]+$/i.test(s));
+const baKey = (env: MEnv) => { if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET 없음"); return env.BETTER_AUTH_SECRET; };
+export const betterAuthCodec: Codec = {
+  form: v => (v === null || v === undefined || v === "" ? "empty" : baSealed(String(v)) ? "v2" : "plain"),
+  seal: async (env, pt) => symmetricEncrypt({ key: baKey(env), data: pt }),
+  open: async (env, v) => { if (!baSealed(v)) return v; if (v.startsWith("$ba$")) throw new Error("$ba$ 꼴(BETTER_AUTH_SECRETS 판) — 이 옮기기는 글월 비밀만"); return symmetricDecrypt({ key: baKey(env), data: v }); },
+};
+const ownerMails = (env: MEnv) => String(env.ALLOW_EMAILS || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+
 const T: Record<string, D1ScopeSpec> = {
   connection: { key: "id", cols: ["auth"], kind: "secret", owner: r => r.owner, pk: r => r.id },
   connection_pending: { key: "state", cols: ["auth"], kind: "secret", owner: r => r.owner, pk: r => r.state },
   hook: { key: "id", cols: ["secret"], kind: "secret", owner: r => r.owner, pk: r => r.id },
+  // 사람별(owner) = 그 메일의 user 줄('' = 주인 메일들, x:<이름> = 없음)
+  account: { key: "id", cols: ["accessToken", "refreshToken"], kind: "text", owner: () => "", pk: r => r.id, codec: betterAuthCodec,
+    who: (env, w) => { const ms = w === "" ? ownerMails(env) : w.includes("@") && !w.startsWith("x:") ? [w.toLowerCase()] : [];
+      return { sql: ms.length ? `userId IN (SELECT id FROM "user" WHERE lower(email) IN (${ms.map(() => "?").join(", ")}))` : "0", args: ms }; } },
 };
 const OTHER = ["sessions", "mcp-results", "engine", "rids"];
 const IDENT = /^[a-z][a-z0-9_]{0,40}$/;
@@ -38,16 +57,18 @@ export function registerScope(name: string, spec: D1ScopeSpec) {
   if (name in T || OTHER.includes(name)) throw new Error(`vault scope 이미 있음: ${name}`);
   T[name] = spec;
 }
-/** 지금 있는 scope — 코어 D1 셋 · 등록한 D1 표 · R2 둘 · DO 둘 */
+/** 지금 있는 scope — 코어 D1 넷(커넥터 셋 · better-auth account) · 등록한 D1 표 · R2 둘 · DO 둘 */
 export const scopes = (): string[] => [...Object.keys(T), ...OTHER];
+/** 이 scope 가 봉투(DEK · envelope 스위치)를 쓰는지 — codec 표(account)는 스위치와 상관없이 run · back */
+export const envelopeScope = (s: string) => !T[s]?.codec;
 // 호스팅 판: ee 가 ../hosted.ts 의 vaultScopes 칸으로 넣은 표(공개 판에선 hosted 가 빈 확장이라 없음)
 for (const [n, sp] of Object.entries(hosted.vaultScopes ?? {})) registerScope(n, sp);
 
 // who = DEK 주인 하나만(사람별 옮기기)
 async function* rows(env: MEnv, tbl: string, page: number, who?: string) {
-  const whoSql = T[tbl]?.whoSql ?? "owner = ?";
+  const w = who === undefined ? null : T[tbl]?.who ? T[tbl].who!(env, who) : { sql: T[tbl]?.whoSql ?? "owner = ?", args: [who] };
   for (let after = 0; ;) {
-    const rs = (await env.DB.prepare(`SELECT rowid AS _r, * FROM ${tbl} WHERE rowid > ?${who === undefined ? "" : ` AND ${whoSql}`} ORDER BY rowid LIMIT ?`).bind(...(who === undefined ? [after, page] : [after, who, page])).all<R>()).results;
+    const rs = (await env.DB.prepare(`SELECT rowid AS _r, * FROM ${tbl} WHERE rowid > ?${w ? ` AND (${w.sql})` : ""} ORDER BY rowid LIMIT ?`).bind(after, ...(w ? w.args : []), page).all<R>()).results;
     if (!rs.length) return;
     yield rs;
     after = rs[rs.length - 1]._r;
@@ -57,12 +78,15 @@ async function* rows(env: MEnv, tbl: string, page: number, who?: string) {
 async function d1Plan(env: MEnv, scope: string, page: number, who?: string) {
   const out: Record<string, Counts> = {};
   for (const c of T[scope].cols) out[c] = { plain: 0, v1: 0, v2: 0, empty: 0 };
-  for await (const rs of rows(env, scope, page, who)) for (const r of rs) for (const c of T[scope].cols) out[c][form(r[c])]++;
+  for await (const rs of rows(env, scope, page, who)) for (const r of rs) for (const c of T[scope].cols) out[c][(T[scope].codec?.form ?? form)(r[c])]++;
   return out;
 }
 
 async function d1Move(env: MEnv, scope: string, to: "v2" | "old", page: number, dryRun: boolean, who?: string): Promise<Result> {
-  const S = T[scope], out = res(scope, dryRun);
+  const S = T[scope], out = res(scope, dryRun), C = S.codec;
+  const fm = C ? C.form : form;
+  // 열기 · 봉하기: codec 표는 그 봉투, 나머지는 vault
+  const open = (owner: string, ref: { tbl: string; pk: string; col: string }, v: string) => (C ? C.open(env, v) : openField(env, owner, ref, v) as Promise<string>);
   for await (const rs of rows(env, scope, page, who)) for (const r of rs) {
     const key = `${scope}:${r[S.key]}`;
     try {
@@ -71,14 +95,19 @@ async function d1Move(env: MEnv, scope: string, to: "v2" | "old", page: number, 
       let gen = G ? r[G.col] as string | null : null;
       const want: Record<string, string> = {};   // 칸마다 연 값(다시 읽어 비교)
       for (const c of S.cols) {
-        const f = form(r[c]);
+        const f = fm(r[c]);
         if (to === "v2" ? f === "v2" || f === "empty" : f !== "v2") continue;
         if (to === "v2" && S.kind === "secret" && f === "plain") throw new Error(`${c}: 평문 비밀 — 꼴을 몰라 안 건드림`);
         if (to === "v2" && G && !gen) gen = G.make();
         const pk = G ? gen : S.pk(r);
         if (!pk) throw new Error("줄 키 없음");
         const ref = { tbl: scope, pk, col: c };
-        if (to === "v2") {
+        if (C) {   // codec 표: 평문 ↔ 그 봉투(감싸기 없음 — 봉한 꼴로 보이는 평문은 쓰지 않음)
+          const pt = to === "v2" ? String(r[c]) : await C.open(env, String(r[c]));
+          const neu = to === "v2" ? await C.seal(env, pt) : pt;
+          if (fm(neu) !== (to === "v2" ? "v2" : "plain")) throw new Error(`${c}: ${to === "v2" ? "봉한 꼴이 아님" : "연 평문이 봉한 꼴로 보임(읽는 쪽이 풀려 함)"} — 안 씀`);
+          sets.push([c, r[c], neu]); want[c] = pt;
+        } else if (to === "v2") {
           const pt = f === "v1" ? (await openField(env, owner, ref, r[c])) as string : unescapeField(String(r[c]));   // v1 은 안의 JSON 글월 그대로, 감싼 평문은 뗀 값
           const sealed = (await sealField(env, owner, ref, pt)) as string;
           // 봉하지 않은 값(그사이 스위치가 꺼짐 등)은 쓰지 않음 — v1 비밀 자리에 평문 JSON 이 들어가면 다시 읽기 비교도 통과해 버림
@@ -99,8 +128,8 @@ async function d1Move(env: MEnv, scope: string, to: "v2" | "old", page: number, 
       const chk = await env.DB.prepare(`SELECT ${S.cols.join(", ")}, ${G ? G.col : S.key + " AS _k"} FROM ${scope} WHERE ${S.key} = ?`).bind(r[S.key]).first<R>();
       const pk = G ? chk?.[G.col] : S.pk(r);
       let ok = !!chk;
-      for (const [c] of sets) if (ok) ok = (to === "v2" ? String(chk![c]).startsWith("v2.") : !String(chk![c]).startsWith("v2."))   // 쓴 꼴도 확인
-        && (await openField(env, owner, { tbl: scope, pk, col: c }, chk![c]).catch(() => null)) === want[c];
+      for (const [c] of sets) if (ok) ok = (to === "v2" ? fm(chk![c]) === "v2" : fm(chk![c]) !== "v2")   // 쓴 꼴도 확인
+        && (await open(owner, { tbl: scope, pk, col: c }, chk![c]).catch(() => null)) === want[c];
       if (!ok) {
         await env.DB.prepare(`UPDATE ${scope} SET ${sets.map(s => `${s[0]} = ?`).join(", ")} WHERE ${S.key} = ? AND ${sets.map(s => `${s[0]} IS ?`).join(" AND ")}`).bind(...sets.map(s => s[1]), r[S.key], ...sets.map(s => s[2])).run();
         throw new Error("다시 연 값이 처음과 다름 — 되돌림");

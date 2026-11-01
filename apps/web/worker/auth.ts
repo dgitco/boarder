@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { emailOTP } from "better-auth/plugins";
+import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 
 export type Env = { DB: D1Database; EMAIL: SendEmail; ASSETS: Fetcher; BETTER_AUTH_SECRET: string; PUBLIC_URL: string; ALT_URLS?: string; ALLOW_EMAILS: string; GOOGLE_CLIENT_ID?: string; GOOGLE_CLIENT_SECRET?: string };
 
@@ -27,6 +28,15 @@ export async function otpSendOk(db: D1Database, email: string, now = Date.now())
   return !!ins.meta.changes;
 }
 
+// 로그인 코드 보관(verification.value, 봉투 암호화 §13): better-auth 의 "hashed" · "encrypted" 는 배포 때 이미 보낸 평문 코드("123456")를
+// 못 읽어 그 5분 안 로그인이 깨짐("hashed" 는 다시 보내기 때 같은 코드 다시 쓰기도 멈춤) → 같은 비밀값으로 봉하되 접두사 없는 옛 값은 그대로 읽음.
+// 접두사 e1. = BETTER_AUTH_SECRET 로 봉한 better-auth 암호(xchacha20poly1305, hex). 옛 평문 줄은 5분 뒤 저절로 사라져 옮기기가 필요 없음
+export const OTP_SEALED = "e1.";
+export const otpStore = (secret: string) => ({
+  encrypt: async (otp: string) => OTP_SEALED + (await symmetricEncrypt({ key: secret, data: otp })),
+  decrypt: async (v: string) => (v.startsWith(OTP_SEALED) ? symmetricDecrypt({ key: secret, data: v.slice(OTP_SEALED.length) }) : v),
+});
+
 export function createAuth(env: Env) {
   return betterAuth({
     database: env.DB,
@@ -38,7 +48,7 @@ export function createAuth(env: Env) {
     rateLimit: { enabled: true },
     disabledPaths: ["/email-otp/request-password-reset", "/forget-password/email-otp", "/email-otp/reset-password"],
     advanced: { ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] } },
-    account: { accountLinking: { enabled: true } },
+    account: { accountLinking: { enabled: true }, encryptOAuthTokens: true },
     session: { expiresIn: 60 * 60 * 24 * 30, cookieCache: { enabled: true, maxAge: 5 * 60 } },   // 요청마다 D1 을 안 감(5분 서명 쿠키) — 나가기는 바로, 다른 기기 끊기는 최대 5분 늦음
     plugins: [
       emailOTP({
@@ -46,6 +56,7 @@ export function createAuth(env: Env) {
         expiresIn: 5 * 60,
         allowedAttempts: 5,
         disableSignUp: false,
+        storeOTP: otpStore(env.BETTER_AUTH_SECRET),
         async sendVerificationOTP({ email, otp, type }) {
           if (type !== "sign-in") return;   // 로그인 코드만(다른 종류는 주소 상한 밖 길일 수 있음)
           if (!(await member(env, email))) return;   // 밖 주소: 조용히 아무것도 안 보냄(있는 주소인지 알려 주지 않음)
