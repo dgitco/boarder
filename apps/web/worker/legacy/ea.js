@@ -277,7 +277,11 @@
     const k = openKey(), p = k.startsWith('n:') ? BY()[k.slice(2)] : null, f = p?.folder ? tail(p.folder) : '';
     const pick = (f && cs.find(x => tail(x.folder) === f)) || cs[0];
     if (!fn('openArt')) return;
-    Promise.resolve(openArt(pick.id)).then(() => { if (fn('meetOn')) meetOn(pick.id); }).catch(() => {});
+    const V = window.HBV, pane = callPane();
+    let started = false;
+    if (V && !V.call && pane) { try { V.start?.({pane}); started = !!V.call; } catch {} }
+    const own = started;
+    Promise.resolve(openArt(pick.id)).then(() => { if (fn('meetOn')) { meetOn(pick.id); try { if (own && typeof MEET === 'object' && MEET) MEET.own = true; } catch {} } }).catch(() => {});
   }
   const note = t => { if (fn('toast')) toast(t); };
   const menuButton = head.querySelector('[data-ea="menu"]'), menu = head.querySelector('.bx-ea-call-menu');

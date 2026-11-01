@@ -111,7 +111,7 @@ test("영상 메뉴 → 전화 HBV.start · 미팅 openArt · 통화 중 바로 
   menu.querySelector('[data-ea="call"]').click();
   assert.deepEqual(t.calls, ["call:lead"]); assert.equal(menu.hidden, true);
   trigger.click(); menu.querySelector('[data-ea="meet"]').click();
-  assert.deepEqual(t.calls, ["call:lead", "art:canvas"]); assert.equal(menu.hidden, true);
+  assert.deepEqual(t.calls, ["call:lead", "call:lead", "art:canvas"]); assert.equal(menu.hidden, true);
   t.ctx.HBV.call = {}; trigger.click();
   assert.equal(t.calls.at(-1), "layout"); assert.equal(menu.hidden, true);
 });
