@@ -107,7 +107,7 @@
   }
   function close(){
     wipe();
-    S.open = false; S.view = ''; S.tok = {}; scrim.hidden = true;   // 보낸 직후 닫아도 숨은 시트에 결과를 안 그림 R.classList.remove('bx-es-open');
+    S.open = false; S.view = ''; S.tok = {}; scrim.hidden = true; R.classList.remove('bx-es-open');   // tok 새로 = 보낸 직후 닫아도 숨은 시트에 결과를 안 그림
     body.replaceChildren();
     try { S.back?.focus?.(); } catch {}
   }

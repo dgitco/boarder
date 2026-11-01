@@ -214,7 +214,10 @@ test("값 넣기: Tab 이 숨은 「쓸 때」 단추에서 멈추지 않고 「
   for (let i = 0; i < 14; i++) { t.key("Tab"); visited.push(ACTIVE); }
   assert.ok(visited.includes(go), "Tab 으로 넣기에 닿음");
   for (const e of visited) assert.ok(shown(e as El), "숨은 단추엔 안 감");
+  assert.equal(t.html.classList.contains("bx-es-open"), true, "열면 bx-es-open");
   t.key("Escape"); assert.equal(inp.value, "");
+  assert.equal(t.html.classList.contains("bx-es-open"), false, "닫으면 bx-es-open 빠짐");
+  assert.equal(shown(one(t.body, "bx-es-scrim")), false);
 });
 
 test("값 넣기 실패: 409 = 「같은 이름이 있어요」 · 500 = 한 줄 오류 · 값은 칸에 그대로 · 닫으면 칸 비움", async () => {
