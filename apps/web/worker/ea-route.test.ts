@@ -89,7 +89,7 @@ test("주인 /es: / 와 같은 몸통(다리 path 「/」)에 틀 + head 맨 앞
   const eaJs = await (await get(`/bxs/${js(html).at(-2)}.js`)).text();
   assert.ok(eaJs.includes("window.BX_EA") && eaJs.includes("bx-ea-pins"), "끝에서 둘째 스크립트 = ea.js");
   const secJs = await (await get(`/bxs/${js(html).at(-1)}.js`)).text();
-  assert.ok(secJs.includes("/api/secret/pending"), "마지막 스크립트 = ea-secret.js");
+  assert.ok(secJs.includes("BX_EA_SECRET") && secJs.includes("/api/secrets/requests/"), "마지막 스크립트 = ea-secret.js");
   const eaCss = await (await get(`/bxs/${css(html).at(-1)}.css`)).text();
   assert.ok(eaCss.includes("html.bx-ea"), "마지막 css = ea.css");
 });
