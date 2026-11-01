@@ -787,7 +787,14 @@ app.post("/api/me/cards/:id/answer", async c => {
   choice = String(ch ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, " ").trim().slice(0, 2000);
   const freeOk = !!free && !!choice && !(await c.env.DB.prepare("SELECT 1 FROM imp_proposal WHERE card_id = ? AND owner = ?").bind(id, me).first());
   if (!(JSON.parse(r.choices) as string[]).includes(choice) && !freeOk) return c.json({ error: "없는 선택지" }, 400);
-  if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("UPDATE board_card SET state = 'answered', answer = ?, answered_at = ? WHERE id = ? AND owner = ? AND state = 'open'").bind(String(choice), Date.now(), id, me)], p => c.executionCtx.waitUntil(p))) && await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true });
+  const upd = c.env.DB.prepare("UPDATE board_card SET state = 'answered', answer = ?, answered_at = ? WHERE id = ? AND owner = ? AND state = 'open'").bind(String(choice), Date.now(), id, me);
+  let won = false;
+  try { won = Number((await c.env.DB.batch(rid ? [upd, c.env.DB.prepare("INSERT INTO f7_rid(rid, at) SELECT ?, ? WHERE changes() > 0").bind(rid, Date.now())] : [upd]))[0]?.meta?.changes || 0) > 0; }
+  catch (e) { if (!queue.ridDup(e)) throw e; }
+  if (!won) {
+    if (!rid || !(await queue.ridSeen(c.env.DB, rid))) return c.json({ error: "이미 답한 결정이에요" }, 400);   // 다른 답이 먼저 — 확정 실패(409 면 화면이 보낸 것으로 봄)
+    if (await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true });   // 같은 rid 로 이미 답함 — 넘기기가 빠졌으면 아래로
+  }
   }
   } catch (e) { if (rid) return queue.retrySafe(c); throw e; }
   await onCardAnswered(c.env as never, me, id).catch(e => console.error("들여오기 카드 답", e));

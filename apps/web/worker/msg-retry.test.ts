@@ -14,15 +14,19 @@ function d1() {
   const db = new DatabaseSync(":memory:");
   for (const f of readdirSync(MIG).filter(f => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(f, MIG), "utf8"));
   const run1 = (sql: string, args: unknown[]) => { const r = db.prepare(sql).run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } }; };
+  // gate = 이 글을 담은 읽기는 waitFor 개가 모일 때까지 기다렸다 같이 풀림(동시 요청이 같은 「열린 카드」를 읽은 뒤 쓰는 경합)
+  const st = { loseNext: false, gate: "", waitFor: 0, parked: [] as (() => void)[] };
+  const hold = (sql: string) => !st.gate || !sql.includes(st.gate) ? null : new Promise<void>(res => {
+    st.parked.push(res); if (st.parked.length >= st.waitFor) { st.gate = ""; st.parked.splice(0).forEach(f => f()); }
+  });
   const stmt = (sql: string, args: unknown[] = []): any => ({
     sql, args,
     bind: (...a: unknown[]) => stmt(sql, a),
     all: async () => ({ success: true, results: db.prepare(sql).all(...(args as never[])), meta: {} }),
-    first: async (col?: string) => { const r = db.prepare(sql).get(...(args as never[])) as Record<string, unknown> | undefined; return r ? (col ? r[col] : r) : null; },
+    first: async (col?: string) => { await hold(sql); const r = db.prepare(sql).get(...(args as never[])) as Record<string, unknown> | undefined; return r ? (col ? r[col] : r) : null; },
     raw: async () => db.prepare(sql).all(...(args as never[])).map(r => Object.values(r as object)),
     run: async () => /\breturning\b/i.test(sql) ? { success: true, results: db.prepare(sql).all(...(args as never[])), meta: {} } : run1(sql, args),
   });
-  const st = { loseNext: false };
   const D1 = {
     prepare: (sql: string) => stmt(sql),
     batch: async (ss: any[]) => {
@@ -128,6 +132,22 @@ test("회원 카드 스레드: 이미 답한 글에 다른 글은 확정 실패(
   assert.equal((await post("/api/chat", { ...th, text: "뒤따른 글", rid: "rtest-card-0102" })).status, 400);
   assert.equal((await post("/api/chat", { ...th, text: "첫 답", rid: "rtest-card-0103" })).status, 200);
   assert.equal(sent.length, 1, "같은 답은 창에 두 번 안 감");
+});
+
+test("회원 카드 답: 두 기기가 같은 열린 카드에 동시에 다른 답 — 하나만 됨, 다른 쪽은 확정 실패, 창에는 한 번", async () => {
+  const { db, st, sent, post } = setup();
+  const n = (db.prepare("SELECT rowid AS n FROM board_card WHERE id = '1793300000.000001'").get() as { n: number }).n;
+  Object.assign(st, { gate: "SELECT choices FROM board_card", waitFor: 2 });   // 둘 다 「열림」을 읽은 뒤에 씀
+  const [ra, rb] = await Promise.all([
+    post("/api/answer", { item: "w" + n, text: "A", rid: "rtest-race-000a" }),
+    post("/api/answer", { item: "w" + n, text: "B", rid: "rtest-race-000b" }),
+  ]);
+  const won = (db.prepare("SELECT answer FROM board_card WHERE id = '1793300000.000001'").get() as { answer: string }).answer;
+  const [win, lose] = won === "A" ? [ra, rb] : [rb, ra];
+  assert.equal(win.status, 200);
+  assert.ok(lose.status >= 400 && lose.status < 500, `진 답은 확정 실패여야 함(받음 ${lose.status}) — 200 이면 화면은 그 답이 들어간 줄 앎`);
+  assert.equal(sent.length, 1, "창에는 이긴 답 한 번만");
+  assert.match(sent[0].text, new RegExp(`: ${won}\\. Continue`));
 });
 
 test("회원 노드 채팅: 다 끝난 글을 같은 rid 로 또 보내도(rid 칸이 답을 잊음) 그 창에 두 번 안 들어가고 내 글도 한 줄", async () => {

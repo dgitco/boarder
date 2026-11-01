@@ -40,14 +40,14 @@ export function windowKey() {
 }
 
 /** 이 창의 토큰(없거나 서버가 거절하면 기기 토큰으로 새로 받음) */
-export async function windowToken({ fresh = false } = {}) {
+export async function windowToken({ fresh = false, timeoutMs = 20000 } = {}) {
   if (process.env.BOARDER_TOKEN?.trim()) return { token: process.env.BOARDER_TOKEN.trim(), ...windowKey() };
   const dev = loadDevice();
   if (!dev?.token) { const e = new Error('This machine is not set up for Boarder yet — run `boarder setup --yes`.'); e.code = 'NO_DEVICE'; throw e; }
   const w = windowKey();
   const saved = !fresh && loadWindow(w.key);
   if (saved?.token) return { token: saved.token, ...w };
-  const r = await fetch(`${dev.server}/api/device/window`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${dev.token}` }, body: JSON.stringify({ key: w.key, name: w.name }), signal: AbortSignal.timeout(20000) });
+  const r = await fetch(`${dev.server}/api/device/window`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${dev.token}` }, body: JSON.stringify({ key: w.key, name: w.name }), signal: AbortSignal.timeout(timeoutMs) });
   if (r.status === 401) { const e = new Error('This device was revoked or signed out — run `boarder setup --yes` again.'); e.code = 'REVOKED'; throw e; }
   if (!r.ok) throw new Error(`Boarder server answered ${r.status}`);
   const { token } = await r.json();

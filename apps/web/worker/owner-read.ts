@@ -210,8 +210,8 @@ function cardMarks(msgs: R[], rows: R[]) {
 async function channel(db: D1Database, cfg: Cfg, key: string, before: string | undefined, now: number): Promise<Out> {
   const rep = cfg.rep || REP, bf = new Set(cfg.board_files || []), own = cfg.owners || {};
   const q = `SELECT ${COLS} FROM wl_talk_msg m WHERE chan=(SELECT id FROM wl_talk_chan WHERE slack_channel = ?) AND thread IS NULL AND ${LIVE_ROOT}` +
-    (before ? " AND m.at < (SELECT at FROM wl_talk_msg WHERE id = ? OR slack_ts = ? LIMIT 1)" : "") + " ORDER BY at DESC LIMIT ?";
-  const rows = (await db.prepare(q).bind(cfg.channels[key], ...(before ? [before, before] : []), PAGE + 1).all<R>()).results;
+    (before ? " AND m.at < coalesce((SELECT at FROM wl_talk_msg WHERE id = ? OR slack_ts = ? LIMIT 1), CAST(? AS REAL))" : "") + " ORDER BY at DESC LIMIT ?";
+  const rows = (await db.prepare(q).bind(cfg.channels[key], ...(before ? [before, before, before] : []), PAGE + 1).all<R>()).results;
   const page = rows.slice(0, PAGE), more = rows.length > PAGE;
   const ids = page.map(r => r.id);
   // 두 번째 왕복: 꾸밈 넷 + 표시(db_marks) 셋 — 표시는 뿌리 꼴(답 수 · 단추)이 있어야 해서 꾸밈 결과로 먼저 꼴을 만든 뒤 묻지 않고, 뿌리 전부로 물어 둠

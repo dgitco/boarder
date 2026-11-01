@@ -79,7 +79,7 @@ async function callJson(tool, args) {
   let r = await go(w.token);
   if (r.status === 401) { w = await windowToken({ fresh: true }); r = await go(w.token); }
   const j = await r.json().catch(() => ({ error: `Boarder ${r.status}` }));
-  if (!r.ok) throw new Error(j.error || String(r.status));
+  if (!r.ok) throw Object.assign(new Error(j.error || String(r.status)), { status: r.status });
   return j;
 }
 async function call(tool, args) {
@@ -93,11 +93,12 @@ async function call(tool, args) {
   console.log(JSON.stringify(j));
   if (tool === 'inbox_wait' && j.state === 'open') process.exit(2);
 }
+const transient = e => e?.code !== 'NO_DEVICE' && e?.code !== 'REVOKED' && (!e?.status || e.status >= 500 || e.status === 408 || e.status === 429);
 async function waitLong(cardId, timeoutS) {
   const until = Date.now() + timeoutS * 1000;
   for (;;) {
     const left = Math.max(0, Math.round((until - Date.now()) / 1000));
-    let j; try { j = await callJson('inbox_wait', { card_id: cardId, timeout_s: Math.min(50, left) }); } catch (e) { if (Date.now() > until) throw e; await new Promise(r => setTimeout(r, 5000)); continue; }
+    let j; try { j = await callJson('inbox_wait', { card_id: cardId, timeout_s: Math.min(50, left) }); } catch (e) { if (Date.now() > until || !transient(e)) throw e; await new Promise(r => setTimeout(r, 5000)); continue; }
     if (j.state !== 'open' || Date.now() >= until) { console.log(JSON.stringify(j)); if (j.state === 'open') process.exit(2); return; }
   }
 }
@@ -141,7 +142,7 @@ export async function main(argv) {
     if (cmd === 'headers') { const w = await windowToken(); return console.log(JSON.stringify({ Authorization: `Bearer ${w.token}` })); }
     if (cmd === 'hook' && pos[0] === 'session-start') {
       let note = 'Boarder: report this session on the human\'s board — `boarder log start|progress|blocked|done "<one line>"`, decisions with `boarder ask` (skill: boarder).';
-      try { await windowToken(); } catch (e) { note = `Boarder: ${e.message}`; }
+      try { await windowToken({ timeoutMs: 6000 }); } catch (e) { note = `Boarder: ${e.name === 'TimeoutError' ? 'the Boarder server did not answer in time — reports may fail until the network is back' : e.message}`; }
       return console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: note } }));
     }
     const num = v => v === undefined ? undefined : Number(v);
