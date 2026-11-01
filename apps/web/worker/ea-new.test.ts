@@ -182,9 +182,9 @@ test('Esc · 바깥 닫기 · 포커스 가둠과 복귀 · 오래된 folders �
   t.one('.bx-en-scrim').click(); assert.equal(t.one('.bx-en-scrim').hidden, true);
 });
 
-test('40초 넘으면 임시 줄 오류 후 제거, 판을 열지 않음', async () => {
+test('3분 넘으면 임시 줄 오류 후 제거, 판을 열지 않음', async () => {
   const t = setup(); await t.open(); t.chooseFolder(); t.one('.bx-en-start').click(); await t.settle();
-  t.advance(39000); assert.match(t.one('.bx-en-pending').textContent, /여는 중/);
+  t.advance(179000); assert.match(t.one('.bx-en-pending').textContent, /여는 중/);
   t.advance(1000); assert.match(t.one('.bx-en-pending').textContent, /일시적인 오류가 발생했어요/);
   assert.equal(t.one('.bx-en-pending').querySelector('.bx-es-spin'), null);
   t.advance(2000); assert.equal(t.one('.bx-en-pending'), null); assert.deepEqual(t.opened, []);

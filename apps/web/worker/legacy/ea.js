@@ -135,7 +135,7 @@
   }
   function watchPane(pane, name){
     const item = {pane, name, error: false}; opening.unshift(item); draw(true);
-    const until = Date.now() + 40000;
+    const until = Date.now() + 180000;
     const remove = () => { const i = opening.indexOf(item); if (i >= 0) opening.splice(i, 1); draw(true); };
     function check(){
       if (P().some(p => p.pane === pane)){ remove(); go('n:' + pane); return; }
