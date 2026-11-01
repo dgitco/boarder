@@ -122,7 +122,10 @@
   const btn = (label, attrs = '', kind = '') => `<button type="button" class="bxs-btn ${kind}" ${attrs}>${label}</button>`;
   const empty = (o, old) => window.HBEmpty ? window.HBEmpty(o) : old;
   const sw = (on, attrs = '', label = '') => `<button type="button" role="switch" aria-checked="${on}" class="bxs-sw" ${attrs} aria-label="${esc(label)}"><i></i></button>`;
-  const badge = c => c.status === 'ok' ? `<span class="bxs-badge"><i class="ok"></i>${c.tools == null ? '연결됨' : `도구 ${c.tools - c.off}`}</span>`
+  /** 정상으로 보이나 도구가 하나도 안 읽힘 = 토큰이 죽었거나 권한이 빠진 연결 의심 */
+  const suspect = c => c.status === 'ok' && c.tools === 0;
+  const canRecon = c => c.kind !== 'api' || c.api_oauth && apiReady(c);
+  const badge = c => suspect(c) ? '<span class="bxs-badge warn">도구 없음 · 끊김 의심</span>' : c.status === 'ok' ? `<span class="bxs-badge"><i class="ok"></i>${c.tools == null ? '연결됨' : `도구 ${c.tools - c.off}`}</span>`
     : c.status === 'expired' ? '<span class="bxs-badge warn">다시 연결</span>' : '<span class="bxs-badge bad">오류</span>';
   const confirmBox = (msg, yes) => new Promise(res => {
     const d = mk('div', 'bxs-dlg', `<div class="bxs-dlgc" role="alertdialog" aria-modal="true"><p>${msg}</p><div class="bxs-row end">${btn('취소', 'data-no', 'ghost')}${btn(esc(yes), 'data-yes', 'danger')}</div></div>`);
@@ -158,7 +161,7 @@
     const rows = [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([svc, xs]) => `<div class="bxs-grp"><div class="bxs-gh"><b>${esc(xs[0].title)}</b><span>${esc(xs[0].host)}</span></div><ul>`
       + xs.map(c => `<li class="bxs-conn" data-id="${esc(c.id)}"><span class="tick" aria-hidden="true"></span><div class="bxs-cm"><div class="l1"><a href="#settings/connectors/${encodeURIComponent(c.id)}" data-to="#settings/connectors/${encodeURIComponent(c.id)}" class="${c.label ? '' : 'mut'}">${esc(c.label || '라벨 없음')}</a>${badge(c)}${c.kind === 'api' ? '<span class="bxs-badge">API</span>' : ''}${c.read_only ? '<span class="bxs-badge">읽기만</span>' : ''}${c.account ? `<span class="acct">${esc(c.account)}</span>` : ''}</div>`
         + `<div class="l2">${c.status !== 'ok' && c.error ? esc(c.error) + ' · ' : ''}<code>${esc(c.prefix)}__…</code></div></div>`
-        + (c.status === 'expired' ? (c.kind !== 'api' || c.api_oauth && apiReady(c) ? btn('다시 연결', `data-recon="${esc(c.id)}"`, 'sm pri') : apiReady(c) ? btn('키 넣기', `data-apikey="${esc(c.id)}"`, 'sm pri') : '') : '')
+        + (suspect(c) && canRecon(c) ? btn('다시 연결', `data-recon="${esc(c.id)}"`, 'sm pri') : c.status === 'expired' ? (canRecon(c) ? btn('다시 연결', `data-recon="${esc(c.id)}"`, 'sm pri') : apiReady(c) ? btn('키 넣기', `data-apikey="${esc(c.id)}"`, 'sm pri') : '') : '')
         + `<button type="button" class="bxs-more" data-more="${esc(c.id)}" aria-label="${esc(c.prefix)} 메뉴" aria-haspopup="menu">${IC.more}</button></li>`).join('') + hooksOf(svc).map(hookLine).join('') + '</ul></div>').join('')
       + (unbound.length ? `<div class="bxs-grp"><div class="bxs-gh"><b>웹훅</b><span>어느 서비스에도 안 묶인 받는 주소</span></div><ul>${unbound.map(hookLine).join('')}</ul></div>` : '');
     el.innerHTML = header('커넥터', 'AI 도구들이 보더를 거쳐 쓰는 서비스예요. 연결한 서비스는 모든 창에서 <code>서비스__도구</code> 로 불려요.', btn('+ 연결', 'data-add', 'pri'))
@@ -256,7 +259,7 @@
   };
   function moreMenu(anchor, c){
     document.querySelector('.bxs-pop')?.remove();
-    const p = mk('div', 'bxs-pop', `<button type="button" data-a="tools">도구와 자세히</button><button type="button" data-a="rename">이름 바꾸기</button><hr><button type="button" data-a="rm" class="danger">끊기</button>`);
+    const p = mk('div', 'bxs-pop', `<button type="button" data-a="tools">도구와 자세히</button>${canRecon(c) ? '<button type="button" data-a="recon">다시 연결</button>' : ''}<button type="button" data-a="rename">이름 바꾸기</button><hr><button type="button" data-a="rm" class="danger">끊기</button>`);
     p.setAttribute('role', 'menu'); p.addEventListener('keydown', e => e.stopPropagation()); document.body.append(p);
     const r = anchor.getBoundingClientRect(); p.style.top = (r.bottom + 4) + 'px'; p.style.left = Math.max(8, Math.min(innerWidth - 200, r.right - 190)) + 'px';
     const close = () => { p.remove(); removeEventListener('click', out, true); };
@@ -266,6 +269,7 @@
       const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return; close();
       if (a === 'tools') return go('#settings/connectors/' + encodeURIComponent(c.id));
       if (a === 'rename') return rename(c);
+      if (a === 'recon') return connect({service: c.service, reconnect: c.id});
       if (a === 'rm' && await confirmBox(`<b>${esc(c.prefix)}</b> 연결을 끊을까요? 에이전트가 이 도구를 더 못 써요.`, '끊기')){ try { await api('DELETE', 'api/connections/' + encodeURIComponent(c.id)); toast('끊었어요'); render(); } catch (err) { toast(err.message); } }
     });
   }
@@ -304,9 +308,10 @@
     const c = j.connection, tools = j.tools || [], onN = tools.filter(t => t.on).length;
     el.innerHTML = `<a href="#settings/connectors" class="bxs-crumb" data-to="#settings/connectors">‹ 커넥터</a>`
       + `<div class="bxs-h"><div data-rename-at><h1>${esc(c.title)}${c.label ? ` <span class="mut">› ${esc(c.label)}</span>` : ''} ${badge(c)}</h1><p>${c.account ? esc(c.account) + ' · ' : ''}${esc(c.host)} · <code>${esc(c.prefix)}__…</code></p></div></div>`
+      + (suspect(c) && !j.err && canRecon(c) ? `<div class="bxs-note warn">도구가 하나도 안 읽혀요 — 로그인이 풀렸을 수 있어요. ${btn('다시 연결', 'data-recon', 'sm pri')}</div>` : '')
       + (j.err || (c.status !== 'ok' && c.error) ? `<div class="bxs-note warn">${esc(j.err || c.error)}${c.status === 'expired' ? (c.kind !== 'api' || c.api_oauth && apiReady(c) ? ' ' + btn('다시 연결', 'data-recon', 'sm pri') : apiReady(c) ? ' ' + btn('키 넣기', 'data-rekey', 'sm pri') : '') : ''}</div>` : '')
       + `<div class="bxs-sech">접근</div><div class="bxs-list"><div class="bxs-li"><div><b>읽기만</b><span>에이전트에게 읽는 도구만 보여요</span></div>${sw(c.read_only, 'data-ro', '읽기만')}</div></div>`
-      + `<div class="bxs-sech bxs-row between"><span>도구 · ${tools.length}개 중 ${onN}개 켬</span><span class="bxs-row">${c.kind === 'api' ? (!apiReady(c) ? '' : c.api_oauth ? btn('다시 연결', 'data-recon', 'sm ghost') : btn('키 바꾸기', 'data-rekey', 'sm ghost')) : btn('도구 다시 읽기', 'data-refresh', 'sm ghost')}${btn('이름 바꾸기', 'data-ren', 'sm ghost')}${btn('끊기', 'data-rm', 'sm ghost danger')}</span></div>`
+      + `<div class="bxs-sech bxs-row between"><span>도구 · ${tools.length}개 중 ${onN}개 켬</span><span class="bxs-row">${c.kind === 'api' ? (!apiReady(c) ? '' : c.api_oauth ? btn('다시 연결', 'data-recon', 'sm ghost') : btn('키 바꾸기', 'data-rekey', 'sm ghost')) : btn('도구 다시 읽기', 'data-refresh', 'sm ghost') + (canRecon(c) ? btn('다시 연결', 'data-recon', 'sm ghost') : '')}${btn('이름 바꾸기', 'data-ren', 'sm ghost')}${btn('끊기', 'data-rm', 'sm ghost danger')}</span></div>`
       + (tools.length ? `<input class="bxs-in" type="search" placeholder="도구 거르기" aria-label="도구 거르기" data-tf><div class="bxs-list" data-tl>${tools.map(t => `<div class="bxs-li" data-tn="${esc(t.name)}"><div><b><code>${esc(t.exposed)}</code></b><span>${t.read_only ? '읽기' : '바꿈'}${t.description ? ' · ' + esc(t.description.split('\n')[0].slice(0, 140)) : ''}</span></div>${sw(t.on, `data-tog="${esc(t.name)}"`, t.name)}</div>`).join('')}</div>` : '<p class="bxs-mut">도구 목록이 없어요 — 「도구 다시 읽기」</p>') + '<div data-hb></div>';
     const off = new Set(tools.filter(t => !t.on).map(t => t.name));
     api('GET', 'api/hooks').then(({hooks}) => { const hb = el.querySelector('[data-hb]'); if (live() && hb) hookBlock(hb, hooks.filter(h => h.service === c.service), c.service); }).catch(() => {});
