@@ -146,10 +146,13 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     st.push(DB.prepare("DELETE FROM imp_item WHERE owner = ? AND gone_at < ?").bind(owner, t - 7 * 86400_000));
     for (let i = 0; i < st.length; i += 90) await DB.batch(st.slice(i, i + 90));
     const set = await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner).first<{ data: string }>();
-    const fresh = items.length && !json<{ unit?: Unit }>(set?.data, {}).unit && !(await DB.prepare("SELECT 1 FROM mnode WHERE owner = ? LIMIT 1").bind(owner).first());
-    const picked = fresh ? pickUnit(items, (b.roles || []).map(x => x.name)) : null;
+    const cur = json<{ unit?: Unit; unit_by?: string }>(set?.data, {});
+    const fresh = items.length && !cur.unit && !(await DB.prepare("SELECT 1 FROM mnode WHERE owner = ? LIMIT 1").bind(owner).first());
+    let picked = fresh ? pickUnit(items, (b.roles || []).map(x => x.name)) : null;
     if (picked) await setUnit(env(c), owner, picked, "auto");
     const r = await regroup(env(c), owner);
+    // 고른 뒤 카드 전에 끊겼으면(묶기 중 D1 오류 · Worker 내려감) 다시 올린 들여오기에서 카드를 이어서 — 아직 사람이 안 정했고(auto) 그 카드가 한 번도 없을 때만
+    if (!picked && items.length && cur.unit && cur.unit_by === "auto" && !(await DB.prepare("SELECT 1 FROM board_card WHERE owner = ? AND win = ? AND question = ? LIMIT 1").bind(owner, IMPORT_WIN, UNIT_Q).first())) picked = cur.unit;
     if (picked) {
       const other: Unit = picked === "agent" ? "goal" : "agent", id = `${Math.floor(t / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
       const body = picked === "agent" ? "쓰던 에이전트가 여럿이라 에이전트마다 채널로 묶었어요. 일은 그 채널의 대화로 들어가요." : "일마다 채널로 묶었어요.";

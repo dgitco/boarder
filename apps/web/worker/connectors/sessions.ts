@@ -34,27 +34,34 @@ export async function upload(env: Env, owner: string, meta: { tool: ConverterId;
   const have = row?.lines ?? 0;
   if (meta.from !== have) return { status: 409 as const, body: { error: "줄 위치가 다름", lines: have } };
   const lines = text.split("\n"); if (lines.at(-1) === "") lines.pop();
-  const claimAt = Date.now();
-  const claim = row
-    ? await env.DB.prepare("UPDATE ai_session SET lines = ?, updated_at = ? WHERE owner = ? AND id = ? AND lines = ?").bind(have + lines.length, claimAt, owner, sid, have).run()
-    : await env.DB.prepare("INSERT INTO ai_session(id, owner, tool, native, lines, created_at, updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(owner, id) DO NOTHING").bind(sid, owner, meta.tool, meta.native, lines.length, claimAt, claimAt).run();
-  if (!claim.meta.changes) return { status: 409 as const, body: { error: "줄 위치가 다름", lines: (await offset(env, owner, meta.tool, meta.native)).lines } };
   const prev = row?.state ? JSON.parse(row.state) as ParseState : undefined;
   const r = converters[meta.tool](lines, prev);
   const msgs: Msg[] = toConversation(r.events).map(m => ({ role: m.role, at: m.at, text: redact(m.text) }));
   const restart = !!row && row.win === "0b" && have === 0;
   const n = restart ? 0 : row?.parts ?? 0, now = Date.now();
-  if (msgs.length) await env.RESULTS.put(key(owner, sid, n), JSON.stringify(msgs), { httpMetadata: { contentType: "application/json" } });
   const firstAsk = msgs.find(m => m.role === "user")?.text.replace(/\s+/g, " ").trim().slice(0, 80);
   const title = redact(r.meta.title || row?.title || firstAsk || "").slice(0, 200), cwd = redact(meta.cwd || r.meta.cwd || row?.cwd || "").slice(0, 300);
-  meta.repo = redact((meta.repo || "").replace(/^([a-z+]+:\/\/)[^@/]+@/i, "$1"));
-  await env.DB.prepare(`INSERT INTO ai_session(id, owner, tool, native, title, cwd, repo, branch, model, host, win, lines, messages, parts, state, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(owner, id) DO UPDATE SET title = excluded.title, cwd = excluded.cwd, repo = CASE WHEN excluded.repo != '' THEN excluded.repo ELSE ai_session.repo END, branch = excluded.branch, model = excluded.model,
-      host = excluded.host, win = excluded.win, lines = excluded.lines, messages = excluded.messages, parts = excluded.parts, state = excluded.state, updated_at = excluded.updated_at`)
-    .bind(sid, owner, meta.tool, meta.native, title, cwd, (meta.repo || "").slice(0, 200), (r.meta.branch || row?.branch || "").slice(0, 120), (r.meta.model || row?.model || "").slice(0, 80),
-      meta.host.slice(0, 60), meta.win.slice(0, 80), have + lines.length, (restart ? 0 : row?.messages ?? 0) + msgs.length, n + (msgs.length ? 1 : 0), JSON.stringify(r.state), row?.created_at ?? (r.meta.startedAt || now), now).run();
-  return { status: 200 as const, body: { id: sid, lines: have + lines.length, messages: (restart ? 0 : row?.messages ?? 0) + msgs.length, added: msgs.length } };
+  const repo = (redact((meta.repo || "").replace(/^([a-z+]+:\/\/)[^@/]+@/i, "$1")) || row?.repo || "").slice(0, 200);
+  const total = have + lines.length, messages = (restart ? 0 : row?.messages ?? 0) + msgs.length, parts = n + (msgs.length ? 1 : 0);
+  const vals = [title, cwd, repo, (r.meta.branch || row?.branch || "").slice(0, 120), (r.meta.model || row?.model || "").slice(0, 80), meta.host.slice(0, 60), meta.win.slice(0, 80), total, messages, parts, JSON.stringify(r.state), now];
+  const claim = row
+    ? await env.DB.prepare(`UPDATE ai_session SET title = ?, cwd = ?, repo = ?, branch = ?, model = ?, host = ?, win = ?, lines = ?, messages = ?, parts = ?, state = ?, updated_at = ?
+        WHERE owner = ? AND id = ? AND lines = ? AND parts = ?`).bind(...vals, owner, sid, have, row.parts).run()
+    : await env.DB.prepare(`INSERT INTO ai_session(title, cwd, repo, branch, model, host, win, lines, messages, parts, state, updated_at, id, owner, tool, native, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner, id) DO NOTHING`).bind(...vals, sid, owner, meta.tool, meta.native, r.meta.startedAt || now).run();
+  if (!claim.meta.changes) return { status: 409 as const, body: { error: "줄 위치가 다름", lines: (await offset(env, owner, meta.tool, meta.native)).lines } };
+  // 조각 번호 n 은 위 줄을 잡은 저장만 씀. R2 가 실패하면 잡은 것을 되돌림(그 사이 다른 저장이 이어 갔으면 그대로) — 다음 저장이 같은 위치부터 다시
+  if (msgs.length) try {
+    await env.RESULTS.put(key(owner, sid, n), JSON.stringify(msgs), { httpMetadata: { contentType: "application/json" } });
+  } catch (e) {
+    const mine = [owner, sid, total, parts, now];
+    await (row
+      ? env.DB.prepare(`UPDATE ai_session SET title = ?, cwd = ?, repo = ?, branch = ?, model = ?, host = ?, win = ?, lines = ?, messages = ?, parts = ?, state = ?, updated_at = ?
+          WHERE owner = ? AND id = ? AND lines = ? AND parts = ? AND updated_at = ?`).bind(row.title, row.cwd, row.repo, row.branch, row.model, row.host, row.win, row.lines, row.messages, row.parts, row.state, row.updated_at, ...mine)
+      : env.DB.prepare("DELETE FROM ai_session WHERE owner = ? AND id = ? AND lines = ? AND parts = ? AND updated_at = ?").bind(...mine)).run().catch(() => {});
+    throw e;
+  }
+  return { status: 200 as const, body: { id: sid, lines: total, messages, added: msgs.length } };
 }
 
 export async function list(env: Env, owner: string, query: string | undefined, limit: number) {

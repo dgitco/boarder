@@ -57,11 +57,23 @@ export function obLive(env: Env, row: Pick<Row, "source">): boolean {
   return !String(env.OB_MOVED || "").split(",").map(x => x.trim()).filter(Boolean).includes(who);
 }
 
+/**
+ * 이 요청이 줄을 읽은 뒤 다른 요청이 이미 갱신해 둔 토큰. 요청마다 줄을 따로 읽어 쥐므로(catalog), 앞 요청의 갱신이 끝난 뒤 옛 줄로 갱신하면
+ * 이미 쓴 갱신 토큰을 다시 보냄 — 돌려 쓰는 서버(Slack · GitHub · OAuth 2.1)는 재사용을 잡아 토큰 줄 전체를 폐기함
+ */
+async function newer(env: Env, row: Row): Promise<Auth | null> {
+  const fresh = await env.DB.prepare("SELECT auth FROM connection WHERE id = ?").bind(row.id).first<{ auth: string }>();
+  if (!fresh || fresh.auth === row.auth) return null;
+  row.auth = fresh.auth;
+  return open<Auth>(env.CONNECTOR_KEY, fresh.auth);
+}
+
 async function doRefresh(env: Env, row: Row, a: Auth): Promise<Auth> {
   if (obLive(env, row)) throw new Error("옮겨 오기 전 서비스가 아직 같은 토큰을 써요 — 옮기기를 마칠 때 새로 받아요");
   const running = refreshing.get(row.id); if (running) return running;
   const p = (async () => {
     try {
+      const n = await newer(env, row); if (n) { if (!n.expires_at || n.expires_at > Date.now() + 60_000) return n; a = n; }
       const t = await refresh(a.token_endpoint!, a.refresh_token!, a.resource || row.url, clientOf(env, row, a));
       const next = { ...a, access_token: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
       const sealed = await seal(env.CONNECTOR_KEY, next);
@@ -138,7 +150,7 @@ export async function call(env: Env, row: Row, tool: string, args: Record<string
  * 갱신 토큰을 구글이 거절하면(invalid_grant 등 — Gmail 테스트 앱은 7일마다) 「다시 연결」
  */
 async function googleKey(env: Env, row: Row): Promise<string | undefined> {
-  const a = await open<Auth>(env.CONNECTOR_KEY, row.auth);
+  let a = await open<Auth>(env.CONNECTOR_KEY, row.auth);
   const provider = a.api?.auth.type === "oauth" ? a.api.auth.provider : null, slack = provider === "slack", github = provider === "github";
   const app = a.api ? (slack ? slackApp(env, a.api.auth) : github ? githubApp(env, a.api.auth) : googleApp(env, a.api.auth)) : null;
   if (!a.refresh_token || !app || !a.expires_at || a.expires_at > Date.now() + 60_000) return a.key;
@@ -146,6 +158,7 @@ async function googleKey(env: Env, row: Row): Promise<string | undefined> {
   const running = refreshing.get(row.id); if (running) return (await running).key;
   const p = (async () => {
     try {
+      const n = await newer(env, row); if (n) { if (n.expires_at && n.expires_at > Date.now() + 60_000) return n; a = n; }
       const t = slack ? await slackToken(app, a.refresh_token!) : github ? await githubAppToken(app, a.refresh_token!) : await googleToken(app, { grant_type: "refresh_token", refresh_token: a.refresh_token! });
       const next: Auth = { ...a, key: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
       const sealed = await seal(env.CONNECTOR_KEY, next);

@@ -133,6 +133,20 @@ test("일시 실패(503)는 다시", () => {
   assert.deepEqual(s.later(), []);
 });
 
+// r9: 한 통(BURST 넘음)이 일시 실패하면 다음 차례에 다시 가야 함 — 고를 때 fps 를 미리 적어 두면 다시 고를 때 「같은 내용 보냄」으로 넘겨 영영 안 감
+test("한꺼번에 많은 한 통이 일시 실패(503)해도 다시 감", () => {
+  const s = new Sim(); s.tick(s.t);
+  s.code = 503;
+  for (let n = 0; n < 6; n++) s.card(`19${n}.000001`, { label: `카드 ${n}`, ref: `r${n}` });
+  assert.deepEqual(s.later(), []);
+  s.code = 201;
+  assert.deepEqual(s.later(), ["card:190.000001"]);
+  assert.equal(s.got.at(-1)!.title, "내 차례");
+  assert.deepEqual(s.later(), []);
+  for (let n = 0; n < 6; n++) assert.ok(s.st.notified.includes(`card:19${n}.000001`));
+  assert.deepEqual(s.st.tries, {});
+});
+
 test("꼴이 틀린 구독 · 410 은 지울 것, 다른 기기는 그대로", async () => {
   const v = (await P.vapidKey(P.b64u(crypto.getRandomValues(new Uint8Array(32)))))!;
   const ok = (async () => new Response(null, { status: 201 })) as unknown as typeof fetch, gone = (async () => new Response(null, { status: 410 })) as unknown as typeof fetch;

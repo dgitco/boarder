@@ -621,9 +621,11 @@ app.post("/api/device/token", async c => {
   if (scope === "watch" && ((await c.env.DB.prepare("SELECT count(*) n FROM device WHERE owner = ? AND revoked_at IS NULL").bind(r.owner).first<{ n: number }>())?.n || 0) >= 10) return c.json({ state: "denied" }, 403);
   // 승인됨 → 기기 토큰을 지금 한 번만 만듦(값은 안 두고 해시만). 두 폴링이 겹쳐도 한쪽만(state 조건)
   const id = rand(9), tok = "bxd_" + rand(32);
-  const u = await c.env.DB.prepare("UPDATE device_code SET state = 'issued', device_id = ? WHERE code_hash = ? AND state = 'approved'").bind(id, h).run();
+  const [u] = await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE device_code SET state = 'issued', device_id = ? WHERE code_hash = ? AND state = 'approved'").bind(id, h),
+    c.env.DB.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope) SELECT ?,?,?,?,?,?,?,? FROM device_code WHERE code_hash = ? AND device_id = ? AND state = 'issued'").bind(id, r.owner, r.name, r.tools, await sha(tok), now, now, scope, h, id),
+  ]);
   if (!u.meta.changes) return c.json({ error: "used" }, 400);
-  await c.env.DB.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope) VALUES (?,?,?,?,?,?,?,?)").bind(id, r.owner, r.name, r.tools, await sha(tok), now, now, scope).run();
   return c.json({ state: "approved", token: tok, email: r.owner, device_id: id, server: c.env.PUBLIC_URL, scope });
 });
 app.get("/api/device/lookup", async c => {
@@ -1413,12 +1415,14 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   try { hop = await memberBoard.post(c.env.DB, me, url.pathname, b); } catch { return queue.retrySafe(c); }   // 읽기만(쓰기 전) — D1 실패는 다시 보내도 됨
   if ("error" in hop) return c.json({ ok: false, error: hop.error }, hop.status as 400);
   if ("ok" in hop) return c.json({ rid, ...hop.ok });
+  const qrid = hop.log ? queue.ridOfBody(b) : "";
+  if (qrid) { try { if (await queue.ridSeen(c.env.DB, qrid)) return c.json({ ok: true, rid, state: "ok", channel: "primary", already: true }); } catch { return queue.retrySafe(c); } }
   const h = new Headers({ "content-type": "application/json", "x-hb": "1", cookie: c.req.header("cookie") || "" });
   const sf = c.req.header("sec-fetch-site"); if (sf) h.set("sec-fetch-site", sf);
   const r = await app.fetch(new Request(new URL(hop.path, url), { method: "POST", headers: h, body: JSON.stringify({ ...(hop.body as object), ...(rid ? { rid } : {}) }) }), c.env, c.executionCtx);   // rid 도 넘김(안쪽 쓰기가 한 번만)
   const j = await r.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
   if (!r.ok || j.ok === false) return c.json({ ok: false, rid, error: typeof j.error === "string" ? j.error : "일시적인 오류가 발생했어요" }, (r.ok ? 400 : r.status) as 400, r.headers.get("x-retry-safe") === "1" ? { "x-retry-safe": "1" } : {});
-  if (hop.log && !j.already) await c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), null, Date.now(), Array.isArray(j.cmds) && j.cmds[0] ? `cmd:${j.cmds[0]}` : null).run().catch(e => console.error("노드 채팅 줄", e));
+  if (hop.log && !j.already) await queue.ridBatch(c.env.DB, qrid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), null, Date.now(), Array.isArray(j.cmds) && j.cmds[0] ? `cmd:${j.cmds[0]}` : null)]).catch(e => console.error("노드 채팅 줄", e));
   return c.json({ ...j, ok: true, rid, state: "ok", channel: "primary" });
 }
 async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false) {

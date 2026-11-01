@@ -15,7 +15,8 @@ type Env = { AI: Ai };
 
 const MODEL = "@cf/baai/bge-m3", DIM = 1024;
 const SEM_MIN: Record<string, number> = { node: 0.42, card: 0.55, art: 0.5, log: 0.58, chat: 0.62 };
-const EMB_BATCH = 64, EMB_PAR = 3;   // 알람 한 번에 64 × 3(처음 채울 때 ~9천 개, 이후는 바뀐 것만)
+const EMB_BATCH = 64, EMB_PAR = 3;
+const EMB_TRIES = 30, EMB_RETRY_MS = 30_000, EMB_RETRY_MAX_MS = 3_600_000;
 
 export class Search extends DurableObject<Env> {
   private mat: Int8Array | null = null;     // 뜻 벡터(문서마다 DIM 칸) — 처음 찾을 때 한 번 올리고 바뀌면 버림
@@ -84,7 +85,7 @@ export class Search extends DurableObject<Env> {
 
   async alarm() {
     const s = this.ctx.storage.sql;
-    s.exec("DELETE FROM embq WHERE rid NOT IN (SELECT rid FROM doc WHERE emb=1) OR tries >= 5");   // 지운 글 · 뜻 검색 뺀 글 · 다섯 번 실패한 글은 버림(무한 재시도로 한도를 쓰지 않게)
+    s.exec("DELETE FROM embq WHERE rid NOT IN (SELECT rid FROM doc WHERE emb=1) OR tries >= ?", EMB_TRIES);   // 지운 글 · 뜻 검색 뺀 글 · 하루쯤 실패한 글은 버림(무한 재시도로 한도를 쓰지 않게)
     const rows = s.exec<{ rid: number; title: string; body: string }>("SELECT d.rid, d.title, d.body FROM embq q JOIN doc d ON d.rid=q.rid WHERE d.emb=1 LIMIT ?", EMB_BATCH * EMB_PAR).toArray();
     if (!rows.length) return;
     const tsigs = await Promise.all(rows.map(x => sig8(JSON.stringify([x.title, x.body]))));
@@ -100,7 +101,8 @@ export class Search extends DurableObject<Env> {
       });
     });
     if (wrote) this.mat = null;
-    await this.ctx.storage.setAlarm(Date.now() + (bad ? 30_000 : 100));   // 한도 · 일시 오류면 30초 뒤
+    const t = bad ? s.exec<{ n: number | null }>("SELECT min(tries) n FROM embq WHERE tries > 0").one().n || 1 : 0;
+    await this.ctx.storage.setAlarm(Date.now() + (bad ? Math.min(EMB_RETRY_MAX_MS, EMB_RETRY_MS * 2 ** (t - 1)) : 100));
   }
 
   private load() {

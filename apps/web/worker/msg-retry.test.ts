@@ -51,7 +51,7 @@ function snapNs() {
 }
 // 엔진 DO(기기마다): 넣은 글만 적음
 function engineNs(sent: { id: string; text: string }[]) {
-  return { idFromName: (n: string) => n, get: () => ({ deliver: async (id: string, text: string) => { sent.push({ id, text }); return { sent: true }; } }) };
+  return { idFromName: (n: string) => n, get: () => ({ deliver: async (id: string, text: string) => { sent.push({ id, text }); return { sent: true }; }, drainCmds: async () => null }) };
 }
 
 const MEMBER = "member@example.test", SECRET = "test-secret-not-real", TOKEN = "sess-token-made-up";
@@ -76,7 +76,7 @@ function setup() {
     await Promise.all(waits.splice(0));   // 뒷일(rid 칸 done · release · 엔진 넣기)까지 끝난 뒤
     return r;
   };
-  return { db, st, sent, post };
+  return { db, st, sent, post, env };
 }
 
 test("회원 채팅: D1 에 들어갔는데 답을 잃고 같은 rid 로 다시 보내면 — 글 한 줄 · 메인 봇에 한 번", async () => {
@@ -128,4 +128,33 @@ test("회원 카드 스레드: 이미 답한 글에 다른 글은 확정 실패(
   assert.equal((await post("/api/chat", { ...th, text: "뒤따른 글", rid: "rtest-card-0102" })).status, 400);
   assert.equal((await post("/api/chat", { ...th, text: "첫 답", rid: "rtest-card-0103" })).status, 200);
   assert.equal(sent.length, 1, "같은 답은 창에 두 번 안 감");
+});
+
+test("회원 노드 채팅: 다 끝난 글을 같은 rid 로 또 보내도(rid 칸이 답을 잊음) 그 창에 두 번 안 들어가고 내 글도 한 줄", async () => {
+  const { db, post, env } = setup(), T = Date.now();
+  db.prepare("INSERT INTO mnode(owner, id, name, state, created_at, updated_at) VALUES (?,?,?,?,?,?)").run(MEMBER, "n_test01", "일 노드", "working", T, T);
+  db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?,?)").run(MEMBER, "window:w1", "devMember01", "window", "tmux", "일 창", "idle", "w1", T);
+  db.prepare("INSERT INTO mnode_item(owner, item, node) VALUES (?,?,?)").run(MEMBER, "window:w1", "n_test01");
+  const { paneOfId } = await import("./member-board.ts");
+  const body = { channel: "primary", pane: paneOfId("n_test01"), text: "노드에 한 번만", rid: "rtest-node-0001" };
+  assert.equal((await post("/api/chat", body)).status, 200);
+  // rid 칸(DO)이 「하는 중」을 남긴 채 죽어 2분 뒤 다시 잡힌 것과 같음(답을 잃은 화면이 같은 rid 로 다시 보냄)
+  (env as { SNAP: unknown }).SNAP = snapNs();
+  const again = await post("/api/chat", body);
+  assert.equal(again.status, 200);
+  const sends = (db.prepare("SELECT count(*) AS n FROM engine_cmd WHERE owner = ? AND verb = 'send'").get(MEMBER) as { n: number }).n;
+  const mine = (db.prepare("SELECT count(*) AS n FROM board_log WHERE owner = ? AND kind = 'me' AND text = ?").get(MEMBER, "노드에 한 번만") as { n: number }).n;
+  assert.equal(sends, 1, "창에 넣는 줄은 한 번");
+  assert.equal(mine, 1, "노드 채팅 내 글은 한 줄");
+});
+
+test("회원 엔진 창 채팅: 다 끝난 글을 같은 rid 로 또 보내도 그 창에 두 번 안 감", async () => {
+  const { db, sent, post, env } = setup();
+  const { paneOfId } = await import("./member-board.ts");
+  const body = { channel: "primary", pane: paneOfId("ew_role1"), text: "역할 창에 한 번만", rid: "rtest-node-0002" };
+  assert.equal((await post("/api/chat", body)).status, 200);
+  (env as { SNAP: unknown }).SNAP = snapNs();
+  assert.equal((await post("/api/chat", body)).status, 200);
+  assert.deepEqual(sent.map(s => s.id), ["ew_role1"], "역할 창에 한 번");
+  assert.equal((db.prepare("SELECT count(*) AS n FROM board_log WHERE owner = ? AND kind = 'me'").get(MEMBER) as { n: number }).n, 1);
 });
