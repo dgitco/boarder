@@ -30,7 +30,9 @@ import { mountConnectors } from "./connectors/routes";
 import { mountHooks } from "./connectors/hooks";
 import * as sessions from "./connectors/sessions";
 import { catalog } from "./connectors/store";
-import { open as unseal, seal } from "./connectors/seal";
+import { openSecret, sealSecret } from "./vault/secret";
+import { envelopeOn, forgetFlags, openBlob, sealBlob, type VaultEnv } from "./vault/index";
+import * as vmig from "./vault/migrate";
 import { mountImport, onCardAnswered, regroup, setUnit } from "./importer/routes";
 import * as ledger from "./ledger";
 import * as ownerWrite from "./owner-write";
@@ -468,11 +470,13 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
     op: async (name: string, args: Record<string, unknown>) => { const t = Date.now(); try { return await boardTool(c.env, ch, name, args, agent); } finally { seg(c.req.raw, "tool", Date.now() - t); } },
     get: async (path: string) => { const t = Date.now(), r = await boardCall(c.env, ch, { method: "GET", path, headers: { accept: "application/json" } }); bridgeSeg(c.req.raw, Date.now() - t, r.headers); if (r.status >= 400) throw new Error(`보드 ${r.status}`); return JSON.parse(new TextDecoder().decode(r.body)); },
     store: async (text: string) => {
-      const id = crypto.randomUUID().replace(/-/g, "");
-      await c.env.RESULTS.put(`mcp-results/${owner}/${id}.txt`, text, { httpMetadata: { contentType: "text/plain; charset=utf-8" }, customMetadata: { agent } });
+      const id = crypto.randomUUID().replace(/-/g, ""), k = `mcp-results/${owner}/${id}.txt`;
+      // 봉함 켜짐(f7_flag envelope): 그 사람 DEK(주인 '') · AAD = key, 메타 vault=1 로 표시 — 꺼짐이면 글 그대로 · 메타도 그대로
+      const body = await sealBlob(c.env as unknown as VaultEnv, who.owner || "", k, text);
+      await c.env.RESULTS.put(k, body, { httpMetadata: { contentType: "text/plain; charset=utf-8" }, customMetadata: body === text ? { agent } : { agent, vault: "1" } });
       return `${c.env.PUBLIC_URL}/api/agent/result/${id}`;
     },
-    owner,
+    owner, person: who.owner || "",   // person = 봉함 DEK 주인(주인 '')
     ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card))) } : {}),
     host: who.host, win: who.win || who.pane,
     conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
@@ -537,8 +541,9 @@ app.get("/api/sessions/:id/handoff", async c => {
 app.get("/api/agent/result/:id", async c => {
   const ctx = await agentCtx(c); if (ctx === "mismatch") return c.json({ error: "신원 불일치" }, 403); if (!ctx) return c.json({ error: "토큰" }, 401);
   const id = c.req.param("id"); if (!/^[0-9a-f]{32}$/.test(id)) return c.json({ error: "없음" }, 404);
-  const o = await c.env.RESULTS.get(`mcp-results/${ctx.owner}/${id}.txt`); if (!o) return c.json({ error: "없음" }, 404);
-  return new Response(o.body, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+  const k = `mcp-results/${ctx.owner}/${id}.txt`, o = await c.env.RESULTS.get(k); if (!o) return c.json({ error: "없음" }, 404);
+  const body = o.customMetadata?.vault === "1" ? await openBlob(c.env as unknown as VaultEnv, ctx.person, k, await o.arrayBuffer()) : o.body;   // 봉한 것만 풂 — 옛 것은 지금처럼 흘려보냄
+  return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 });
 app.route("/", legal);   // 개인정보 처리방침 · 약관(legal.ts) — 구글 동의 화면 링크
 app.post("/mcp", async c => { const ctx = await agentCtx(c); if (ctx === "mismatch") return c.json({ error: "신원 불일치" }, 403); if (!ctx) return c.json({ error: "토큰" }, 401); return mcp(c.req.raw, ctx); });
@@ -1068,11 +1073,42 @@ app.post("/api/admin/test-session", async c => {
   return c.json({ cookies: [{ name: ctx.authCookies.sessionToken.name, value: await sign(sess.token) }, { name: ctx.authCookies.dontRememberToken.name, value: await sign("true") }], expires: sess.expiresAt }, 200, { "cache-control": "no-store" });
 });
 // 감독 규칙 분(시험 계정에서 짧게 — 기본 30 · 30 · 15)
+// 봉투 옮기기(worker/vault/migrate.ts) — 관리 토큰만. GET ?scope=&owner= = plan(쓰지 않음) · POST { action: run | back, scope, owner?, page?, dryRun? }
+// owner = 그 DEK 주인만('' = 주인, 소문자 메일, x:<이름>) — 없으면 모두. 스위치는 그 owner 의 것(envelopeOn(env, owner), owner 없으면 모두 스위치):
+// run 은 켜져 있을 때만(꺼진 채면 옮긴 뒤 새 쓰기가 봉해지지 않음), back 은 꺼져 있을 때만(켜진 채면 새 쓰기가 곧 다시 봉함). dryRun 은 늘 됨
+const vscope = (s: unknown) => vmig.scopes().includes(String(s)) ? String(s) as vmig.Scope : null;   // 등록한 scope 만(공개 판엔 호스팅 전용 표가 없음)
+const vowner = (o: unknown) => typeof o === "string" ? (o.startsWith("x:") ? o : o.trim().toLowerCase()) : undefined;
+app.get("/api/admin/vault", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const scope = vscope(c.req.query("scope")); if (!scope) return c.json({ error: `scope = ${vmig.scopes().join(" · ")}` }, 400);
+  const env = c.env as unknown as vmig.MEnv, owner = vowner(c.req.query("owner"));
+  return c.json({ scope, owner: owner ?? null, envelope: await envelopeOn(env, owner ?? null), plan: await vmig.plan(env, scope, { owner }) }, 200, { "cache-control": "no-store" });
+});
+app.post("/api/admin/vault", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ action?: string; scope?: string; owner?: string; page?: number; dryRun?: boolean }>().catch(() => ({} as { action?: string; scope?: string; owner?: string; page?: number; dryRun?: boolean }));
+  const scope = vscope(b.scope); if (!scope) return c.json({ error: `scope = ${vmig.scopes().join(" · ")}` }, 400);
+  if (b.action !== "run" && b.action !== "back") return c.json({ error: "action = run · back" }, 400);
+  const env = c.env as unknown as vmig.MEnv, owner = vowner(b.owner), on = await envelopeOn(env, owner ?? null);
+  const sw = owner === undefined ? "envelope" : owner.startsWith("x:") ? "envelope(x: 주인은 모두 스위치)" : `envelope 또는 envelope:${owner || "owner"}`;
+  if (!b.dryRun && b.action === "run" && !on) return c.json({ error: `스위치 ${sw} 가 꺼져 있어요(DATA_KEK_CUR · f7_flag) — 켠 뒤 옮겨요` }, 409);
+  if (!b.dryRun && b.action === "back" && on) return c.json({ error: `스위치 ${sw} 가 켜져 있어요 — 끈 뒤 되돌려요` }, 409);
+  const o = { page: Number(b.page) || undefined, dryRun: !!b.dryRun, owner };
+  return c.json(b.action === "run" ? await vmig.run(env, scope, o) : await vmig.back(env, scope, o), 200, { "cache-control": "no-store" });
+});
 app.post("/api/admin/f7-flag", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ name?: string; on?: boolean; note?: string }>().catch(() => ({} as { name?: string; on?: boolean; note?: string }));
-  if (!/^(read|write|shadow|member)_[a-z]{2,20}$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음>" }, 400);
+  if (/^envelope:/i.test(b.name || "")) b.name = b.name!.toLowerCase();
+  if (!/^(read|write|shadow|member)_[a-z]{2,20}$/.test(b.name || "")
+    && !/^envelope(:owner|:[^@\s:,]{1,64}@[^@\s:,]{1,190})?$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음> · envelope · envelope:<메일 | owner>" }, 400);
+  // e2e 판이 있는 사람의 envelope:<owner> 는 못 끔(vault adoptE2e 의 지킬 것 — 끄면 그 사람 쓰기가 봉해지지 않음)
+  if (!b.on && /^envelope:/.test(b.name!)) {
+    const who = b.name === "envelope:owner" ? "" : b.name!.slice("envelope:".length);
+    if (await c.env.DB.prepare("SELECT 1 FROM dek WHERE owner = ? AND mode = 'e2e' LIMIT 1").bind(who).first()) return c.json({ error: "종단간(e2e) 판이 있는 사람은 envelope 스위치를 끌 수 없어요" }, 409);
+  }
   await ledger.setFlag(c.env.DB, b.name!, !!b.on, String(b.note || "").slice(0, 200));
+  if (/^envelope/.test(b.name!)) forgetFlags();
   return c.json({ ok: true, flags: (await c.env.DB.prepare("SELECT name, on_at, note FROM f7_flag ORDER BY name").all()).results });
 });
 app.post("/api/admin/engine/drain", async c => {   // 그 기기 엔진 칸에 밀린 사람 글을 넣게 함 — { device }. 옛 코드 칸이면 오류 글로 알 수 있음
@@ -1229,12 +1265,13 @@ app.post("/api/admin/connections/expire", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const { id } = await c.req.json<{ id?: string }>().catch(() => ({} as { id?: string }));
   if (!id || !/^c_[0-9a-f]{20}$/.test(id)) return c.json({ error: "id" }, 400);
-  const row = await c.env.DB.prepare("SELECT kind, auth FROM connection WHERE id = ?").bind(id).first<{ kind: string; auth: string }>();
+  const row = await c.env.DB.prepare("SELECT kind, auth, owner FROM connection WHERE id = ?").bind(id).first<{ kind: string; auth: string; owner: string }>();
   if (!row || row.kind !== "oauth" && row.kind !== "api") return c.json({ error: "OAuth 연결 없음" }, 404);   // api = 구글 로그인 API(캘린더 · Gmail)
-  const a = await unseal<{ refresh_token?: string; expires_at?: number }>(c.env.CONNECTOR_KEY, row.auth);
+  const ref = { tbl: "connection" as const, pk: id, col: "auth" as const };
+  const a = await openSecret<{ refresh_token?: string; expires_at?: number }>(c.env, row.owner, ref, row.auth);
   if (!a.refresh_token) return c.json({ error: "갱신 토큰 없음" }, 422);
   const was = a.expires_at ?? null;
-  const r = await c.env.DB.prepare("UPDATE connection SET auth = ?, updated_at = ? WHERE id = ? AND auth = ?").bind(await seal(c.env.CONNECTOR_KEY, { ...a, expires_at: Date.now() - 1000 }), Date.now(), id, row.auth).run();
+  const r = await c.env.DB.prepare("UPDATE connection SET auth = ?, updated_at = ? WHERE id = ? AND auth = ?").bind(await sealSecret(c.env, row.owner, ref, { ...a, expires_at: Date.now() - 1000 }), Date.now(), id, row.auth).run();
   if (!r.meta.changes) return c.json({ error: "그새 바뀜 — 다시" }, 409);
   return c.json({ ok: true, was });
 });

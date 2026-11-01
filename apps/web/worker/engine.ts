@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { bumpMember } from "./live";
+import { envelopeOn, getDek, openField, sealFieldNow, type VaultEnv } from "./vault/index";
 
 export type EngEnv = { DB: D1Database; ENGINE: DurableObjectNamespace<Engine>; PUBLIC_URL: string };
 type Win = { id: string; owner: string; device_id: string; kind: string; role_id: string | null; name: string; state: string; state_at: number | null; handle: string | null; woke_at: number | null; created_at: number; dialog: string | null };
@@ -8,6 +9,9 @@ type Wait = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: 
 export const MODEL = "claude-opus-5-5";
 export const RULES = { wake_min: 30, park_min: 30, close_min: 15, one_goal: true };
 const LIVE = ["opening", "starting", "busy", "idle", "waiting", "background"];
+/** 봉투 스위치 이름의 사람(주인 메일들 → '' = envelope:owner) — 엔진 DO 는 기기 주인 메일을 들고 있음 */
+export const flagOwner = (env: { ALLOW_EMAILS?: string }, owner: string) => String(env.ALLOW_EMAILS || "").split(",").map(s => s.trim().toLowerCase()).includes(owner.trim().toLowerCase()) ? "" : owner;
+const hhmm = (at: number) => new Date(at).toISOString().slice(11, 16) + " UTC";
 const rid = (p: string) => p + [...crypto.getRandomValues(new Uint8Array(12))].map(b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
 export const engineOf = (env: EngEnv, device: string) => env.ENGINE.get(env.ENGINE.idFromName(`dev:${device}`));
 export class EngineError extends Error { constructor(public code: number, msg: string) { super(msg); } }
@@ -86,7 +90,51 @@ export class Engine extends DurableObject<EngEnv> {
     await this.ctx.storage.deleteAlarm(); await this.ctx.storage.delete("pending"); await this.ctx.storage.delete("hpending");
     return { ok: true };
   }
-  async pend(p: Pend) { const q = (await this.ctx.storage.get<Pend[]>("pending")) || []; q.push({ ...p, k: p.k || crypto.randomUUID() }); await this.ctx.storage.put("pending", q.slice(-50)); return { queued: true }; }
+  async pend(p: Pend) { const q = (await this.q<Pend>("pending")) || []; q.push({ ...p, k: p.k || crypto.randomUUID() }); await this.qput("pending", q.slice(-50)); return { queued: true }; }
+  // 밀린 글 줄(pending · hpending — 사람 글 원문) 봉함(f7_flag envelope): 켜짐이면 {o: 주인, d: 기기, s: 봉한 JSON}, 꺼짐이면 지금처럼 배열 그대로.
+  // 읽기는 꼴로 가름(켰다 꺼도 열림). 읽기 앞에 스위치 · DEK 를 미리 데움 — 읽고 고쳐 쓰는 사이에 D1 을 부르면 입력 문이 열려 다른 부르기가 끼어듦
+  private ve() { return this.env as unknown as VaultEnv; }
+  // 스위치는 사람마다: 엔진 DEK 주인은 who.owner(기기 주인 메일) 그대로 두고, 스위치 이름만 다른 길과 같게(주인 메일 = 'envelope:owner')
+  private on(owner: string) { return envelopeOn(this.ve(), flagOwner(this.env as { ALLOW_EMAILS?: string }, owner)); }
+  private async warm() { try { const { owner } = await this.who(); if (await this.on(owner)) await getDek(this.ve(), owner, { create: true }); } catch { /* 데우기는 덤 — 스위치 · DEK 오류는 쓰는 qput 이 크게 던짐 */ } }
+  private async q<T>(k: "pending" | "hpending"): Promise<T[]> {
+    await this.warm();
+    const v = await this.ctx.storage.get<T[] | { o: string; d: string; s: string }>(k);
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    return JSON.parse((await openField(this.ve(), v.o, { tbl: "engine", pk: v.d, col: k }, v.s)) as string) as T[];
+  }
+  private async qput(k: "pending" | "hpending", q: unknown[]) {
+    const { owner, device } = await this.who(), d = device || "-";
+    if (!(await this.on(owner))) return this.ctx.storage.put(k, q);
+    await this.ctx.storage.put(k, { o: owner, d, s: await sealFieldNow(this.ve(), owner, { tbl: "engine", pk: d, col: k }, JSON.stringify(q)) });
+  }
+  /** 옮기기(worker/vault/migrate.ts): 두 줄의 꼴 — plain = 배열, v2 = {o, d, s} */
+  async vaultPlan() {
+    const out = { plain: 0, v2: 0, empty: 0 };
+    for (const k of ["pending", "hpending"] as const) { const v = await this.ctx.storage.get(k); if (!v || Array.isArray(v) && !v.length) out.empty++; else if (Array.isArray(v)) out.plain++; else out.v2++; }
+    return out;
+  }
+  /** to v2 = 배열을 봉함, plain = 봉한 것을 배열로(되돌리기). 봉한 값을 다시 열어 같은지 본 뒤, 그사이 줄이 바뀌었으면(다시 읽어 비교) 안 씀 */
+  async vaultMove(to: "v2" | "plain", dryRun = false) {
+    const out = { done: 0, skipped: 0, changed: 0, failed: [] as { key: string; error: string }[] };
+    const { owner, device } = await this.who(), d = device || "-", ve = this.ve();
+    for (const k of ["pending", "hpending"] as const) {
+      try {
+        if (to === "v2") await getDek(ve, owner, { create: true });   // 읽기 앞에 데움(입력 문)
+        const v = await this.ctx.storage.get<unknown[] | { o: string; d: string; s: string }>(k);
+        if (!v || (Array.isArray(v) ? to === "plain" || !v.length : to === "v2")) { out.skipped++; continue; }
+        const was = JSON.stringify(v), arr = Array.isArray(v) ? v : JSON.parse((await openField(ve, v.o, { tbl: "engine", pk: v.d, col: k }, v.s)) as string);
+        const next = to === "v2" ? { o: owner, d, s: await sealFieldNow(ve, owner, { tbl: "engine", pk: d, col: k }, JSON.stringify(arr)) } : arr;
+        if (to === "v2" && (await openField(ve, owner, { tbl: "engine", pk: d, col: k }, (next as { s: string }).s)) !== JSON.stringify(arr)) throw new Error("다시 연 값이 다름");
+        if (JSON.stringify(await this.ctx.storage.get(k)) !== was) { out.changed++; continue; }   // CAS
+        if (dryRun) { out.done++; continue; }
+        await this.ctx.storage.put(k, next);
+        out.done++;
+      } catch (e) { out.failed.push({ key: k, error: String((e as Error)?.message || e).slice(0, 200) }); }
+    }
+    return out;
+  }
   async who() { return (await this.ctx.storage.get<{ device: string; owner: string; harness?: boolean }>("who")) || { device: "", owner: "", harness: false }; }
 
   /** 기기에서 동사 하나 — 답(result)이나 EngineError(code 1 실패 · 2 바쁨 · 4 없음 · 5 못 하는 동사) */
@@ -180,7 +228,7 @@ export class Engine extends DurableObject<EngEnv> {
   async deliver(id: string, text: string, ordered = true, k?: string): Promise<Delivered> {
     const w = await this.row(id); if (!w) throw new EngineError(4, "없는 창");
     if (w.state === "closed" || w.state === "failed") throw new EngineError(4, "닫힌 창이에요");
-    if (ordered && ((await this.ctx.storage.get<Pend[]>("pending")) || []).some(p => p.id === id)) { const r = await this.pend({ id, text, at: Date.now() }); await this.flush().catch(() => null); return r; }
+    if (ordered && ((await this.q<Pend>("pending")) || []).some(p => p.id === id)) { const r = await this.pend({ id, text, at: Date.now() }); await this.flush().catch(() => null); return r; }
     if (w.state === "parked" || w.state === "gone") return this.reopen(id, text, k);
     if (w.state === "opening" || w.state === "starting" || !this.online()) return this.pend({ id, text, at: Date.now(), k });
     try { await this.cmd("send", { id, text }); return { sent: true }; }
@@ -240,28 +288,29 @@ export class Engine extends DurableObject<EngEnv> {
     finally { this.flushing = false; }
   }
   private async flushOnce() {
-    const q = (await this.ctx.storage.get<Pend[]>("pending")) || []; if (!q.length) return;
+    const q = (await this.q<Pend>("pending")) || []; if (!q.length) return;
     const db = this.env.DB, left: Pend[] = [], held = new Set<string>(), wait = (p: Pend) => { left.push(p); held.add(p.id); };
     const key = (p: Pend) => p.k || `${p.id}\n${p.at}\n${p.text}`;
-    const reopenAt = async (p: Pend) => { try { if ((await this.reopen(p.id, p.text, key(p))).queued) wait(p); } catch { wait(p); } };
+    const lost = (p: Pend, w: Win) => sysLine(db, w.owner, `「${w.name}」 창에 글이 들어갔는지 확인하지 못했어요: ${p.text.replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null);
+    const reopenAt = async (p: Pend, w: Win) => { try { if ((await this.reopen(p.id, p.text, key(p))).queued) wait(p); } catch (e) { if (lostAnswer(e)) await lost(p, w); else wait(p); } };
     for (const p of q) {
       if (held.has(p.id)) { left.push(p); continue; }
       const w = await this.row(p.id);
       if (!w || w.state === "closed" || w.state === "failed") continue;
       if (Date.now() - p.at > 6 * 3600_000) { await sysLine(db, w.owner, `「${w.name}」 창에 6시간 동안 못 넣은 글을 버렸어요: ${p.text.replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null); continue; }
-      if (w.state === "parked" || w.state === "gone") { await reopenAt(p); continue; }
+      if (w.state === "parked" || w.state === "gone") { await reopenAt(p, w); continue; }
       if (w.state !== "idle") { wait(p); continue; }
       try { await this.cmd("send", { id: p.id, text: p.text }); }
       catch (e) {
-        if (lostAnswer(e)) { await sysLine(db, w.owner, `「${w.name}」 창에 글이 들어갔는지 확인하지 못했어요: ${p.text.replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null); continue; }
+        if (lostAnswer(e)) { await lost(p, w); continue; }
         if ((e as EngineError).code !== 4) { wait(p); continue; }
         await db.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ? AND state NOT IN ('closed','failed','parked')").bind(Date.now(), p.id).run();
-        await reopenAt(p);
+        await reopenAt(p, w);
       }
     }
     const had = new Set(q.map(key));
-    const added = ((await this.ctx.storage.get<Pend[]>("pending")) || []).filter(p => !had.has(key(p)));
-    await this.ctx.storage.put("pending", [...left, ...added].slice(-50));
+    const added = ((await this.q<Pend>("pending")) || []).filter(p => !had.has(key(p)));
+    await this.qput("pending", [...left, ...added].slice(-50));
   }
   async park(id: string, why = "") {
     const w = await this.row(id); if (!w || !LIVE.includes(w.state)) return { ok: false };
@@ -346,7 +395,7 @@ export class Engine extends DurableObject<EngEnv> {
   async hsend(id: string, text: string, o: { test?: boolean; queue?: boolean } = {}) {
     if (!(await this.who()).harness) throw new EngineError(1, "하네스 기기가 아니에요");
     if (!this.online()) { if (o.queue) return this.hpend({ id, text, at: Date.now(), test: o.test }); return { offline: true }; }
-    if (o.queue && ((await this.ctx.storage.get<HPend[]>("hpending")) || []).some(p => p.id === id)) { const r = await this.hpend({ id, text, at: Date.now(), test: o.test }); this.hflush(); return r; }
+    if (o.queue && ((await this.q<HPend>("hpending")) || []).some(p => p.id === id)) { const r = await this.hpend({ id, text, at: Date.now(), test: o.test }); this.hflush(); return r; }
     try { const r = await this.cmd("send", { id, text, ...(o.test ? { test: true } : {}) }, HCMD_MS); return { sent: true, to: r?.to || widPane(id), ...(r?.reopening ? { reopening: true } : {}) }; }
     catch (e) {
       if ((e as EngineError).code !== 2) throw e;
@@ -356,33 +405,33 @@ export class Engine extends DurableObject<EngEnv> {
   /** 운영 확인: 산 소켓 수 · 밀린 글 수(D1 engine_at 은 2분 늦을 수 있음 — 이게 진짜 붙음) */
   async hstatus() {
     const all = this.ctx.getWebSockets();
-    return { sockets: all.length, open: all.filter(w => !(w.readyState >= 2)).length, online: this.online(), pending: ((await this.ctx.storage.get<HPend[]>("hpending")) || []).length };
+    return { sockets: all.length, open: all.filter(w => !(w.readyState >= 2)).length, online: this.online(), pending: ((await this.q<HPend>("hpending")) || []).length };
   }
-  async hpend(p: HPend) { const q = (await this.ctx.storage.get<HPend[]>("hpending")) || []; q.push({ ...p, k: crypto.randomUUID() }); await this.ctx.storage.put("hpending", q.slice(-50)); await this.ctx.storage.setAlarm(Date.now() + 10_000); return { queued: true }; }
-  async hmark(k: string | undefined, sending: number | undefined) { const q = (await this.ctx.storage.get<HPend[]>("hpending")) || []; await this.ctx.storage.put("hpending", q.map(x => x.k === k ? { ...x, sending } : x)); }
-  async hdrop(k?: string) { const q = (await this.ctx.storage.get<HPend[]>("hpending")) || []; await this.ctx.storage.put("hpending", q.filter(x => x.k !== k)); }
+  async hpend(p: HPend) { const q = (await this.q<HPend>("hpending")) || []; q.push({ ...p, k: crypto.randomUUID() }); await this.qput("hpending", q.slice(-50)); await this.ctx.storage.setAlarm(Date.now() + 10_000); return { queued: true }; }
+  async hmark(k: string | undefined, sending: number | undefined) { const q = (await this.q<HPend>("hpending")) || []; await this.qput("hpending", q.map(x => x.k === k ? { ...x, sending } : x)); }
+  async hdrop(k?: string) { const q = (await this.q<HPend>("hpending")) || []; await this.qput("hpending", q.filter(x => x.k !== k)); }
   hflushing = false;
   async hflush() {
     if (this.hflushing || !this.online()) return;
     this.hflushing = true;
     try {
-      const q = (await this.ctx.storage.get<HPend[]>("hpending")) || [], held = new Set<string>();
+      const q = (await this.q<HPend>("hpending")) || [], held = new Set<string>();
       for (const p of q.filter(x => x.sending)) {
-        await this.env.DB.prepare("UPDATE engine_window SET note = ? WHERE id = ? AND kind = 'harness'").bind(`보드 글을 못 넣었을 수 있어요(보내는 중 서버가 다시 뜸): ${p.text.slice(0, 100)}`, p.id).run();
+        await this.env.DB.prepare("UPDATE engine_window SET note = ? WHERE id = ? AND kind = 'harness'").bind(`보드 글을 못 넣었을 수 있어요(보내는 중 서버가 다시 뜸) — ${hhmm(p.at)} 에 보낸 글`, p.id).run();
         await this.hdrop(p.k);
       }
       for (const p of q.filter(x => !x.sending)) {
         if (!this.online()) break;
         if (held.has(p.id)) continue;
         if (Date.now() - p.at > 10 * 60_000) {
-          await this.env.DB.prepare("UPDATE engine_window SET note = ? WHERE id = ? AND kind = 'harness'").bind(`보드 글을 10분 동안 못 넣었어요: ${p.text.slice(0, 120)}`, p.id).run();
+          await this.env.DB.prepare("UPDATE engine_window SET note = ? WHERE id = ? AND kind = 'harness'").bind(`보드 글을 10분 동안 못 넣었어요 — ${hhmm(p.at)} 에 보낸 글`, p.id).run();
           await this.hdrop(p.k); continue;
         }
         await this.hmark(p.k, Date.now());
         try { await this.cmd("send", { id: p.id, text: p.text, ...(p.test ? { test: true } : {}) }, HCMD_MS); }
         catch (e) {
           if ((e as EngineError).code === 2 || (!this.online() && /꺼져/.test((e as Error).message))) { held.add(p.id); await this.hmark(p.k, undefined); continue; }   // 바쁨 · 보내기 전 끊김만 다시
-          await this.env.DB.prepare("UPDATE engine_window SET note = ? WHERE id = ? AND kind = 'harness'").bind(`보드 글을 못 넣었을 수 있어요(${String((e as Error).message).slice(0, 60)}): ${p.text.slice(0, 100)}`, p.id).run();
+          await this.env.DB.prepare("UPDATE engine_window SET note = ? WHERE id = ? AND kind = 'harness'").bind(`보드 글을 못 넣었을 수 있어요(${String((e as Error).message).slice(0, 60)}) — ${hhmm(p.at)} 에 보낸 글`, p.id).run();
         }
         await this.hdrop(p.k);
       }
@@ -394,7 +443,7 @@ export class Engine extends DurableObject<EngEnv> {
     const { device, owner } = await this.who();
     if (!device || !this.online()) return;   // 데몬이 붙으면 fetch 가 다시 건다
     if (!(await deviceOk(this.env.DB, device, owner))) { await this.revoke(); return; }
-    if ((await this.who()).harness) { await this.hflush(); await this.ctx.storage.setAlarm(Date.now() + ((await this.ctx.storage.get<HPend[]>("hpending"))?.length ? 10_000 : 60_000)); return; }
+    if ((await this.who()).harness) { await this.hflush(); await this.ctx.storage.setAlarm(Date.now() + ((await this.q<HPend>("hpending"))?.length ? 10_000 : 60_000)); return; }
     try { await this.rules(device, owner); } catch {}
     try { await this.flush(); } catch {}
     await this.ctx.storage.setAlarm(Date.now() + 60_000);

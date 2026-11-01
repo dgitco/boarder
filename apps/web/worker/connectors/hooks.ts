@@ -1,6 +1,8 @@
 import type { Context, Hono } from "hono";
 import { z } from "zod";
-import { open, randomId, seal } from "./seal";
+import { randomId } from "./seal";
+import { openSecret, sealSecret } from "../vault/secret";
+const SECRET = (id: string) => ({ tbl: "hook" as const, pk: id, col: "secret" as const });   // AAD pk = 훅 id(넣기 전에 만듦)
 import { maskText } from "../mcp/registry";
 
 type Env = { DB: D1Database; CONNECTOR_KEY?: string; PUBLIC_URL: string };
@@ -32,7 +34,7 @@ async function verified(env: Env, h: Row, headers: Record<string, string>, query
     const given = v.mode === "header" ? headers[v.header.toLowerCase()] : query.get(v.param) || undefined;
     return !!given && same(enc.encode(await sha256(given)), enc.encode(h.secret_hash));
   }
-  const secret = (await open<{ s: string }>(env.CONNECTOR_KEY, h.secret)).s;
+  const secret = (await openSecret<{ s: string }>(env, h.owner, SECRET(h.id), h.secret)).s;
   if (v.mode === "github") {
     const given = headers["x-hub-signature-256"];
     return !!given?.startsWith("sha256=") && same(enc.encode(given.toLowerCase()), enc.encode(`sha256=${hex(await hmac(enc.encode(secret), body))}`));
@@ -92,7 +94,7 @@ export function mountHooks(host: Hono<any>, who: Who, wake: Wake) {
     const shared = v.mode === "header" || v.mode === "query";
     try {
       await c.env.DB.prepare("INSERT INTO hook(id, owner, name, preset, service, verify, secret, secret_hash, target, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-        .bind(id, m.w.owner, p.data.name, p.data.preset, p.data.service || "", JSON.stringify(v), shared ? "" : await seal(c.env.CONNECTOR_KEY, { s: secret }), shared ? await sha256(secret) : "", p.data.target, Date.now()).run();
+        .bind(id, m.w.owner, p.data.name, p.data.preset, p.data.service || "", JSON.stringify(v), shared ? "" : await sealSecret(c.env, m.w.owner, SECRET(id), { s: secret }), shared ? await sha256(secret) : "", p.data.target, Date.now()).run();
     } catch { return c.json({ error: "그 이름은 이미 있어요" }, 409); }
     const url = `${c.env.PUBLIC_URL}/hook/${id}` + (v.mode === "query" ? `?${v.param}=${secret}` : "");
     return c.json({ id, url, secret, verify: v.mode, note: "비밀은 지금 한 번만 보여요" });
@@ -114,7 +116,7 @@ export function mountHooks(host: Hono<any>, who: Who, wake: Wake) {
     const m = await me(c, true); if (m.err) return m.err;
     const h = await one(c, m.w.owner); if (!h) return c.json({ error: "없음" }, 404);
     const v = JSON.parse(h.verify) as Verify, secret = newSecret(v), shared = v.mode === "header" || v.mode === "query";
-    await c.env.DB.prepare("UPDATE hook SET secret = ?, secret_hash = ? WHERE id = ?").bind(shared ? "" : await seal(c.env.CONNECTOR_KEY, { s: secret }), shared ? await sha256(secret) : "", h.id).run();
+    await c.env.DB.prepare("UPDATE hook SET secret = ?, secret_hash = ? WHERE id = ?").bind(shared ? "" : await sealSecret(c.env, h.owner, SECRET(h.id), { s: secret }), shared ? await sha256(secret) : "", h.id).run();
     return c.json({ secret, url: `${c.env.PUBLIC_URL}/hook/${h.id}` + (v.mode === "query" ? `?${v.param}=${secret}` : "") });
   });
   app.delete("/api/hooks/:id", async c => {

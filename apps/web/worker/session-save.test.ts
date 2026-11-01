@@ -19,6 +19,7 @@ function r2() {
 function d1() {
   const db = new DatabaseSync(":memory:");
   db.exec(readFileSync(new URL("../migrations/0009_sessions.sql", import.meta.url), "utf8"));
+  db.exec("create table f7_flag (name text primary key, on_at integer, note text)");   // 봉투 스위치(vault envelopeOn)가 읽음 — 0021 마이그레이션이 만듦
   const stmt = (sql: string, args: unknown[] = []): any => ({
     sql, args, bind: (...a: unknown[]) => stmt(sql, a),
     all: async () => ({ success: true, results: db.prepare(sql).all(...(args as never[])), meta: {} }),

@@ -1,4 +1,5 @@
 import { converters, redact, toConversation, type ConverterId, type ParseState } from "../session";
+import { openBlob, sealBlob, type VaultEnv } from "../vault/index";
 
 type Env = { DB: D1Database; RESULTS: R2Bucket };
 export type SessionRow = { id: string; owner: string; tool: string; native: string; title: string; cwd: string; repo: string; branch: string; model: string; host: string; win: string; lines: number; messages: number; parts: number; state: string; created_at: number; updated_at: number };
@@ -9,6 +10,18 @@ const TOOLS = new Set(Object.keys(converters));
 const RESUME: Record<string, (n: string) => string> = { "claude-code": n => `claude --resume ${n}`, codex: n => `codex resume ${n}`, "gemini-cli": () => "gemini --resume" };
 const key = (owner: string, sid: string, n: number) => `sessions/${owner || "_"}/${encodeURIComponent(sid)}/${String(n).padStart(5, "0")}.json`;
 const sidOf = (tool: string, native: string) => `${tool}:${native}`;
+// 대화 조각 몸통 봉함(f7_flag envelope): 그 사람 DEK, AAD = R2 key. 꺼짐 = 지금 그대로(같은 글월을 put), 읽기는 봉한 머리가 없으면 그대로
+const ve = (env: Env) => env as unknown as VaultEnv;
+// 봉한 조각만 메타 vault=1(mcp-results · files 와 같은 표) — 표 없는 조각은 지금처럼 o.json()
+export const putPart = async (env: Env, owner: string, k: string, body: string) => {
+  const b = await sealBlob(ve(env), owner, k, body);
+  return env.RESULTS.put(k, b, { httpMetadata: { contentType: "application/json" }, ...(b === body ? {} : { customMetadata: { vault: "1" } }) });
+};
+export const getPart = async (env: Env, owner: string, k: string): Promise<Msg[] | null> => {
+  const o = await env.RESULTS.get(k); if (!o) return null;
+  if (o.customMetadata?.vault !== "1") return o.json<Msg[]>();
+  return JSON.parse(new TextDecoder().decode(await openBlob(ve(env), owner, k, await o.arrayBuffer()))) as Msg[];
+};
 
 export const validTool = (t: string): t is ConverterId => TOOLS.has(t);
 export const validNative = (n: string) => /^[\w.-]{6,120}$/.test(n);
@@ -52,7 +65,7 @@ export async function upload(env: Env, owner: string, meta: { tool: ConverterId;
   if (!claim.meta.changes) return { status: 409 as const, body: { error: "줄 위치가 다름", lines: (await offset(env, owner, meta.tool, meta.native)).lines } };
   // 조각 번호 n 은 위 줄을 잡은 저장만 씀. R2 가 실패하면 잡은 것을 되돌림(그 사이 다른 저장이 이어 갔으면 그대로) — 다음 저장이 같은 위치부터 다시
   if (msgs.length) try {
-    await env.RESULTS.put(key(owner, sid, n), JSON.stringify(msgs), { httpMetadata: { contentType: "application/json" } });
+    await putPart(env, owner, key(owner, sid, n), JSON.stringify(msgs));
   } catch (e) {
     const mine = [owner, sid, total, parts, now];
     await (row
@@ -78,8 +91,8 @@ export async function handoff(env: Env, owner: string, id: string, last = 30) {
   if (!s) throw new Error("없는 세션");
   const msgs: Msg[] = [];
   for (let n = s.parts - 1; n >= 0 && msgs.length < last; n--) {
-    const o = await env.RESULTS.get(key(owner, s.id, n)); if (!o) continue;
-    msgs.unshift(...(await o.json<Msg[]>()));
+    const part = await getPart(env, owner, key(owner, s.id, n)); if (!part) continue;
+    msgs.unshift(...part);
   }
   const tail = msgs.slice(-last), resume = RESUME[s.tool]?.(s.native);
   const head = [`# ${s.title || s.id}`, `- 도구: ${s.tool} · 기기: ${s.host || "?"} · 창: ${s.win || "?"}`, s.cwd && `- 폴더: ${s.cwd}`, (s.repo || s.branch) && `- 리포: ${s.repo}${s.branch ? ` (${s.branch})` : ""}`,

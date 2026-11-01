@@ -2,6 +2,9 @@ export type Out = { status: number; headers: Record<string, string>; body: Uint8
 type Art = { kind: "page" | "canvas" | "doc"; title: string; at: string; acct: string; auto: string; main?: string; cv?: string; map?: Record<string, string> };
 type Index = { v: number; at: number; arts: Record<string, Art>; blobs: Record<string, string>; shim: string };
 type Env = { RESULTS: R2Bucket; DB: D1Database };
+import type { VaultEnv } from "./vault/index";
+// vault 는 봉한 첨부일 때만 불러옴 — files.test 는 불러오기 훅 없는 node 로 돌고, 옛 첨부 길은 지금과 같게 아무것도 더 안 불러옴
+const vault = () => import("./vault/index");
 
 const ID = /^[A-Za-z0-9]{16,40}$/, BLOB = /^[0-9a-f]{32}$/;
 const SYS = "art/_sys/";
@@ -26,6 +29,9 @@ export async function isCanvas(env: Env, id: string) { return (await index(env))
 
 const text = (status: number, s: string, ct = "text/plain"): Out => ({ status, headers: { "content-type": ct, "cache-control": "no-store" }, body: te.encode(s) });
 const bytes = async (o: R2ObjectBody) => new Uint8Array(await o.arrayBuffer());
+// 봉한 첨부(메타 vault=1, worker/vault 몸통 꼴 — 주인 DEK, AAD = key): 크기 · 범위는 평문 기준으로 셈. 표시 없는 옛 첨부는 지금 그대로
+const ve = (env: Env) => env as unknown as VaultEnv;
+const rangeOf = (env: Env, key: string) => async (offset: number, length: number) => { const o = await env.RESULTS.get(key, { range: { offset, length } }); if (!o) throw new Error("없음"); return bytes(o); };
 function find(h: Uint8Array, n: Uint8Array) {
   outer: for (let i = 0; i + n.length <= h.length; i++) { for (let j = 0; j < n.length; j++) if (h[i + j] !== n[j]) continue outer; return i; }
   return -1;
@@ -92,7 +98,8 @@ async function attach(env: Env, id: string, full: boolean, range: string | undef
   let head = await env.RESULTS.head(`files/${id}${full ? ".full" : ""}`), key = `files/${id}${full ? ".full" : ""}`;
   if (!head && full && id.startsWith("f_")) { key = `files/${id}`; head = await env.RESULTS.head(key); }   // 대화 DB 첨부는 미리보기 = 원본
   if (!head) return null;
-  const mime = head.httpMetadata?.contentType || "application/octet-stream", name = nameOf(head.customMetadata?.name || "") || id, n = head.size;
+  const V = head.customMetadata?.vault === "1" ? await vault() : null, sealed = V ? await V.blobInfo(rangeOf(env, key), head.size) : null;
+  const mime = head.httpMetadata?.contentType || "application/octet-stream", name = nameOf(head.customMetadata?.name || "") || id, n = sealed ? sealed.plain : head.size;
   const img = mime.startsWith("image/") && mime !== "image/svg+xml";
   if (mime.startsWith("video/")) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(range || ""), r = m && (m[1] || m[2]) ? m : null;
@@ -101,13 +108,16 @@ async function attach(env: Env, id: string, full: boolean, range: string | undef
       if (r[1]) { a = +r[1]; z = Math.min(r[2] ? +r[2] : n - 1, n - 1); } else { a = Math.max(0, n - +r[2]); z = n - 1; }
       if (a > z || a >= n) return { status: 416, headers: { "content-range": `bytes */${n}` }, body: new Uint8Array(0) };
     }
-    const o = await env.RESULTS.get(key, { range: { offset: a, length: z - a + 1 } }); if (!o) return null;
+    let body: Uint8Array;
+    if (sealed) { if (!n) body = new Uint8Array(0); else try { body = await V!.openBlobRange(ve(env), "", key, rangeOf(env, key), sealed, a, z); } catch { return null; } }   // 그 조각만 받아 풂
+    else { const o = await env.RESULTS.get(key, { range: { offset: a, length: z - a + 1 } }); if (!o) return null; body = await bytes(o); }
     return { status: r ? 206 : 200, headers: { "content-type": mime, "accept-ranges": "bytes", ...(r ? { "content-range": `bytes ${a}-${z}/${n}` } : {}),
-      "content-disposition": `inline; filename*=UTF-8''${pyQuote(name)}`, "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" }, body: await bytes(o) };
+      "content-disposition": `inline; filename*=UTF-8''${pyQuote(name)}`, "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" }, body };
   }
   const o = await env.RESULTS.get(key); if (!o) return null;
+  const body = sealed ? await V!.openBlob(ve(env), "", key, await o.arrayBuffer()) : await bytes(o);
   return { status: 200, headers: { "content-type": img ? mime : "application/octet-stream", "content-disposition": `${img ? "inline" : "attachment"}; filename*=UTF-8''${pyQuote(name)}`,
-    "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" }, body: await bytes(o) };
+    "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" }, body };
 }
 
 async function sha1tag(b: Uint8Array) { const h = new Uint8Array(await crypto.subtle.digest("SHA-1", b as BufferSource)); return '"' + [...h].map(x => x.toString(16).padStart(2, "0")).join("").slice(0, 16) + '"'; }

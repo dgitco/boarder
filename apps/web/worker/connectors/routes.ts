@@ -3,7 +3,9 @@ import { z } from "zod";
 import { PRESETS, PREREGISTERED, SCOPES, TITLES, hostedApp } from "./presets";
 import { authorizeUrl, discover, exchange, register, revoke, safeUrl } from "./oauth";
 import { forget, listTools } from "./client";
-import { open, randomId, seal } from "./seal";
+import { randomId } from "./seal";
+import { openSecret, sealSecret } from "../vault/secret";
+const PEND = (state: string) => ({ tbl: "connection_pending" as const, pk: state, col: "auth" as const });   // AAD pk = state(넣기 전에 정해짐)
 import { accountOfIdToken } from "./identity";
 import { exposedName } from "./naming";
 import * as store from "./store";
@@ -75,7 +77,7 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     await c.env.DB.batch([
       c.env.DB.prepare("DELETE FROM connection_pending WHERE expires_at < ?").bind(Date.now()),
       c.env.DB.prepare("INSERT INTO connection_pending(state, owner, service, label, url, auth, back, bind, expires_at) VALUES (?,?,?,?,?,?,?,?,?)")
-        .bind(state, owner, service, label, spec.baseUrl, await seal(c.env.CONNECTOR_KEY, { google: true, spec, redirect_uri: redirect }), back || "#settings/connectors", await sha(bind), Date.now() + PENDING_MS),
+        .bind(state, owner, service, label, spec.baseUrl, await sealSecret(c.env, owner, PEND(state), { google: true, spec, redirect_uri: redirect }), back || "#settings/connectors", await sha(bind), Date.now() + PENDING_MS),
     ]);
     return c.json({ state: "authenticating", authUrl: googleAuthUrl(app, redirect, state, spec.auth.scope) }, 200, { "set-cookie": `bx_oc_${state.slice(0, 12).replace(/[^A-Za-z0-9]/g, "x")}=${bind}; Path=/api/connectors/callback; Secure; HttpOnly; SameSite=Lax; Max-Age=600` });
   };
@@ -175,7 +177,7 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     await c.env.DB.batch([
       c.env.DB.prepare("DELETE FROM connection_pending WHERE expires_at < ?").bind(Date.now()),
       c.env.DB.prepare("INSERT INTO connection_pending(state, owner, service, label, url, auth, back, bind, expires_at) VALUES (?,?,?,?,?,?,?,?,?)")
-        .bind(a.state, m.w.owner, service, label, url, await seal(c.env.CONNECTOR_KEY, { verifier: a.verifier, ...saved, token_endpoint: d.as.token_endpoint, revocation_endpoint: d.as.revocation_endpoint, redirect_uri: redirect, resource: d.resource }), b.back || "#settings/connectors", await sha(bind), Date.now() + PENDING_MS),
+        .bind(a.state, m.w.owner, service, label, url, await sealSecret(c.env, m.w.owner, PEND(a.state), { verifier: a.verifier, ...saved, token_endpoint: d.as.token_endpoint, revocation_endpoint: d.as.revocation_endpoint, redirect_uri: redirect, resource: d.resource }), b.back || "#settings/connectors", await sha(bind), Date.now() + PENDING_MS),
     ]);
     return c.json({ state: "authenticating", authUrl: a.url }, 200, { "set-cookie": `bx_oc_${a.state.slice(0, 12).replace(/[^A-Za-z0-9]/g, "x")}=${bind}; Path=/api/connectors/callback; Secure; HttpOnly; SameSite=Lax; Max-Age=600` });
   });
@@ -189,7 +191,7 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     const oc = cookieOf(c, `bx_oc_${state.slice(0, 12).replace(/[^A-Za-z0-9]/g, "x")}`);
     if (p.owner !== w.owner || !oc || (await sha(oc)) !== p.bind) return back(p.back, "error", "이 브라우저에서 시작한 연결이 아니에요");
     if (q.get("error")) return back(p.back, "error", `${p.service}: ${q.get("error_description") || q.get("error")}`.slice(0, 200));
-    const g = await open<{ google?: boolean; spec?: ApiSpec; redirect_uri?: string }>(c.env.CONNECTOR_KEY, p.auth);
+    const g = await openSecret<{ google?: boolean; spec?: ApiSpec; redirect_uri?: string }>(c.env, p.owner, PEND(state), p.auth);
     if (g.google && g.spec) {   // 구글 로그인 API: 코드 → 토큰(그 API 의 구글 앱), 계정은 그 API 에 물음
       const app = googleApp(c.env as unknown as Record<string, unknown>, g.spec.auth); if (!app) return back(p.back, "error", "구글 로그인 앱이 없어요");
       try {
@@ -253,7 +255,7 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     const row = await store.get(c.env, m.w.owner, c.req.param("id")); if (!row) return c.json({ error: "없음" }, 404);
     let revoked = false;
     try {
-      const a = await open<store.Auth>(c.env.CONNECTOR_KEY, row.auth);
+      const a = await openSecret<store.Auth>(c.env, row.owner, { tbl: "connection", pk: row.id, col: "auth" }, row.auth);
       const cl = a.hosted ? hostedApp(c.env as unknown as Record<string, unknown>, row.service) : (a.client_id ? { client_id: a.client_id, client_secret: a.client_secret } : null);
       if (cl && (a.refresh_token || a.access_token)) revoked = await revoke(a.revocation_endpoint, (a.refresh_token || a.access_token)!, cl);
       if (a.api?.auth.type === "oauth" && a.api.auth.app === "gmail" && (a.refresh_token || a.key))

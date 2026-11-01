@@ -218,6 +218,10 @@ export class BoardSnap extends DurableObject<object> {
     return { state: "new" as const };
   }
   async done(rid: string, status: number, body: string, ct: string, ce: string) { this.ctx.storage.sql.exec("UPDATE rids SET state='done', status=?, body=?, ct=?, ce=?, at=? WHERE rid=?", status, body, ct, ce, Date.now(), rid); }
+  // 옮기기(worker/vault/migrate.ts): 남긴 답 몸통을 쪽으로 읽고 · 옛 값일 때만 바꿈(CAS) — 봉하고 여는 일은 부른 쪽(queue.ts 와 같은 키)
+  async ridBodies(after = "", n = 100) { return this.ctx.storage.sql.exec<{ rid: string; body: string }>("SELECT rid, body FROM rids WHERE state='done' AND body IS NOT NULL AND body != '' AND rid > ? ORDER BY rid LIMIT ?", after, n).toArray(); }
+  async ridBody(rid: string) { return this.ctx.storage.sql.exec<{ body: string }>("SELECT body FROM rids WHERE rid=?", rid).toArray()[0]?.body ?? null; }
+  async ridSwap(rid: string, old: string, neu: string) { return this.ctx.storage.sql.exec("UPDATE rids SET body=? WHERE rid=? AND body=?", neu, rid, old).rowsWritten; }
   async release(rid: string) { this.ctx.storage.sql.exec("DELETE FROM rids WHERE rid=? AND state='busy'", rid); }
   async look(rid: string, full = false) {   // full = 남긴 답의 상태 번호도(회원 「보냈나」 — 옛 코드 DO 는 이 값을 몰라 글자만 줌)
     const r = this.ctx.storage.sql.exec<{ state: string; status: number; at: number }>("SELECT state, status, at FROM rids WHERE rid=?", rid).toArray()[0];

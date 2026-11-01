@@ -1,4 +1,5 @@
-import { open, seal } from "./seal";
+import { envelopeOn, type VaultEnv } from "../vault/index";
+import { openSecret, sealSecret } from "../vault/secret";
 import { refresh, TokenError } from "./oauth";
 import { hostedApp } from "./presets";
 import { AuthError, forget, listTools, rpc, type Remote, type RemoteTool } from "./client";
@@ -19,6 +20,11 @@ export type Auth = {
   api?: ApiSpec; key?: string;   // kind 'api' — 구글 로그인 줄은 key = 액세스 토큰 + refresh_token · expires_at
 };
 
+// 토큰 칸 봉함 자리(vault — 스위치 꺼짐이면 seal.ts 그대로). AAD 의 pk = 연결 id
+const AUTH = (id: string) => ({ tbl: "connection" as const, pk: id, col: "auth" as const });
+const openAuth = (env: Env, row: Pick<Row, "owner" | "id">, s: string) => openSecret<Auth>(env, row.owner, AUTH(row.id), s);
+const sealAuth = (env: Env, row: Pick<Row, "owner" | "id">, a: Auth) => sealSecret(env, row.owner, AUTH(row.id), a);
+
 export const TOOLS_TTL = 10 * 60_000;
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
 export const prefixOf = (r: Pick<Row, "service" | "label">) => r.label ? `${r.service}${SEP}${r.label}` : r.service;
@@ -32,14 +38,22 @@ export async function get(env: Env, owner: string, id: string): Promise<Row | nu
 
 /** 새 연결 또는 같은 service · label 을 다시 연결(토큰만 바꿈) */
 export async function upsert(env: Env, owner: string, v: { service: string; label: string; kind: Row["kind"]; url: string; auth: Auth; account?: string }): Promise<string> {
-  const now = Date.now(), sealed = await seal(env.CONNECTOR_KEY, v.auth);
-  const id = "c_" + crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+  const now = Date.now();
+  let id = "c_" + crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+  // 봉함 켜짐: 같은 service · label 줄이 있으면 ON CONFLICT 가 그 옛 id 를 남김 → AAD 의 pk 가 맞게 그 id 로 봉함
+  if (await envelopeOn(env as unknown as VaultEnv, owner)) {
+    const old = await env.DB.prepare("SELECT id FROM connection WHERE owner = ? AND service = ? AND label = ?").bind(owner, v.service, v.label).first<{ id: string }>();
+    if (old) id = old.id;
+  }
+  const sealed = await sealAuth(env, { owner, id }, v.auth);
   const r = await env.DB.prepare(
     `INSERT INTO connection(id, owner, service, label, kind, url, auth, account, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?, 'ok', ?, ?)
      ON CONFLICT(owner, service, label) DO UPDATE SET kind = excluded.kind, url = excluded.url, auth = excluded.auth, source = '', account = CASE WHEN excluded.account != '' THEN excluded.account ELSE connection.account END,
        status = 'ok', error = NULL, tools = NULL, tools_at = NULL, updated_at = excluded.updated_at
      RETURNING id`,
   ).bind(id, owner, v.service, v.label, v.kind, v.url, sealed, v.account || "", now, now).first<{ id: string }>();
+  // 읽고 넣는 사이에 다른 요청이 같은 줄을 먼저 만들었으면(드묾) 남은 id 로 다시 봉함 — 그새 또 바뀌었으면 그쪽이 이김(auth = ? 맞을 때만)
+  if (r!.id !== id && sealed.startsWith("v2.")) await env.DB.prepare("UPDATE connection SET auth = ? WHERE id = ? AND auth = ?").bind(await sealAuth(env, { owner, id: r!.id }, v.auth), r!.id, sealed).run();
   forget(r!.id);
   return r!.id;
 }
@@ -65,7 +79,7 @@ async function newer(env: Env, row: Row): Promise<Auth | null> {
   const fresh = await env.DB.prepare("SELECT auth FROM connection WHERE id = ?").bind(row.id).first<{ auth: string }>();
   if (!fresh || fresh.auth === row.auth) return null;
   row.auth = fresh.auth;
-  return open<Auth>(env.CONNECTOR_KEY, fresh.auth);
+  return openAuth(env, row, fresh.auth);
 }
 
 async function doRefresh(env: Env, row: Row, a: Auth): Promise<Auth> {
@@ -76,14 +90,14 @@ async function doRefresh(env: Env, row: Row, a: Auth): Promise<Auth> {
       const n = await newer(env, row); if (n) { if (!n.expires_at || n.expires_at > Date.now() + 60_000) return n; a = n; }
       const t = await refresh(a.token_endpoint!, a.refresh_token!, a.resource || row.url, clientOf(env, row, a));
       const next = { ...a, access_token: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
-      const sealed = await seal(env.CONNECTOR_KEY, next);
+      const sealed = await sealAuth(env, row, next);
       await env.DB.prepare("UPDATE connection SET auth = ?, status = 'ok', error = NULL, updated_at = ? WHERE id = ?").bind(sealed, Date.now(), row.id).run();
       row.auth = sealed;
       return next;
     } catch (e) {
       // 다른 isolate 가 먼저 갱신했으면 그 토큰을 씀
       const fresh = await env.DB.prepare("SELECT auth FROM connection WHERE id = ?").bind(row.id).first<{ auth: string }>();
-      if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; return open<Auth>(env.CONNECTOR_KEY, fresh.auth); }
+      if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; return openAuth(env, row, fresh.auth); }
       const dead = e instanceof TokenError && (["invalid_grant", "bad_refresh_token", "invalid_client", "unauthorized_client"].includes(e.code || "") || (e.status >= 400 && e.status < 500 && e.status !== 429));
       await mark(env, row.id, dead ? "expired" : "error", dead ? "다시 연결이 필요해요" : (e instanceof Error ? e.message : String(e)).slice(0, 200));
       throw dead ? new AuthError("refresh") : e;
@@ -95,7 +109,7 @@ async function doRefresh(env: Env, row: Row, a: Auth): Promise<Auth> {
 
 /** 부를 준비: 토큰을 열고, 1분 안에 끝나면(또는 force) 갱신 */
 export async function remote(env: Env, row: Row, force = false, timeoutMs?: number): Promise<Remote> {
-  let a = await open<Auth>(env.CONNECTOR_KEY, row.auth);
+  let a = await openAuth(env, row, row.auth);
   const canRefresh = row.kind === "oauth" && !!a.refresh_token && !!a.token_endpoint && !!a.client_id;
   if (canRefresh && (force || (a.expires_at && a.expires_at < Date.now() + 60_000))) a = await doRefresh(env, row, a);
   const headers: Record<string, string> = { ...(a.headers || {}) };
@@ -108,7 +122,7 @@ async function withAuth<T>(env: Env, row: Row, f: (r: Remote) => Promise<T>, tim
   try { return await f(await remote(env, row, false, timeoutMs)); }
   catch (e) {
     if (!(e instanceof AuthError)) throw e;
-    const a = await open<Auth>(env.CONNECTOR_KEY, row.auth);
+    const a = await openAuth(env, row, row.auth);
     if (row.kind === "oauth" && a.refresh_token && e.message !== "refresh") {
       try { return await f(await remote(env, row, true, timeoutMs)); } catch (e2) { if (!(e2 instanceof AuthError)) throw e2; }
     }
@@ -150,7 +164,7 @@ export async function call(env: Env, row: Row, tool: string, args: Record<string
  * 갱신 토큰을 구글이 거절하면(invalid_grant 등 — Gmail 테스트 앱은 7일마다) 「다시 연결」
  */
 async function googleKey(env: Env, row: Row): Promise<string | undefined> {
-  let a = await open<Auth>(env.CONNECTOR_KEY, row.auth);
+  let a = await openAuth(env, row, row.auth);
   const provider = a.api?.auth.type === "oauth" ? a.api.auth.provider : null, slack = provider === "slack", github = provider === "github";
   const app = a.api ? (slack ? slackApp(env, a.api.auth) : github ? githubApp(env, a.api.auth) : googleApp(env, a.api.auth)) : null;
   if (!a.refresh_token || !app || !a.expires_at || a.expires_at > Date.now() + 60_000) return a.key;
@@ -161,13 +175,13 @@ async function googleKey(env: Env, row: Row): Promise<string | undefined> {
       const n = await newer(env, row); if (n) { if (n.expires_at && n.expires_at > Date.now() + 60_000) return n; a = n; }
       const t = slack ? await slackToken(app, a.refresh_token!) : github ? await githubAppToken(app, a.refresh_token!) : await googleToken(app, { grant_type: "refresh_token", refresh_token: a.refresh_token! });
       const next: Auth = { ...a, key: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
-      const sealed = await seal(env.CONNECTOR_KEY, next);
+      const sealed = await sealAuth(env, row, next);
       await env.DB.prepare("UPDATE connection SET auth = ?, status = 'ok', error = NULL, updated_at = ? WHERE id = ?").bind(sealed, Date.now(), row.id).run();
       row.auth = sealed;
       return next;
     } catch (e) {
       const fresh = await env.DB.prepare("SELECT auth FROM connection WHERE id = ?").bind(row.id).first<{ auth: string }>();
-      if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; return open<Auth>(env.CONNECTOR_KEY, fresh.auth); }
+      if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; return openAuth(env, row, fresh.auth); }
       const dead = e instanceof GoogleTokenError && (e.code === "invalid_grant" || (e.status >= 400 && e.status < 500 && e.status !== 429));
       await mark(env, row.id, dead ? "expired" : "error", dead ? "다시 연결이 필요해요" : (e instanceof Error ? e.message : String(e)).slice(0, 200));
       throw dead ? new AuthError(`${prefixOf(row)} 연결이 끊겼어요 — 보더 설정에서 다시 연결`) : e;
@@ -178,7 +192,7 @@ async function googleKey(env: Env, row: Row): Promise<string | undefined> {
 }
 
 export async function apiAuth(env: Env, row: Row): Promise<{ spec?: ApiSpec; key?: string }> {
-  const a = row.auth ? await open<Auth>(env.CONNECTOR_KEY, row.auth) : {};
+  const a = row.auth ? await openAuth(env, row, row.auth) : {};
   if (a.api) return { spec: a.api, key: a.key };
   const p = API_PRESETS[row.service]?.spec;
   try { if (p && new URL(row.url).origin === new URL(p.baseUrl).origin) return { spec: p, key: a.key }; } catch {}

@@ -2,6 +2,8 @@ import type { Context, Next } from "hono";
 import { isOwner, type Env as AuthEnv } from "./auth";
 import type { BoardSnap } from "./board";
 import { f7On } from "./ledger";
+import { envelopeOn, isSealed, openField, sealField, type VaultEnv } from "./vault/index";
+export const _q = { sealBody: null as null | ((b64: string) => Promise<string>) };   // 시험만: 봉하기 실패 흉내
 
 type QEnv = AuthEnv & { SNAP: DurableObjectNamespace<BoardSnap>; FAULT_OK?: string };
 type C = Context<{ Bindings: QEnv }>;
@@ -14,6 +16,14 @@ const ridOf = (env: QEnv, email: string) => {
   if (FAULT.do) throw new Error("DO 장애(시험)");
   return env.SNAP.get(env.SNAP.idFromName(`rid:${isOwner(env, email) ? "owner" : email.trim().toLowerCase()}@apac`), { locationHint: "apac" });
 };
+// 남긴 답 몸통(rids.body — 쓰기 답 원문) 봉함(f7_flag envelope): 그 사람 DEK(주인 ''), AAD pk = rid. 꺼짐이면 base64 그대로 · 읽기는 꼴로 가름
+const ve = (env: QEnv) => env as unknown as VaultEnv;
+export const dekOwner = (env: QEnv, email: string) => isOwner(env, email) ? "" : email.trim().toLowerCase();
+export const RB = (rid: string) => ({ tbl: "rids", pk: rid, col: "body" });
+/** 그 사람의 rid 칸 DO(옮기기 · migrate.ts 가 씀) */
+export const ridCell = (env: QEnv, email: string) => ridOf(env, email);
+const sealBody = async (env: QEnv, email: string, rid: string, b64: string) => b64 && await envelopeOn(ve(env), dekOwner(env, email)) ? (await sealField(ve(env), dekOwner(env, email), RB(rid), b64)) as string : b64;
+const openBody = async (env: QEnv, email: string, rid: string, body: string) => isSealed(body) ? (await openField(ve(env), dekOwner(env, email), RB(rid), body)) as string : body;
 export const brokenDB = (db: D1Database) => new Proxy(db, { get: () => () => { throw new Error("D1 장애(시험)"); } }) as D1Database;
 export const lostDB = (db: D1Database) => new Proxy(db, { get: (t, k) => k === "batch" ? async (s: D1PreparedStatement[]) => { await t.batch(s); throw new Error("D1 응답 잃음(시험)"); } : (v => typeof v === "function" ? v.bind(t) : v)(Reflect.get(t, k)) }) as D1Database;
 
@@ -55,7 +65,8 @@ export async function idem(c: C, email: string, next: Next, seg: (ms: number) =>
   seg(Date.now() - t0);
   if (got.state === "done") {   // 남긴 답 그대로(바이트 · 눌림 · 종류 · 오류도) — 다시 처리 안 함
     const h: Record<string, string> = { "content-type": got.ct || "application/json", "cache-control": "no-store", "x-rid": "replay" }; if (got.ce) h["content-encoding"] = got.ce;
-    return new Response(got.body ? Uint8Array.from(atob(got.body), x => x.charCodeAt(0)) : null, { status: got.status, headers: h, ...(got.ce ? { encodeBody: "manual" as const } : {}) });
+    const b64 = await openBody(c.env, email, rid, got.body);
+    return new Response(b64 ? Uint8Array.from(atob(b64), x => x.charCodeAt(0)) : null, { status: got.status, headers: h, ...(got.ce ? { encodeBody: "manual" as const } : {}) });
   }
   if (got.state === "busy") return c.json({ ok: false, error: "일시적인 오류가 발생했어요", code: "busy" }, 409, { "x-rid": "busy" });
   try { await next(); }
@@ -67,7 +78,13 @@ export async function idem(c: C, email: string, next: Next, seg: (ms: number) =>
   if (u.length > 65536 && !ce) { const z = new Uint8Array(await new Response(new Response(u).body!.pipeThrough(new CompressionStream("gzip"))).arrayBuffer().catch(() => new ArrayBuffer(0))); if (z.length) { u = z; ce = "gzip"; } }
   const keep = u.length <= (ce ? 524288 : 65536);
   let b64 = ""; if (keep) for (let i = 0; i < u.length; i += 0x8000) b64 += String.fromCharCode(...u.subarray(i, i + 0x8000));
-  c.executionCtx.waitUntil(st.done(rid, r.status, b64 ? btoa(b64) : "", r.headers.get("content-type") || "", keep ? ce : "").catch(() => {}));
+  c.executionCtx.waitUntil((async () => {
+    const raw = b64 ? btoa(b64) : "";
+    let body = raw, enc = keep ? ce : "";
+    // 봉하기가 실패해도(스위치 읽기 D1 오류 · DEK 못 만듦 · e2e 사람) 끝남은 남김 — 몸통 없이 상태만. 안 남기면 rid 가 「하는 중」으로 남아 같은 rid 로 다시 와 쓰기를 또 함
+    try { body = _q.sealBody ? await _q.sealBody(raw) : await sealBody(c.env, email, rid, raw); } catch { body = ""; enc = ""; }
+    await st.done(rid, r.status, body, r.headers.get("content-type") || "", enc);
+  })().catch(() => {}));
   mark(c, "new");
 }
 

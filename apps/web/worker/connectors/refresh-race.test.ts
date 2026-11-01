@@ -27,6 +27,7 @@ function d1(db: Database) {
 
 async function setup(row: { kind: string; service: string; url: string; auth: Record<string, unknown> }) {
   const db = new Database(":memory:");
+  db.run("CREATE TABLE f7_flag (name TEXT PRIMARY KEY, on_at INTEGER, note TEXT)");   // 봉투 스위치(vault envelopeOn)가 읽음 — 0021 마이그레이션이 만듦
   db.run(`CREATE TABLE connection(id TEXT PRIMARY KEY, owner TEXT, service TEXT, label TEXT, kind TEXT, url TEXT, auth TEXT, account TEXT DEFAULT '',
     status TEXT, error TEXT, tools TEXT, tools_at INTEGER, off TEXT DEFAULT '', read_only INTEGER DEFAULT 0, created_at INTEGER, updated_at INTEGER, source TEXT DEFAULT '')`);
   const env: Env = { DB: d1(db), CONNECTOR_KEY: KEY, GITHUB_APP_CLIENT_ID: "gid", GITHUB_APP_CLIENT_SECRET: "gsecret" };

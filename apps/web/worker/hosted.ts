@@ -1,5 +1,6 @@
 import type { Context, Hono } from "hono";
 import type { ZodType } from "zod";
+import type { D1ScopeSpec } from "./vault/migrate";
 
 export type HostedCall = { method: string; path: string; headers: Record<string, string>; body?: Uint8Array };
 export type HostedOut = { status: number; headers: Record<string, string>; body: Uint8Array };
@@ -32,6 +33,8 @@ export type Hosted = {
   liveTags?(env: any, email: string): Promise<Record<string, string>>;
   tick?(env: any, wait: (p: Promise<unknown>) => void): void;
   route?(c: Context<any>, url: URL, ch: string, pass: { req: string[]; res: string[] }, seg: (name: string, ms: number) => void): Promise<Response | null>;
+  /** 봉투 옮기기(vault/migrate.ts)에 더할 호스팅 전용 D1 표(이름 → 칸 · 줄 키 · DEK 주인) — 없으면 그 scope 가 없음 */
+  vaultScopes?: Record<string, D1ScopeSpec>;
 };
 
 const mods = import.meta.glob<{ default: Hosted }>("./ee/index.ts", { eager: true });
