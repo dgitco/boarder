@@ -30,6 +30,10 @@
     } catch { return {status: 0, j: null}; }
   };
   const rnd = () => 'f' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  // 넣을 곳: 브라우저 = https 주소, 터미널 = 'terminal:<판>'(boarder secret type --tmux)
+  const TERM = 'terminal:';
+  const isTerm = q => str(q.site).startsWith(TERM);
+  const where = q => isTerm(q) ? `터미널 판 ${str(q.site).slice(TERM.length)}` : str(q.site);
   const ago = t => { const s = Math.max(0, (Date.now() - Number(t || 0)) / 1000); return s < 60 ? '방금' : s < 3600 ? `${Math.floor(s / 60)}분 전` : `${Math.floor(s / 3600)}시간 전`; };
 
   // ── 상태
@@ -142,7 +146,7 @@
       out.push(mk('h3', 'bx-es-sec', '허락 기다림'));
       for (const q of pend){
         const c = btn('bx-es-card'); c.append(ic('shield', 'bx-es-ci'));
-        const t = mk('span', 'bx-es-ct'); t.append(mk('b', '', str(q.name) || '비밀값'), mk('span', 'bx-es-sub', [str(q.agent), str(q.site), ago(q.created_at)].filter(Boolean).join(' · ')));
+        const t = mk('span', 'bx-es-ct'); t.append(mk('b', '', str(q.name) || '비밀값'), mk('span', 'bx-es-sub', [str(q.agent), where(q), ago(q.created_at)].filter(Boolean).join(' · ')));
         c.append(t, ic('right', 'bx-es-chev')); c.addEventListener('click', () => allowView(q)); out.push(c); cards.push(c);
       }
     }
@@ -191,7 +195,7 @@
     const kindSeg = seg('종류', KINDS, kind, v => { kind = v; setMode(); }, 'bx-es-kinds');
     const useSeg = seg('쓸 때', [['ask', '쓸 때마다 허락'], ['auto', '에이전트가 알아서']], 'ask', v => { policy = v; });
     const keepSeg = seg('보관', [['once', '한 번만 쓰고 버림'], ['saved', '저장']], 'once', v => { mode = v; useSeg.el.hidden = v !== 'saved'; });
-    const note = line('bx-es-note', '값은 에이전트 · 대화 · 기록 어디에도 보이지 않고, 허락한 기기의 브라우저 입력칸에만 들어가요. 한 번만은 10분 안에 안 쓰면 지워져요');
+    const note = line('bx-es-note', '값은 보드 대화 · 장부 · 이 화면에 남지 않고, 쓸 때마다 그 기기의 브라우저 칸이나 터미널에 한 번 들어가요. 들어간 뒤엔 그 기기의 에이전트가 읽을 수 있어요. 한 번만은 10분 안에 안 쓰면 지워져요');
     const err = errLine();
     const go = btn('bx-es-go', '넣기'); go.disabled = true;
     const ready = () => NAME.test(nm.value) && nm.value !== 'requests' && !!inp.value;   // requests = 뒤쪽 예약어
@@ -260,7 +264,8 @@
   // 허락
   function allowView(q){
     wipe(); S.view = 'allow'; head(str(q.name) || '비밀값', true); const tok = S.tok;
-    const who = line('bx-es-who', `${str(q.site) || '사이트'} 에 넣으려 해요 · ${str(q.agent) || '에이전트'}`);
+    const who = line('bx-es-who', `${where(q) || '사이트'} 에 넣으려 해요 · ${str(q.agent) || '에이전트'}`);
+    const warn = line('bx-es-warn', '입력이 화면에 안 보이는 비밀번호 칸일 때만 허락하세요. 일반 셸이면 화면 · 기록에 값이 남아요'); warn.hidden = !isTerm(q);
     const why = line('bx-es-why', `${ago(q.created_at)} 요청 · 10분 안에 정하지 않으면 지나가요`);
     const err = errLine();
     const row = mk('div', 'bx-es-row'), no = btn('bx-es-ghost', '거절'), yes = btn('bx-es-go', '허락');
@@ -277,7 +282,7 @@
       done(allow ? '허락했어요' : '거절했어요'); load();
     }
     no.addEventListener('click', () => decide(false)); yes.addEventListener('click', () => decide(true));
-    body.replaceChildren(who, why, err, row);
+    body.replaceChildren(who, warn, why, err, row);
     setFocus([no, yes]);
     yes.focus?.();
   }

@@ -125,8 +125,9 @@ test("ask: 카드로 묻고 · 허용 전엔 안 넘김 · 허용 뒤 묶인 기
   const f = await s.call("POST", "/api/secrets/card/fill", { site: "https://shop.example/checkout?a=1", selector: "#cc", tab: "T1" }, s.agent());
   assert.equal(f.status, 200); assert.equal(f.j.state, "pending"); assert.ok(f.j.card_id);
   const id = f.j.id;
-  const card = s.db.prepare("SELECT question, choices, state FROM board_card WHERE id = ?").get(f.j.card_id) as any;
+  const card = s.db.prepare("SELECT question, choices, state, body FROM board_card WHERE id = ?").get(f.j.card_id) as any;
   assert.deepEqual(JSON.parse(card.choices), ["허용", "거절"]); assert.match(card.question, /card.*https:\/\/shop\.example/);
+  assert.match(card.body, /값은 대화·로그·이 화면에 남지 않고 이 기기의 브라우저 칸\(#cc\)에 들어가요\. 입력된 뒤에는 이 기기의 에이전트가 값을 읽을 수 있어요\./);
   assert.equal((s.db.prepare("SELECT site FROM secret_request WHERE id = ?").get(id) as any).site, "https://shop.example", "사이트는 origin 으로");
   // 허용 전: 기기도 못 받음
   assert.equal((await s.call("GET", `/api/secrets/requests/${id}/value`, undefined, s.device())).status, 404);
@@ -322,6 +323,9 @@ test("tmux: strict target validation, terminal approval card, device binding and
   assert.equal(row.device_id, "dev1", "member ignores device header");
   const card = s.db.prepare("SELECT question, body FROM board_card WHERE id = ?").get(f.j.card_id) as any;
   for (const text of [card.question, card.body]) { assert.match(text, /이 기기의 터미널\(demo:1.2\)/); assert.ok(!text.includes("브라우저")); }
+  assert.match(card.body, /값은 대화·로그·이 화면에 남지 않고/);
+  assert.match(card.body, /입력된 뒤에는 이 기기의 에이전트가 값을 읽을 수 있어요\./);
+  assert.match(card.body, /입력값이 화면에 보이지 않는 비밀번호 프롬프트일 때만 허용해요\./);
   assert.equal((await s.call("GET", `/api/secrets/requests/${f.j.id}/value`, undefined, s.device())).status, 404);
   await s.call("POST", `/api/me/cards/${f.j.card_id}/answer`, { choice: "허용" }, await s.human());
   assert.equal((await s.call("GET", `/api/secrets/requests/${f.j.id}/value`, undefined, s.device(DEV2))).status, 404);

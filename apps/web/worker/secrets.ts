@@ -210,7 +210,7 @@ export function mountSecrets(app: Hono<{ Bindings: SEnv }>, h: Hooks) {
       card = `${Math.floor(now / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
       const q = terminal ? `「${s.name}」 비밀을 이 기기의 터미널(${b.tmux})에 넣을까요? — ${ag.win}` : `「${s.name}」 비밀을 ${site} 에 넣을까요? — ${ag.win}`;
       stmts.push(c.env.DB.prepare("INSERT INTO board_card(id, owner, win, question, choices, recommend, body, at) VALUES (?,?,?,?,?,?,?,?)")
-        .bind(card, owner, ag.win, q, JSON.stringify([ALLOW, DENY]), null, `값은 에이전트에게 안 보이고 이 기기의 ${terminal ? `터미널(${b.tmux})` : `브라우저 칸(${selector})`}에만 들어가요. 10분 안에 답하지 않으면 만료돼요. (요청 ${id})`, now));
+        .bind(card, owner, ag.win, q, JSON.stringify([ALLOW, DENY]), null, `값은 대화·로그·이 화면에 남지 않고 이 기기의 ${terminal ? `터미널(${b.tmux})` : `브라우저 칸(${selector})`}에 들어가요. 입력된 뒤에는 이 기기의 에이전트가 값을 읽을 수 있어요.${terminal ? " 입력값이 화면에 보이지 않는 비밀번호 프롬프트일 때만 허용해요." : ""} 10분 안에 답하지 않으면 만료돼요. (요청 ${id})`, now));
     }
     stmts.push(c.env.DB.prepare("INSERT INTO secret_request(id, secret_id, owner, site, target, state, device_id, agent, tok, card_id, created_at, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
       .bind(id, s.id, owner, site, JSON.stringify(terminal ? { tmux: b.tmux } : tab === undefined ? { selector } : { selector, tab }), auto ? "approved" : "pending", device, ag.win, ag.tok, card, now, auto ? now : null));

@@ -1,6 +1,7 @@
 // node --test packages/cli/src/help.test.mjs
 // --help · -h 는 어떤 명령에서도 실행 전에 끝나야 한다: 서버에 아무것도 안 보내고 기기에 아무것도 안 쓴다.
 import { test } from 'node:test';
+import { SECRET_HELP } from './secret.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import http from 'node:http';
 import { spawn } from 'node:child_process';
@@ -109,3 +110,9 @@ test('멈춘 기기: --follow · 감시는 안 올리고, 손으로 부른 impor
   assert.equal((await cli(['import', '--no-gh'])).code, 0); assert.equal(imports(hits).length, 1);
   assert.ok(!stopMark(B).stopped);
 }));
+
+test('secret help states where values remain and requires non-echoing prompts', () => {
+  assert.match(SECRET_HELP, /The value never appears in this chat, logs or tool output; once typed, the page\/terminal holds it\n  and an agent on that device could read it\./);
+  assert.match(SECRET_HELP, /Use only for prompts that do not echo input \(password prompts\)\./);
+  assert.doesNotMatch(SECRET_HELP, /you never see them/);
+});

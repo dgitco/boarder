@@ -151,6 +151,7 @@ html.bx-ea .bx-es-why,html.bx-ea .bx-es-note{color:var(--muted)}
 html.bx-ea .bx-es-note{font-size:12.5px}
 html.bx-ea .bx-es-who{font-size:15px;color:var(--ink)}
 html.bx-ea .bx-es-err{color:var(--ink);font-weight:600}
+html.bx-ea .bx-es-warn{margin:0;padding:8px 10px;border-radius:10px;background:var(--sunk);color:var(--ink);font-size:13.5px;line-height:1.4;font-weight:600}
 html.bx-ea .bx-es-in{box-sizing:border-box;width:100%;height:46px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--sunk);color:var(--ink);font:inherit;font-size:17px;letter-spacing:.08em;outline:none}   /* 17px — iOS 확대 없게 */
 html.bx-ea .bx-es-in:focus{border-color:var(--ink)}
 html.bx-ea .bx-es-seg{display:flex;padding:2px;border-radius:9px;background:var(--sunk)}

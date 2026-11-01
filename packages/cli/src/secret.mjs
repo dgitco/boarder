@@ -5,13 +5,16 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, openSyn
 import { loadDevice, server, dir, home, ensureDir } from './config.mjs';
 import { windowToken } from './window.mjs';
 
-export const SECRET_HELP = `Secrets (values the human typed on their phone — you never see them)
+export const SECRET_HELP = `Secrets (values the human typed on their phone)
+  The value never appears in this chat, logs or tool output; once typed, the page/terminal holds it
+  and an agent on that device could read it.
   boarder secret fill <name> --site <https url> --selector <css> [--tab <id>] [--cdp <port>] [--timeout <s>]
                                     asks the human to allow it (or their auto rule), then types the value into that field
                                     of the local Chrome (remote debugging port, default 9222) and masks it.
                                     Prints the request id/state and "filled" — never the value.
   boarder secret type <name> --tmux <session:window.pane> [--timeout <s>] [--no-enter]
                                     asks for approval, then types into that local terminal and clears its history.
+                                    Use only for prompts that do not echo input (password prompts).
                                     Prints the request id/state and "typed" — never the value.`;
 
 export const normalize = v => String(v).replace(/[ \t\-./()+_]/g, '').toLowerCase();

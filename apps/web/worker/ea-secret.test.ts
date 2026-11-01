@@ -274,6 +274,24 @@ test("허락 · 거절: POST /api/secrets/requests/:id {action} · 409 = 지나�
   one(t4.body, "bx-es-scrim").dispatch("click"); assert.equal(t4.win.BX_EA_SECRET.state().open, false);
 });
 
+test("허락 화면: 터미널 요청(terminal:<판>)은 「터미널 판」 · 비밀번호 칸일 때만 경고, 브라우저 요청엔 경고 없음 · 안내 글이 실제보다 세지 않음", async () => {
+  const L2 = { secrets: LIST.secrets, requests: [{ id: "sr_t", name: "corp-card", site: "terminal:demo:3.1", state: "pending", agent: "dgit", created_at: NOW }, LIST.requests[0]] };
+  const t = setup(() => J(L2)); await t.settle(); await openSheet(t);
+  const cards = byClass(t.body, "bx-es-card");
+  assert.match(cards[0].textContent, /dgit · 터미널 판 demo:3\.1 · /);
+  cards[0].click();
+  assert.equal(one(t.body, "bx-es-who").textContent, "터미널 판 demo:3.1 에 넣으려 해요 · dgit");
+  const w = one(t.body, "bx-es-warn");
+  assert.equal(shown(w), true); assert.match(w.textContent, /입력이 화면에 안 보이는 비밀번호 칸일 때만 허락/);
+  t.key("Escape"); await openSheet(t);
+  byClass(t.body, "bx-es-card")[1].click();
+  assert.equal(one(t.body, "bx-es-who").textContent, "https://example.test 에 넣으려 해요 · company");
+  assert.equal(shown(one(t.body, "bx-es-warn")), false, "브라우저 요청엔 경고 없음");
+  t.key("Escape"); await openSheet(t); one(t.body, "bx-es-add").click();
+  const note = byClass(t.body, "bx-es-note").map(e => e.textContent).join(" ");
+  assert.ok(!/어디에도 보이지 않/.test(note) && /에이전트가 읽을 수 있어요/.test(note), "넣은 뒤 그 기기 에이전트가 읽을 수 있음을 숨기지 않음");
+});
+
 test("넣어 둔 값: 쓸 때 바꾸기 PATCH {policy} · 지우기 두 번 눌러 DELETE · 한 번만 값은 쓸 때 고르기 없음", async () => {
   const seen: any[] = [];
   const t = setup((url, init) => { if (init?.method === "PATCH" || init?.method === "DELETE") { seen.push({ url, m: init.method, b: init.body && JSON.parse(init.body), h: init.headers }); return J({ ok: true }); } return J(LIST); });
