@@ -97,7 +97,7 @@ function deep(v: unknown, mask: boolean): unknown {
   return v;
 }
 export function shape(name: string, out: unknown, mask: boolean): unknown {
-  const keys = OUT[name as ToolName];
+  const keys = Object.hasOwn(OUT, name) ? OUT[name as ToolName] : undefined;   // 호스팅 확장 도구는 제 꼴 그대로
   const picked = keys && out && typeof out === "object" && !Array.isArray(out)
     ? Object.fromEntries(keys.filter(k => k in (out as object)).map(k => [k, (out as Record<string, unknown>)[k]]))
     : out;

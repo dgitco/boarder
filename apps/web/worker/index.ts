@@ -24,7 +24,7 @@ import blobJs from "./legacy/blobatar.js?raw";
 import botPickJs from "./legacy/botpick.js?raw";
 import { snippet, capture, phId, type PH } from "./posthog";
 import { mcp } from "./mcp/server";
-import { run as runTool, SCHEMAS } from "./mcp/tools";
+import { run as runTool, hasTool, addTools } from "./mcp/tools";
 import { registry, view, dropCache, diff } from "./mcp/registry";
 import { mountConnectors } from "./connectors/routes";
 import { mountHooks } from "./connectors/hooks";
@@ -46,6 +46,7 @@ import { newMeter, meterEnv, meterProps, sampleOf } from "./perf";
 import * as PU from "./push";
 import { resolve as pushResolve, cardLoc } from "./push-do";
 import { hosted } from "./hosted";   // 호스팅 전용(ee/) — 공개 판에선 빈 확장
+addTools(hosted.tools);
 import * as live from "./live";
 import * as queue from "./queue";
 import * as bxs from "./bxs";
@@ -154,7 +155,7 @@ app.use("*", async (c, next) => {
 });
 app.use("*", async (c, next) => {
   if ((queue.FAULT.d1 || queue.FAULT.d1after) && !/^\/api\/(admin\/fault|relay\/)/.test(c.req.path)) c.env = { ...c.env, DB: queue.FAULT.d1 ? queue.brokenDB(c.env.DB) : queue.lostDB(c.env.DB) };
-  if (c.req.method !== "POST" || !queue.QPATHS.has(c.req.path) || !(await ledger.f7On(c.env.DB, "write_queue"))) return next();
+  if (c.req.method !== "POST" || !(queue.QPATHS.has(c.req.path) || hosted.qpath?.(c.req.path)) || !(await ledger.f7On(c.env.DB, "write_queue"))) return next();
   const s = await signedIn(c); if (!s) return next();
   return queue.idem(c as never, s.user.email, next, ms => seg(c.req.raw, "claim", ms));
 });
@@ -281,6 +282,7 @@ app.put("/api/relay/sync", async c => {
     const lz = await snapLazy(c);
     if (!(await sn.touch("sync", lz))) await sn.put("sync", "{}", false, lz);
     kickPush(c.env, c.executionCtx);
+    hosted.tick?.(c.env, p => c.executionCtx.waitUntil(p));
     if (b.changes.length) c.executionCtx.waitUntil(live.bumpLedger(c.env));
     return c.json({ ok: true, n });
   }
@@ -393,6 +395,7 @@ app.get("/api/live", async c => {
     const tag = await memberBoard.etag(JSON.stringify(d));
     return { data: tag, chat: tag + (l?.n ?? 0) };
   });
+  if (hosted.liveTags) Object.assign(o.t, await hosted.liveTags(c.env, me).catch(() => ({})));
   return c.json(o, 200, { "cache-control": "no-store" });
 });
 
@@ -421,7 +424,8 @@ app.get("/api/search", async c => {
   return c.json({ ...r, ms: { ...r.ms, worker: Date.now() - t0 } }, 200, { "cache-control": "private, no-store" });
 });
 
-hosted.mount?.(app);
+hosted.mount?.(app, { me: async c => (await signedIn(c as never))?.user.email ?? null, sameSite: c => sameSite(c as never) });
+// 릴레이의 다리(WebSocket) — 토큰 확인 뒤 Bridge DO 로
 app.get("/api/relay/ws", async c => {
   const tok = (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "");
   if (!c.env.RELAY_TOKEN || !sameToken(tok, c.env.RELAY_TOKEN)) return c.json({ error: "no" }, 403);
@@ -541,7 +545,7 @@ app.post("/mcp", async c => { const ctx = await agentCtx(c); if (ctx === "mismat
 app.get("/mcp", c => new Response(null, { status: 405, headers: { allow: "POST" } }));
 app.post("/api/agent/:tool", async c => {
   const ctx = await agentCtx(c); if (ctx === "mismatch") return c.json({ error: "신원 불일치" }, 403); if (!ctx) return c.json({ error: "토큰" }, 401);
-  const name = c.req.param("tool"); if (!(name in SCHEMAS)) return c.json({ error: "없는 도구" }, 404);
+  const name = c.req.param("tool"); if (!hasTool(name)) return c.json({ error: "없는 도구" }, 404);
   try { return c.json(await runTool(ctx, name, await c.req.json().catch(() => ({})))); }
   catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e) }, 400); }
 });
@@ -1242,12 +1246,15 @@ app.post("/api/dev/ch", async c => {
 let artKinds: { at: number; ch: string; kinds: Record<string, string> } | null = null;
 async function isCanvas(env: Env, ch: string, id: string) {
   if (ch === "owner" && await ledger.f7On(env.DB, "read_files")) { const ix = await files.index(env); if (ix) return ix.arts[id]?.kind === "canvas"; }
-  if (!artKinds || artKinds.ch !== ch || Date.now() - artKinds.at > 60_000) {
-    const r = await boardCall(env, ch, { method: "GET", path: "/api/arts", headers: { accept: "application/json" } });
-    const j = r.status === 200 ? JSON.parse(new TextDecoder().decode(r.body)) as Record<string, { kind?: string }> : {};
-    artKinds = { at: Date.now(), ch, kinds: Object.fromEntries(Object.entries(j).map(([k, v]) => [k, v.kind || ""])) };
+  const age = artKinds && artKinds.ch === ch ? Date.now() - artKinds.at : Infinity;
+  if (age > 60_000 || (age > 5_000 && !(id in artKinds!.kinds))) {
+    const r = await boardCall(env, ch, { method: "GET", path: "/api/arts", headers: { accept: "application/json" } }).catch(() => null);
+    let j: Record<string, { kind?: string }> | null = null;
+    try { j = r?.status === 200 ? JSON.parse(new TextDecoder().decode(r.body)) : null; } catch { j = null; }
+    if (j) artKinds = { at: Date.now(), ch, kinds: Object.fromEntries(Object.entries(j).map(([k, v]) => [k, v?.kind || ""])) };
+    else if (artKinds?.ch !== ch) return false;
   }
-  return artKinds.kinds[id] === "canvas";
+  return artKinds!.kinds[id] === "canvas";
 }
 
 const PASS_REQ = ["accept", "content-type", "if-none-match", "x-hb", "range", "x-file-name", "x-request-id"];

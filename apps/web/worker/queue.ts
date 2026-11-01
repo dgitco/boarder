@@ -63,9 +63,11 @@ export async function idem(c: C, email: string, next: Next, seg: (ms: number) =>
   const r = c.res;
   if (r.status === 503 && r.headers.get("x-retry-safe") === "1") { c.executionCtx.waitUntil(st.release(rid).catch(() => {})); mark(c, "new"); return; }
   // 남기는 답은 64KB 까지(보드 쓰기 답은 몇백 바이트, server.py 는 4KB 넘으면 gzip — 바이트 그대로 base64) — 넘으면 상태만(다시 보낸 쪽은 몸통 없는 같은 상태)
-  const u = new Uint8Array(await r.clone().arrayBuffer().catch(() => new ArrayBuffer(0)));
-  let b64 = ""; if (u.length <= 65536) for (let i = 0; i < u.length; i += 0x8000) b64 += String.fromCharCode(...u.subarray(i, i + 0x8000));
-  c.executionCtx.waitUntil(st.done(rid, r.status, b64 ? btoa(b64) : "", r.headers.get("content-type") || "", u.length <= 65536 ? r.headers.get("content-encoding") || "" : "").catch(() => {}));
+  let u = new Uint8Array(await r.clone().arrayBuffer().catch(() => new ArrayBuffer(0))), ce = r.headers.get("content-encoding") || "";
+  if (u.length > 65536 && !ce) { const z = new Uint8Array(await new Response(new Response(u).body!.pipeThrough(new CompressionStream("gzip"))).arrayBuffer().catch(() => new ArrayBuffer(0))); if (z.length) { u = z; ce = "gzip"; } }
+  const keep = u.length <= (ce ? 524288 : 65536);
+  let b64 = ""; if (keep) for (let i = 0; i < u.length; i += 0x8000) b64 += String.fromCharCode(...u.subarray(i, i + 0x8000));
+  c.executionCtx.waitUntil(st.done(rid, r.status, b64 ? btoa(b64) : "", r.headers.get("content-type") || "", keep ? ce : "").catch(() => {}));
   mark(c, "new");
 }
 

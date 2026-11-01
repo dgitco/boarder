@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Tool } from "./codemode";
 import { shape, type View } from "./registry";
+import type { Hosted } from "../hosted";
 
 export type Ctx = {
   via?: "mcp" | "rest";                                      // 들어온 길(피드백 기록용)
@@ -13,6 +14,7 @@ export type Ctx = {
   store?: (text: string) => Promise<string>;
   local?: (name: string, args: Record<string, any>) => Promise<unknown>;
   flag?: (text: string) => void;
+  win?: string;
   conn?: import("../connectors/mcp").Conn & { env: import("../connectors/store").Env; owner: string; scope: string };
 };
 
@@ -59,11 +61,11 @@ export const SCHEMAS = {
 export type ToolName = keyof typeof SCHEMAS;
 
 export const MEMBER_ONLY = new Set<string>(["chat_say", "role_draft", "role_list"]);
-const READS = new Set<ToolName>(["role_list", "inbox_wait", "inbox_cards", "hook_events", "hook_event", "session_search", "session_handoff"]);
-export const onlyReads = (n: string) => READS.has(n as ToolName);
+const READS = new Set<string>(["role_list", "inbox_wait", "inbox_cards", "hook_events", "hook_event", "session_search", "session_handoff"]);
+export const onlyReads = (n: string) => READS.has(n);
 
 // 보이는 설명(boarder_search · boarder_describe) — 입력 꼴은 zod 와 같게 손으로(작아서)
-export const TOOLS: (Tool & { name: ToolName })[] = [
+const CORE_TOOLS: (Tool & { name: ToolName })[] = [
   { name: "inbox_ask", title: "Ask the human a decision",
     description: "Put a decision card in front of the human: a one-line question (bold conclusion, ≤80 chars ideal), 1–6 choices like \"A: plan — why\", the recommended letter first. Returns card_id and thread_id; with wait_s it waits for the answer. urgency incident/today also notifies at once. Ask only what only the human can decide.",
     inputSchema: { type: "object", properties: { question: { type: "string" }, choices: { type: "array", items: { type: "string" } }, recommend: { type: "string", description: "e.g. A" }, kind: { type: "string", enum: ["decision", "approval", "question", "todo"] }, urgency: { type: "string", enum: ["incident", "today", "normal"] }, due: { type: "string" }, thread: { type: "string", description: "Thread ts to post the card under" }, body: { type: "string", description: "Context under the question (short)" }, wait_s: { type: "number", description: "0–600" } }, required: ["question", "choices"] },
@@ -126,6 +128,19 @@ export const TOOLS: (Tool & { name: ToolName })[] = [
     annotations: { readOnlyHint: false, destructiveHint: false } },
 ];
 
+// 호스팅 확장 도구(ee/, 공개 판엔 없음)는 index.ts 가 addTools 로 코어 도구 뒤에 붙임(이 파일은 hosted 를 import 하지 않음 — 시험이 따로 불러도 되게).
+// 이름은 코어와 겹치지 않는 것만 — 등록 · 켜기 · 권한 · 가림은 코어와 같은 길
+export const TOOLS: (Tool & { name: string })[] = [...CORE_TOOLS];
+let ext: NonNullable<Hosted["tools"]> | null = null;
+export function addTools(t: Hosted["tools"]) {
+  if (!t || ext) return;
+  ext = t;
+  for (const d of t.defs) if (!(d.name in SCHEMAS)) TOOLS.push(d as Tool & { name: string });
+  for (const n of t.reads) READS.add(n);
+}
+const schemaOf = (name: string) => SCHEMAS[name as ToolName] ?? (ext && Object.hasOwn(ext.schemas, name) ? ext.schemas[name] : undefined);
+export const hasTool = (name: string) => !!schemaOf(name);
+
 export function search(view: View, query: string, limit = 10) {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const mine = TOOLS.filter(t => view.visible(t.name)).map(t => ({ ...t, description: view.desc(t.name) }));
@@ -175,7 +190,7 @@ async function listCards(ctx: Ctx, query: string | undefined, limit: number) {
 }
 
 export async function run(ctx: Ctx, name: string, raw: Record<string, unknown>): Promise<unknown> {
-  const schema = SCHEMAS[name as ToolName]; if (!schema) throw new Error(`없는 도구: ${name}`);
+  const schema = schemaOf(name); if (!schema) throw new Error(`없는 도구: ${name}`);
   const no = ctx.view.why(name); if (no) throw new Error(no);
   const r = schema.safeParse(raw ?? {});
   if (!r.success) throw new Error(`입력이 맞지 않음: ${r.error.issues.map(i => `${i.path.join(".")} ${i.message}`).join("; ")}`);
@@ -199,6 +214,10 @@ async function raw_(ctx: Ctx, name: string, a: Record<string, any>): Promise<unk
     const r = await addFeedback(ctx.conn.env.DB, { owner: ctx.conn.owner, author: ctx.agent, via: ctx.via === "rest" ? "cli" : "mcp", test: !!ctx.testCh }, a, ctx.flag || (() => {}));
     if ("error" in r) throw new Error(r.error);
     return r;
+  }
+  if (!(name in SCHEMAS) && ext) {
+    if (!ctx.conn) throw new Error("이 토큰은 쓸 수 없음");
+    return ext.run({ env: ctx.conn.env, owner: ctx.conn.owner, win: ctx.win || "", agent: ctx.agent, test: !!ctx.testCh }, name, a);
   }
   if (MEMBER_ONLY.has(name) && !ctx.local) throw new Error("회원 보드 전용 도구예요");
   if (ctx.local) return ctx.local(name, a);

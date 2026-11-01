@@ -53,7 +53,7 @@ export const widPane = (id: string) => { const m = /^ew_pane(\d{1,7})$/.exec(id)
 const HSTATE = /^(busy|idle|waiting|background|starting|none|parked)$/;
 type HPend = { k?: string; id: string; text: string; at: number; test?: boolean; sending?: number };
 const HCMD_MS = 160_000;
-type Pend = { id: string; text: string; at: number };
+type Pend = { id: string; text: string; at: number; k?: string };
 export const sysLine = (db: D1Database, owner: string, text: string, wid?: string) =>
   db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(owner, "보더", "sys", text, "primary", Date.now(), wid ?? null).run();
 
@@ -85,7 +85,7 @@ export class Engine extends DurableObject<EngEnv> {
     await this.ctx.storage.deleteAlarm(); await this.ctx.storage.delete("pending"); await this.ctx.storage.delete("hpending");
     return { ok: true };
   }
-  async pend(p: Pend) { const q = (await this.ctx.storage.get<Pend[]>("pending")) || []; q.push(p); await this.ctx.storage.put("pending", q.slice(-50)); return { queued: true }; }
+  async pend(p: Pend) { const q = (await this.ctx.storage.get<Pend[]>("pending")) || []; q.push({ ...p, k: p.k || crypto.randomUUID() }); await this.ctx.storage.put("pending", q.slice(-50)); return { queued: true }; }
   async who() { return (await this.ctx.storage.get<{ device: string; owner: string; harness?: boolean }>("who")) || { device: "", owner: "", harness: false }; }
 
   /** 기기에서 동사 하나 — 답(result)이나 EngineError(code 1 실패 · 2 바쁨 · 4 없음 · 5 못 하는 동사) */
@@ -176,9 +176,11 @@ export class Engine extends DurableObject<EngEnv> {
     if (r) await sysLine(db, owner, "메인 봇이 이 기기에서 시작했어요", r.id);
     return r?.id || null;
   }
-  async deliver(id: string, text: string): Promise<Delivered> {
+  async deliver(id: string, text: string, ordered = true): Promise<Delivered> {
     const w = await this.row(id); if (!w) throw new EngineError(4, "없는 창");
     if (w.state === "closed" || w.state === "failed") throw new EngineError(4, "닫힌 창이에요");
+    // 그 창에 밀린 글이 있으면 뒤에 줄 섬(점검 r11: 다시 붙은 직후 · 바쁨 뒤에 새 글이 앞 글을 앞지름). ordered=false 는 flush 안 다시 열기 길(그 글이 이미 줄 맨 앞)
+    if (ordered && ((await this.ctx.storage.get<Pend[]>("pending")) || []).some(p => p.id === id)) { const r = await this.pend({ id, text, at: Date.now() }); await this.flush().catch(() => null); return r; }
     if (w.state === "parked" || w.state === "gone") return this.reopen(id, text);
     if (w.state === "opening" || w.state === "starting" || !this.online()) return this.pend({ id, text, at: Date.now() });
     try { await this.cmd("send", { id, text }); return { sent: true }; }
@@ -229,20 +231,34 @@ export class Engine extends DurableObject<EngEnv> {
       } while (this.drainAgain);
     } finally { this.draining = false; }
   }
-  /** 밀린 글: 그 창이 쉬는 중일 때만 넣음(뜨는 중엔 입력칸이 없어 글이 사라짐) */
+  flushing = false; flushAgain = false;
   async flush() {
     if (!this.online()) return;
+    if (this.flushing) { this.flushAgain = true; return; }
+    this.flushing = true;
+    try { do { this.flushAgain = false; await this.flushOnce(); } while (this.flushAgain && this.online()); }
+    finally { this.flushing = false; }
+  }
+  private async flushOnce() {
     const q = (await this.ctx.storage.get<Pend[]>("pending")) || []; if (!q.length) return;
-    const left: Pend[] = [];
+    const db = this.env.DB, left: Pend[] = [], held = new Set<string>(), wait = (p: Pend) => { left.push(p); held.add(p.id); };
     for (const p of q) {
-      if (Date.now() - p.at > 6 * 3600_000) continue;
+      if (held.has(p.id)) { left.push(p); continue; }
       const w = await this.row(p.id);
       if (!w || w.state === "closed" || w.state === "failed") continue;
-      if (w.state === "parked" || w.state === "gone") { try { await this.reopen(p.id, p.text); } catch { left.push(p); } continue; }
-      if (w.state !== "idle") { left.push(p); continue; }
-      try { await this.cmd("send", { id: p.id, text: p.text }); } catch (e) { if ((e as EngineError).code !== 4) left.push(p); }
+      if (Date.now() - p.at > 6 * 3600_000) { await sysLine(db, w.owner, `「${w.name}」 창에 6시간 동안 못 넣은 글을 버렸어요: ${p.text.replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null); continue; }
+      if (w.state === "parked" || w.state === "gone") { try { await this.reopen(p.id, p.text); } catch { wait(p); } continue; }
+      if (w.state !== "idle") { wait(p); continue; }
+      try { await this.cmd("send", { id: p.id, text: p.text }); }
+      catch (e) {
+        if ((e as EngineError).code !== 4) { wait(p); continue; }
+        await db.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ? AND state NOT IN ('closed','failed','parked')").bind(Date.now(), p.id).run();
+        try { await this.reopen(p.id, p.text); } catch { wait(p); }
+      }
     }
-    await this.ctx.storage.put("pending", left);
+    const key = (p: Pend) => p.k || `${p.id}\n${p.at}\n${p.text}`, had = new Set(q.map(key));
+    const added = ((await this.ctx.storage.get<Pend[]>("pending")) || []).filter(p => !had.has(key(p)));
+    await this.ctx.storage.put("pending", [...left, ...added].slice(-50));
   }
   async park(id: string, why = "") {
     const w = await this.row(id); if (!w || !LIVE.includes(w.state)) return { ok: false };
@@ -267,7 +283,7 @@ export class Engine extends DurableObject<EngEnv> {
       if (/^(busy|idle|waiting|background|starting)$/.test(s)) {
         await this.env.DB.prepare("UPDATE engine_window SET state = ?, state_at = ? WHERE id = ? AND state = 'starting'").bind(s, Date.now(), id).run();
         // 이번 답이 없었으면 이 글이 그 창의 첫 메시지로 들어갔을 수 있음 — 다시 안 넣음. 기기가 「이미 떠 있음」으로 거절했으면 이 글은 안 들어감 — 넣음
-        return (e as Error).message === "엔진 답 없음" || !text ? { reopened: true } : this.deliver(id, text);
+        return (e as Error).message === "엔진 답 없음" || !text ? { reopened: true } : this.deliver(id, text, false);
       }
       await this.env.DB.prepare("UPDATE engine_window SET state = ?, state_at = ?, note = ? WHERE id = ?").bind(w.state, Date.now(), String((e as Error).message).slice(0, 200), id).run(); throw e;
     }
