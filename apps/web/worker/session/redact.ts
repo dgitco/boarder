@@ -15,6 +15,8 @@ export const SECRET_PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   /\b0B(?:-[A-Z2-7]{4}){13}\b/g,
   /\b0b_[A-Za-z0-9_-]{20,}/g,
+  /\bbx[a-z]_[A-Za-z0-9_-]{20,}/g, // Boarder tokens
+  /(?<=\bBearer\s+)[A-Za-z0-9._~+\/=-]{16,}/g, // Authorization Bearer values
   /(?<=:\/\/[^\s/:@]+:)[^\s/@]{6,}(?=@)/g, // password in a URL
   // KEY=value / "token": "value" where the name says it's a secret
   /(?<=\b[A-Za-z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|ACCESS_KEY)[A-Za-z0-9_]*["']?\s*[:=]\s*["']?)[^\s"'`,;]{8,}/gi,

@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { server } from './config.mjs';
 import { windowToken } from './window.mjs';
+import { redactLine } from './redact.mjs';
 
 const CHUNK = 4 * 1024 * 1024;
 const fail = m => { console.error(m); process.exit(1); };
@@ -34,7 +35,7 @@ async function save(flags) {
   const q = new URLSearchParams({ tool, native });
   const off = await api('GET', `/api/sessions/offset?${q}`); if (off.status !== 200) fail(off.j.error || off.status);
   const raw = readFileSync(file, 'utf8'), whole = raw.slice(0, raw.lastIndexOf('\n') + 1);
-  const lines = whole.split('\n').slice(0, -1).map(l => l.length > CHUNK - 1024 ? JSON.stringify({ type: 'boarder-skipped', bytes: l.length }) : l);
+  const lines = whole.split('\n').slice(0, -1).map(l => l.length > CHUNK - 1024 ? JSON.stringify({ type: 'boarder-skipped', bytes: l.length }) : redactLine(l));
   let from = off.j.lines, sent = 0;
   const meta = { 'x-session-tool': tool, 'x-session-native': native, 'x-session-cwd': encodeURIComponent(process.cwd()), 'x-session-repo': encodeURIComponent(git('remote', 'get-url', 'origin').replace(/^([a-z+]+:\/\/)[^@/]+@/i, '$1')) };
   while (from < lines.length) {
