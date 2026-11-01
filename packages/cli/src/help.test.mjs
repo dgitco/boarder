@@ -37,7 +37,7 @@ const COMMANDS = [
   ['engine', 'setup'], ['engine', 'stop'], ['engine', 'run'], ['watch'], ['watch', 'install'], ['watch', 'remove'], ['watch', '--once'],
   ['import'], ['import', '--setup'], ['import', '--follow'], ['import', '--stop'],
   ['connect', 'linear'], ['session', 'save'], ['profile', 'add', 'x'], ['profile', 'shims'], ['mcp'], ['headers'], ['hook', 'session-start'],
-  ['secret', 'fill', 'x'], ['log', 'progress', 'x'], ['ask', 'q'], ['wait', '1'], ['close', '1', 'x'], ['say', '1', 'x'], ['cards'], ['feedback', 'x'], ['chat', 'x'], ['role', 'list'],
+  ['secret', 'fill', 'x'], ['secret', 'type', 'x'], ['log', 'progress', 'x'], ['ask', 'q'], ['wait', '1'], ['close', '1', 'x'], ['say', '1', 'x'], ['cards'], ['feedback', 'x'], ['chat', 'x'], ['role', 'list'],
 ];
 for (const flag of ['--help', '-h']) test(`${flag}: 모든 명령이 도움말만 내고 끝남(서버 · 기기 그대로)`, () => withServer(async ({ cli, hits, H }) => {
   const before = tree(H);

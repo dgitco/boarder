@@ -38,7 +38,7 @@ function wsServe(srv, onMsg) {
   });
 }
 
-async function rig({ decision = 'approved', tabUrl = 'https://shop.example/checkout', policy = 'ask', wsUrl, navigateAfter, field = 'input', value = VALUE } = {}) {
+async function rig({ decision = 'approved', tabUrl = 'https://shop.example/checkout', policy = 'ask', wsUrl, navigateAfter, field = 'input', value = VALUE, kind = 'browser', tmuxTarget = 'demo:1.2', tmuxFail, tmuxPane = '123 %3 456\n', tmuxRecheck = '123 %3 456\n', tmuxMarker = true, tmuxBufferRemains = false, tmuxPaneDead = false, tmuxSignal, maskFailure = false, noPorts = false } = {}) {
   const hits = [], cdpLog = [];
   let polls = 0, origin = new URL(tabUrl).origin;
   const writes = [], events = [], styles = [];
@@ -64,12 +64,12 @@ async function rig({ decision = 'approved', tabUrl = 'https://shop.example/check
       if (req.url === '/api/device/window' && auth === `Bearer ${DEV}`) return j(200, { token: WIN });
       if (req.url === '/api/secrets/card/fill' && req.method === 'POST' && auth === `Bearer ${WIN}`) return j(200, { id: 'sr_1', state: policy === 'auto' ? 'approved' : 'pending' });
       if (req.url === '/api/secrets/requests/sr_1' && auth === `Bearer ${WIN}`) return j(200, { id: 'sr_1', state: ++polls < 2 ? 'pending' : decision, site: 'https://shop.example' });
-      if (req.url === '/api/secrets/requests/sr_1/value') return auth === `Bearer ${DEV}` ? j(200, { value, site: 'https://shop.example', selector: '#cc', tab: null }) : j(401, { error: '기기 토큰' });
+      if (req.url === '/api/secrets/requests/sr_1/value') return auth === `Bearer ${DEV}` ? j(200, kind === 'tmux' ? { value, kind, site: `terminal:${tmuxTarget}`, tmux: tmuxTarget } : { value, kind, site: 'https://shop.example', selector: '#cc', tab: null }) : j(401, { error: '기기 토큰' });
       j(404, { error: 'no' });
     });
   });
   const chrome = http.createServer((req, res) => {
-    const port = chrome.address().port;
+    const port = (chrome.address()?.port || 9222);
     if (req.url === '/json') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify([{ id: 'T1', type: 'page', url: tabUrl, webSocketDebuggerUrl: wsUrl || `ws://127.0.0.1:${port}/devtools/page/T1` }])); }
     res.writeHead(404); res.end();
   });
@@ -95,20 +95,99 @@ async function rig({ decision = 'approved', tabUrl = 'https://shop.example/check
     if (m.method === navigateAfter) origin = 'https://evil.example';
     send(JSON.stringify({ id: m.id, result: v }));
   });
-  await Promise.all([new Promise(r => api.listen(0, '127.0.0.1', r)), new Promise(r => chrome.listen(0, '127.0.0.1', r))]);
+  if (!noPorts) await Promise.all([new Promise(r => api.listen(0, '127.0.0.1', r)), new Promise(r => chrome.listen(0, '127.0.0.1', r))]);
   const H = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-secret-')), B = path.join(H, 'boarder');
   fs.mkdirSync(B, { mode: 0o700 });
-  fs.writeFileSync(path.join(B, 'device.json'), JSON.stringify({ token: DEV, device_id: 'd1', server: `http://127.0.0.1:${api.address().port}` }));
-  const env = { ...process.env, HOME: H, BOARDER_HOME: B, BOARDER_WINDOW: 'w1' };
+  fs.writeFileSync(path.join(B, 'device.json'), JSON.stringify({ token: DEV, device_id: 'd1', server: `http://127.0.0.1:${(api.address()?.port || 1)}` }));
+  const fakeBin = path.join(H, 'bin'), tmuxLog = path.join(H, 'tmux.jsonl');
+  fs.mkdirSync(fakeBin);
+  fs.writeFileSync(path.join(fakeBin, 'tmux'), `#!${process.execPath}
+const fs = require('node:fs'), path = require('node:path');
+const input = fs.readFileSync(0, 'utf8');
+{
+  const args = process.argv.slice(2);
+  const D = path.join(process.env.HOME, '.local/state/boarder/secret-masks.d');
+  const masks = args[0] === 'load-buffer' && fs.existsSync(D) ? fs.readdirSync(D).map(n => fs.readFileSync(path.join(D, n), 'utf8')) : [];
+  fs.appendFileSync(process.env.TMUX_LOG, JSON.stringify({ args, input, env: process.env, masks }) + '\\n');
+  if (args[0] === process.env.TMUX_FAIL) {
+    fs.writeSync(1, ${JSON.stringify(value)}); fs.writeSync(2, ${JSON.stringify(value)}); process.exit(1);
+  }
+  const bufferFile = process.env.TMUX_LOG + '.buffer', markerFile = process.env.TMUX_LOG + '.marker';
+  if (args[0] === 'display-message') fs.writeSync(1, ${JSON.stringify(tmuxPane)});
+  if (args[0] === 'load-buffer') {
+    const event = name => fs.appendFileSync(process.env.TMUX_LOG + '.events', name + '\\n');
+    if (${JSON.stringify(tmuxSignal)} !== undefined) {
+      process.kill(process.ppid, ${JSON.stringify(tmuxSignal)});
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+      fs.writeFileSync(bufferFile, input);
+      event('created');
+      event('child-exit');
+      process.exit(0);
+    }
+    fs.writeFileSync(bufferFile, input);
+    const matches = ${JSON.stringify(tmuxRecheck)} !== null && ${JSON.stringify(tmuxRecheck)}?.trim() === ${JSON.stringify(tmuxPane)}.trim();
+    const live = !${JSON.stringify(tmuxPaneDead)} || !args[9].includes('#{==:#{pane_dead},0}');
+    const commands = (matches && live ? args[10] : args[11]).split(' ; ');
+    event(matches && live ? 'then' : 'else');
+    for (const command of commands) {
+      const words = command.split(' ');
+      if (words[0] === process.env.TMUX_FAIL) process.exit(1);
+      if (['paste-buffer', 'delete-buffer'].includes(words[0]) && !${JSON.stringify(tmuxBufferRemains)}) fs.unlinkSync(bufferFile);
+      if (words[0] === 'set-option' && ${JSON.stringify(tmuxMarker)}) fs.writeFileSync(markerFile, ${JSON.stringify(tmuxMarker)} === 'stale' ? 'stale' : words.at(-1));
+    }
+  }
+  if (args[0] === 'show-buffer') {
+    if (!fs.existsSync(bufferFile)) process.exit(1);
+    fs.writeSync(1, fs.readFileSync(bufferFile));
+  }
+  if (args[0] === 'show-options') {
+    if (!fs.existsSync(markerFile)) process.exit(1);
+    fs.writeSync(1, fs.readFileSync(markerFile));
+  }
+  if (args[0] === 'delete-buffer') {
+    fs.appendFileSync(process.env.TMUX_LOG + '.events', 'delete-buffer\\n');
+    if (fs.existsSync(bufferFile)) fs.unlinkSync(bufferFile);
+  }
+  if (args[0] === 'set-option' && fs.existsSync(markerFile)) fs.unlinkSync(markerFile);
+}
+`, { mode: 0o700 });
+  const env = { ...process.env, HOME: H, BOARDER_HOME: B, BOARDER_WINDOW: 'w1', PATH: `${fakeBin}:${process.env.PATH}`, TMUX_LOG: tmuxLog, ...(tmuxFail ? { TMUX_FAIL: tmuxFail } : {}) };
   delete env.BOARDER_TOKEN;
   const cli = args => new Promise(res => {
-    const c = spawn(process.execPath, [BIN, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const script = `
+      import fs from 'node:fs';
+      console.log = (...args) => fs.writeSync(1, args.join(' ') + '\\n');
+      console.error = (...args) => fs.writeSync(2, args.join(' ') + '\\n');
+      if (${JSON.stringify(maskFailure)}) {
+        const { syncBuiltinESMExports } = await import('node:module');
+        const read = fs.readFileSync;
+        fs.readFileSync = (file, ...args) => {
+          const raw = read(file, ...args);
+          if (String(file).includes('secret-masks.d/') && String(file).endsWith('.json')) {
+            const saved = JSON.parse(raw); saved.entries[0].h = '00'.repeat(32);
+            return JSON.stringify(saved);
+          }
+          return raw;
+        };
+        syncBuiltinESMExports();
+      }
+      globalThis.fetch = async (url, options = {}) => {
+        const u = new URL(url), headers = options.headers || {};
+        fs.appendFileSync(${JSON.stringify(path.join(H, 'hits.jsonl'))}, JSON.stringify({ method: options.method || 'GET', url: u.pathname, auth: headers.authorization, dev: headers['x-boarder-device'], body: options.body || '' }) + '\\n');
+        if (u.pathname.endsWith('/fill')) return Response.json({ id: 'sr_1', state: ${JSON.stringify(policy === 'auto' ? 'approved' : 'pending')} });
+        if (u.pathname.endsWith('/value')) return Response.json(${JSON.stringify(kind === 'tmux' ? { value, kind, site: `terminal:${tmuxTarget}`, tmux: tmuxTarget } : { value, kind, site: 'https://shop.example', selector: '#cc', tab: null })});
+        return Response.json({ id: 'sr_1', state: ${JSON.stringify(decision)} });
+      };
+      const { main } = await import(${JSON.stringify(new URL('./main.mjs', import.meta.url).href)});
+      await main(${JSON.stringify(args)});
+    `;
+    const c = spawn(process.execPath, noPorts ? ['--input-type=module', '-e', script] : [BIN, ...args], { env: noPorts ? { ...env, BOARDER_TOKEN: WIN } : env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = ''; c.stdout.on('data', d => out += d); c.stderr.on('data', d => err += d);
     const t = setTimeout(() => c.kill('SIGKILL'), 20000);
-    c.on('close', code => { clearTimeout(t); res({ code, out, err }); });
+    c.on('close', code => { clearTimeout(t); if (noPorts && fs.existsSync(path.join(H, 'hits.jsonl'))) hits.splice(0, hits.length, ...fs.readFileSync(path.join(H, 'hits.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)); res({ code, out, err }); });
   });
   const close = () => { api.close(); chrome.closeAllConnections?.(); chrome.close(); fs.rmSync(H, { recursive: true, force: true }); };
-  return { cli, hits, cdpLog, close, cdp: String(chrome.address().port), H, B, writes, events, styles };
+  return { cli, hits, cdpLog, tmuxCalls: () => fs.existsSync(tmuxLog) ? fs.readFileSync(tmuxLog, 'utf8').trim().split('\n').map(JSON.parse) : [], close, cdp: String((chrome.address()?.port || 9222)), H, B, writes, events, styles };
 }
 const noValue = (s, where) => { for (const f of FORMS) assert.ok(!s.includes(f), `${where} 에 값(${f.length}자 꼴)`); };
 
@@ -350,7 +429,7 @@ for (const scenario of ['connect', 'Page.bringToFront', 'Page.getFrameTree', 'Pa
       };
       globalThis.fetch = async url => {
         if (url.endsWith('/fill')) return Response.json({ id: 'sr_1', state: 'approved' });
-        if (url.endsWith('/value')) return Response.json({ value: ${JSON.stringify(VALUE)}, site: 'https://shop.example', selector: '#cc' });
+        if (url.endsWith('/value')) return Response.json({ value: ${JSON.stringify(VALUE)}, kind: 'browser', site: 'https://shop.example', selector: '#cc' });
         assert.equal(url, 'http://127.0.0.1:9222/json');
         return Response.json([{ type: 'page', url: 'https://shop.example', webSocketDebuggerUrl: 'ws://127.0.0.1:9222/page' }]);
       };
@@ -437,7 +516,7 @@ for (const failure of ['read', 'json', 'hmac', 'fsync']) test(`지문 ${failure}
       syncBuiltinESMExports();
       globalThis.fetch = async url => {
         if (url.endsWith('/fill')) return Response.json({ id: 'sr_1', state: 'approved' });
-        if (url.endsWith('/value')) return Response.json({ value: ${JSON.stringify(VALUE)}, site: 'https://shop.example', selector: '#cc' });
+        if (url.endsWith('/value')) return Response.json({ value: ${JSON.stringify(VALUE)}, kind: 'browser', site: 'https://shop.example', selector: '#cc' });
         console.error('unexpected Chrome request'); process.exit(99);
       };
       let message;
@@ -457,4 +536,167 @@ for (const failure of ['read', 'json', 'hmac', 'fsync']) test(`지문 ${failure}
     noValue(result.stdout + result.stderr, '출력');
     assert.ok(!fs.readdirSync(path.join(H, '.local', 'state', 'boarder', 'secret-masks.d')).some(name => name.endsWith('.tmp')));
   } finally { fs.rmSync(H, { recursive: true, force: true }); }
+});
+
+for (const noEnter of [false, true]) test(`type: stdin only, fingerprint first, paste deletes buffer, clear history (no-enter=${noEnter})`, async () => {
+  const r = await rig({ noPorts: true, kind: 'tmux', tmuxPane: '  123 %3 456\n' });
+  try {
+    const o = await r.cli(['secret', 'type', 'card', ...(noEnter ? ['--no-enter'] : []), '--tmux', 'demo:1.2']);
+    assert.equal(o.code, 0, o.err);
+    assert.equal(o.out, 'request sr_1: pending\nrequest sr_1: approved\ntyped\n');
+    assert.equal(o.err, ''); noValue(o.out + o.err, 'output');
+    const request = r.hits.find(h => h.url === '/api/secrets/card/fill');
+    assert.deepEqual(JSON.parse(request.body), { tmux: 'demo:1.2' });
+    assert.equal(request.auth, `Bearer ${WIN}`); assert.equal(request.dev, DEV);
+    assert.equal(r.hits.find(h => h.url.endsWith('/value')).auth, `Bearer ${DEV}`);
+    const calls = r.tmuxCalls();
+    assert.deepEqual(calls.map(c => c.args[0]), ['display-message', 'load-buffer', 'show-buffer', 'show-options', 'set-option']);
+    assert.deepEqual(calls[0].args, ['display-message', '-p', '-t', 'demo:1.2', '#{pid} #{pane_id} #{pane_pid}']);
+    const buffer = calls[1].args[2]; assert.match(buffer, /^boarder-[a-f0-9]{32}$/);
+    const nonce = buffer.slice('boarder-'.length), marker = `@boarder_typed_${nonce}`;
+    assert.deepEqual(calls[1].args, ['load-buffer', '-b', buffer, '-', ';', 'if-shell', '-F', '-t', '%3',
+      '#{&&:#{==:#{pane_dead},0},#{&&:#{==:#{pid},123},#{&&:#{==:#{pane_id},%3},#{==:#{pane_pid},456}}}}',
+      `paste-buffer -d -b ${buffer} -t %3 ; ${noEnter ? '' : 'send-keys -t %3 Enter ; '}clear-history -t %3 ; set-option -p -t %3 ${marker} ${nonce}`,
+      `delete-buffer -b ${buffer}`]);
+    assert.deepEqual(calls[2].args, ['show-buffer', '-b', buffer]);
+    assert.deepEqual(calls[3].args, ['show-options', '-p', '-v', '-t', '%3', marker]);
+    assert.deepEqual(calls[4].args, ['set-option', '-p', '-u', '-t', '%3', marker]);
+    const key = fs.readFileSync(path.join(r.B, 'secret-mask.key'));
+    const fingerprint = createHmac('sha256', key).update(VALUE.replace(/\D/g, '')).digest('hex');
+    assert.ok(calls[1].masks.some(m => JSON.parse(m).entries.some(e => e.h === fingerprint && e.exp > Date.now() / 1000)));
+    for (const c of calls) {
+      noValue(JSON.stringify(c.args), 'argv'); noValue(JSON.stringify(c.env), 'env');
+      assert.equal(c.input, c.args[0] === 'load-buffer' ? VALUE : '');
+    }
+    assert.deepEqual(r.cdpLog, []);
+  } finally { r.close(); }
+});
+
+for (const tmuxRecheck of [null, '\n', '123 %99 456\n', '124 %3 456\n', '123 %3 457\n']) test(`type: missing or changed server/pane identity (${JSON.stringify(tmuxRecheck)}) prevents typing`, async () => {
+  const r = await rig({ noPorts: true, kind: 'tmux', tmuxRecheck });
+  try {
+    const o = await r.cli(['secret', 'type', 'card', '--tmux', 'demo:1.2']);
+    assert.equal(o.code, 1);
+    assert.equal(o.err, 'not typed: terminal step failed\n');
+    noValue(o.out + o.err, 'output');
+    const calls = r.tmuxCalls();
+    assert.deepEqual(calls.map(c => c.args[0]), ['display-message', 'load-buffer', 'show-buffer', 'show-options', 'delete-buffer', 'set-option']);
+    assert.equal(fs.existsSync(path.join(r.H, 'tmux.jsonl.buffer')), false);
+    assert.ok(!o.out.split('\n').includes('typed'));
+  } finally { r.close(); }
+});
+
+for (const tmuxPane of ['\n', 'demo:1.2\n', '%3\n%4\n', '123 %3junk 456\n', 'abc %3 456\n', '123 %3 def\n', '123 %3\n', '123 %3 456 extra\n']) test(`type: invalid server/pane identity (${JSON.stringify(tmuxPane)}) refuses before any request`, async () => {
+  const r = await rig({ noPorts: true, kind: 'tmux', tmuxPane });
+  try {
+    const o = await r.cli(['secret', 'type', 'card', '--tmux', 'demo:1.2']);
+    assert.equal(o.code, 1);
+    assert.equal(o.err, 'terminal pane is unavailable\n');
+    assert.deepEqual(r.hits, []);
+    assert.deepEqual(r.tmuxCalls().map(c => c.args[0]), ['display-message']);
+  } finally { r.close(); }
+});
+
+for (const step of ['display-message', 'load-buffer', 'paste-buffer', 'send-keys', 'clear-history']) test(`type: ${step} failure is fixed and cleans buffer`, async () => {
+  const r = await rig({ noPorts: true, kind: 'tmux', policy: 'auto', tmuxFail: step });
+  try {
+    const o = await r.cli(['secret', 'type', 'card', '--tmux', 'demo:1.2']);
+    assert.equal(o.code, 1); noValue(o.out + o.err, 'output');
+    const calls = r.tmuxCalls();
+    if (step === 'display-message') {
+      assert.equal(o.err, 'terminal pane is unavailable\n');
+      assert.deepEqual(r.hits, [], 'missing pane must not request a secret');
+    } else {
+      assert.equal(o.err, 'not typed: terminal step failed\n');
+      assert.deepEqual(calls.at(-2).args, ['delete-buffer', '-b', calls[1].args[2]]);
+      assert.equal(calls.filter(c => c.args[0] === 'load-buffer').length, 1);
+    }
+  } finally { r.close(); }
+});
+
+for (const sub of ['type', 'fill']) test(`${sub}: refuses the other target kind`, async () => {
+  const r = await rig({ noPorts: true, kind: sub === 'type' ? 'browser' : 'tmux', policy: 'auto' });
+  try {
+    const args = sub === 'type' ? ['--tmux', 'demo:1.2'] : ['--site', 'https://shop.example', '--selector', '#cc', '--cdp', r.cdp];
+    const o = await r.cli(['secret', sub, 'card', ...args]);
+    assert.equal(o.code, 1); assert.match(o.err, /secret target kind does not match/);
+    noValue(o.out + o.err, 'output');
+    assert.deepEqual(r.cdpLog, []);
+    assert.ok(!r.tmuxCalls().some(c => c.args[0] === 'load-buffer'));
+  } finally { r.close(); }
+});
+
+test('type: fingerprint write failure prevents typing', async () => {
+  const r = await rig({ noPorts: true, kind: 'tmux', policy: 'auto' });
+  try {
+    const D = path.join(r.H, '.local/state/boarder');
+    fs.mkdirSync(D, { recursive: true }); fs.writeFileSync(path.join(D, 'secret-masks.d'), 'blocked');
+    const o = await r.cli(['secret', 'type', 'card', '--tmux', 'demo:1.2']);
+    assert.equal(o.code, 1); assert.equal(o.err, 'not typed: could not record the redaction fingerprint\n');
+    assert.deepEqual(r.tmuxCalls().map(c => c.args[0]), ['display-message']);
+    noValue(o.out + o.err, 'output');
+  } finally { r.close(); }
+});
+
+test('type: invalid tmux target fails before a request', async () => {
+  const r = await rig({ noPorts: true });
+  try {
+    for (const target of ['demo:1.2;echo', 'demo:1\n', 'demo:10000', 'demo:1.1000', 'demo:1.2.3']) {
+      const o = await r.cli(['secret', 'type', 'card', '--tmux', target]);
+      assert.equal(o.code, 1, target);
+    }
+    assert.deepEqual(r.hits, []); assert.deepEqual(r.tmuxCalls(), []);
+  } finally { r.close(); }
+});
+
+
+test('type: fingerprint read-back mismatch prevents loading a buffer', async () => {
+  const r = await rig({ noPorts: true, kind: 'tmux', policy: 'auto', maskFailure: true });
+  try {
+    const o = await r.cli(['secret', 'type', 'card', '--tmux', 'demo:1.2']);
+    assert.equal(o.code, 1); assert.equal(o.err, 'not typed: could not record the redaction fingerprint\n');
+    assert.deepEqual(r.tmuxCalls().map(c => c.args[0]), ['display-message']);
+    noValue(o.out + o.err, 'output');
+  } finally { r.close(); }
+});
+
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) test(`type: ${signal} before buffer creation waits for the child, then synchronously deletes buffer`, async () => {
+  const r = await rig({ noPorts: true, kind: 'tmux', policy: 'auto', tmuxSignal: signal });
+  try {
+    const o = await r.cli(['secret', 'type', 'card', '--tmux', 'demo:1.2']);
+    assert.equal(o.code, { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 }[signal]);
+    const calls = r.tmuxCalls(), buffer = calls[1].args[2];
+    assert.deepEqual(calls.at(-1).args, ['delete-buffer', '-b', buffer]);
+    assert.deepEqual(fs.readFileSync(path.join(r.H, 'tmux.jsonl.events'), 'utf8').trim().split('\n'), ['created', 'child-exit', 'delete-buffer']);
+    assert.equal(fs.existsSync(path.join(r.H, 'tmux.jsonl.buffer')), false);
+    assert.ok(!o.out.split('\n').includes('typed'));
+    noValue(o.out + o.err, 'output');
+  } finally { r.close(); }
+});
+
+for (const scenario of ['missing marker', 'wrong marker', 'remaining buffer']) test(`type: ${scenario} must not report typed`, async () => {
+  const r = await rig({ noPorts: true, kind: 'tmux', policy: 'auto', tmuxMarker: scenario === 'wrong marker' ? 'stale' : scenario !== 'missing marker', tmuxBufferRemains: scenario === 'remaining buffer' });
+  try {
+    const o = await r.cli(['secret', 'type', 'card', '--tmux', 'demo:1.2']);
+    assert.equal(o.code, 1);
+    assert.equal(o.err, 'not typed: terminal step failed\n');
+    assert.ok(!o.out.split('\n').includes('typed'));
+    const calls = r.tmuxCalls();
+    assert.deepEqual(calls.at(-2).args, ['delete-buffer', '-b', calls[1].args[2]]);
+    assert.equal(fs.existsSync(path.join(r.H, 'tmux.jsonl.buffer')), false);
+    noValue(o.out + o.err, 'output');
+  } finally { r.close(); }
+});
+
+test('type: dead pane with unchanged identity takes the delete-buffer else-branch', async () => {
+  const r = await rig({ noPorts: true, kind: 'tmux', policy: 'auto', tmuxPaneDead: true });
+  try {
+    const o = await r.cli(['secret', 'type', 'card', '--tmux', 'demo:1.2']);
+    assert.equal(o.code, 1);
+    assert.equal(o.err, 'not typed: terminal step failed\n');
+    assert.ok(!o.out.split('\n').includes('typed'));
+    assert.equal(fs.readFileSync(path.join(r.H, 'tmux.jsonl.events'), 'utf8').split('\n')[0], 'else');
+    assert.equal(fs.existsSync(path.join(r.H, 'tmux.jsonl.buffer')), false);
+    noValue(o.out + o.err, 'output');
+  } finally { r.close(); }
 });

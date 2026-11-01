@@ -18,6 +18,7 @@ export type Hooks = {
 export const TTL = 10 * 60_000;
 export const ALLOW = "허용", DENY = "거절";
 const KINDS = ["card", "phone", "id", "password", "text", "other"];
+const TMUX = /^[A-Za-z0-9_.-]{1,40}:[0-9]{1,4}(\.[0-9]{1,3})?$/;
 const NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const RESERVED = new Set(["requests"]);
 const MAX_VALUE = 4096, MAX_PENDING = 5;
@@ -151,8 +152,10 @@ export function mountSecrets(app: Hono<{ Bindings: SEnv }>, h: Hooks) {
     let value: string;
     try { value = await openField(c.env, owner, ref(q.secret_id), row.value) as string; }
     catch { return c.json({ error: "열 수 없음" }, 500); }
-    const t = JSON.parse(q.target) as { selector: string; tab?: string };
-    return c.json({ value, site: q.site, selector: t.selector, tab: t.tab ?? null }, 200, NOSTORE);
+    const t = JSON.parse(q.target) as { tmux?: string; selector: string; tab?: string };
+    return c.json(t.tmux !== undefined
+      ? { value, kind: "tmux", site: q.site, tmux: t.tmux }
+      : { value, kind: "browser", site: q.site, selector: t.selector, tab: t.tab ?? null }, 200, NOSTORE);
   });
 
   app.get("/api/secrets/requests/:id", async c => {
@@ -189,9 +192,11 @@ export function mountSecrets(app: Hono<{ Bindings: SEnv }>, h: Hooks) {
     }
     if (!device) return c.json({ error: "기기 창 토큰만(boarder setup 한 기기)" }, 403);
     const b = await c.req.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
-    const site = siteOf(b.site), selector = ctl(b.selector, 300), tab = b.tab === undefined || b.tab === null ? undefined : ctl(b.tab, 100);
+    const terminal = b.tmux !== undefined;
+    if (terminal && (typeof b.tmux !== "string" || !TMUX.test(b.tmux) || b.site !== undefined || b.selector !== undefined || b.tab !== undefined)) return c.json({ error: "tmux = session:window.pane (browser target cannot be combined)" }, 400);
+    const site = terminal ? `terminal:${b.tmux}` : siteOf(b.site), selector = ctl(b.selector, 300), tab = b.tab === undefined || b.tab === null ? undefined : ctl(b.tab, 100);
     if (!site) return c.json({ error: "site = https:// 주소" }, 400);
-    if (!selector) return c.json({ error: "selector" }, 400);
+    if (!terminal && !selector) return c.json({ error: "selector" }, 400);
     const now = Date.now(), owner = ag.owner.toLowerCase(), isOwner = owner === "";
     await sweep(c.env.DB, now);
     const s = await c.env.DB.prepare("SELECT id, name, policy FROM secret WHERE owner = ? AND name = ? AND deleted_at IS NULL AND value IS NOT NULL").bind(owner, c.req.param("name")).first<{ id: string; name: string; policy: string }>();
@@ -203,12 +208,12 @@ export function mountSecrets(app: Hono<{ Bindings: SEnv }>, h: Hooks) {
     const stmts = [];
     if (!auto && !isOwner) {
       card = `${Math.floor(now / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
-      const q = `「${s.name}」 비밀을 ${site} 에 넣을까요? — ${ag.win}`;
+      const q = terminal ? `「${s.name}」 비밀을 이 기기의 터미널(${b.tmux})에 넣을까요? — ${ag.win}` : `「${s.name}」 비밀을 ${site} 에 넣을까요? — ${ag.win}`;
       stmts.push(c.env.DB.prepare("INSERT INTO board_card(id, owner, win, question, choices, recommend, body, at) VALUES (?,?,?,?,?,?,?,?)")
-        .bind(card, owner, ag.win, q, JSON.stringify([ALLOW, DENY]), null, `값은 에이전트에게 안 보이고 이 기기의 브라우저 칸(${selector})에만 들어가요. 10분 안에 답하지 않으면 만료돼요. (요청 ${id})`, now));
+        .bind(card, owner, ag.win, q, JSON.stringify([ALLOW, DENY]), null, `값은 에이전트에게 안 보이고 이 기기의 ${terminal ? `터미널(${b.tmux})` : `브라우저 칸(${selector})`}에만 들어가요. 10분 안에 답하지 않으면 만료돼요. (요청 ${id})`, now));
     }
     stmts.push(c.env.DB.prepare("INSERT INTO secret_request(id, secret_id, owner, site, target, state, device_id, agent, tok, card_id, created_at, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(id, s.id, owner, site, JSON.stringify(tab === undefined ? { selector } : { selector, tab }), auto ? "approved" : "pending", device, ag.win, ag.tok, card, now, auto ? now : null));
+      .bind(id, s.id, owner, site, JSON.stringify(terminal ? { tmux: b.tmux } : tab === undefined ? { selector } : { selector, tab }), auto ? "approved" : "pending", device, ag.win, ag.tok, card, now, auto ? now : null));
     await c.env.DB.batch(stmts);
     if (card) h.card?.(c.env, owner, { id: card, question: `「${s.name}」 비밀 넣기 허용?` });
     return c.json({ id, state: auto ? "approved" : "pending", ...(card ? { card_id: card } : {}) }, 200, NOSTORE);

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, openSync, closeSync, fsyncSync, readdirSync, unlinkSync } from 'node:fs';
 import { loadDevice, server, dir, home, ensureDir } from './config.mjs';
@@ -8,7 +9,10 @@ export const SECRET_HELP = `Secrets (values the human typed on their phone — y
   boarder secret fill <name> --site <https url> --selector <css> [--tab <id>] [--cdp <port>] [--timeout <s>]
                                     asks the human to allow it (or their auto rule), then types the value into that field
                                     of the local Chrome (remote debugging port, default 9222) and masks it.
-                                    Prints the request id/state and "filled" — never the value.`;
+                                    Prints the request id/state and "filled" — never the value.
+  boarder secret type <name> --tmux <session:window.pane> [--timeout <s>] [--no-enter]
+                                    asks for approval, then types into that local terminal and clears its history.
+                                    Prints the request id/state and "typed" — never the value.`;
 
 export const normalize = v => String(v).replace(/[ \t\-./()+_]/g, '').toLowerCase();
 export const masksPath = () => path.join(home(), '.local', 'state', 'boarder', 'secret-masks.d');
@@ -80,7 +84,7 @@ async function fetchValue(id) {
   const r = await fetch(`${server()}/api/secrets/requests/${encodeURIComponent(id)}/value`, { headers: { authorization: `Bearer ${d.token}` }, signal: AbortSignal.timeout(30000) });
   if (!r.ok) throw new Error(`could not receive the secret (Boarder ${r.status})`);
   const j = await r.json().catch(() => null);
-  if (!j || typeof j.value !== 'string' || typeof j.site !== 'string' || typeof j.selector !== 'string') throw new Error('could not receive the secret (bad answer)');
+  if (!j || typeof j.value !== 'string' || typeof j.site !== 'string') throw new Error('could not receive the secret (bad answer)');
   return j;
 }
 
@@ -143,13 +147,79 @@ async function typeInto(base, got, maskFile) {
   } finally { c.close(); }
 }
 
+const TMUX = /^[A-Za-z0-9_.-]{1,40}:[0-9]{1,4}(\.[0-9]{1,3})?$/;
+function tmux(args, value, onSpawn) {
+  return new Promise((resolve, reject) => {
+    const error = () => reject(new Error('terminal step failed'));
+    const child = spawn('tmux', args, { stdio: ['pipe', 'pipe', 'ignore'] });
+    onSpawn?.(child);
+    let output = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', chunk => { output += chunk; });
+    child.on('error', error);
+    child.stdin.on('error', error);
+    child.on('close', code => code === 0 ? resolve(output) : error());
+    child.stdin.end(value);
+  });
+}
+
+async function typeTerminal(got, maskFile, enter, paneIdentity) {
+  const [serverPid, paneId, panePid] = paneIdentity.split(' ');
+  const nonce = randomBytes(16).toString('hex');
+  const buffer = `boarder-${nonce}`, marker = `@boarder_typed_${nonce}`;
+  let typingChild;
+  const signals = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
+  const handlers = Object.entries(signals).map(([signal, code]) => {
+    const handler = () => {
+      // JS exit events cannot run during this synchronous wait. A zombie has
+      // already finished its command, so it is also safe to clean up after it.
+      const until = Date.now() + 5000;
+      const pause = new Int32Array(new SharedArrayBuffer(4));
+      while (typingChild?.pid && typingChild.exitCode === null && typingChild.signalCode === null && Date.now() < until) {
+        const status = spawnSync('ps', ['-o', 'stat=', '-p', String(typingChild.pid)], { encoding: 'utf8', timeout: Math.max(1, until - Date.now()) });
+        if (status.status === 1 || /^\s*Z/.test(status.stdout || '')) break;
+        Atomics.wait(pause, 0, 0, Math.min(20, Math.max(0, until - Date.now())));
+      }
+      spawnSync('tmux', ['delete-buffer', '-b', buffer], { stdio: 'ignore', timeout: 5000 });
+      process.exit(code);
+    };
+    process.on(signal, handler);
+    return [signal, handler];
+  });
+  try {
+    verifyMask(maskFile, got.value);
+    // The server checks the pinned identity and consumes the buffer in one command queue.
+    const condition = `#{&&:#{==:#{pane_dead},0},#{&&:#{==:#{pid},${serverPid}},#{&&:#{==:#{pane_id},${paneId}},#{==:#{pane_pid},${panePid}}}}}`;
+    const then = `paste-buffer -d -b ${buffer} -t ${paneId} ; ${enter ? `send-keys -t ${paneId} Enter ; ` : ''}clear-history -t ${paneId} ; set-option -p -t ${paneId} ${marker} ${nonce}`;
+    await tmux(['load-buffer', '-b', buffer, '-', ';', 'if-shell', '-F', '-t', paneId, condition, then, `delete-buffer -b ${buffer}`], got.value, child => { typingChild = child; });
+    let bufferExists = true;
+    try { await tmux(['show-buffer', '-b', buffer]); } catch { bufferExists = false; }
+    if (bufferExists || (await tmux(['show-options', '-p', '-v', '-t', paneId, marker])).trim() !== nonce) throw new Error('terminal step failed');
+  } catch {
+    try { await tmux(['delete-buffer', '-b', buffer]); } catch {}
+    throw new Error('terminal step failed');
+  } finally {
+    try { await tmux(['set-option', '-p', '-u', '-t', paneId, marker]); } catch {}
+    for (const [signal, handler] of handlers) process.removeListener(signal, handler);
+  }
+}
+
 export async function secretCommand(sub, pos, flags) {
-  if (sub !== 'fill' || !pos[0] || !flags.site || !flags.selector) fail(SECRET_HELP, 64);
+  const terminal = sub === 'type';
+  if (!['fill', 'type'].includes(sub) || !pos[0] || (terminal ? !flags.tmux : !flags.site || !flags.selector)) fail(SECRET_HELP, 64);
+  if (terminal && (typeof flags.tmux !== 'string' || !TMUX.test(flags.tmux))) fail('invalid --tmux target');
   const timeout = Math.max(5, Math.min(Number(flags.timeout) || 600, 600)), name = pos[0];
-  let base; try { base = cdpBase(flags.cdp); } catch (e) { fail(e.message); }
+  let base, paneIdentity;
+  try {
+    if (terminal) {
+      paneIdentity = (await tmux(['display-message', '-p', '-t', flags.tmux, '#{pid} #{pane_id} #{pane_pid}'])).trim();
+      if (!/^[0-9]+ %[0-9]+ [0-9]+$/.test(paneIdentity)) throw new Error('terminal pane is unavailable');
+    }
+    else base = cdpBase(flags.cdp);
+  } catch (e) { fail(terminal ? 'terminal pane is unavailable' : e.message); }
   let req;
   const dev = loadDevice()?.token;
-  try { req = await asAgent('POST', `/api/secrets/${encodeURIComponent(name)}/fill`, { site: flags.site, selector: flags.selector, ...(flags.tab ? { tab: flags.tab } : {}) }, dev ? { 'x-boarder-device': dev } : {}); }
+  try { req = await asAgent('POST', `/api/secrets/${encodeURIComponent(name)}/fill`, terminal ? { tmux: flags.tmux } : { site: flags.site, selector: flags.selector, ...(flags.tab ? { tab: flags.tab } : {}) }, dev ? { 'x-boarder-device': dev } : {}); }
   catch (e) { fail(`secret request failed: ${e.message}`); }
   console.log(`request ${req.id}: ${req.state}`);
   let state = req.state;
@@ -163,11 +233,13 @@ export async function secretCommand(sub, pos, flags) {
   let got;
   try {
     got = await fetchValue(req.id);
+    if (terminal ? got.kind !== 'tmux' || !TMUX.test(got.tmux) || got.tmux !== flags.tmux || got.site !== `terminal:${got.tmux}` : got.kind !== 'browser' || typeof got.selector !== 'string') throw new Error('secret target kind does not match this command');
     let maskFile;
     try { maskFile = writeMask(got.value); } catch { throw new Error('could not record the redaction fingerprint'); }
-    await typeInto(base, got, maskFile);
+    if (terminal) await typeTerminal(got, maskFile, !flags['no-enter'], paneIdentity);
+    else await typeInto(base, got, maskFile);
   }
-  catch (e) { fail(`not filled: ${e.message}`); }
+  catch (e) { fail(`not ${terminal ? 'typed' : 'filled'}: ${e.message}`); }
   finally { if (got) got.value = null; got = null; }
-  console.log('filled');
+  console.log(terminal ? 'typed' : 'filled');
 }

@@ -140,7 +140,7 @@ test("ask: 카드로 묻고 · 허용 전엔 안 넘김 · 허용 뒤 묶인 기
   assert.equal((s.db.prepare("SELECT state FROM board_card WHERE id = ?").get(f.j.card_id) as any).state, "closed");
   assert.equal((await s.call("GET", `/api/secrets/requests/${id}/value`, undefined, s.device(DEV2))).status, 404, "다른 기기");
   const v = await s.call("GET", `/api/secrets/requests/${id}/value`, undefined, s.device());
-  assert.equal(v.status, 200); assert.deepEqual(v.j, { value: VALUE, site: "https://shop.example", selector: "#cc", tab: "T1" });
+  assert.equal(v.status, 200); assert.deepEqual(v.j, { value: VALUE, kind: "browser", site: "https://shop.example", selector: "#cc", tab: "T1" });
   assert.equal((await s.call("GET", `/api/secrets/requests/${id}/value`, undefined, s.device())).status, 404, "두 번째는 없음");
   assert.equal((await s.call("GET", `/api/secrets/requests/${id}`, undefined, s.agent())).j.state, "sent");
   assert.equal((await s.call("GET", `/api/secrets/requests/${id}`, undefined, s.agent(WIN_NODEV))).status, 404);
@@ -305,4 +305,51 @@ test("비밀 승인 카드: 사람 쿠키와 함께 온 토큰 머리도 거절�
   assert.equal((s.db.prepare("SELECT state FROM secret_request WHERE id = ?").get(f.j.id) as any).state, "approved");
   s.db.prepare("INSERT INTO board_card(id, owner, win, question, choices, at) VALUES (?,?,?,?,?,?)").run("ordinary", MEMBER, "test", "Continue?", JSON.stringify(["yes"]), Date.now());
   assert.equal((await s.call("POST", "/api/me/cards/ordinary/answer", { choice: "yes" }, { ...human, "x-boarder-device": DEV1 })).status, 200, "일반 카드는 기존 동작 유지");
+});
+
+test("tmux: strict target validation, terminal approval card, device binding and one delivery", async () => {
+  const s = await setup(); await s.add({});
+  for (const tmux of [null, 1, "", "demo", "demo:1;echo", "demo:1\n", "demo:10000", "demo:1.1000", "demo:1.2.3", "x".repeat(41) + ":1"]) {
+    assert.equal((await s.call("POST", "/api/secrets/card/fill", { tmux }, s.agent())).status, 400, String(tmux));
+  }
+  for (const extra of [{ site: "https://shop.example" }, { selector: "#cc" }, { tab: "T1" }]) {
+    assert.equal((await s.call("POST", "/api/secrets/card/fill", { tmux: "demo:1.2", ...extra }, s.agent())).status, 400);
+  }
+  const f = await s.call("POST", "/api/secrets/card/fill", { tmux: "demo:1.2" }, { ...s.agent(), "x-boarder-device": DEVH });
+  assert.equal(f.status, 200); assert.equal(f.j.state, "pending");
+  const row = s.db.prepare("SELECT site, target, device_id FROM secret_request WHERE id = ?").get(f.j.id) as any;
+  assert.equal(row.site, "terminal:demo:1.2"); assert.deepEqual(JSON.parse(row.target), { tmux: "demo:1.2" });
+  assert.equal(row.device_id, "dev1", "member ignores device header");
+  const card = s.db.prepare("SELECT question, body FROM board_card WHERE id = ?").get(f.j.card_id) as any;
+  for (const text of [card.question, card.body]) { assert.match(text, /이 기기의 터미널\(demo:1.2\)/); assert.ok(!text.includes("브라우저")); }
+  assert.equal((await s.call("GET", `/api/secrets/requests/${f.j.id}/value`, undefined, s.device())).status, 404);
+  await s.call("POST", `/api/me/cards/${f.j.card_id}/answer`, { choice: "허용" }, await s.human());
+  assert.equal((await s.call("GET", `/api/secrets/requests/${f.j.id}/value`, undefined, s.device(DEV2))).status, 404);
+  const v = await s.call("GET", `/api/secrets/requests/${f.j.id}/value`, undefined, s.device());
+  assert.deepEqual(v.j, { value: VALUE, kind: "tmux", site: "terminal:demo:1.2", tmux: "demo:1.2" });
+  assert.equal((await s.call("GET", `/api/secrets/requests/${f.j.id}/value`, undefined, s.device())).status, 404);
+  assert.equal((await s.call("GET", `/api/secrets/requests/${f.j.id}`, undefined, s.agent())).j.state, "sent");
+  for (const x of s.seen) noValue(x, "agent response");
+  noValue(dump(s.db), "D1");
+});
+
+test("tmux: owner device proof, auto, once deletion, deny and ten-minute expiry", async () => {
+  const s = await setup(); await s.add({}, OWNER);
+  const fill = (headers = {}) => s.call("POST", "/api/secrets/card/fill", { tmux: "demo:1" }, { ...s.agent(WIN_OWNER), ...headers });
+  assert.equal((await fill()).status, 403);
+  assert.equal((await fill({ "x-boarder-device": DEV1 })).status, 403);
+  const f = await fill({ "x-boarder-device": DEVH });
+  assert.equal(f.j.state, "pending");
+  await s.call("POST", `/api/admin/secrets/requests/${f.j.id}`, { action: "deny", by: "test" }, adm);
+  assert.equal((await s.call("GET", `/api/secrets/requests/${f.j.id}/value`, undefined, s.device(DEVH))).status, 404);
+  const exp = await fill({ "x-boarder-device": DEVH });
+  s.db.prepare("UPDATE secret_request SET created_at = created_at - 11 * 60000 WHERE id = ?").run(exp.j.id);
+  assert.equal((await s.call("GET", `/api/secrets/requests/${exp.j.id}`, undefined, s.agent(WIN_OWNER))).j.state, "expired");
+  await s.call("PATCH", "/api/secrets/card", { mode: "once", policy: "auto" }, await s.human(OWNER));
+  const auto = await fill({ "x-boarder-device": DEVH });
+  assert.equal(auto.j.state, "approved"); assert.equal(auto.j.card_id, undefined);
+  assert.equal((await s.call("GET", `/api/secrets/requests/${auto.j.id}/value`, undefined, s.device(DEVW))).status, 404);
+  assert.equal((await s.call("GET", `/api/secrets/requests/${auto.j.id}/value`, undefined, s.device(DEVH))).j.kind, "tmux");
+  assert.equal((s.db.prepare("SELECT value FROM secret WHERE owner = ''").get() as any).value, null);
+  for (const x of s.seen) noValue(x, "agent response");
 });
