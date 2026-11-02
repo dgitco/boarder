@@ -334,3 +334,8 @@ html.bx :is(.canvas, .areas, .lanes, .tl-wrap, .board, .mdtbl, .mdpre, .tbl, .at
 html.bx :is(.wrap, .bx-sb, .bx-sbsc, .bx-dr, #cfeed, #cthfeed, .bxs-main, .bxs-sb, .bxs-phone-menu, .ans, .cmain, .msheet, .menpop, #emopk .epb){overflow-x:clip}
 html.bx #ans .mchat2 .cmain > .chd:not(:has(.stale)){display:none}
 html.bx #ans .mchat2 .cmain > .chd .t,html.bx #ans .mchat2 .cmain > .chd .d{display:none}
+html.bx .bx-sech{display:flex;align-items:center;gap:2px}
+html.bx .bx-sech .bx-sec{flex:1;min-width:0}
+html.bx .bx-secadd{flex:none;display:grid;place-items:center;width:28px;height:28px;margin:12px 4px 0 0;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer}
+html.bx .bx-secadd:hover{background:var(--sunk);color:var(--ink)}
+html.bx .bx-it.bx-chat span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

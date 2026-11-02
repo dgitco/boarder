@@ -151,7 +151,7 @@ test('폴더 POST 몸통 · 스피너 · 중복 방지 · 임시 줄 → panes �
   assert.equal(t.one('.bx-ea-rows').children[0], t.one('.bx-en-pending'));
   t.one('.bx-en-pending').click(); assert.deepEqual(t.opened, []);
   t.advance(1000); assert.deepEqual(t.opened, []); t.panes.push({pane: 'new-pane', win: '새 작업'}); t.advance(1000);
-  assert.equal(t.one('.bx-en-pending'), null); assert.deepEqual(t.opened, ['node:new-pane']); assert.match(t.one('.bx-ea-rows').textContent, /새 작업/);
+  assert.equal(t.one('.bx-en-pending'), null); assert.deepEqual(t.opened, ['node:new-pane']); assert.doesNotMatch(t.one('.bx-ea-rows').textContent, /새 작업/);
 });
 
 test('실패 답 · 네트워크 실패는 한 줄 오류와 입력 유지', async () => {

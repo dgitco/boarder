@@ -91,17 +91,12 @@ function setup(width = 390, enabled = true) {
   return { ctx, body, html, doc, calls, panes, input, tick: () => intervals.forEach(f => f()) };
 }
 
-test("여섯 상태 칩 · 모르는 값 없음 · 중복 미리보기 비움 · 상태만 바뀌어도 갱신", () => {
-  const t = setup(), rows = t.body.querySelectorAll(".bx-ea-row");
-  assert.deepEqual(t.body.querySelectorAll(".bx-ea-status").map(e => e.textContent), ["일하는 중", "막힘", "멈춤", "지켜보는 중", "쉬는 중", "끝"]);
-  assert.equal(t.body.querySelectorAll(".bx-ea-pins .bx-ea-status").length, 0);
-  assert.equal(rows[6].querySelectorAll(".bx-ea-status").length, 0);
-  assert.equal(rows[0].querySelector(".bx-ea-pv").textContent, "");
-  assert.equal(rows[1].querySelector(".bx-ea-pv").textContent, "마지막 말");
-  t.panes[1].last = { short: "보이면 안 됨", short_ok: false, ago: 1 } as any;
+test("작업 노드는 /es 목록에 없음 — 고정 원만", () => {
+  const t = setup();
+  assert.equal(t.body.querySelectorAll(".bx-ea-row").length, 0);
+  assert.equal(t.body.querySelectorAll(".bx-ea-pin").length, 5);
   t.panes[0].g = "wait"; t.tick();
-  assert.equal(t.body.querySelectorAll(".bx-ea-status")[0].textContent, "막힘");
-  assert.equal(t.body.querySelectorAll(".bx-ea-pv")[1].textContent, "대체 말");
+  assert.equal(t.body.querySelectorAll(".bx-ea-row").length, 0);
 });
 
 test("영상 메뉴 → 전화 HBV.start · 미팅 openArt · 통화 중 바로 layout", () => {

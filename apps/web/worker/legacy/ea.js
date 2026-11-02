@@ -31,7 +31,7 @@
   const ago = m => m == null || !isFinite(+m) ? '' : +m < 1 ? '방금' : +m < 60 ? Math.round(+m) + '분' : +m < 1440 ? Math.round(+m / 60) + '시간' : Math.round(+m / 1440) + '일';
   const lastId = p => +(p?.last?.id || 0) || 0;
   const agoOf = p => p?.last && p.last.ago != null && isFinite(+p.last.ago) ? +p.last.ago : Infinity;
-  const work = () => P().filter(p => !['primary', 'arealead', 'helper'].includes(p.kind)).map((p, i) => [p, i]).sort((a, b) => lastId(b[0]) - lastId(a[0]) || agoOf(a[0]) - agoOf(b[0]) || a[1] - b[1]).map(x => x[0]);
+  const work = () => [];
   const priPane = () => P().find(p => p.kind === 'primary') || null;
   function openKey(){
     const c = C(); if (ans.hidden || !c) return '';

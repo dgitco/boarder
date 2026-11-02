@@ -91,6 +91,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const SB = (() => { try { return JSON.parse(localStorage.getItem('bx-sb')) || {}; } catch { return {}; } })();
   SB.fold = SB.fold || {};
   const saveSB = () => { try { localStorage.setItem('bx-sb', JSON.stringify(SB)); } catch {} };
+  const chats = () => Array.isArray(window.HB_CHATS) ? window.HB_CHATS : [];
   const recent = () => Object.entries(ARTS || {}).map(([id, x]) => ({id, ...x})).sort((a, b) => (b.at || '').localeCompare(a.at || '')).slice(0, 5);
   const sec = (k, name, body) => `<button type="button" class="bx-sec bx-fh" data-fold="${k}" aria-expanded="${!SB.fold[k]}">${name}${I.fold}</button><div class="bx-sbody" data-sec="${k}"${SB.fold[k] ? ' hidden' : ''}>${body}</div>`;
   function lists(){
@@ -101,9 +102,11 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const ib = it('turn', I.flag, '결정 · 할 일', cnt(tn, true), ibChat() === 'turn') + IBK.map(k => it(k, I[k], IBN[k], cnt(c[k], k === 'unread'), S.ib === k || ibChat() === k)).join('');
     const ch = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('');
     const nd = myNodes().map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), nodeRows(p.pane).length ? '<i class="ud" aria-label="내 차례"></i>' : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
+    const qa = !ans.hidden && cur?.chan, ss = window.HB_MEMBER || typeof openGpt !== 'function' ? '' : `<div class="bx-sech"><button type="button" class="bx-sec bx-fh" data-fold="ss" aria-expanded="${!SB.fold.ss}">세션${I.fold}</button><button type="button" class="bx-secadd" data-chatnew aria-label="새 세션" title="새 세션"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>`
+      + `<div class="bx-sbody" data-sec="ss"${SB.fold.ss ? ' hidden' : ''}>${chats().map(c => `<button type="button" class="bx-it bx-chat" data-chat="${esc(c.sid)}" title="${esc(c.title)}"${qa === 'q:' + c.sid ? ' aria-current="page"' : ''}><span>${esc(c.title)}</span></button>`).join('')}</div>`;
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas');
-    const body = '<div class="bx-sbsc">' + head + sec('ib', '모아 보기', ib) + (nd ? sec('nd', '채널', nd) : '') + sec('ch', '에이전트', ch) + (rc ? sec('rc', '최근 캔버스', rc) : '') + '</div>';
+    const body = '<div class="bx-sbsc">' + head + sec('ib', '모아 보기', ib) + (nd ? sec('nd', '채널', nd) : '') + sec('ch', '에이전트', ch) + (rc ? sec('rc', '최근 캔버스', rc) : '') + ss + '</div>';
     const foot = `<div class="bx-foot"><button type="button" class="bx-me" data-me aria-haspopup="true" aria-expanded="false">${meAv()}<span>${esc(window.HB_MEMBER?.name || ME()?.name || 'Owner')}</span></button></div>`;
     const fb = `<button type="button" class="bx-colb" data-go="find" aria-label="찾기" title="찾기 ⌘K">${I.search}</button>`;
     const keep = [sb, dr].map(x => x.querySelector('.bx-sbsc')?.scrollTop || 0);
@@ -131,7 +134,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const myNodes = () => (typeof panes !== 'undefined' ? panes : []).filter(p => !['primary', 'arealead', 'helper'].includes(p.kind))
     .map((p, i) => [p, i]).sort((a, b) => rankOf(a[0].pri) - rankOf(b[0].pri) || a[1] - b[1]).map(x => x[0]);
   const rcSig = () => recent().map(r => r.id + (r.title || '')).join('|') + '#' + (typeof attnCount === 'function' ? attnCount() : 0)
-    + '#' + myNodes().map(p => p.pane + nameOf(p) + nodeRows(p.pane).length).join('|') + (cur?.page ? '@' + cur.p : '');   // 내 노드 이름 · 점 · 지금 연 노드
+    + '#' + myNodes().map(p => p.pane + nameOf(p) + nodeRows(p.pane).length).join('|') + (cur?.page ? '@' + cur.p : '') + '#' + chats().map(c => c.sid + c.title).join('|') + (!ans.hidden && cur?.chan?.startsWith('q:') ? '@' + cur.chan : '');   // 내 노드 이름 · 점 · 지금 연 노드
+  // 「세션」 칸 목록 = 보드 api/chats(주인만 — 회원 · 보드가 없으면 빈 칸이라 안 보임). 새로 열면 보드가 hb-chats 로 알림
+  const loadChats = () => { if (window.HB_MEMBER) return; fetch('api/chats', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.chats)){ window.HB_CHATS = j.chats; if (on()) lists(); } }).catch(() => {}); };
+  loadChats(); setInterval(loadChats, 20000); window.addEventListener('hb-chats', () => { if (on()) lists(); setTimeout(loadChats, 1500); });
   setInterval(() => { if (on() && lists.sig !== rcSig()) lists(); }, 3000);
   function setCol(v){ SB.col = v; saveSB(); R.classList.toggle('bx-col', !!v); lists(); }
   R.classList.toggle('bx-col', !!SB.col);
@@ -199,6 +205,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       return; }
     if (e.target.closest('[data-sbcol]')) return setCol(!SB.col);
     const me = e.target.closest('[data-me]'); if (me) return meOpen(me);
+    if (e.target.closest('[data-chatnew]')){ closeDr(); ibClose(); return openGpt('q:new'); }
+    const q = e.target.closest('[data-chat]'); if (q){ closeDr(); ibClose(); return openGpt('q:' + q.dataset.chat); }
     const a = e.target.closest('[data-art]'); if (a){ closeDr(); if (!ARTS[a.dataset.art]) return lists(); if (!ans.hidden) closeAns(); return openArt(a.dataset.art); }
     const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go);
   });
@@ -422,12 +430,17 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (location.hash === '#chat') history.replaceState(history.state, '', '#chat/primary');
     const h = location.hash, [k, a, b] = h.slice(1).split('/').map(x => decodeURIComponent(x || ''));
     const gen = ++G;
+    let moved = false;   // 글 링크를 서버가 알려 준 자리로 옮겼으면 끝에서 주소를 링크로 되돌리지 않음
     applying++;
     try {
       if (k !== 'art' && MVv()) mvClose();
       if (k === 'art'){ if (MVv() !== a && await until(() => ARTS[a]) && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ if (!ans.hidden) closeAns(); openArt(a); } }
       else if (k === 'chat' && CH.includes(a)){
-        if (!(chatMode() && cur.chan === a)){ ibClose(); openChan(a, b || undefined); }
+        if (b && typeof window.HBOpenCard === 'function' && !(chatMode() && cur.chan === a && CS.th?.ts === b)){
+          if (await until(() => typeof panes !== 'undefined' && panes.length, 5000) && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ ibClose(); S.ret = null; await window.HBOpenCard(b, {c: a, t: b});
+            if (gen === G){ const w = want(); if (w && w !== location.hash) history.replaceState(history.state, '', w); moved = true; } }
+        }
+        else if (!(chatMode() && cur.chan === a)){ ibClose(); openChan(a, b || undefined); }
         else if ((CS.th?.ts || '') !== (b || '')){ if (b) await th0(a, b); else { CS.th = null; viewChat(true); } }
       }
       else if (k === 'inbox'){ if (cur?.chan !== 'i:turn'){ ibClose(); window.HBInbox?.openFeed('turn'); } }
@@ -439,7 +452,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       sync();
     } finally {
       applying--;
-      if (gen === G && location.hash !== h && !/^#settings(\/|$|\?)/.test(location.hash)) history.replaceState(history.state, '', h);
+      if (gen === G && !moved && location.hash !== h && !/^#settings(\/|$|\?)/.test(location.hash)) history.replaceState(history.state, '', h);
       recLater();   // 도는 사이 열린 화면은 그다음 주소로
     }
   }
