@@ -47,6 +47,9 @@ Report (from an AI tool's session)
 
 Main bot (the Primary chat on your board)
   boarder chat "<text>" [--thread <id>]       answer the human in the Primary chat (--thread: under their message)
+  boarder promise add "<what>" --who "<to whom>" --check "<how you'll know>" --due YYYY-MM-DD[ HH:MM]
+                                              record a promise (shows under promises; past due → to check)
+  boarder promise done <id> "<how it was kept>" [--dropped]   ·   boarder promise list [--all]
   boarder role draft --name "<name>" --brief "<one line>" --instructions "<what it does, what it must not do>" [--cwd <folder>]
                                               put a role draft card in the chat (the human approves it, Boarder opens its window)
   boarder role list                           roles and their windows
@@ -85,7 +88,7 @@ function parse(rest) {
     const a = rest[i];
     if (!a.startsWith('--')) { pos.push(a); continue; }
     const k = a.slice(2);
-    if (['no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay', 'force'].includes(k)) { flags[k] = true; continue; }
+    if (['no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay', 'force', 'dropped', 'all'].includes(k)) { flags[k] = true; continue; }
     const v = rest[++i];
     if (['choice', 'evidence'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
   }
@@ -227,6 +230,7 @@ export async function main(argv) {
       cards: () => ['inbox_cards', { query: pos[0], limit: num(flags.limit) }],
       feedback: () => ['feedback_send', { text: pos.join(' '), kind: flags.kind }],
       chat: () => ['chat_say', { text: pos.join(' '), ...(flags.thread ? { thread: flags.thread } : {}) }],
+      promise: () => pos[0] === 'add' ? ['promise_add', { who: flags.who, what: pos.slice(1).join(' '), check: flags.check, due: flags.due }] : pos[0] === 'done' ? ['promise_done', { promise_id: num(pos[1]), done: pos.slice(2).join(' '), state: flags.dropped ? 'dropped' : 'kept' }] : pos[0] === 'list' ? ['promise_list', { all: !!flags.all }] : null,
       role: () => pos[0] === 'draft' ? ['role_draft', { name: flags.name, brief: flags.brief, instructions: flags.instructions, cwd: flags.cwd }] : pos[0] === 'list' ? ['role_list', {}] : null,
     }[cmd];
     const p = plan?.();

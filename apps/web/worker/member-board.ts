@@ -2,28 +2,29 @@
 import { regroup } from "./importer/routes";
 import { boardHead, withHead } from "./board-head";
 import { primaryOf, type Item } from "./importer/group";
+import { history, topics, promiseRows } from "./member-views";
 
 type R = Record<string, any>;
 const FREQ = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];   // owner-read FREQ_DEFAULT
 const PRIMARY = "%1";
-const ME = "나";        // 회원이 Primary 채팅에 쓴 줄의 win(/api/me/chat)
-const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;
+export const ME = "나";        // 회원이 Primary 채팅에 쓴 줄의 win(/api/me/chat)
+export const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;
 const NODE_PRI = ["급함", "높음", "보통", "낮음"];
 const priOf = (m: Record<string, { pri?: string }>, name: string) => String(m[name]?.pri || m[name.replace(/^\d+\s+/, "")]?.pri || "");
 const PTH = /^p:\d{10}\.\d{6}$/;
 export const primaryThread = (ts: string) => "p:" + ts;
-const inPrim = (r: { thread?: string | null }) => r.thread === "primary" || PTH.test(String(r.thread || ""));
-const KIND_KO: Record<string, string> = { start: "시작", progress: "진행", blocked: "막힘", done: "끝", decision: "결정", incident: "장애", deadline: "마감", chat: "진행", sys: "진행", reply: "답" };
-const json = <T>(s: unknown, d: T): T => { try { return s ? JSON.parse(String(s)) as T : d; } catch { return d; } };
+export const inPrim = (r: { thread?: string | null }) => r.thread === "primary" || PTH.test(String(r.thread || ""));
+export const KIND_KO: Record<string, string> = { start: "시작", progress: "진행", blocked: "막힘", done: "끝", decision: "결정", incident: "장애", deadline: "마감", chat: "진행", sys: "진행", reply: "답" };
+export const json = <T>(s: unknown, d: T): T => { try { return s ? JSON.parse(String(s)) as T : d; } catch { return d; } };
 export const myName = (me: string, who?: string | null) => String(who || String(me).split("@")[0] || "나").slice(0, 40);
-const cut = (s: unknown, n: number) => { const a = Array.from(String(s ?? "")); return a.length <= n ? a.join("") : a.slice(0, n - 1).join("") + "…"; };
+export const cut = (s: unknown, n: number) => { const a = Array.from(String(s ?? "")); return a.length <= n ? a.join("") : a.slice(0, n - 1).join("") + "…"; };
 
 export function paneOfId(id: string) {
   let h = 2166136261; for (const ch of id) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
   return "%" + (1_000_000 + h % 8_999_999);
 }
 // 글 id → Slack 꼴 ts(초.마이크로초 — 마이크로초 자리에 줄 id, 같은 초 안 순서도 id 순)
-const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;
+export const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;
 const kst = (ms: number) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(ms);
 
 type Node = { id: string; pane: string; name: string; area: string; state: string; why: string; updated_at: number; archived_at: number | null; wins: Set<string>; windows: R[]; convos: R[] };
@@ -37,7 +38,7 @@ export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: str
   if (w > a || (a && Date.now() - a > 10 * 60_000)) await regroup(env as never, me);
 }
 
-async function load(db: D1Database, me: string) {
+export async function load(db: D1Database, me: string) {
   const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw] = await db.batch([
     db.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
@@ -171,7 +172,10 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const feed = L.logs.filter(r => !OWN.test(r.win) && !inPrim(r) && r.kind !== "me").slice(0, 40).map(r => ({ id: r.id, ago: ago(r.at), pane: L.nodeOfWin(r.win)?.pane || PRIMARY, win: cut(r.win, 30), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 160) }));
   // 보관한 노드 이름(주인 D.archived 와 같은 꼴) — 찾기 · 타임라인 · 「보관」 띠가 씀
   const archived = ((await db.prepare("SELECT COALESCE(pinned_name, name) AS n FROM mnode WHERE owner = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 300").bind(me).all<R>()).results).map(r => String(r.n || "노드"));
-  return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check: [], promises: [], feed,
+  // 약속(member_promise, 0047): 열린 것 = 주인 D.promises 꼴, 기한이 지난 것은 to_check(「지켰는지 확인」) — 표가 아직 없으면(이주 전) 빈 꼴
+  const promPane = (w: string) => { const ew = L.engineNodes.find(x => x.name === w), p = ew ? paneOfId(ew.id) : ""; return p && known.has(p) ? p : toPane(w); };
+  const { promises, to_check } = await promiseRows(db, me, promPane, now);
+  return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 1000), open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
     cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [] };
 }
@@ -180,7 +184,7 @@ function msg(r: R, my: string, mainName: string) {
   const mine = r.win === ME || r.kind === "me";   // me = 노드 채팅에서 내가 그 창에 넣은 글
   return { ts: tsOf(r.at, r.id), lid: Number(r.id) || 0, thread: null, who: mine ? "owner" : "agent", name: mine ? my : r.win === "보더" ? "보더" : mainName, board: false, text: String(r.text || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null, ...(mine ? { src: String(r.text || "") } : {}) };
 }
-const CARD_TS = /^\d{10}\.\d{6}$/;
+export const CARD_TS = /^\d{10}\.\d{6}$/;
 export const TODO_DONE = "했어요";
 export function nextMorning(now: number) {
   const k = now + 9 * 3600_000, day = Math.floor(k / 86_400_000) * 86_400_000, eight = day + 8 * 3600_000;
@@ -333,8 +337,8 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     const b = JSON.stringify(await data(db, me, bot)), t = await etag(b), h = { etag: t, "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" };
     return inm === t ? new Response(null, { status: 304, headers: h }) : new Response(b, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
   }
-  if (p === "/api/topics") return j({ topics: [], threads: [] });
-  if (p === "/api/history") { const now = Math.floor(Date.now() / 1000); return j({ now, since: now - 72 * 3600, oldest: now, rows: [] }); }
+  if (p === "/api/topics") return j(await topics(db, me, bot));   // 노드 주제 칩 · 찾기 「노드」(member-views.ts — 주인 topics.py 꼴)
+  if (p === "/api/history") return j(await history(db, me, url.searchParams.get("since")));   // 타임라인 지난 판(주인 history.py 꼴)
   if (p === "/api/inbox") return j({ unread: [], drafts: [], saved: [], saved_ids: [] });
   if (p === "/api/arts") return j({});
   if (/^\/api\/artnotes\/[A-Za-z0-9]{16,40}$/.test(p)) return j({ notes: [] });

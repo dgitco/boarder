@@ -60,12 +60,16 @@ export const SCHEMAS = {
   chat_say: z.object({ text: safe(3000, true), thread: z.string().regex(/^\d{10}\.\d{6}$/).optional() }),
   role_draft: z.object({ name: line(40), brief: safe(200).optional(), instructions: safe(3000, true), cwd: z.string().regex(/^~?[\w./ -]{1,200}$/).refine(v => !v.includes(".."), "..").optional() }),
   role_list: z.object({}),
+  // 약속(회원 보드, 0047 member_promise — 주인 promise add 와 같은 칸): who 누구에게 · what 무엇 · check 확인 장치 · due 기한(YYYY-MM-DD[ HH:MM], 한국 시각이면 지남 판정)
+  promise_add: z.object({ who: line(60), what: line(300), check: line(200), due: line(40) }),
+  promise_done: z.object({ promise_id: z.number().int().positive(), done: line(300), state: z.enum(["kept", "dropped"]).default("kept") }),
+  promise_list: z.object({ all: z.boolean().default(false) }),
   feedback_send: z.object({ text: z.string().max(4000), kind: z.enum(["bug", "idea", "other"]).default("other") }),
 } as const;
 export type ToolName = keyof typeof SCHEMAS;
 
-export const MEMBER_ONLY = new Set<string>(["chat_say", "role_draft", "role_list"]);
-const READS = new Set<string>(["role_list", "inbox_wait", "inbox_cards", "hook_events", "hook_event", "session_search", "session_handoff"]);
+export const MEMBER_ONLY = new Set<string>(["chat_say", "role_draft", "role_list", "promise_add", "promise_done", "promise_list"]);
+const READS = new Set<string>(["role_list", "promise_list", "inbox_wait", "inbox_cards", "hook_events", "hook_event", "session_search", "session_handoff"]);
 export const onlyReads = (n: string) => READS.has(n);
 
 // 보이는 설명(boarder_search · boarder_describe) — 입력 꼴은 zod 와 같게 손으로(작아서)
@@ -125,6 +129,18 @@ const CORE_TOOLS: (Tool & { name: ToolName })[] = [
   { name: "role_list", title: "List roles and windows",
     description: "Roles on the person's board, their engine windows (state: starting, busy, idle, waiting, parked …) and drafts waiting for approval.",
     inputSchema: { type: "object", properties: {} },
+    annotations: { readOnlyHint: true, destructiveHint: false } },
+  { name: "promise_add", title: "Record a promise",
+    description: "When you tell someone you will get back to them (\"I'll let you know when …\"), record it with how you will check it: who (to whom), what (what you promised), check (what you watch to know it's done), due (YYYY-MM-DD or YYYY-MM-DD HH:MM, Korea time). It shows on the person's board under promises; past due it moves to \"to check\". Close it with promise_done after you report the result. Returns promise_id.",
+    inputSchema: { type: "object", properties: { who: { type: "string" }, what: { type: "string" }, check: { type: "string" }, due: { type: "string" } }, required: ["who", "what", "check", "due"] },
+    annotations: { readOnlyHint: false, destructiveHint: false } },
+  { name: "promise_done", title: "Close a promise",
+    description: "Close a promise you recorded with promise_add, after you reported the result to the person: done says in one line how it was kept. state dropped when it no longer applies.",
+    inputSchema: { type: "object", properties: { promise_id: { type: "number" }, done: { type: "string" }, state: { type: "string", enum: ["kept", "dropped"] } }, required: ["promise_id", "done"] },
+    annotations: { readOnlyHint: false, destructiveHint: false } },
+  { name: "promise_list", title: "List promises",
+    description: "Open promises on the person's board (promise_id, who, what, check, due, overdue, win). all=true includes closed ones (last 50).",
+    inputSchema: { type: "object", properties: { all: { type: "boolean" } } },
     annotations: { readOnlyHint: true, destructiveHint: false } },
   { name: "feedback_send", title: "Send feedback about Boarder",
     description: "Send feedback about Boarder itself to the people who make it: a bug, an idea, or anything else (kind bug|idea|other, text up to 2000 chars). The Boarder team reads it and turns it into fixes; it is not shown back to you or your human. Phone numbers and ID numbers are masked. Not for questions to your human: use inbox_ask for those.",

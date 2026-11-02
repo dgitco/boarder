@@ -76,6 +76,9 @@ const OUT: Record<ToolName, string[]> = {
   chat_say: ["ok"],
   role_draft: ["draft_id", "shown", "refused", "same_role", "window", "why"],
   role_list: ["roles", "windows", "drafts"],
+  promise_add: ["promise_id", "shown"],
+  promise_done: ["ok"],
+  promise_list: ["promises"],
 };
 const MAX_STR = 4000;
 

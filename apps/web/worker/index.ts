@@ -436,8 +436,8 @@ app.get("/api/relay/search", async c => {
 app.get("/api/search", async c => {
   const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401);
   const q = (c.req.query("q") || "").slice(0, 100), t0 = Date.now();
-  // 회원(boarder-internal#4)은 자기 D1 만(member-search.ts) — 주인 색인(DO)은 주인만. 회원은 뜻 찾기가 없어 sem=1 은 같은 답
-  const r = await memberSearch.route({ owner: isOwner(c.env, sb.user.email), me: sb.user.email, q, db: c.env.DB,
+  // 회원(boarder-internal#4)은 자기 D1 만(member-search.ts) — 주인 색인(DO)은 주인만. 회원 뜻 찾기(sem=1)는 같은 Workers AI 로 최근 글만(member-search.ts)
+  const r = await memberSearch.route({ owner: isOwner(c.env, sb.user.email), me: sb.user.email, q, db: c.env.DB, sem: c.req.query("sem") === "1", ai: c.env.AI as unknown as memberSearch.Ai,
     ownerSearch: () => search(c.env).query(q, c.req.query("sem") === "1", c.req.query("dbg") === "1") });   // dbg = 노드 점수 나눔(주인만, 순위 고칠 때)
   seg(c.req.raw, "search", Date.now() - t0);
   return c.json({ ...r, ms: { ...r.ms, worker: Date.now() - t0 } }, 200, { "cache-control": "private, no-store" });

@@ -384,7 +384,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     fsel = 0; const q = fin.value.trim();
     if (!q) FS.r = null;
     findDraw(); clearTimeout(FS.t);
-    if (q){ fsearch(q, false); if (!window.HB_MEMBER) FS.t = setTimeout(() => fsearch(q, true), 300); }   // 회원 찾기(자기 D1)는 뜻 찾기가 없어 한 번만
+    if (q){ fsearch(q, false); FS.t = setTimeout(() => fsearch(q, true), 300); }   // 낱말 먼저, 300ms 뒤 뜻(회원도 — 자기 D1 최근 글을 Workers AI 로, member-search.ts)
   }
   function findOpen(){ closeDr(); fin.value = ''; fsel = 0; FS.r = null; fd.hidden = false; findDraw(); fin.focus(); }
   function findClose(){ fd.hidden = true; }

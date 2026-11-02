@@ -1,4 +1,5 @@
 import { nodeRoot, primaryRoot, primaryThread } from "./member-board";
+import { overdue } from "./member-views";
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 // 카드 id 는 지금 카드 꼴(초.여섯 자리)과 같게 — 도구 입력 검사(tsId)를 그대로 씀
 const cardId = () => `${Math.floor(Date.now() / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
@@ -90,6 +91,21 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
           db.prepare("SELECT id, name, state FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 20").bind(owner),
         ]);
         return { roles: r.results, windows: w.results, drafts: d.results };
+      }
+      // 약속(0047 member_promise): 이 회원 것만, 적은 창(win · wid)을 남겨 보드가 그 노드 판에 붙임. 닫기는 내 열린 약속만
+      case "promise_add": {
+        const r = await db.prepare("INSERT INTO member_promise(owner, win, wid, who, what, check_by, due, at) VALUES (?,?,?,?,?,?,?,?) RETURNING id").bind(owner, win, wid, a.who, a.what, a.check, a.due, Date.now()).first<{ id: number }>();
+        return { promise_id: Number(r?.id), shown: "on the person's board under promises" };
+      }
+      case "promise_done": {
+        const r = await db.prepare("UPDATE member_promise SET state = ?, done = ?, done_at = ? WHERE id = ? AND owner = ? AND state = 'open'").bind(a.state, a.done, Date.now(), a.promise_id, owner).run();
+        if (!r.meta.changes) throw new Error("없는 약속 — 이 사람 보드의 열린 약속 id 만");
+        return { ok: true };
+      }
+      case "promise_list": {
+        const rs = (await db.prepare(`SELECT id, win, who, what, check_by, due, state, done, at FROM member_promise WHERE owner = ?${a.all ? "" : " AND state = 'open'"} ORDER BY at DESC LIMIT 50`).bind(owner).all<Record<string, any>>()).results;
+        const now = Date.now();
+        return { promises: rs.map(p => ({ promise_id: p.id, who: p.who, what: p.what, check: p.check_by, due: p.due, state: p.state, overdue: p.state === "open" && overdue(p.due, now), win: p.win, ...(p.done ? { done: p.done } : {}) })) };
       }
     }
     throw new Error(`없는 도구: ${name}`);
