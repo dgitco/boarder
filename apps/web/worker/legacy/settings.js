@@ -542,10 +542,11 @@
   const hrs = h => h % 24 ? `${h}시간` : `${h / 24}일`;
   PAGES.nodes = async (el, id, live) => {
     let j = await api('GET', 'api/me/nodeset'), more = false; if (!live()) return;
-    let faces = OWNER || !window.BXBot ? null : await api('GET', 'api/me/nodes/avatar').then(r => r.nodes).catch(() => null), openFace = null; if (!live()) return;
+    let faces = OWNER || !window.BXBot ? null : await api('GET', 'api/me/nodes/avatar').then(r => r.nodes).catch(() => null), openFace = null, openName = null; if (!live()) return;
     const faceSm = f => !f ? '' : f.photo ? `<img src="/_blob/${esc(f.photo)}.png" alt="">` : BXBot.svg(f.seed, f.hue, 32, true);
     const faceRow = x => `<div class="bxs-li"><div class="bxs-row" style="flex-wrap:nowrap;gap:12px"><i class="bxs-face" aria-hidden="true">${faceSm(x.avatar)}</i><div><b>${esc(x.name)}</b><span>${x.head ? `「${esc(x.column)}」 열 머리` : '노드'} · ${x.custom ? '고른 얼굴' : '기본 얼굴'}</span></div></div>`
-      + `<div class="bxs-row" style="flex-wrap:nowrap">${x.custom ? btn('기본으로', `data-nfr="${esc(x.pane)}"`, 'sm ghost') : ''}${btn(openFace === x.pane ? '닫기' : '바꾸기', `data-nfo="${esc(x.pane)}" aria-expanded="${openFace === x.pane}"`, 'sm ghost')}</div></div>`
+      + `<div class="bxs-row" style="flex-wrap:nowrap">${x.node && !String(x.node).startsWith('ew_') ? btn(openName === x.pane ? '취소' : '이름', `data-nno="${esc(x.pane)}" aria-expanded="${openName === x.pane}"`, 'sm ghost') : ''}${x.custom ? btn('기본으로', `data-nfr="${esc(x.pane)}"`, 'sm ghost') : ''}${btn(openFace === x.pane ? '닫기' : '바꾸기', `data-nfo="${esc(x.pane)}" aria-expanded="${openFace === x.pane}"`, 'sm ghost')}</div></div>`
+      + (openName === x.pane ? `<div class="bxs-li"><div class="bxs-row" style="flex-wrap:nowrap;gap:8px;width:100%"><input class="bxs-in" data-nnm="${esc(x.pane)}" maxlength="60" value="${esc(x.name)}" aria-label="채널 이름" style="flex:1;min-width:0">${btn('저장', `data-nns="${esc(x.pane)}"`, 'sm')}</div></div>` : '')
       + (openFace === x.pane ? `<div class="bxs-li col"><div data-nfp="${esc(x.pane)}"></div></div>` : '');
     const faceSec = () => !faces ? '' : `<div class="bxs-sech">얼굴</div>` + (faces.length ? `<div class="bxs-list">${faces.map(faceRow).join('')}</div>`
       : empty({ic: 'node', sm: true, t: '얼굴을 고를 노드가 없어요', p: '노드가 생기면 트리 열 머리 · 노드마다 얼굴을 고를 수 있어요.'}, '<p class="bxs-mut">얼굴을 고를 노드가 없어요</p>'));
@@ -627,7 +628,7 @@
       const v = Number(i.value); if (!i.value || !Number.isFinite(v)) { i.value = j.values[i.dataset.nk]; return; }
       if (v !== j.values[i.dataset.nk]) save({[i.dataset.nk]: v});
     };
-    el.onkeydown = e => { if (e.key === 'Enter' && e.target.matches('input[data-nk]')) e.target.blur(); };
+    el.onkeydown = e => { if (e.key === 'Enter' && e.target.matches('input[data-nk]')) e.target.blur(); if (e.key === 'Enter' && !e.isComposing && e.target.matches('input[data-nnm]')) { e.preventDefault(); el.querySelector(`[data-nns="${CSS.escape(e.target.dataset.nnm)}"]`)?.click(); } };
     el.onclick = async e => {
       if (e.target.closest('[data-nmore]')) { more = true; return draw(); }
       const cp = e.target.closest('[data-cp]'); if (cp) return copy(cp.dataset.cp, '명령을');
@@ -635,6 +636,16 @@
       const rl = e.target.closest('[data-nrl]');
       if (rl) { const k = rl.dataset.nrl, was = j.prefs.rules[k] !== false; j.prefs.rules[k] = !was; draw(); return savePref({rules: {[k]: !was}}, () => { j.prefs.rules[k] = was; }); }
       const fo = e.target.closest('[data-nfo]'); if (fo) { openFace = openFace === fo.dataset.nfo ? null : fo.dataset.nfo; return draw(); }
+      const no = e.target.closest('[data-nno]'); if (no) { openName = openName === no.dataset.nno ? null : no.dataset.nno; draw(); el.querySelector(`[data-nnm="${CSS.escape(no.dataset.nno)}"]`)?.focus(); return; }
+      const ns = e.target.closest('[data-nns]'), nx = ns && faces?.find(f => f.pane === ns.dataset.nns);
+      if (nx) {
+        const v = String(el.querySelector(`[data-nnm="${CSS.escape(nx.pane)}"]`)?.value || '').trim().slice(0, 60);
+        if (v === nx.name) { openName = null; return draw(); }
+        ns.disabled = true;
+        try { await api('POST', 'api/me/nodes/edit', {op: 'rename', node: nx.node, name: v}); faces = (await api('GET', 'api/me/nodes/avatar')).nodes; openName = null; toast(v ? '이름을 바꿨어요' : '자동 이름으로 되돌렸어요'); }
+        catch (err) { ns.disabled = false; toast(err.status === 404 ? '이 채널은 이름을 바꿀 수 없어요' : '일시적인 오류가 발생했어요'); return; }
+        if (live()) draw(); return;
+      }
       const fr = e.target.closest('[data-nfr]'), fx = fr && faces?.find(f => f.pane === fr.dataset.nfr);
       if (fx) {   // 기본 얼굴로: 서버가 지우고, 목록을 다시 받아 기본 얼굴(열 이름 얼굴)을 그림
         try { await api('POST', 'api/me/nodes/avatar', {node: fx.pane}); faces = (await api('GET', 'api/me/nodes/avatar')).nodes; toast('기본 얼굴로 되돌렸어요'); } catch { toast('일시적인 오류가 발생했어요'); }
