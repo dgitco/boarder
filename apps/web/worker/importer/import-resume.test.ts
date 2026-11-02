@@ -48,8 +48,8 @@ function app(D1: D1Database) {
 const BODY = {
   host: "laptop", kinds: ["window", "session"],
   items: [
-    { key: "window:tmux:1", kind: "window", title: "세금 신고 정리", win: "tmux:1", state: "working", engine: "claude" },
-    { key: "session:claude:aaa", kind: "session", title: "신고서 초안", repo: "github.com/example/tax", branch: "main" },
+    { key: "window:tmux:1", kind: "window", title: "매출 보고 정리", win: "tmux:1", state: "working", engine: "claude" },
+    { key: "session:claude:aaa", kind: "session", title: "보고서 초안", repo: "github.com/example/ledger", branch: "main" },
   ],
 };
 const unitCards = (db: DatabaseSync) => db.prepare("SELECT question, state FROM board_card WHERE owner = ? AND win = ? AND question = '노드를 어떻게 묶을까요?'").all(MEMBER, IMPORT_WIN);

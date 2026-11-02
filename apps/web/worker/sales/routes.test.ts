@@ -49,7 +49,7 @@ function setup() {
   return { call, join, events };
 }
 const A = "a@example.com", B = "b@example.com", X = "x@example.com";
-const card = { firm: "예시 세무회계", next: "첫 통화 잡기", due: "2026-11-02" };
+const card = { firm: "예시 상사", next: "첫 통화 잡기", due: "2026-11-02" };
 
 test("로그인 없으면 401, 쓰기에 x-hb 없으면 403", async () => {
   const { call } = setup();

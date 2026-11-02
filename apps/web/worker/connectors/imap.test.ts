@@ -24,7 +24,7 @@ const bytes = (...parts: (string | number[])[]) => {
 };
 
 // 101: plain text in EUC-KR (한글 본문), subject as an encoded word, unread.
-const HEAD_101 = "From: =?UTF-8?B?6rmA7LKg7IiY?= <kim@example.com>\r\nTo: me@example.com\r\nSubject: =?UTF-8?B?7IS46riIIOyLoOqzoCDrp4jqsJA=?=\r\nDate: Fri, 16 Oct 2026 09:00:00 +0900\r\nContent-Type: text/plain; charset=euc-kr\r\nContent-Transfer-Encoding: 8bit\r\n\r\n";
+const HEAD_101 = "From: =?UTF-8?B?6rmA7LKg7IiY?= <kim@example.com>\r\nTo: me@example.com\r\nSubject: =?UTF-8?B?66ek7LacIOuztOqzoCDrp4jqsJA=?=\r\nDate: Fri, 16 Oct 2026 09:00:00 +0900\r\nContent-Type: text/plain; charset=euc-kr\r\nContent-Transfer-Encoding: 8bit\r\n\r\n";
 const TEXT_101 = bytes([0xc7, 0xd1, 0xb1, 0xdb, 0x20, 0xba, 0xbb, 0xb9, 0xae], "\r\n");
 // 102: HTML only, with an attachment, already read; forwarded from bob@example.com.
 const HEAD_102 = 'From: Billing <billing@vendor.test>\r\nTo: bob@example.com\r\nSubject: Invoice\r\nDate: Thu, 15 Oct 2026 18:00:00 +0900\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="b1"\r\n\r\n';
@@ -72,7 +72,7 @@ function fakeServer(opts: { password?: string; hugeSearch?: boolean } = {}) {
     if (/^EXAMINE /.test(verb)) return say("* 2 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 7] ok\r\n", `${tag} OK [READ-ONLY] examined\r\n`);
     if (/^FETCH 1:2 \(UID\)$/.test(verb)) return say("* 1 FETCH (UID 101)\r\n* 2 FETCH (UID 102)\r\n", `${tag} OK fetched\r\n`);
     if (/^UID SEARCH /.test(verb)) {
-      const hits = [/FROM "kim"|UNSEEN|SUBJECT 세금/.test(verb) ? 101 : 0, /TO "bob@example.com"/.test(verb) ? 102 : 0].filter(Boolean);
+      const hits = [/FROM "kim"|UNSEEN|SUBJECT 매출/.test(verb) ? 101 : 0, /TO "bob@example.com"/.test(verb) ? 102 : 0].filter(Boolean);
       if (opts.hugeSearch) return say(`* SEARCH${" 1234567".repeat(400_000)}\r\n`, `${tag} OK searched\r\n`);   // 3.2MB, 40만 개
       return say(`* SEARCH${hits.map((h) => ` ${h}`).join("")}\r\n`, `${tag} OK searched\r\n`);
     }
@@ -162,7 +162,7 @@ test("list_messages: newest first, decoded, with a one-line snippet, without mar
   expect(r.total).toBe(2);
   expect(r.messages).toEqual([
     { uid: 102, date: "2026-10-15T09:00:00.000Z", from: "Billing <billing@vendor.test>", to: "bob@example.com", subject: "Invoice", snippet: "Your invoice & receipt Due 10/20", unread: false, attachments: true },
-    { uid: 101, date: "2026-10-16T00:00:00.000Z", from: "김철수 <kim@example.com>", to: "me@example.com", subject: "세금 신고 마감", snippet: "한글 본문", unread: true },
+    { uid: 101, date: "2026-10-16T00:00:00.000Z", from: "김철수 <kim@example.com>", to: "me@example.com", subject: "매출 보고 마감", snippet: "한글 본문", unread: true },
   ]);
   expect(s.commands[0]).toMatch(/^z1 LOGIN /);
   expect(s.commands).toContain('z2 EXAMINE "INBOX"');
@@ -177,9 +177,9 @@ test("search_messages: filters become SEARCH keys; Korean terms go as UTF-8 lite
   expect(s.commands).toContain('z3 UID SEARCH TO "bob@example.com" SINCE 1-Oct-2026 BEFORE 17-Oct-2026');
 
   const k = fakeServer();
-  const kr = json(await tool("search_messages").run(noFetch, { subject: "세금", unread: true }, { imap: k.open }));
+  const kr = json(await tool("search_messages").run(noFetch, { subject: "매출", unread: true }, { imap: k.open }));
   expect(kr.messages.map((m: { uid: number }) => m.uid)).toEqual([101]);
-  expect(k.commands).toContain("z3 UID SEARCH CHARSET UTF-8 SUBJECT 세금 UNSEEN");
+  expect(k.commands).toContain("z3 UID SEARCH CHARSET UTF-8 SUBJECT 매출 UNSEEN");
   readOnlyCommands([...s.commands, ...k.commands]);
 
   // No filter, or a bad date: an error, before anything is searched.

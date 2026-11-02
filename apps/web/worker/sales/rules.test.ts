@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { check, diff, day, addBusinessDays, suggestDue, todayKst, csv, dueToday } from "./rules.ts";
 
 const team = ["a@example.com", "b@example.com"];
-const ok = { firm: "예시 세무회계", assignee: "a@example.com", next: "첫 통화 잡기", due: "2026-11-02" };
+const ok = { firm: "예시 상사", assignee: "a@example.com", next: "첫 통화 잡기", due: "2026-11-02" };
 
 test("만들기: 사무소 · 담당 · 다음 할 일 · 기한이 있으면 통과, 기본은 문의 · 문의 길", () => {
   const r = check(null, ok, team);
@@ -64,7 +64,7 @@ test("보류 · 놓침에서 되돌리면 다시 볼 날짜 · 놓친 이유를 
 test("고치기: 받은 칸만 덮고 나머지는 앞 판 그대로, 바뀐 칸만 기록", () => {
   const a = check(null, ok, team); assert.ok(a.ok);
   const b = check(a.card, { stage: "contact", due: "2026-11-03" }, team); assert.ok(b.ok);
-  assert.equal(b.card.firm, "예시 세무회계"); assert.equal(b.card.next, "첫 통화 잡기");
+  assert.equal(b.card.firm, "예시 상사"); assert.equal(b.card.next, "첫 통화 잡기");
   assert.deepEqual(diff(a.card, b.card), { stage: ["inquiry", "contact"], due: ["2026-11-02", "2026-11-03"] });
   assert.deepEqual(diff(b.card, b.card), {});
 });
@@ -87,7 +87,7 @@ test("CSV 칸: 쉼표 · 따옴표 · 줄바꿈은 따옴표로 싸고, 빈 값�
   const r = check(null, ok, team); assert.ok(r.ok);   // 칸 검사는 줄바꿈을 지우므로 CSV 만 보려고 직접 넣음
   const lines = csv([{ ...r.card, next: '전화, "오후"\n다시' }], e => e === "a@example.com" ? "김영업" : e).split("\r\n");
   assert.equal(lines.length, 3);
-  assert.equal(lines[1], '예시 세무회계,문의,김영업,문의,,,"전화, ""오후""\n다시",2026-11-02,,,');
+  assert.equal(lines[1], '예시 상사,문의,김영업,문의,,,"전화, ""오후""\n다시",2026-11-02,,,');
 });
 
 test("아침 알림 대상: 오늘까지 기한인 진행 카드 · 다시 볼 날이 된 보류, 놓침은 빼기", () => {

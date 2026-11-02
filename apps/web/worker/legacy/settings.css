@@ -93,6 +93,8 @@ textarea.bxs-in{height:auto;padding:10px 12px;resize:vertical}
 .bxs-li b{display:block;font-weight:600}
 .bxs-li span{display:block;font-size:13px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
 .bxs-li[hidden]{display:none}
+.bxs-face{flex:none;width:32px;height:32px;display:grid;place-items:center}
+.bxs-face svg,.bxs-face img{display:block;width:32px;height:32px;border-radius:9px;object-fit:cover}
 a.bxs-li:hover{background:var(--hover)}
 .bxs-sw,.bxs-main .bxs-sw{flex:none;position:relative;width:38px;height:22px;border-radius:11px;background:color-mix(in srgb,var(--ink) 18%,transparent);transition:background .15s}   /* .bxs-main 붙임: .bxs-main button{background:none} 이 꺼짐 바탕을 지워 손잡이만 떠 보였음(S1) */
 .bxs-sw i{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:9px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:left .15s}

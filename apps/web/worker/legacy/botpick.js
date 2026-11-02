@@ -77,7 +77,7 @@
   <div class="bp-pv"><div class="g" data-pv></div><div><div class="n" data-pn></div><div class="c">${esc(opts.caption || '좌측 상단 · 홈 화면 아이콘이 이 봇이 돼요')}</div></div></div>
   <div class="bp-sec"><div class="bp-lab">모양<i class="bp-ok" data-ok="shape" aria-live="polite">저장했어요</i><span><button type="button" data-up>사진 올리기</button><button type="button" data-mix>섞기</button></span></div><div class="bp-sh" role="radiogroup" aria-label="모양" data-sh></div></div>
   <div class="bp-sec"><div class="bp-lab">색<i class="bp-ok" data-ok="hue" aria-live="polite">저장했어요</i></div><div class="bp-co" role="radiogroup" aria-label="색" data-co>${HUES.map(([h, n]) => `<button type="button" role="radio" aria-label="${n}" title="${n}" data-hue="${h}" style="background:hsl(${h} 70% 72%)"></button>`).join('')}</div></div>
-  <div class="bp-sec"><div class="bp-lab"><label for="bp-name">이름</label><i class="bp-ok" data-ok="name" aria-live="polite">저장했어요</i></div><input class="bp-in" id="bp-name" maxlength="20" autocomplete="off" spellcheck="false" enterkeyhint="done" value="${esc(st.name)}" data-nm><div class="bp-hint">${esc(opts.hint || '창들이 이 이름으로 불러요 · 한두 단어')}</div></div>
+  <div class="bp-sec"${opts.noName ? ' hidden' : ''}><div class="bp-lab"><label for="bp-name">이름</label><i class="bp-ok" data-ok="name" aria-live="polite">저장했어요</i></div><input class="bp-in" id="bp-name" maxlength="20" autocomplete="off" spellcheck="false" enterkeyhint="done" value="${esc(st.name)}" data-nm><div class="bp-hint">${esc(opts.hint || '창들이 이 이름으로 불러요 · 한두 단어')}</div></div>
   <input type="file" accept="image/*" hidden data-file>
 </div>`;
     const $ = s => el.querySelector(s);
@@ -130,10 +130,17 @@
     if (!r.ok) throw new Error(j.error || '일시적인 오류가 발생했어요');
     return j.bot;
   }
+  async function saveFace(v, path, extra){
+    const photo = v.photoId ? v.photoId : v.photo ? await draw(await loadImg(v.photo), 512, false).then(up) : '';
+    const r = await fetch(path, {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({...(extra || {}), seed: v.seed, hue: v.hue, photo})});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || '일시적인 오류가 발생했어요');
+    return j;
+  }
   function toast(t){
     let e = document.getElementById('bx-toast'); if (!e){ e = document.createElement('div'); e.id = 'bx-toast'; e.className = 'bx-toast'; e.setAttribute('role', 'status'); document.body.append(e); }
     e.textContent = t; e.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove('on'), 2200);
   }
 
-  window.BXBot = {mount, save, svg, live, toast};
+  window.BXBot = {mount, save, saveFace, svg, live, toast};
 })();

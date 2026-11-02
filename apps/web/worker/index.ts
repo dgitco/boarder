@@ -970,6 +970,36 @@ app.post("/api/me/bot", async c => {
     .bind(me, seed, hue, name, photo, icon, fav, now).run();
   return c.json({ bot: { seed, hue, name, photo, icon, fav } });
 });
+const photoOk = async (env: Env, photo: string) => { if (!photo) return true; if (!BLOB_ID.test(photo)) return false; const h = await env.RESULTS.head(`blobs/${photo}`); return !!h && /^image\/(png|jpeg|webp)$/.test(h.httpMetadata?.contentType || ""); };
+app.get("/api/me/avatar", async c => {
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  const me = s.user.email.toLowerCase();
+  if (isOwner(c.env, me)) { const b = await memberBot(c.env, "@owner"); return c.json({ avatar: b ? memberBoard.cleanFace(b) : null }, 200, { "cache-control": "no-store" }); }   // 주인 아바타 = 「@owner」 줄(api/me/bot 과 같음)
+  return c.json({ avatar: await memberBoard.myAvatar(c.env.DB, me) }, 200, { "cache-control": "no-store" });
+});
+app.post("/api/me/avatar", async c => {
+  const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
+  const f = memberBoard.cleanFace(await c.req.json().catch(() => null));
+  if (!f) return c.json({ error: "모양 · 색" }, 400);
+  if (!(await photoOk(c.env, f.photo || ""))) return c.json({ error: "그림을 먼저 올려요" }, 400);
+  return c.json({ avatar: await memberBoard.setMyAvatar(c.env.DB, me, f) });
+});
+app.get("/api/me/nodes/avatar", async c => {
+  const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  const me = s.user.email.toLowerCase();
+  return c.json({ nodes: await memberBoard.nodeFaceList(c.env.DB, me, await memberBot(c.env, me)) }, 200, { "cache-control": "no-store" });
+});
+app.post("/api/me/nodes/avatar", async c => {
+  const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
+  const b = Object(await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const reset = !b.seed && !b.photo;
+  const id = await memberBoard.nodeIdOf(c.env.DB, me, String(b.node ?? "")); if (!id) return c.json({ error: "없는 노드예요" }, 404);
+  const base = memberBoard.faceOf(id), f = reset ? null : memberBoard.cleanFace({ seed: b.seed || base.seed, hue: b.hue ?? base.hue, photo: b.photo || "" });
+  if (!reset && !f) return c.json({ error: "모양 · 색" }, 400);
+  if (f && !(await photoOk(c.env, f.photo || ""))) return c.json({ error: "그림을 먼저 올려요" }, 400);
+  const r = await memberBoard.setNodeFace(c.env.DB, me, id, f);
+  return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
+});
 const flagOwner = (c: Context<{ Bindings: Env }>) => (text: string) => c.executionCtx.waitUntil((boardTool(c.env, chOf(c), "flag", { text }, "boarder@worker") as Promise<unknown>).catch(() => {}));
 app.post("/api/me/feedback", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);

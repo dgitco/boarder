@@ -452,26 +452,26 @@
   PAGES.profile = async (el, id, live) => {
     const me = await api('GET', 'api/me'); if (!live()) return;
     const owner = !!me.user?.owner;
-    const bot = window.BXBot && (owner ? ((await api('GET', 'api/me/bot').catch(() => ({}))).bot || {seed: 'Owner', hue: 140, name: 'Owner'}) : window.BX_BOT);
+    const [bot, mine] = !window.BXBot ? [null, null] : owner
+      ? [(await api('GET', 'api/me/bot').catch(() => ({}))).bot || {seed: 'Owner', hue: 140, name: 'Owner'}, null]
+      : await Promise.all([api('GET', 'api/me/bot').then(j => j.bot).catch(() => window.BX_BOT || null), api('GET', 'api/me/avatar').then(j => j.avatar).catch(() => null)]);
     if (!live()) return;
-    el.innerHTML = header('프로필') + (bot ? `<div class="bxs-sech">${owner ? '내 아바타' : '메인 봇'}</div><div class="bxs-card"><div data-bp></div></div><div class="bxs-sech">계정</div>` : '') + `<div class="bxs-list"><div class="bxs-li"><div><b>메일</b><span>${esc(me.user?.email || '')}</span></div></div><div class="bxs-li"><div><b>로그아웃</b><span>이 브라우저에서 나가요</span></div>${btn('로그아웃', 'data-out', 'sm ghost danger')}</div></div>`;
-    const bpEl = el.querySelector('[data-bp]');
-    const P = bot ? BXBot.mount(bpEl, {...bot, photoId: bot.photo}, owner ? {caption: '사이드바 아래 · 글 줄 아바타가 이 그림이 돼요', hint: '사이드바 아래 · 글 줄에 보이는 이름'} : {}) : null;
-    if (P){
+    const myName = window.HB_MEMBER?.name || me.user?.name || String(me.user?.email || '').split('@')[0];
+    const card = k => `<div class="bxs-card"><div data-bp="${k}"></div></div>`;
+    el.innerHTML = header('프로필')
+      + (!owner && window.BXBot ? `<div class="bxs-sech">내 아바타</div>${card('me')}` : '')
+      + (bot ? `<div class="bxs-sech">${owner ? '내 아바타' : '메인 봇'}</div>${card('bot')}` : '')
+      + (bot || (!owner && window.BXBot) ? '<div class="bxs-sech">계정</div>' : '') + `<div class="bxs-list"><div class="bxs-li"><div><b>메일</b><span>${esc(me.user?.email || '')}</span></div></div><div class="bxs-li"><div><b>로그아웃</b><span>이 브라우저에서 나가요</span></div>${btn('로그아웃', 'data-out', 'sm ghost danger')}</div></div>`;
+    const wire = (bpEl, P, store, done, fields) => {
       let saved = P.get(), busy = false, want = null;
-      const done = b => {
-        window.BX_BOT = b;
-        if (owner){ window.BX_ME = {seed: b.seed, hue: b.hue, name: b.name, photo: b.photo, icon: b.icon}; try { localStorage.setItem('bx-me', JSON.stringify(window.BX_ME)); } catch {} window.dispatchEvent(new CustomEvent('bx-me')); }   // 사이드바 아래 · 글 줄 바로
-        else { applyAccent(); document.querySelectorAll('link[rel="icon"]').forEach(l => { l.href = `/_blob/${b.fav}.png`; }); const hi = document.querySelector('#hello img'); if (hi) hi.src = `/_blob/${b.fav}.png`; }   // 회원: 파비콘 · 인사 그림(왼쪽 위 로고 · 홈 화면 아이콘은 다음에 열 때)
-      };
       const commit = async k => {
         if (k === 'name' && !P.valid()){ toast('이름을 적어요'); return P.set({name: saved.name}); }
         want = k; if (busy) return; busy = true;
         while (want){
           const w = want; want = null; const v = P.get();
-          if (['seed', 'hue', 'name', 'photo'].every(f => v[f] === saved[f])) continue;
+          if (fields.every(f => v[f] === saved[f])) continue;
           try {
-            const b = await BXBot.save(v);
+            const b = await store(v);
             saved = {...v, photo: b.photo ? `/_blob/${b.photo}.png` : '', photoId: b.photo || ''};
             if (b.photo && P.get().photo === v.photo) P.set({photo: saved.photo, photoId: b.photo});   // 같은 사진을 다시 올리지 않게
             done(b); P.ok(w);
@@ -480,6 +480,23 @@
         busy = false;
       };
       bpEl.addEventListener('bxb-pick', e => commit(e.detail));
+    };
+    const meEl = el.querySelector('[data-bp="me"]');
+    if (meEl){   // 회원 내 아바타: 이름은 계정 이름 그대로(칸 없음), 처음엔 이름에서 정한 얼굴
+      const init = mine || {seed: 'bean', hue: 140};
+      const P = BXBot.mount(meEl, {...init, name: myName, photoId: init.photo}, {caption: '사이드바 아래 · 내 글 줄 아바타가 이 그림이 돼요', noName: true});
+      wire(meEl, P, v => BXBot.saveFace(v, '/api/me/avatar').then(j => j.avatar), a => {
+        window.BX_ME = {seed: a.seed, hue: a.hue, name: myName, photo: a.photo || ''}; window.dispatchEvent(new CustomEvent('bx-me'));   // 사이드바 아래 · 글 줄 바로
+      }, ['seed', 'hue', 'photo']);
+    }
+    const bpEl = el.querySelector('[data-bp="bot"]');
+    if (bpEl){
+      const P = BXBot.mount(bpEl, {...bot, photoId: bot.photo}, owner ? {caption: '사이드바 아래 · 글 줄 아바타가 이 그림이 돼요', hint: '사이드바 아래 · 글 줄에 보이는 이름'} : {});
+      wire(bpEl, P, v => BXBot.save(v), b => {
+        window.BX_BOT = b;
+        if (owner){ window.BX_ME = {seed: b.seed, hue: b.hue, name: b.name, photo: b.photo, icon: b.icon}; try { localStorage.setItem('bx-me', JSON.stringify(window.BX_ME)); } catch {} window.dispatchEvent(new CustomEvent('bx-me')); }   // 사이드바 아래 · 글 줄 바로
+        else { applyAccent(); document.querySelectorAll('link[rel="icon"]').forEach(l => { l.href = `/_blob/${b.fav}.png`; }); const hi = document.querySelector('#hello img'); if (hi) hi.src = `/_blob/${b.fav}.png`; }   // 회원: 파비콘 · 인사 그림(왼쪽 위 로고 · 홈 화면 아이콘은 다음에 열 때)
+      }, ['seed', 'hue', 'name', 'photo']);
     }
     el.onclick = async e => {
       if (e.target.closest('[data-out]') && await confirmBox('로그아웃할까요?', '로그아웃')){ await window.bxPushOff?.(); await fetch('api/auth/sign-out', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: '{}'}); location.href = '/'; } };
@@ -525,6 +542,28 @@
   const hrs = h => h % 24 ? `${h}시간` : `${h / 24}일`;
   PAGES.nodes = async (el, id, live) => {
     let j = await api('GET', 'api/me/nodeset'), more = false; if (!live()) return;
+    let faces = OWNER || !window.BXBot ? null : await api('GET', 'api/me/nodes/avatar').then(r => r.nodes).catch(() => null), openFace = null; if (!live()) return;
+    const faceSm = f => !f ? '' : f.photo ? `<img src="/_blob/${esc(f.photo)}.png" alt="">` : BXBot.svg(f.seed, f.hue, 32, true);
+    const faceRow = x => `<div class="bxs-li"><div class="bxs-row" style="flex-wrap:nowrap;gap:12px"><i class="bxs-face" aria-hidden="true">${faceSm(x.avatar)}</i><div><b>${esc(x.name)}</b><span>${x.head ? `「${esc(x.column)}」 열 머리` : '노드'} · ${x.custom ? '고른 얼굴' : '기본 얼굴'}</span></div></div>`
+      + `<div class="bxs-row" style="flex-wrap:nowrap">${x.custom ? btn('기본으로', `data-nfr="${esc(x.pane)}"`, 'sm ghost') : ''}${btn(openFace === x.pane ? '닫기' : '바꾸기', `data-nfo="${esc(x.pane)}" aria-expanded="${openFace === x.pane}"`, 'sm ghost')}</div></div>`
+      + (openFace === x.pane ? `<div class="bxs-li col"><div data-nfp="${esc(x.pane)}"></div></div>` : '');
+    const faceSec = () => !faces ? '' : `<div class="bxs-sech">얼굴</div>` + (faces.length ? `<div class="bxs-list">${faces.map(faceRow).join('')}</div>`
+      : empty({ic: 'node', sm: true, t: '얼굴을 고를 노드가 없어요', p: '노드가 생기면 트리 열 머리 · 노드마다 얼굴을 고를 수 있어요.'}, '<p class="bxs-mut">얼굴을 고를 노드가 없어요</p>'));
+    const facePick = () => {   // 연 노드의 고르기 판: 고르는 순간 저장(프로필과 같은 규칙), 실패면 되돌리고 한 줄 오류
+      const box = openFace && el.querySelector(`[data-nfp="${CSS.escape(openFace)}"]`), x = box && faces.find(f => f.pane === openFace); if (!x) return;
+      const P = BXBot.mount(box, {...x.avatar, name: x.name, photoId: x.avatar.photo}, {caption: x.head ? '트리 열 머리 얼굴이 이 그림이 돼요' : '이 노드 얼굴이 이 그림이 돼요', noName: true});
+      let busy = false, again = false;
+      box.addEventListener('bxb-pick', async e => {
+        if (busy){ again = true; return; } busy = true;
+        do { again = false; const v = P.get();
+          try { const r = await BXBot.saveFace(v, '/api/me/nodes/avatar', {node: x.pane}); x.avatar = r.avatar; x.custom = true;
+            if (r.avatar.photo && P.get().photo === v.photo) P.set({photo: `/_blob/${r.avatar.photo}.png`, photoId: r.avatar.photo}); P.ok(e.detail);
+            const row = box.closest('.bxs-li')?.previousElementSibling; if (row) row.outerHTML = faceRow(x).split('<div class="bxs-li col">')[0];
+          } catch { P.set({...x.avatar, photo: x.avatar.photo ? `/_blob/${x.avatar.photo}.png` : '', photoId: x.avatar.photo || ''}); toast('일시적인 오류가 발생했어요'); again = false; }
+        } while (again);
+        busy = false;
+      });
+    };
     const num = ([k, n, d, u]) => `<div class="bxs-li"><div><b>${n}</b><span>${d}</span></div><label class="bxs-num"><input class="bxs-in sm" type="number" inputmode="numeric" min="${j.limits[k][0]}" max="${j.limits[k][1]}" value="${j.values[k]}" data-nk="${k}" aria-label="${esc(n)}"><span>${u}</span></label></div>`;
     const archRow = x => `<div class="bxs-li"><div><b>${esc(x.name)}</b><span>끝 ${esc(kst(x.at * 1000))} · 닫힌 지 ${esc(ago(x.at * 1000).replace(' 전', ''))}${x.msg ? ' · ' + esc(x.msg) : ''}</span></div>${x.reopen ? btn('다시 열기', `data-nro="${esc(x.id || x.name)}"`, 'sm ghost') : '<span class="bxs-mut" title="닫힌 창 목록(7일)에서 빠져 다시 열 수 없어요">다시 열 수 없음</span>'}</div>`;
     const draw = () => {
@@ -533,12 +572,14 @@
         + (OWNER ? '' : `<div class="bxs-sech">채널 묶기</div><div class="bxs-list"><div class="bxs-li"><div><b>무엇을 채널로 볼까요</b><span>화면은 같고 묶는 단위만 달라요. 들여올 때 쓰던 방식을 보고 골라 뒀어요</span></div>`
           + `<select class="bxs-in sm bxs-sel" data-nu aria-label="채널 묶기">${j.unit ? '' : '<option value="" selected>고르지 않음</option>'}<option value="agent"${j.unit === 'agent' ? ' selected' : ''}>에이전트마다 채널 · 일은 스레드</option><option value="goal"${j.unit === 'goal' ? ' selected' : ''}>일마다 채널</option></select></div></div>`)
         + `<div class="bxs-sech bxs-row between"><span>정리 기준</span><span class="bxs-row"><a class="bxs-btn sm ghost" style="text-decoration:none" href="/node-rules.md" download="node-rules.md" title="쓰던 하네스의 총괄에 붙여 넣는 노드 = 목표 규칙">노드 규칙 묶음 내려받기</a>${btn('기본값으로', 'data-ndef', 'sm ghost')}</span></div><div class="bxs-list">${NRULES.map(num).join('')}</div>`
+        + faceSec()
         + `<div class="bxs-sech">보관</div><div class="bxs-list"><div class="bxs-li"><div><b>끝난 노드 보관</b><span>끝나고 닫힌 노드를 트리 · 타임라인에서 보관함으로 옮겨요(대화 · 장부 · 결과는 그대로)</span></div>`
         + `<select class="bxs-in sm bxs-sel" data-nk="archive_h" aria-label="끝난 노드 보관">${[...new Set([...ARCH_H, j.values.archive_h])].sort((x, y) => x - y).map(h => `<option value="${h}"${h === j.values.archive_h ? ' selected' : ''}>닫히고 ${hrs(h)} 뒤</option>`).join('')}</select></div>`
         + `<div class="bxs-li"><div><b>주차 · 리드 노드</b><span>남의 답을 기다리는 노드 · 총괄 · 영역 리드 · 열린 약속이 있는 노드는 늘 빼요</span></div><span class="bxs-mut">보관 안 함</span></div></div>`
         + `<div class="bxs-sech">보관함 ${a.length}</div>`
         + (a.length ? `<div class="bxs-list">${shown.map(archRow).join('')}</div>` + (a.length > shown.length ? `<div class="bxs-row">${btn(`${a.length - shown.length}개 더 보기`, 'data-nmore', 'sm ghost')}</div>` : '')
           : empty({ic: 'archive', sm: true, t: '보관한 노드가 없어요', p: '끝난 노드가 닫히고 정한 시간이 지나면 여기로 와요.'}, '<p class="bxs-mut">보관한 노드가 없어요</p>'));
+      facePick();
     };
     draw();
     const save = async vals => {
@@ -561,6 +602,12 @@
     el.onkeydown = e => { if (e.key === 'Enter' && e.target.matches('input[data-nk]')) e.target.blur(); };
     el.onclick = async e => {
       if (e.target.closest('[data-nmore]')) { more = true; return draw(); }
+      const fo = e.target.closest('[data-nfo]'); if (fo) { openFace = openFace === fo.dataset.nfo ? null : fo.dataset.nfo; return draw(); }
+      const fr = e.target.closest('[data-nfr]'), fx = fr && faces?.find(f => f.pane === fr.dataset.nfr);
+      if (fx) {   // 기본 얼굴로: 서버가 지우고, 목록을 다시 받아 기본 얼굴(열 이름 얼굴)을 그림
+        try { await api('POST', 'api/me/nodes/avatar', {node: fx.pane}); faces = (await api('GET', 'api/me/nodes/avatar')).nodes; toast('기본 얼굴로 되돌렸어요'); } catch { toast('일시적인 오류가 발생했어요'); }
+        if (live()) draw(); return;
+      }
       if (e.target.closest('[data-ndef]') && await confirmBox(OWNER ? '정리 기준 · 보관 시간을 기본값으로 되돌릴까요?' : '정리 기준 · 보관 시간을 처음 값으로 되돌릴까요?', '되돌리기')) return save({...j.defaults});
       const ro = e.target.closest('[data-nro]');
       const key = x => x.id || x.name, roRow = ro && j.archive.find(x => key(x) === ro.dataset.nro);

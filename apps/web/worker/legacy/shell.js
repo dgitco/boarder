@@ -47,8 +47,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (c && c.key === st.key){ c.el.title = c.el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : window.HB_MEMBER ? '내 차례' : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`; return c.el; }
     const el = mk('button', 'lg lgb mood-' + st.key); el.type = 'button'; el.dataset.go = 'chan:primary';
     const ex = window.HB_EXPR || {};
-    el.innerHTML = window.HB_BLOB_ANIM ? window.HB_BLOB_ANIM('primary', {size: 34, background: false, animate: 'always', ...(st.key === 'sad' ? {expression: ex.sad} : st.key === 'think' ? {expression: ex.thinking} : {})})
-      : window.HB_BLOB ? window.HB_BLOB('primary', {size: 34, background: false}) : '<img src="icons/icon-192.png" alt="" width="32" height="32">';
+    const bf = window.HB_MEMBER && typeof D !== 'undefined' ? (D?.areas || []).find(a => a.key === 'primary')?.avatar : null;
+    el.innerHTML = bf?.photo && window.BXBot?.live ? window.BXBot.live(bf, 34)
+      : window.HB_BLOB_ANIM ? window.HB_BLOB_ANIM(bf?.seed || 'primary', {size: 34, background: false, animate: 'always', ...(bf ? {hue: bf.hue} : {}), ...(st.key === 'sad' ? {expression: ex.sad} : st.key === 'think' ? {expression: ex.thinking} : {})})
+      : window.HB_BLOB ? window.HB_BLOB(bf?.seed || 'primary', {size: 34, background: false, ...(bf ? {hue: bf.hue} : {})}) : '<img src="icons/icon-192.png" alt="" width="32" height="32">';
     el.title = el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : window.HB_MEMBER ? '내 차례' : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`;
     LG[which] = {key: st.key, el}; return el;
   }
@@ -118,16 +120,16 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     lists.sig = rcSig();
   }
   const ME = () => { const m = window.BX_ME; return m && (m.seed || /^[0-9a-f]{32}$/.test(m.photo || '')) ? m : null; };
-  const meAv = () => ME() && window.BXBot?.live ? `<b class="${ME().photo ? 'pic' : 'blob'}">${window.BXBot.live(ME(), 30)}</b>` : '<b>B</b>';
+  const meAv = () => ME() && window.BXBot?.live ? `<b class="${ME().photo ? 'pic' : 'blob'}">${window.BXBot.live(ME(), 30)}</b>` : `<b>${esc(Array.from(String(window.HB_MEMBER?.name || 'B'))[0] || 'B')}</b>`;
   try { window.BX_ME = JSON.parse(localStorage.getItem('bx-me') || 'null'); } catch {}
   const meRedraw = () => { lists(); try { if (typeof cur !== 'undefined' && cur && !ans.hidden) render(); } catch {} };
   window.addEventListener('bx-me', meRedraw);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { if (ME()) meRedraw(); });
-  if (window.HB_MEMBER) window.BX_ME = null;
-  else fetch('api/me/bot', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => {
-    if (!j) return; const b = j.bot, m = b ? {seed: b.seed, hue: b.hue, name: b.name, photo: b.photo, icon: b.icon} : null;
+  if (window.HB_MEMBER){ const a = typeof D !== 'undefined' ? D?.me_avatar : null; window.BX_ME = a ? {...a, name: window.HB_MEMBER.name} : null; }
+  fetch(window.HB_MEMBER ? 'api/me/avatar' : 'api/me/bot', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => {
+    if (!j) return; const b = window.HB_MEMBER ? j.avatar && {...j.avatar, name: window.HB_MEMBER.name} : j.bot, m = b ? {seed: b.seed, hue: b.hue, name: b.name, photo: b.photo || '', icon: b.icon} : null;
     if (JSON.stringify(m) === JSON.stringify(window.BX_ME)) return;
-    window.BX_ME = m; try { m ? localStorage.setItem('bx-me', JSON.stringify(m)) : localStorage.removeItem('bx-me'); } catch {}
+    window.BX_ME = m; if (!window.HB_MEMBER) try { m ? localStorage.setItem('bx-me', JSON.stringify(m)) : localStorage.removeItem('bx-me'); } catch {}   // 회원은 보드 데이터 me_avatar 가 첫 값 — 주인 브라우저 값과 안 섞이게 저장 안 함
     meRedraw();
   }).catch(() => {});
   const rankOf = v => typeof priRank === 'function' ? priRank(v) : 2.5;

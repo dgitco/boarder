@@ -29,6 +29,58 @@ const kst = (ms: number) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/S
 
 type Node = { id: string; pane: string; name: string; area: string; state: string; why: string; updated_at: number; archived_at: number | null; wins: Set<string>; windows: R[]; convos: R[] };
 
+export type Face = { seed: string; hue: number; photo?: string };
+const FACE_SEEDS = ["mochi", "pebble", "nova", "tofu", "echo", "kiwi", "company lead", "DGit lead", "personal lead", "shop lead", "luma", "bean"];   // botpick.js SEEDS
+const FACE_HUES = [18, 45, 140, 180, 215, 265, 320, 0];   // botpick.js HUES
+const FACE_SEED = /^[A-Za-z0-9 _-]{1,40}$/, BLOB_ID = /^[0-9a-f]{32}$/;
+export const meKey = (me: string) => "@me:" + String(me).toLowerCase();
+export function faceOf(name: string): Face {
+  let h = 2166136261; for (const ch of String(name || "").trim()) { h ^= ch.codePointAt(0)!; h = Math.imul(h, 16777619) >>> 0; }
+  return { seed: FACE_SEEDS[h % FACE_SEEDS.length], hue: FACE_HUES[(h >>> 8) % FACE_HUES.length] };
+}
+// 저장된 값 → 얼굴(틀린 값은 버림). photo 는 R2 blobs/ id 만
+export function cleanFace(v: unknown): Face | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as R, seed = String(o.seed ?? ""), hue = Number(o.hue), photo = String(o.photo ?? "");
+  if (!FACE_SEED.test(seed) || !Number.isInteger(hue) || hue < 0 || hue > 359 || (photo && !BLOB_ID.test(photo))) return null;
+  return { seed, hue, ...(photo ? { photo } : {}) };
+}
+const faceRow = (r: R | undefined | null) => r ? cleanFace(r) : null;
+function facesOf(data: unknown): Record<string, Face> {
+  const f = json<{ faces?: Record<string, unknown> }>(data, {}).faces, out: Record<string, Face> = {};
+  if (f && typeof f === "object") for (const [k, v] of Object.entries(f)) { const c = cleanFace(v); if (c) out[k] = c; }
+  return out;
+}
+export async function nodeIdOf(db: D1Database, me: string, ref: string): Promise<string | null> {
+  const r = String(ref || "").trim(); if (!r || r.length > 80) return null;
+  const rows = ((await db.prepare("SELECT id FROM mnode WHERE owner = ?1 UNION ALL SELECT id FROM engine_window WHERE owner = ?1 AND kind = 'role'").bind(me).all<R>()).results).map(x => String(x.id));
+  return rows.find(id => id === r || paneOfId(id) === r) || null;
+}
+// 노드 얼굴 고르기 · 되돌리기(face = null). 다른 설정 칸(unit · pri · 정리 기준)은 그대로 — faces 칸만 json_patch
+export async function setNodeFace(db: D1Database, me: string, ref: string, face: Face | null) {
+  const id = await nodeIdOf(db, me, ref); if (!id) return { error: "없는 노드예요", status: 404 } as const;
+  const patch = JSON.stringify({ [id]: face });
+  await db.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('faces', json_patch('{}', json(?2))), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.faces', json_patch(CASE WHEN json_valid(data) AND json_type(data, '$.faces') = 'object' THEN json_extract(data, '$.faces') ELSE '{}' END, json(?2))), updated_at = ?3").bind(me, patch, Date.now()).run();
+  return { ok: true, node: id, pane: paneOfId(id), avatar: face } as const;
+}
+// 내 아바타(사이드바 아래 · 내 글 얼굴) — 메인 봇 줄과 따로
+export async function myAvatar(db: D1Database, me: string) { return faceRow(await db.prepare("SELECT seed, hue, photo FROM member_bot WHERE owner = ?").bind(meKey(me)).first<R>()); }
+export async function setMyAvatar(db: D1Database, me: string, face: Face) {
+  await db.prepare("INSERT INTO member_bot (owner, seed, hue, name, photo, icon, fav, updated_at) VALUES (?,?,?,'',?,'','',?) ON CONFLICT(owner) DO UPDATE SET seed = excluded.seed, hue = excluded.hue, photo = excluded.photo, updated_at = excluded.updated_at")
+    .bind(meKey(me), face.seed, face.hue, face.photo || "", Date.now()).run();
+  return face;
+}
+// 설정 › 노드 「얼굴」 목록: 열 머리 먼저, 그다음 노드. avatar = 지금 보이는 얼굴, custom = 고른 것인지
+export async function nodeFaceList(db: D1Database, me: string, bot: { name?: string } | null) {
+  const d = await data(db, me, bot), L = await load(db, me);
+  const idOf = new Map<string, string>([...L.nodes.map(n => [n.pane, n.id] as [string, string]), ...L.engineNodes.map(w => [paneOfId(String(w.id)), String(w.id)] as [string, string])]);
+  const heads = new Map((d.areas as R[]).filter(a => a.key !== "primary").map(a => [String(a.lead), a]));
+  return (d.panes as R[]).filter(p => p.kind === "lead").map(p => {
+    const id = idOf.get(p.pane) || "", h = heads.get(p.pane), mine = id ? L.faces[id] : undefined;
+    return { pane: p.pane, node: id, name: p.win, head: !!h, column: h ? h.name : "", avatar: mine || (h ? h.avatar : faceOf(String(p.win))), custom: !!mine };
+  }).sort((a, b) => Number(b.head) - Number(a.head));
+}
+
 export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
   const [la, lw] = await env.DB.batch([
     env.DB.prepare("SELECT MAX(at) at FROM imp_audit WHERE owner = ?").bind(me),
@@ -39,7 +91,7 @@ export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: str
 }
 
 export async function load(db: D1Database, me: string) {
-  const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw] = await db.batch([
+  const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb] = await db.batch([
     db.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
@@ -50,6 +102,7 @@ export async function load(db: D1Database, me: string) {
     db.prepare("SELECT id, kind, name, state, state_at, note, created_at, closed_at FROM engine_window WHERE owner = ? AND (state NOT IN ('closed','failed','gone') OR state_at > ?) ORDER BY created_at DESC LIMIT 60").bind(me, Date.now() - 12 * 3600_000),
     db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
     db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me),
+    db.prepare("SELECT owner, seed, hue, photo FROM member_bot WHERE owner IN (?, ?)").bind(me, meKey(me)),   // 메인 봇 얼굴 · 내 아바타(@me:<메일>)
   ]);
   const items = new Map((it.results as R[]).map(r => [String(r.key), r]));
   const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(r.win, r.pane);
@@ -76,7 +129,8 @@ export async function load(db: D1Database, me: string) {
   const onlyPrim = (id: string) => { let p = 0, o = 0; for (const [k, v] of nodeOfItem) if (v === id) primKeys.has(k) ? p++ : o++; return p > 0 && o === 0; };
   const shown = primary ? nodes.filter(n => !onlyPrim(n.id)) : nodes;
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
-  return { defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes };
+  return { defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
+    faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
 // 채널(pane)마다 에이전트 글 — 모아 보기 읽지 않음 · 저장(member-inbox.ts)이 씀. 채널 = 노드 + 노드에 안 묶인 역할 창(메인 봇은 따로), 이름은 틀 노드 채팅 열쇠(「n:<이름>」)와 같음.
@@ -121,20 +175,25 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const P = L.primary;
   const panes: R[] = [pane({ pane: PRIMARY, win: mainName, kind: "primary", state: STATE[L.mainWin?.state] || (P && PSTATE[P.state]) || "쉼", cwd: L.mainWin ? "" : P?.cwd, branch: L.mainWin ? "" : P?.branch,
     rows: L.logs.filter(r => inPrim(r) ? r.win !== ME && r.win !== "보더" : r.kind !== "me" && L.isPrimWin(String(r.win))) })];
+  const botFace = cleanFace(bot) || L.botFace || faceOf(mainName);
+  panes[0].avatar = botFace;
+  const nodeOfPane = new Map<string, string>();
   const parked: R[] = [], closed: R[] = [];
   for (const n of L.nodes) {
     const rows = logsOf(n), w0 = n.windows[0];
     if (n.archived_at || n.state === "done") { closed.push({ pane: n.pane, win: n.name, ago: ago(n.archived_at || n.updated_at), msg: rows[0] ? cut(rows[0].text, 200) : n.why, area: "primary" }); continue; }
     if (n.state === "parked") { parked.push({ id: "c" + n.pane.slice(1), name: n.name, area: "primary", msg: n.why || "주차", owner: false, ago: ago(n.updated_at), stale: null, wait: n.why || "주차", topics: [], pri: priOf(L.pri, n.name), pane: n.pane, short: n.why || "주차", watch: "" }); continue; }
     panes.push(pane({ pane: n.pane, win: n.name, kind: "lead", state: STATE[n.state] || (n.state === "turn" ? "질문" : "쉼"), cwd: w0?.cwd, branch: w0?.branch, rows }));
+    nodeOfPane.set(n.pane, n.id);
   }
   for (const w of L.engineNodes) {
     const rows = logsOf(null, [w.name]), p = paneOfId(w.id);
     if (w.state === "parked") parked.push({ id: "c" + p.slice(1), name: w.name, area: "primary", msg: w.note || "주차", owner: false, ago: ago(w.state_at || w.created_at), stale: null, wait: "주차", topics: [], pri: priOf(L.pri, String(w.name)), pane: p, short: "주차", watch: "" });
     else if (["closed", "failed", "gone"].includes(w.state)) closed.push({ pane: p, win: w.name, ago: ago(w.closed_at || w.state_at || w.created_at), msg: w.note || "", area: "primary" });
-    else panes.push(pane({ pane: p, win: w.name, kind: "lead", state: STATE[w.state] || "쉼", rows }));
+    else { panes.push(pane({ pane: p, win: w.name, kind: "lead", state: STATE[w.state] || "쉼", rows })); nodeOfPane.set(p, String(w.id)); }
   }
-  const areas: R[] = [{ key: "primary", name: "Primary", lead: PRIMARY }];
+  for (const p of panes) { const f = L.faces[nodeOfPane.get(p.pane) || ""]; if (f) p.avatar = f; }
+  const areas: R[] = [{ key: "primary", name: "Primary", lead: PRIMARY, avatar: botFace }];
   {
     const areaOf = new Map(L.nodes.map(n => [n.pane, n.area && n.area !== "기타" ? n.area : ""]));
     const groups = new Map<string, R[]>();
@@ -148,7 +207,10 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
         const ps = groups.get(a)!, key = "m" + i;
         const head = ps.find(p => HEAD.test(String(p.win))) || ps.find(p => BUSY.has(String(p.state))) || ps[0];
         for (const p of ps) p.area = key;
-        areas.push({ key, name: a || "기타", lead: head.pane, lead_name: head.win });
+        // 열 머리 얼굴 = 머리 노드에 고른 얼굴, 없으면 열 이름에서 정한 얼굴(같은 이름 → 같은 얼굴) — 머리 판에도 같은 값
+        const avatar = L.faces[nodeOfPane.get(head.pane) || ""] || faceOf(a || "기타");
+        head.avatar = avatar;
+        areas.push({ key, name: a || "기타", lead: head.pane, lead_name: head.win, avatar });
       });
     }
   }
@@ -177,7 +239,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const { promises, to_check } = await promiseRows(db, me, promPane, now);
   return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 1000), open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
-    cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [] };
+    cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [], me_avatar: L.meFace };
 }
 
 function msg(r: R, my: string, mainName: string) {
