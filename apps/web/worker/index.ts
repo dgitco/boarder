@@ -47,6 +47,8 @@ import * as files from "./files";
 import * as ownerRead from "./owner-read";
 import * as OS from "./owner-state";
 import * as memberBoard from "./member-board";
+import * as memberInbox from "./member-inbox";
+import * as memberFiles from "./member-files";
 import { importedWindow, queueToImported } from "./member-imported";
 import { claimEndpoint, pushKind, releaseEndpoint } from "./member-push";
 import * as emoji from "./emoji";
@@ -552,6 +554,7 @@ app.get("/api/agent/result/:id", async c => {
   const body = o.customMetadata?.vault === "1" ? await openBlob(c.env as unknown as VaultEnv, ctx.person, k, await o.arrayBuffer()) : o.body;   // 봉한 것만 풂 — 옛 것은 지금처럼 흘려보냄
   return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 });
+app.get("/f/:id{[0-9a-f]{32}}", c => memberFiles.signedGet(c as never, c.req.param("id")));
 app.route("/", legal);   // 개인정보 처리방침 · 약관(legal.ts) — 구글 동의 화면 링크
 app.post("/mcp", async c => { const ctx = await agentCtx(c); if (ctx === "mismatch") return c.json({ error: "신원 불일치" }, 403); if (!ctx) return c.json({ error: "토큰" }, 401); return mcp(c.req.raw, ctx); });
 app.get("/mcp", c => new Response(null, { status: 405, headers: { allow: "POST" } }));
@@ -1555,6 +1558,13 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
   const b = await c.req.json<Record<string, unknown>>().catch(() => null);
   if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
+  try { const mi = await memberInbox.route(c as never, me, url, b); if (mi) return mi; } catch { return queue.retrySafe(c); }   // 반응 · 고치기 · 읽음 · 모아 보기 · 초안(member-inbox.ts)
+  // 파일 붙은 글: 창이 받아 갈 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 보냄 — 내 파일만(member-files.ts)
+  if (url.pathname === "/api/chat" && Array.isArray(b.files) && b.files.length && !b.delete && !b.react && b.edit === undefined) {
+    const f = await memberFiles.fileLines(c.env, me, c.env.PUBLIC_URL || url.origin, b.files as unknown[]);
+    if (!f.lines.length) return c.json({ ok: false, error: "파일을 찾지 못했어요" }, 400);
+    b.text = [String(b.text || "").trim(), ...f.lines].filter(Boolean).join("\n"); delete b.files;
+  }
   const rid = String(b.rid || "").slice(0, 64);
   let hop: Awaited<ReturnType<typeof memberBoard.post>>;
   try { hop = await memberBoard.post(c.env.DB, me, url.pathname, b); } catch { return queue.retrySafe(c); }   // 읽기만(쓰기 전) — D1 실패는 다시 보내도 됨
@@ -1664,11 +1674,17 @@ app.all("*", async c => {
           try { const a = await queue.answerOf(c.env, me, ans[1]); return a ? c.json({ ok: true, ...a }, 200, { "cache-control": "no-store" }) : c.json({ state: "unknown" }, 404, { "cache-control": "no-store" }); }
           catch { return queue.retrySafe(c); }   // rid 칸을 못 부름 = 모름(화면은 같은 rid 로)
         }
+        const fm = /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));   // 내가 올린 파일만
+        const mi = await memberInbox.route(c as never, me, url); if (mi) return mi;   // 모아 보기 · 초안(member-inbox.ts), 노드 채팅을 열면 그 채널 읽음
         if (url.pathname === "/api/data") await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드
         if (sl) return sl;
         const r = await memberBoard.get(c.env.DB, me, await memberBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"));
         if (r) return r;
+      }
+      if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {   // 몸통이 파일 · 녹음(JSON 아님) — 회원 쓰기와 같은 문
+        if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
+        return url.pathname === "/api/upload" ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never);
       }
       if (c.req.method === "POST") return memberPost(c, me, url);
     }

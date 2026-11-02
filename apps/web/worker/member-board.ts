@@ -65,6 +65,30 @@ async function load(db: D1Database, me: string) {
   return { defaultNode, primaryWin, nodes, byId, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes };
 }
 
+// 채널(pane)마다 에이전트 글 — 모아 보기 읽지 않음 · 저장(member-inbox.ts)이 씀. 채널 = 노드 + 노드에 안 묶인 역할 창(메인 봇은 따로), 이름은 틀 노드 채팅 열쇠(「n:<이름>」)와 같음.
+// 글은 load 가 읽는 최근 600줄 안에서만. paneOfLog: 글 한 줄(win · thread) → 그 채널 pane(못 찾으면 null)
+export async function paneLogs(db: D1Database, me: string) {
+  const L = await load(db, me);
+  const agent = (r: R) => r.kind !== "me" && r.win !== ME && !OWN.test(r.win);
+  const chans = [
+    ...L.nodes.map(n => ({ pane: n.pane, name: n.name, rows: L.logs.filter(r => r.thread !== "primary" && agent(r) && L.nodeOfWin(r.win) === n) })),
+    ...L.engineNodes.map(w => ({ pane: paneOfId(w.id), name: String(w.name), rows: L.logs.filter(r => r.thread !== "primary" && agent(r) && r.win === w.name) })),
+  ];
+  const engineOf = new Map(L.engineNodes.map(w => [String(w.name), paneOfId(w.id)]));
+  const paneOfLog = (r: { win: string; kind?: string; thread?: string | null }) => r.thread === "primary" ? PRIMARY
+    : L.nodeOfWin(r.win)?.pane || engineOf.get(r.win) || (r.kind === "me" ? L.nodes.find(n => n.name === r.win)?.pane : null) || null;   // 내 글(kind me)은 win 이 노드 이름
+  return { chans, paneOfLog };
+}
+// 글 반응(member_react): 그 글들에 단 이모지 — 회원 혼자 보는 보드라 「누가」는 늘 나. 틀 꼴 { name(Slack 이름), count, mine }
+async function withReacts(db: D1Database, me: string, out: R[]) {
+  const lids = out.map(m => m.lid).filter((x): x is number => !!x);
+  if (!lids.length) return out;
+  const rs = (await db.prepare("SELECT log_id, emoji FROM member_react WHERE owner = ? AND log_id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(lids)).all<{ log_id: number; emoji: string }>().catch(() => ({ results: [] as { log_id: number; emoji: string }[] }))).results;
+  const by = new Map<number, string[]>(); for (const r of rs) (by.get(r.log_id) || by.set(r.log_id, []).get(r.log_id)!).push(r.emoji);
+  for (const m of out) if (m.lid && by.has(m.lid)) m.reactions = by.get(m.lid)!.map(name => ({ name, count: 1, mine: true }));
+  return out;
+}
+
 const STATE: Record<string, string> = { working: "일하는 중", busy: "일하는 중", starting: "일하는 중", opening: "일하는 중", background: "뒤 작업 중" };
 
 export async function data(db: D1Database, me: string, bot: { name?: string } | null) {
@@ -118,7 +142,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
 // ── 채팅(chat.py norm 꼴) ──
 function msg(r: R, me: string, mainName: string) {
   const mine = r.win === ME || r.kind === "me";   // me = 노드 채팅에서 내가 그 창에 넣은 글
-  return { ts: tsOf(r.at, r.id), thread: null, who: mine ? "owner" : "agent", name: mine ? "Owner" : r.win === "보더" ? "보더" : mainName, board: false, text: String(r.text || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null, ...(mine ? { src: String(r.text || "") } : {}) };
+  return { ts: tsOf(r.at, r.id), lid: Number(r.id) || 0, thread: null, who: mine ? "owner" : "agent", name: mine ? "Owner" : r.win === "보더" ? "보더" : mainName, board: false, text: String(r.text || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null, ...(mine ? { src: String(r.text || "") } : {}) };
 }
 const CARD_TS = /^\d{10}\.\d{6}$/;
 export const TODO_DONE = "했어요";
@@ -144,7 +168,7 @@ export function convoMsg(i: R, mainName: string) {
   const ref = String(json<string[]>(i.refs, [])[0] || ""), src = i.kind === "session" ? String(i.engine || "claude") : ref.split(":")[0];
   let h = 0; for (const ch of String(i.key)) h = (Math.imul(h, 31) + ch.charCodeAt(0)) >>> 0;
   const at = convoAt(i), mine = i.kind === "session";
-  return { ...msg({ id: h, win: mine ? ME : "보더", kind: mine ? "me" : "chat", text: String(i.title), at }, "", mainName), ch: "primary", moved: { chan: ORIGIN[src] || src || "들여오기", at: at / 1000 } };
+  return { ...msg({ id: h, win: mine ? ME : "보더", kind: mine ? "me" : "chat", text: String(i.title), at }, "", mainName), lid: 0, ch: "primary", moved: { chan: ORIGIN[src] || src || "들여오기", at: at / 1000 } };
 }
 async function primaryRows(db: D1Database, me: string, before?: string) {
   const m = before ? /^(\d{10})\.(\d{6})$/.exec(before) : null, sec = m ? Number(m[1]) * 1000 : 0;
@@ -208,6 +232,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
       return j({ channel: "primary", root: m[2], owner: null, messages: rows.results.map(r => msg(r, me, mainName)) });
     }
     const rows = await primaryRows(db, me, url.searchParams.get("before") || undefined), page = rows.slice(0, 100), msgs = page.map(r => msg(r, me, mainName)).reverse();
+    await withReacts(db, me, msgs);
     return j({ channel: "primary", messages: msgs, more: rows.length > 100, cursor: msgs.length ? msgs[0].ts : null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
   }
   if (p === "/api/nodechat") {
@@ -223,6 +248,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     const out = [...rows.map(r => ({ at: Number(r.at), m: { ...msg(r, me, r.win), ch: "primary", ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })), ...(n ? n.convos.map(i => ({ at: convoAt(i), m: convoMsg(i, mainName) })) : []),
       ...cards.map(c => ({ at: Number(c.at), m: { ...cardMsg(c, L.logs.filter(r => r.thread === c.id)), ch: "primary" } }))]
       .sort((a, b) => a.at - b.at).slice(-300).map(x => x.m);
+    await withReacts(db, me, out as R[]);
     return j({ channel: "n:" + t, messages: out, stale_min: 0, more: false });
   }
   return null;
