@@ -73,7 +73,7 @@
     for (const x of a){
       const q = low(x); if (!q) continue;
       const k = PINS.find(k => q === k || q === low(AN()[k]) || q === low(pinName(k)));
-      out.add('c:primary');   // 목록 = 기능별 비서라 영역 · 일 줄이 없음 — 비서 줄에 자물쇠
+      out.add(BOTS[0].k);   // 목록 = 기능별 비서라 영역 · 일 줄이 없음 — 비서 줄(/es = Primary, /ea = 퍼스널)에 자물쇠
       if (k) continue;
     }
     return out;
@@ -84,12 +84,24 @@
   const when = ts => { if (!ts || !isFinite(+ts)) return ''; const d = new Date(+ts * 1000), n = new Date(), y = new Date(n); y.setDate(n.getDate() - 1);
     return d.toDateString() === n.toDateString() ? hm(d) : d.toDateString() === y.toDateString() ? '어제' : `${d.getMonth() + 1}/${d.getDate()}`; };
   const lastOf = ch => { try { const m = typeof CS !== 'undefined' ? CS.ch?.[ch]?.messages : null; const x = m && m[m.length - 1]; return x ? {ts: x.ts, text: String(x.text || '').replace(/[*_`>~]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80)} : null; } catch { return null; } };
-  const BOTS = [
+  const COMPANY = [
     {k: 'c:primary', name: () => pinName('primary'), av: () => pinAv('primary'), pre: () => lastOf('primary')?.text || '무엇이든 맡겨 주세요', at: () => lastOf('primary')?.ts, n: () => 0, open: () => fn('openChan') && openChan('primary')},
     {k: 'c:i:unread', name: () => '슬랙 인박스', av: () => 'slack inbox', pre: () => IBC().unread ? `읽지 않은 글 ${IBC().unread}개` : '새 글이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.unread || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => IBC().unread || 0, open: () => window.HBInbox?.openFeed?.('unread')},
     {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => ATTN() ? `${window.HB_MEMBER ? '내 차례' : '내 차례'} ${ATTN()}개` : '할 일이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.turn || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => ATTN(), open: () => window.HBInbox?.openFeed?.('turn')},
     {k: 'c:shop', name: () => '상담봇', av: () => 'counsel bot', pre: () => lastOf('shop')?.text || '채널톡 상담 답 초안을 올려요', at: () => lastOf('shop')?.ts, n: () => 0, open: () => fn('openChan') && openChan('shop')},
   ];
+  const PERSONAL = window.BX_EA_MODE === 'personal';
+  const mine = (ch, area) => { ch = String(ch || ''); if (ch === 'personal' || area === 'personal') return true; if (!ch.startsWith('n:')) return false; const t = ch.slice(2);
+    const p = P().find(x => x.pane === t || (typeof nodeTitle === 'function' && nodeTitle(x) === t)); return p?.area === 'personal'; };
+  const ibAt = k => () => { try { return Math.max(0, ...(window.HBInbox?.state?.[k] || []).map(x => +x.ts || 0)) || null; } catch { return null; } };
+  const PERSONAL_BOTS = [
+    {k: 'c:personal', name: () => '비서', av: () => pinAv('personal'), pre: () => lastOf('personal')?.text || '일정 · 이동 · 돈 · 잔일을 맡겨 주세요', at: () => lastOf('personal')?.ts, n: () => 0, open: () => fn('openChan') && openChan('personal')},
+    ...(typeof window.HBInbox?.setOnly === 'function' ? [
+      {k: 'c:i:unread', name: () => '읽지 않은 글', av: () => 'unread', pre: () => IBC().unread ? `읽지 않은 글 ${IBC().unread}개` : '새 글이 없어요', at: ibAt('unread'), n: () => IBC().unread || 0, open: () => window.HBInbox?.openFeed?.('unread')},
+      {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => IBC().turn ? `내 차례 ${IBC().turn}개` : '할 일이 없어요', at: ibAt('turn'), n: () => IBC().turn || 0, open: () => window.HBInbox?.openFeed?.('turn')}] : []),
+  ];
+  const BOTS = PERSONAL ? PERSONAL_BOTS : COMPANY;
+  if (PERSONAL) try { window.HBInbox?.setOnly?.(mine); } catch {}
   function data(){
     const ws = work(), lk = locks(ws);
     return {ws, lk, open: openKey(),
@@ -222,7 +234,8 @@
   scrim.addEventListener('keydown', composeKey);
   document.addEventListener('keydown', composeKey);
   for (const b of list.querySelectorAll('.bx-ea-compose')) b.addEventListener('click', openCompose);
-  // 찾기 = 틀의 찾기(⌘K) 그대로 — 사이드바 찾기 단추를 누름, 없으면 ⌘K
+  // 찾기 = 틀의 찾기(⌘K) 그대로 — 사이드바 찾기 단추를 누름, 없으면 ⌘K. /ea 는 뺌(틀 찾기가 회사 채널 · 노드 · 카드까지 찾음 — 회사 일 안 섞음)
+  if (PERSONAL) for (const b of list.querySelectorAll('.bx-ea-find')) b.remove();
   for (const find of list.querySelectorAll('.bx-ea-find')) find.addEventListener('click', () => {
     const b = document.querySelector('.bx-sb [data-go="find"]');
     if (b) return b.click();
@@ -232,7 +245,7 @@
   function callPane(){
     const k = openKey();
     if (k.startsWith('n:')) return k.slice(2);
-    const ch = k.startsWith('c:') && PINS.includes(k.slice(2)) ? k.slice(2) : 'primary';
+    const ch = k.startsWith('c:') && PINS.includes(k.slice(2)) ? k.slice(2) : PERSONAL ? 'personal' : 'primary';
     try { return fn('leadPane') ? leadPane(ch) || (ch === 'primary' ? priPane()?.pane : null) : ch === 'primary' ? priPane()?.pane : null; } catch { return ch === 'primary' ? priPane()?.pane : null; }
   }
   function call(){
@@ -244,7 +257,7 @@
   const tail = f => String(f || '').replace(/\/+$/, '').split('/').pop();
   function meet(){
     const A = typeof ARTS === 'object' && ARTS ? ARTS : {};
-    const cs = Object.entries(A).filter(([, x]) => x && x.kind === 'canvas').map(([id, x]) => ({id, ...x})).sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+    const cs = Object.entries(A).filter(([, x]) => x && x.kind === 'canvas' && (!PERSONAL || /^퍼스널(\/|$)/.test(String(x.folder || '')))).map(([id, x]) => ({id, ...x})).sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
     if (!cs.length) return note('미팅할 캔버스가 없어요');
     const k = openKey(), p = k.startsWith('n:') ? BY()[k.slice(2)] : null, f = p?.folder ? tail(p.folder) : '';
     const pick = (f && cs.find(x => tail(x.folder) === f)) || cs[0];

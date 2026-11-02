@@ -137,3 +137,24 @@ test("로그인 안 함 /es → 로그인 화면(React, 주소 그대로 — 들
   assert.ok(html.includes("로그인 화면") && !html.includes("BX_EA"));
   assert.deepEqual(paths, []);
 });
+
+test("주인 /ea(퍼스널 비서): /es 와 같은 길 · 같은 틀에 BX_EA_MODE=personal, /es 에는 없음", async () => {
+  const { paths, get } = setup();
+  const r = await get("/ea");
+  assert.equal(r.status, 200);
+  assert.deepEqual(paths, ["/"]);
+  const html = await r.text();
+  assert.match(html, /<head[^>]*><script>window\.BX_EA=1;window\.BX_EA_MODE="personal"<\/script>/);
+  assert.ok(!(await (await get("/es")).text()).includes("BX_EA_MODE"));
+});
+
+test("/ea/ → 301 /ea, 회원 /ea → /es(퍼스널 리드가 없음)", async () => {
+  const { paths, get } = setup();
+  const r = await get("/ea/?x=1");
+  assert.equal(r.status, 301);
+  assert.equal(new URL(r.headers.get("location")!, "https://example.test").pathname, "/ea");
+  const m = await get("/ea", MEMBER);
+  assert.equal(m.status, 302);
+  assert.equal(new URL(m.headers.get("location")!, "https://example.test").pathname, "/es");
+  assert.deepEqual(paths, []);
+});

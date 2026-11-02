@@ -101,8 +101,9 @@ test("메인 봇 = Primary 얼굴: member_bot 의 고른 얼굴, 없으면 봇 �
 test("내 아바타는 메인 봇과 따로: 다른 줄(@me:<메일>), 보드 데이터 me_avatar, 남과 안 섞임", async () => {
   const { db, D1 } = setup();
   db.prepare("INSERT INTO member_bot(owner, seed, hue, name, photo, icon, fav, updated_at) VALUES (?,?,?,?,?,?,?,?)").run(A, "tofu", 265, "모찌", "", "a".repeat(32), "b".repeat(32), 1);
-  assert.equal(await MB.myAvatar(D1, A), null);
-  assert.equal((await MB.data(D1, A, { name: "모찌" })).me_avatar, null);
+  assert.deepEqual(await MB.myAvatar(D1, A), MB.faceOf(A));
+  assert.deepEqual((await MB.data(D1, A, { name: "모찌" })).me_avatar, MB.faceOf(A));
+  assert.notDeepEqual(MB.faceOf(A), { seed: "tofu", hue: 265 });
   await MB.setMyAvatar(D1, A, { seed: "bean", hue: 140 });
   assert.deepEqual(await MB.myAvatar(D1, A), { seed: "bean", hue: 140 });
   const d = await MB.data(D1, A, { name: "모찌" });
@@ -114,6 +115,6 @@ test("내 아바타는 메인 봇과 따로: 다른 줄(@me:<메일>), 보드 �
   await MB.setMyAvatar(D1, A, { seed: "bean", hue: 140, photo: "d".repeat(32) });
   assert.deepEqual(await MB.myAvatar(D1, A), { seed: "bean", hue: 140, photo: "d".repeat(32) });
   assert.equal((db.prepare("SELECT count(*) n FROM member_bot WHERE owner = ?").get(MB.meKey(A)) as any).n, 1);
-  assert.equal(await MB.myAvatar(D1, B), null);
-  assert.equal((await MB.data(D1, B, null)).me_avatar, null);
+  assert.deepEqual(await MB.myAvatar(D1, B), MB.faceOf(B));
+  assert.deepEqual((await MB.data(D1, B, null)).me_avatar, MB.faceOf(B));
 });

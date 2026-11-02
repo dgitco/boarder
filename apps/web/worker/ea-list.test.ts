@@ -63,9 +63,10 @@ class El {
     for (let p: El | null = this; p; p = p.parent) for (const f of p.listeners.get(type) ?? []) f(e);
   }
   click() { this.dispatch("click"); }
+  remove() { if (this.parent) { this.parent.children = this.parent.children.filter(c => c !== this); this.parent = null; } }
   focus() { active = this; }
 }
-function setup(width = 390, enabled = true) {
+function setup(width = 390, enabled = true, extra: Record<string, unknown> = {}) {
   active = null;
   const doc = new El("document"), html = new El("html"), body = new El("body"), ans = new El("div"), input = new El("input");
   doc.append(html); html.append(body); body.append(ans, input);
@@ -85,7 +86,7 @@ function setup(width = 390, enabled = true) {
   };
   Object.defineProperty(doc, "activeElement", { get: () => active });
   Object.assign(doc, { dispatchEvent: (e: any) => doc.dispatch(e.type, e) });
-  ctx.window = ctx;
+  Object.assign(ctx, extra); ctx.window = ctx;
   // 보드의 look/nameOf는 window 속성이 아닌 전역 const다.
   vm.runInNewContext("const {look, nameOf, leadPane} = boardFns;\n" + SRC, ctx);
   return { ctx, body, html, doc, calls, panes, input, tick: () => intervals.forEach(f => f()) };
@@ -159,4 +160,35 @@ test('인박스 비서 대화 꼴 CSS 는 /es(html.bx-ea #ans) 안에서만 — 
   for (const l of rules) for (const sel of l.slice(0, l.indexOf("{")).split(/,(?![^(]*\))/)) assert.match(sel.trim(), /^html\.bx-ea #ans /, sel);
   assert.doesNotMatch(css, /\.ibbox[^{]*\{[^}]*display:none|\.ibpx\{display:none/);
   assert.match(css, /\.ibpx :is\(\.plus,\.vmemo,\.ctip,\.send,\.cvoice,\.xpand,\.att\)\{display:none!important\}/);
+});
+
+test("/ea(퍼스널 비서) — 비서 = 퍼스널 리드 채널 · 읽지 않은 글 · 할 일 관리, 모아 보기는 퍼스널 글만(회사 일 안 섞음)", () => {
+  let only: ((ch: string) => boolean) | null = null;
+  const HBInbox = { setOnly: (f: (ch: string) => boolean) => { only = f; }, counts: () => ({ unread: 2, turn: 1 }), state: { unread: [], turn: [] }, openFeed: (k: string) => t.calls.push(`feed:${k}`) };
+  const t = setup(390, true, { BX_EA_MODE: "personal", HBInbox });
+  t.panes[1].area = "personal"; t.panes[2].area = "company";
+  assert.deepEqual(t.body.querySelectorAll(".bx-ea-row b").map(e => e.textContent), ["비서", "읽지 않은 글", "할 일 관리"]);
+  assert.ok(only, "보드 모아 보기에 거르개를 검");
+  assert.deepEqual(["personal", "company", "primary", "dgit", "shop", "n:p1", "n:p2"].map(c => only!(c)), [true, false, false, false, false, true, false]);
+  t.ctx.ans.hidden = true; t.body.querySelectorAll(".bx-ea-row")[0].click(); t.ctx.ans.hidden = true; t.tick(); t.body.querySelectorAll(".bx-ea-row")[2].click();
+  assert.deepEqual(t.calls, ["chan:personal", "feed:turn"]);
+  assert.doesNotMatch(t.body.textContent, /상담봇|슬랙 인박스/);
+  assert.equal(only!("primary", "personal"), true, "메인 채널에 올라간 퍼스널 카드도 퍼스널");
+  assert.equal(t.body.querySelectorAll(".bx-ea-find").length, 0, "/ea 찾기 없음(틀 찾기가 회사 것까지 찾음)");
+});
+
+test("/ea 전화 · 미팅은 퍼스널로 — 모아 보기 비서에서 걸어도 퍼스널 리드 판, 미팅은 퍼스널 폴더 캔버스만", () => {
+  const t = setup(390, true, { BX_EA_MODE: "personal", HBInbox: { setOnly() {}, counts: () => ({}), state: {}, openFeed() {} },
+    boardFns: { nameOf: (p: any) => p.win, look: (p: any) => ({ g: p.g, s: "대체 말" }), leadPane: (k: string) => "lp-" + k },
+    ARTS: { co: { kind: "canvas", at: "2026-11-02", folder: "회사/리포트" }, me: { kind: "canvas", at: "2026-11-01", folder: "퍼스널/디자인" } } });
+  t.ctx.cur.chan = "i:turn"; t.ctx.ans.hidden = false; t.tick();
+  const trigger = t.body.querySelector('[data-ea="menu"]'), menu = t.body.querySelector('[role="menu"]');
+  trigger.click(); menu.querySelector('[data-ea="call"]').click();
+  trigger.click(); menu.querySelector('[data-ea="meet"]').click();
+  assert.deepEqual(t.calls, ["call:lp-personal", "call:lp-personal", "art:me"]);
+});
+
+test("/ea 인데 보드에 거르개(setOnly)가 없으면 비서 하나만 — 회사 글이 섞인 모아 보기를 안 보임", () => {
+  const t = setup(390, true, { BX_EA_MODE: "personal", HBInbox: { counts: () => ({ unread: 9, turn: 9 }), state: {} } });
+  assert.deepEqual(t.body.querySelectorAll(".bx-ea-row b").map(e => e.textContent), ["비서"]);
 });

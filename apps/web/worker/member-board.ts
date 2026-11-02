@@ -63,8 +63,7 @@ export async function setNodeFace(db: D1Database, me: string, ref: string, face:
   await db.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('faces', json_patch('{}', json(?2))), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.faces', json_patch(CASE WHEN json_valid(data) AND json_type(data, '$.faces') = 'object' THEN json_extract(data, '$.faces') ELSE '{}' END, json(?2))), updated_at = ?3").bind(me, patch, Date.now()).run();
   return { ok: true, node: id, pane: paneOfId(id), avatar: face } as const;
 }
-// 내 아바타(사이드바 아래 · 내 글 얼굴) — 메인 봇 줄과 따로
-export async function myAvatar(db: D1Database, me: string) { return faceRow(await db.prepare("SELECT seed, hue, photo FROM member_bot WHERE owner = ?").bind(meKey(me)).first<R>()); }
+export async function myAvatar(db: D1Database, me: string) { return faceRow(await db.prepare("SELECT seed, hue, photo FROM member_bot WHERE owner = ?").bind(meKey(me)).first<R>()) || faceOf(String(me).toLowerCase()); }
 export async function setMyAvatar(db: D1Database, me: string, face: Face) {
   await db.prepare("INSERT INTO member_bot (owner, seed, hue, name, photo, icon, fav, updated_at) VALUES (?,?,?,'',?,'','',?) ON CONFLICT(owner) DO UPDATE SET seed = excluded.seed, hue = excluded.hue, photo = excluded.photo, updated_at = excluded.updated_at")
     .bind(meKey(me), face.seed, face.hue, face.photo || "", Date.now()).run();
@@ -239,7 +238,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const { promises, to_check } = await promiseRows(db, me, promPane, now);
   return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 1000), open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
-    cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [], me_avatar: L.meFace };
+    cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
 }
 
 function msg(r: R, my: string, mainName: string) {

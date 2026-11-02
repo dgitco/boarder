@@ -125,7 +125,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const meRedraw = () => { lists(); try { if (typeof cur !== 'undefined' && cur && !ans.hidden) render(); } catch {} };
   window.addEventListener('bx-me', meRedraw);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { if (ME()) meRedraw(); });
-  if (window.HB_MEMBER){ const a = typeof D !== 'undefined' ? D?.me_avatar : null; window.BX_ME = a ? {...a, name: window.HB_MEMBER.name} : null; }
+  if (window.HB_MEMBER){ const a = window.HB_MEMBER.avatar || (typeof D !== 'undefined' ? D?.me_avatar : null); window.BX_ME = a ? {...a, name: window.HB_MEMBER.name} : null; }   // 첫 그리기부터 내 얼굴(페이지에 실려 옴 — 고른 것 없으면 기본 얼굴)
   fetch(window.HB_MEMBER ? 'api/me/avatar' : 'api/me/bot', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => {
     if (!j) return; const b = window.HB_MEMBER ? j.avatar && {...j.avatar, name: window.HB_MEMBER.name} : j.bot, m = b ? {seed: b.seed, hue: b.hue, name: b.name, photo: b.photo || '', icon: b.icon} : null;
     if (JSON.stringify(m) === JSON.stringify(window.BX_ME)) return;
