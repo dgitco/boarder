@@ -1,8 +1,9 @@
 import { RULE_KEYS, type Rules } from "./install";
+import { BUNDLE_KEYS, BUNDLE_DEF } from "./harness-bundles";
 import { pickOf, PARK_H_LIM, PARK_QUIET_MS, type PrimaryPick } from "./importer/group";
 
-export type NodePrefs = { park_on: boolean; park_h: number; primary_item: PrimaryPick; rules: Required<Rules> };
-export const PREF_DEF: NodePrefs = { park_on: true, park_h: PARK_QUIET_MS / 3600_000, primary_item: "auto", rules: Object.fromEntries(RULE_KEYS.map(k => [k, true])) as Required<Rules> };
+export type NodePrefs = { park_on: boolean; park_h: number; primary_item: PrimaryPick; rules: Required<Rules>; bundles: Record<string, boolean> };
+export const PREF_DEF: NodePrefs = { park_on: true, park_h: PARK_QUIET_MS / 3600_000, primary_item: "auto", bundles: { ...BUNDLE_DEF }, rules: Object.fromEntries(RULE_KEYS.map(k => [k, true])) as Required<Rules> };
 
 const obj = (v: unknown): Record<string, unknown> => {
   if (typeof v === "string") { try { v = JSON.parse(v); } catch { return {}; } }
@@ -12,12 +13,13 @@ const hours = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? Math
 
 /** node_setting.data(문자열 · 객체 · 없음) → 칸마다 값, 없거나 틀린 칸은 기본값 */
 export function prefsOf(data: unknown): NodePrefs {
-  const d = obj(data), r = obj(d.rules);
+  const d = obj(data), r = obj(d.rules), b = obj(d.bundles);
   return {
     park_on: d.park_on !== false,
     park_h: hours(d.park_h) ?? PREF_DEF.park_h,
     primary_item: pickOf(d.primary_item),
     rules: Object.fromEntries(RULE_KEYS.map(k => [k, r[k] !== false])) as Required<Rules>,
+    bundles: Object.fromEntries(BUNDLE_KEYS.map(k => [k, typeof b[k] === "boolean" ? b[k] : BUNDLE_DEF[k]])) as Record<string, boolean>,
   };
 }
 export const parkHOf = (p: NodePrefs) => p.park_on ? p.park_h : 0;
@@ -31,6 +33,9 @@ export function prefsPatch(raw: unknown): Partial<NodePrefs> | null {
   const r = obj(b.rules), rules: Rules = {};
   for (const k of RULE_KEYS) if (typeof r[k] === "boolean") rules[k] = r[k] as boolean;
   if (Object.keys(rules).length) out.rules = rules as Required<Rules>;
+  const bn = obj(b.bundles), bundles: Record<string, boolean> = {};
+  for (const k of BUNDLE_KEYS) if (typeof bn[k] === "boolean") bundles[k] = bn[k] as boolean;
+  if (Object.keys(bundles).length) out.bundles = bundles;
   return Object.keys(out).length ? out : null;
 }
 
@@ -43,6 +48,7 @@ export async function savePrefs(db: D1Database, owner: string, patch: Partial<No
   if (patch.park_h !== undefined) put("park_h", "?", patch.park_h);
   if (patch.primary_item !== undefined) put("primary_item", "?", patch.primary_item);
   if (patch.rules) put("rules", `json_patch(CASE WHEN json_valid(data) AND json_type(data, '$.rules') = 'object' THEN json_extract(data, '$.rules') ELSE '{}' END, json(?))`, JSON.stringify(patch.rules));
+  if (patch.bundles) put("bundles", `json_patch(CASE WHEN json_valid(data) AND json_type(data, '$.bundles') = 'object' THEN json_extract(data, '$.bundles') ELSE '{}' END, json(?))`, JSON.stringify(patch.bundles));
   if (!sets.length) return;
   // 자리표: ?1 owner · ?2 처음 data(줄이 없을 때) · ?3 시각 · ?4… 칸 값
   const setSql = sets.map((x, i) => x.replace("?", `?${i + 4}`)).join(", ");

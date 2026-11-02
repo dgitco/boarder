@@ -95,6 +95,19 @@ test("상위 없는 노드 · 주차 노드는 기본 창(primary_win)이 열 �
   assert.equal(d.panes.find((p: any) => p.win === "개인 비서").area, d.areas.find((a: any) => a.lead_name === "개인 비서").key, "다른 열 머리는 그대로");
 });
 
+test("노드 상태 한 줄(watch): 창의 가장 새 줄이 status(boarder status)면 그 줄, 다른 줄이 더 새로우면 비움", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_1", "가동 점검", "acme"); add(db, A, "n_2", "분기 정산", "acme");
+  const item = (node: string, win: string) => { db.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?)").run(A, "win:" + win, node, "auto"); };
+  item("n_1", "가동 창"); item("n_2", "정산 창");
+  const log = (win: string, kind: string, text: string, at: number) => db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(A, win, kind, text, null, at);
+  log("가동 창", "progress", "시험 셋 끝", Date.now() - 3600_000); log("가동 창", "status", "쉼 · 깨움 21:30 · 팀장님 배포", Date.now() - 1800_000);
+  log("정산 창", "status", "옛 상태", Date.now() - 3600_000); log("정산 창", "progress", "보고서 초안 고침", Date.now() - 600_000);
+  const d = await data(d1, A, null) as any, w = (name: string) => d.panes.find((p: any) => p.win === name).watch;
+  assert.equal(w("가동 점검"), "쉼 · 깨움 21:30 · 팀장님 배포");
+  assert.equal(w("분기 정산"), "", "더 새 progress 가 있으면 상태 줄은 낡은 것");
+});
+
 test("영역이 하나뿐이면 예전처럼 Primary 한 열", async () => {
   const { db, d1 } = fakeD1();
   add(db, A, "n_1", "가", "acme"); add(db, A, "n_2", "나", "acme");

@@ -34,7 +34,7 @@ async function withServer(fn) {
 const tree = d => fs.readdirSync(d, { recursive: true }).sort();
 
 const COMMANDS = [
-  ['setup', '--yes'], ['status'], ['restore'], ['enable', 'report'], ['enable', 'engine'], ['disable', 'report'], ['disable', 'engine'], ['uninstall'],
+  ['setup', '--yes'], ['status'], ['restore'], ['enable', 'report'], ['enable', 'engine'], ['disable', 'report'], ['disable', 'engine'], ['enable', 'harness'], ['disable', 'harness'], ['harness', 'list'], ['uninstall'],
   ['engine', 'setup'], ['engine', 'stop'], ['engine', 'run'], ['watch'], ['watch', 'install'], ['watch', 'remove'], ['watch', '--once'],
   ['canvas', 'put', 'x'], ['canvas', 'list'], ['promise', 'list'], ['import'], ['import', '--setup'], ['engine', 'move-all', 'herdr', 'tmux', '--yes'], ['import', '--follow'], ['import', '--stop'],
   ['connect', 'linear'], ['session', 'save'], ['profile', 'add', 'x'], ['profile', 'shims'], ['mcp'], ['headers'], ['hook', 'session-start'],
@@ -49,6 +49,13 @@ for (const flag of ['--help', '-h']) test(`${flag}: 모든 명령이 도움말�
     assert.deepEqual(hits, [], `${c.join(' ')} ${flag}: 서버로 나감`);
     assert.deepEqual(tree(H), before, `${c.join(' ')} ${flag}: 기기에 씀`);
   }
+}));
+test('enable · disable · harness 도움말에 하네스 줄', () => withServer(async ({ cli }) => {
+  for (const c of [['enable', '--help'], ['help', 'disable'], ['harness', '-h']]) { const r = await cli(c); assert.match(r.out, /boarder enable harness/); assert.match(r.out, /boarder harness list/); }
+}));
+test('enable harness: 하네스를 내주지 않는 서버(공개 판)면 아무것도 안 깔고 실패', () => withServer(async ({ cli, H }) => {
+  const before = tree(H), r = await cli(['enable', 'harness', '--name', 'x', '--lang', 'ko']);
+  assert.notEqual(r.code, 0); assert.deepEqual(tree(H), before);
 }));
 test('명령 도움말은 그 명령 칸만, help <명령> 도 같음', () => withServer(async ({ cli }) => {
   const a = await cli(['import', '--help']), b = await cli(['help', 'import']), all = await cli(['--help']);

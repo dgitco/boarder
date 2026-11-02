@@ -566,6 +566,7 @@
       });
     };
     const num = ([k, n, d, u]) => `<div class="bxs-li"><div><b>${n}</b><span>${d}</span></div><label class="bxs-num"><input class="bxs-in sm" type="number" inputmode="numeric" min="${j.limits[k][0]}" max="${j.limits[k][1]}" value="${j.values[k]}" data-nk="${k}" aria-label="${esc(n)}"><span>${u}</span></label></div>`;
+    const BUN_KO = {board: ['판', '채널 · 스레드 · 노드 · 캔버스'], 'work-tools': ['창 관리 명령', 'work · wlog · waitfor · pane · park'], guards: ['안전 훅', '묻기 · 언어 · Chrome 지킴이'], skills: ['스킬', '쓰던 스킬 묶음'], rules: ['규칙 템플릿', '호칭 · 영역 · 한도는 내 값으로'], timers: ['감시 타이머', '핵심만'], 'phone-alert': ['폰 알림', '급한 것만 폰으로 — 사람 몸에 닿아 꺼진 채 시작'], 'external-send': ['바깥 발송', '메일 · 메시지 — 초안 승인 뒤에만, 꺼진 채 시작'], 'account-autoswitch': ['계정 자동 넘김', '한도 차면 다른 계정으로 — 꺼진 채 시작'], 'priority-file': ['우선순위 한 파일', '급한 일 · 목표일 · 완료 조건'], 'switch-confirm': ['계정 넘김 뒤 확인창 통과', ''], 'input-log': ['입력 · 정정 기록', ''], 'one-memory': ['기억 하나로', '대화 전부 보더에'], 'signals-first': ['신호 먼저', '메일 · 사용 패턴 · DB 부하'], 'qa-evidence': ['QA 캔버스 증거', '전 · 후 캡처 · 영상'], 'kickoff': ['큰 일 킥오프', '멘탈 모델 · 완료 조건 먼저'], 'company-assistant': ['/es 회사 비서', ''], 'session-panel': ['세션 칸', ''], 'personal-assistant': ['/ea 퍼스널 비서', ''], experimental: ['실험 묶음', '아직 진행 중인 줄들']};
     const RULE_KO = {one_goal: ['창 하나 = 목표 하나', '같은 목표의 다른 요청은 새 창이 아니라 그 창 안에서'], report: ['보드에 보고', '시작 · 일하는 동안(30분에 한 번 이상) · 막힘 · 끝'],
       park: ['끝나면 저장하고 주차', '끝났거나 남의 답만 기다리면 대화를 저장하고 창을 닫아요 — 조건이 차면 다시 열어요'], ask: ['묻는 글 꼴', '첫 줄에 정할 것, 그다음 고를 것(추천 먼저), 쉬운 말로'], outside: ['바깥에 보내기 전 허락', '메일 · 메시지처럼 바깥에 가는 글은 초안을 보이고 허락 뒤에만']};
     const PARK_HS = [1, 2, 3, 6, 12, 24, 48, 72, 168];
@@ -576,6 +577,7 @@
         + `<select class="bxs-in sm bxs-sel" data-npr aria-label="메인 봇 창">${opts.map(k => `<option value="${esc(k)}"${k === P.primary_item ? ' selected' : ''}>${esc(primLabel(k))}</option>`).join('')}</select></div></div>`
         + `<div class="bxs-sech">주차</div><div class="bxs-list"><div class="bxs-li"><div><b>조용한 노드 주차</b><span>창 · 세션 · 보고 줄이 이만큼 조용하면 노드를 주차로 보여요(창은 안 닫음 — 다시 일하면 바로 살아나요)</span></div>`
         + `<div class="bxs-row" style="flex-wrap:nowrap">${P.park_on ? `<select class="bxs-in sm bxs-sel" data-nph aria-label="주차까지 조용한 시간">${[...new Set([...PARK_HS, P.park_h])].sort((x, y) => x - y).map(h => `<option value="${h}"${h === P.park_h ? ' selected' : ''}>${hrs(h)} 조용하면</option>`).join('')}</select>` : '<span class="bxs-mut">끔</span>'}${sw(P.park_on, 'data-npo', '조용한 노드 주차')}</div></div></div>`
+        + `<div class="bxs-sech">하네스 묶음 <span class="bxs-mut">처음엔 Owner 방식 그대로 — 끄고 고쳐 써요</span></div><div class="bxs-list">${(j.bundle_keys || []).map(k => `<div class="bxs-li"><div><b>${esc(BUN_KO[k]?.[0] || k)}</b><span>${esc(BUN_KO[k]?.[1] || '')}</span></div>${sw(!!(P.bundles || {})[k], `data-nbn="${esc(k)}"`, BUN_KO[k]?.[0] || k)}</div>`).join('')}</div>`
         + `<div class="bxs-sech">하네스 규칙</div><div class="bxs-list">${(j.rule_keys || Object.keys(RULE_KO)).map(k => `<div class="bxs-li"><div><b>${esc(RULE_KO[k]?.[0] || k)}</b><span>${esc(RULE_KO[k]?.[1] || '')}</span></div>${sw(P.rules[k] !== false, `data-nrl="${esc(k)}"`, RULE_KO[k]?.[0] || k)}</div>`).join('')}`
         + `<div class="bxs-li"><div><b>비밀 찍지 않기</b><span>비밀번호 · 토큰은 출력 · 기록 · 게시하지 않아요 — 끌 수 없어요</span></div><span class="bxs-mut">늘 켬</span></div>`
         + `<div class="bxs-li"><div><b>기기에 반영</b><span>설치 프롬프트 · 새 창은 바로 따라요. 이미 설치한 AI 도구의 규칙(스킬)은 기기에서 다시 넣어요</span></div><div class="bxs-row"><code class="bxs-url">boarder enable report</code>${btn('복사', 'data-cp="boarder enable report"', 'sm ghost')}</div></div></div>`
@@ -633,6 +635,8 @@
       if (e.target.closest('[data-nmore]')) { more = true; return draw(); }
       const cp = e.target.closest('[data-cp]'); if (cp) return copy(cp.dataset.cp, '명령을');
       if (e.target.closest('[data-npo]')) { const was = j.prefs.park_on; j.prefs.park_on = !was; draw(); return savePref({park_on: !was}, () => { j.prefs.park_on = was; }); }
+      const bn = e.target.closest('[data-nbn]');
+      if (bn) { const k = bn.dataset.nbn; if (!j.prefs.bundles) j.prefs.bundles = {}; const was = !!j.prefs.bundles[k]; j.prefs.bundles[k] = !was; draw(); return savePref({bundles: {[k]: !was}}, () => { j.prefs.bundles[k] = was; }); }
       const rl = e.target.closest('[data-nrl]');
       if (rl) { const k = rl.dataset.nrl, was = j.prefs.rules[k] !== false; j.prefs.rules[k] = !was; draw(); return savePref({rules: {[k]: !was}}, () => { j.prefs.rules[k] = was; }); }
       const fo = e.target.closest('[data-nfo]'); if (fo) { openFace = openFace === fo.dataset.nfo ? null : fo.dataset.nfo; return draw(); }

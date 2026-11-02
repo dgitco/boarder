@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync, readdirSync, rmdirSync } from 'node:fs';
 import { dir, ensureDir, home, loadDevice, server } from './config.mjs';
+import { HARNESS_HELP } from './harness.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/boarder.mjs', import.meta.url));
 const UNIT = 'boarder-follow', LABEL = 'co.dgit.boarder.follow';
@@ -69,7 +70,8 @@ export async function features() {
   return { report: [...new Set(dirs.filter(d => d.state !== 'off').map(d => d.tool))], reportDirs: dirs, engine: !!cfg.tmux, view: true };
 }
 
-export async function enable(what, { log = console.log, only, skip, yes = true } = {}) {
+export async function enable(what, opts = {}) {
+  const { log = console.log, only, skip, yes = true } = opts;
   if (what === 'report') {
     const S = await setupMod(), r = await S.writeReport({ log, only, skip, yes });
     return { ok: true, report: r.tools };
@@ -79,7 +81,8 @@ export async function enable(what, { log = console.log, only, skip, yes = true }
     const r = await ensureEngine({ log });
     return { ok: !!r.caps.length, engine: true, caps: r.caps };
   }
-  throw new Error('enable report | engine');
+  if (what === 'harness') { const { enableHarness } = await import('./harness.mjs'); return enableHarness({ log, name: opts.name, lang: opts.lang }); }
+  throw new Error('enable report | engine | harness');
 }
 export async function disable(what, { log = console.log, only, skip } = {}) {
   if (what === 'report') { const S = await setupMod(), d = S.dropReport({ only, skip, note: log }); for (const p of d) log(`removed Boarder from ${p}`); return { ok: true, removed: d.length }; }
@@ -91,7 +94,8 @@ export async function disable(what, { log = console.log, only, skip } = {}) {
     for (const p of d) log(`removed ${p}`);
     return { ok: true, removed: d.length };
   }
-  throw new Error('disable report | engine');
+  if (what === 'harness') { const { disableHarness } = await import('./harness.mjs'); return disableHarness({ log }); }
+  throw new Error('disable report | engine | harness');
 }
 
 const RC_BLOCK = '\n# boarder\nexport PATH="$HOME/.local/bin:$PATH"\n';
@@ -104,6 +108,7 @@ export async function uninstall({ log = console.log } = {}) {
   done.push(...S.dropReport());
   const { removeTimer } = await import('./watch.mjs');
   done.push(...removeTimer(), ...removeFollow());
+  try { const { disableHarness } = await import('./harness.mjs'); disableHarness({ log: p => done.push(String(p).replace(/^removed /, '')) }); } catch {}
   try { const { removeService } = await import('./engine/daemon.mjs'); done.push(...await removeService()); } catch {}
   const d = loadDevice();
   if (d?.token) { try { await fetch(`${server()}/api/device/revoke`, { method: 'POST', headers: { authorization: `Bearer ${d.token}` }, signal: AbortSignal.timeout(15000) }); } catch {} }
@@ -135,5 +140,6 @@ export const VIEW_HELP = `What Boarder may change on this machine (all off after
                                     let your agents report to Boarder (adds its MCP server, a session-start hook and a skill to each AI tool folder —
                                     every Claude account folder too — backed up first; fixes entries that point to an old Boarder path)
   boarder enable engine             let Boarder open, wake, park and close AI windows here (Boarder's own tmux and engine service)
-  boarder disable report|engine [--only <folder>]   take that back out again (report: all folders, or the ones named)
+${HARNESS_HELP}
+  boarder disable report|engine|harness [--only <folder>]   take that back out again (report: all folders, or the ones named)
   boarder uninstall                 remove Boarder from this machine (leaves no trace)`;

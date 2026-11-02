@@ -8,6 +8,7 @@ import { onboarding } from "./member-onboarding";
 import { legal } from "./legal";
 import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
 import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, type Bot } from "./install";
+import { BUNDLE_KEYS } from "./harness-bundles";
 import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
 import { canBePrimary, primaryPick, PARK_H_LIM, type Item } from "./importer/group";
 import { landingPage } from "./landing";
@@ -829,7 +830,7 @@ app.get("/api/me/nodeset", async c => {
     return { id: d.id, name: d.name, online: Date.now() - (d.engine_at || 0) < 120_000, default: e?.default ?? null, engines: e?.engines ? Object.keys(e.engines) : [], known: !!e };
   });
   return c.json({ values: await memberNodeVals(c.env, me), defaults: NODE_DEF, limits: NODE_LIM, archive, unit,
-    prefs, pref_defaults: PREF_DEF, park_limits: PARK_H_LIM, rule_keys: RULE_KEYS,
+    prefs, pref_defaults: PREF_DEF, park_limits: PARK_H_LIM, rule_keys: RULE_KEYS, bundle_keys: BUNDLE_KEYS,
     windows: wins.map(w => ({ key: w.key, title: w.title || w.win || w.key, engine: w.engine, device: w.device, state: w.state || "" })), primary_now: cur?.key ?? null, engines }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/nodeset", async c => {
