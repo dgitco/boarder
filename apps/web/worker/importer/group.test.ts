@@ -142,7 +142,22 @@ test("노드 = 목표: 계정 이름 판은 노드가 아니고, 세션이 있�
   assert.equal(r.audit.history, 2);
 });
 
-test("노드 = 목표: 같은 일 번호는 한 노드, 글에 언급된 링크로 다른 이름 창끼리 붙지 않음", async () => {
+test("창 하나 = 노드 하나: 같은 이슈 링크 · 같은 브랜치 · 같은 세션을 가진 두 창도 따로, 세션 · 할 일은 한 창에 붙음", async () => {
+  const items = [
+    it({ key: "window:mini:ew_lead", kind: "window", title: "팀장", win: "mini:ew_lead", session: "session:claude:s1", refs: ["slack:C0/1793.1"], repo: "github.com/acme/ledger", branch: "feat/x" }),
+    it({ key: "window:mini:ew_merge", kind: "window", title: "머지 담당", win: "mini:ew_merge", session: "session:claude:s1", refs: ["slack:C0/1793.1"], repo: "github.com/acme/ledger", branch: "feat/x" }),
+    it({ key: "window:mini:ew_ops", kind: "window", title: "운영 담당", win: "mini:ew_ops", refs: ["slack:C0/1793.1"] }),
+    it({ key: "session:claude:s1", kind: "session", title: "팀장 세션", repo: "github.com/acme/ledger", branch: "feat/x" }),
+    it({ key: "todo:claude:s1:1", kind: "todo", title: "할 일", session: "session:claude:s1" }),
+  ];
+  const r = await group({ items, logs: [], cards: [], prev: [], prevNodes: [], now });
+  assert.ok(r.nodes.every(n => n.items.filter(k => k.startsWith("window:")).length <= 1), JSON.stringify(r.nodes.map(n => n.items)));
+  const nodeOf = (k: string) => r.nodes.find(n => n.items.includes(k))!.id;
+  assert.equal(nodeOf("todo:claude:s1:1"), nodeOf("session:claude:s1"));
+  assert.equal(new Set(["window:mini:ew_lead", "window:mini:ew_merge", "window:mini:ew_ops"].map(nodeOf)).size, 3);
+});
+
+test("노드 = 목표: 같은 일 번호라도 창 하나 = 노드 하나, 글에 언급된 링크로 다른 이름 창끼리 붙지 않음", async () => {
   const ref = "gh:o/ledger#2586", repo = "github.com/o/ledger";
   const items = [
     it({ key: "window:m:1", kind: "window", engine: "tmux", title: "#7000 영업 총괄", win: "m:1", repo, refs: [ref], state: "idle", session: "session:claude:a" }),
@@ -155,10 +170,10 @@ test("노드 = 목표: 같은 일 번호는 한 노드, 글에 언급된 링크�
   ];
   const r = await group({ items, logs: [], cards: [], prev: [], prevNodes: [], now, unit: "goal" });
   const nodeOf = (k: string) => r.nodes.find(n => n.items.includes(k))!.id;
-  assert.equal(nodeOf("window:m:1"), nodeOf("window:m:2"));
+  assert.notEqual(nodeOf("window:m:1"), nodeOf("window:m:2"));
   assert.notEqual(nodeOf("window:m:1"), nodeOf("window:m:3"));
   assert.equal(nodeOf("session:claude:d"), nodeOf("window:m:3"));
-  assert.equal(r.nodes.length, 2);
+  assert.equal(r.nodes.length, 3);
 });
 
 test("노드 = 목표: 시험 창은 줄이 있어도 노드가 아니고, 열린 카드가 있으면 남음", async () => {

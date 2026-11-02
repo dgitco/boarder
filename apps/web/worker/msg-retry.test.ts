@@ -124,14 +124,18 @@ test("회원 카드 답: 다 끝난 답을 같은 rid 로 또 보내도 그 창�
   assert.equal(sent.length, 1); assert.match(sent[0].text, /: B\. Continue/);
 });
 
-test("회원 카드 스레드: 이미 답한 글에 다른 글은 확정 실패(400), 같은 답을 다시 보내면 됨(200) — 409 면 화면이 보낸 것으로 보고 글을 잃음", async () => {
-  const { sent, post } = setup();
+test("회원 카드 스레드: 답한 뒤 다른 글은 스레드 답(창에 「replied in the thread」 한 줄 · 스레드에 남음), 같은 답을 다시 보내면 됨(200) · 창에 두 번 안 감", async () => {
+  const { db, sent, post } = setup();
   const th = { channel: "primary", thread: "1793300000.000001" };
   assert.equal((await post("/api/chat", { ...th, text: "첫 답", rid: "rtest-card-0101" })).status, 200);
   assert.equal(sent.length, 1);
-  assert.equal((await post("/api/chat", { ...th, text: "뒤따른 글", rid: "rtest-card-0102" })).status, 400);
+  assert.equal((await post("/api/chat", { ...th, text: "뒤따른 글", rid: "rtest-card-0102" })).status, 200);
+  assert.equal(sent.length, 2);
+  assert.match(sent[1].text, /replied in the thread of your card 1793300000\.000001 .*: 뒤따른 글$/);
+  assert.deepEqual(db.prepare("SELECT kind, text FROM board_log WHERE thread = '1793300000.000001'").all().map(r => ({ ...r })), [{ kind: "me", text: "뒤따른 글" }]);
   assert.equal((await post("/api/chat", { ...th, text: "첫 답", rid: "rtest-card-0103" })).status, 200);
-  assert.equal(sent.length, 1, "같은 답은 창에 두 번 안 감");
+  assert.equal(sent.length, 2, "같은 답은 창에 두 번 안 감");
+  assert.equal((await post("/api/chat", { ...th, label: "B", rid: "rtest-card-0104" })).status, 400, "다른 단추는 확정 실패");
 });
 
 test("회원 카드 답: 두 기기가 같은 열린 카드에 동시에 다른 답 — 하나만 됨, 다른 쪽은 확정 실패, 창에는 한 번", async () => {
@@ -177,4 +181,56 @@ test("회원 엔진 창 채팅: 다 끝난 글을 같은 rid 로 또 보내도 �
   assert.equal((await post("/api/chat", body)).status, 200);
   assert.deepEqual(sent.map(s => s.id), ["ew_role1"], "역할 창에 한 번");
   assert.equal((db.prepare("SELECT count(*) AS n FROM board_log WHERE owner = ? AND kind = 'me'").get(MEMBER) as { n: number }).n, 1);
+});
+
+function importedCard(engine: string) {
+  const s = setup(), T = Date.now();
+  s.db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?,?)").run(MEMBER, "window:imp1", "devMember01", "window", engine, "들여온 창", "idle", "host:ew_imp001", T);
+  s.db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?,?)").run("other@example.test", "window:imp1", "devOther01", "window", engine, "남의 창", "idle", "host:ew_imp001", T);
+  s.db.prepare("INSERT INTO board_card(id, owner, win, question, choices, body, state, at, wid) VALUES (?,?,?,?,?,?,?,?,?)").run("1793300000.000009", MEMBER, "host:ew_imp001", "들여온 창 질문?", JSON.stringify(["받음", "보류"]), "", "open", T, "ew_imp001");
+  const cmds = () => s.db.prepare("SELECT owner, device_id, verb, args FROM engine_cmd ORDER BY at").all().map(r => ({ ...(r as Record<string, unknown>), args: JSON.parse(String((r as { args: string }).args)) }));
+  return { ...s, cmds };
+}
+
+test("들여온 tmux 창의 카드: 선택 답 · 스레드 답이 내 기기 명령 줄(send)로 — 남의 기기엔 안 감", async () => {
+  const { post, cmds, sent } = importedCard("tmux");
+  const th = { channel: "primary", thread: "1793300000.000009" };
+  assert.equal((await post("/api/chat", { ...th, label: "받음", rid: "rtest-imp-0001" })).status, 200);
+  assert.equal((await post("/api/chat", { ...th, text: "하나 더 볼게요", rid: "rtest-imp-0002" })).status, 200);
+  const c = cmds();
+  assert.equal(c.length, 2);
+  assert.ok(c.every(x => x.owner === MEMBER && x.device_id === "devMember01" && x.verb === "send" && x.args.item === "window:imp1"));
+  assert.match(c[0].args.text, /answered your card 1793300000\.000009 .*: 받음\. Continue/);
+  assert.match(c[1].args.text, /replied in the thread of your card 1793300000\.000009 .*: 하나 더 볼게요$/);
+  assert.equal(sent.length, 0, "엔진 창으로는 안 감");
+});
+
+test("들여온 tmux 아닌 창의 카드 선택 답: onCardAnswered 가 넣은 한 번뿐(두 번 안 넣음)", async () => {
+  const { post, cmds } = importedCard("herdr");
+  assert.equal((await post("/api/chat", { channel: "primary", thread: "1793300000.000009", label: "받음", rid: "rtest-imp-0003" })).status, 200);
+  assert.equal(cmds().length, 1);
+});
+
+// 기본 창(/api/me/primary-window): 일반 채널(Primary) 글을 메인 봇 대신 정한 창으로. 내 살아 있는 창만 정할 수 있음
+const getJ = async (env: unknown, path: string) => (await app.fetch(new Request("https://example.test" + path, { headers: { cookie: await cookie() } }), env as never, { waitUntil() {}, passThroughOnException() {} } as never)).json() as Promise<any>;
+test("기본 창: 정하면 일반 채널 글이 그 창으로(들여온 창 = 기기 명령 줄, 엔진 창 = 엔진), 비우면 메인 봇, 남의 · 없는 창은 404", async () => {
+  const { db, post, sent, env } = setup(), T = Date.now();
+  db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?,?)").run(MEMBER, "window:lead", "devMember01", "window", "tmux", "팀장", "idle", "host:lead", T);
+  db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?,?)").run("other@example.test", "window:theirs", "devOther01", "window", "tmux", "남의 창", "idle", "host:x", T);
+  assert.equal((await post("/api/me/primary-window", { target: "window:theirs" })).status, 404);
+  assert.equal((await post("/api/me/primary-window", { target: "window:nope" })).status, 404);
+  assert.equal((await post("/api/me/primary-window", { target: "window:lead" })).status, 200);
+  assert.deepEqual(await getJ(env, "/api/me/primary-window"), { target: "window:lead" });
+  assert.equal((await post("/api/chat", { channel: "primary", text: "오늘 할 일 정리해 줘", rid: "rtest-pw-0001" })).status, 200);
+  const cmd = db.prepare("SELECT device_id, verb, args FROM engine_cmd").all() as { device_id: string; verb: string; args: string }[];
+  assert.equal(cmd.length, 1);
+  assert.equal(JSON.parse(cmd[0].args).item, "window:lead");
+  assert.match(JSON.parse(cmd[0].args).text, /오늘 할 일 정리해 줘/);
+  assert.equal(sent.length, 0, "메인 봇엔 안 감");
+  assert.equal((await post("/api/me/primary-window", { target: "ew_role1" })).status, 200);   // 엔진 창도 됨
+  assert.equal((await post("/api/chat", { channel: "primary", text: "둘째 글", rid: "rtest-pw-0002" })).status, 200);
+  assert.deepEqual(sent.map(x => x.id), ["ew_role1"]);
+  assert.equal((await post("/api/me/primary-window", { target: null })).status, 200);
+  assert.equal((await post("/api/chat", { channel: "primary", text: "셋째 글", rid: "rtest-pw-0003" })).status, 200);
+  assert.deepEqual(sent.map(x => x.id), ["ew_role1", "ew_main1"], "비우면 메인 봇");
 });

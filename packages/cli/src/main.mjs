@@ -9,6 +9,7 @@ import { sessionCommand, SESSION_HELP } from './session.mjs';
 import { watchCommand, WATCH_HELP } from './watch.mjs';
 import { connectCommand } from './connect.mjs';
 import { importCommand, IMPORT_HELP } from './importer.mjs';
+import { slackImport } from './slack-import.mjs';
 import { engineCommand, ENGINE_HELP } from './engine/cmd.mjs';
 import { enable, disable, uninstall, VIEW_HELP } from './view.mjs';
 import { secretCommand, SECRET_HELP } from './secret.mjs';
@@ -69,7 +70,7 @@ function parse(rest) {
     const a = rest[i];
     if (!a.startsWith('--')) { pos.push(a); continue; }
     const k = a.slice(2);
-    if (['no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop'].includes(k)) { flags[k] = true; continue; }
+    if (['no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run'].includes(k)) { flags[k] = true; continue; }
     const v = rest[++i];
     if (['choice', 'evidence'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
   }
@@ -138,6 +139,7 @@ export async function main(argv) {
     if (cmd === 'uninstall') return void await uninstall();
     if (cmd === 'engine') return await engineCommand(pos[0], pos.slice(1), flags);
     if (cmd === 'watch') return await watchCommand(pos[0], flags);
+    if (cmd === 'import' && pos[0] === 'slack') { const r = await slackImport(pos[1], flags); if (r.stopped) process.exitCode = 75; return; }   // 옛 Slack 글(채널 = 노드)
     if (cmd === 'import') return await importCommand(flags);   // 들여오기 · 경우 (가)(A-2 · A-3 · A-4)
     if (cmd === 'restore') return await restore(pos[0]);
     if (cmd === 'secret') return await secretCommand(pos[0], pos.slice(1), flags);   // 비밀 넣기(값은 안 찍음)

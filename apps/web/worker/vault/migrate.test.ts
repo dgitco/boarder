@@ -352,8 +352,8 @@ test("e2e 사람의 envelope:<owner> 는 관리 길로 못 끔(409)", async () =
 });
 
 // ── 등록표(registerScope): 공개 판엔 코어 scope 만 · 호스팅 전용 표는 ee 가 hosted.vaultScopes 로 넣을 때만 있음
-test("공개 판 scope: 코어 D1 넷(커넥터 셋 · better-auth account) + R2 둘 + DO 둘만 — 관리 길도 등록한 것만 받음", async () => {
-  assert.deepEqual(M.scopes(), ["connection", "connection_pending", "hook", "account", "sessions", "mcp-results", "engine", "rids"]);
+test("공개 판 scope: 코어 D1 다섯(커넥터 셋 · 들여온 Slack 글 · better-auth account) + R2 둘 + DO 둘만 — 관리 길도 등록한 것만 받음", async () => {
+  assert.deepEqual(M.scopes(), ["connection", "connection_pending", "hook", "slack_msg", "account", "sessions", "mcp-results", "engine", "rids"]);
   const s = await setup();
   const r = await s.call("GET", "/api/admin/vault?scope=nope_tbl", undefined, s.adm);
   assert.equal(r.status, 400); assert.ok(!r.text.includes("nope_tbl"), r.text);

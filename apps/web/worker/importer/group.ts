@@ -26,8 +26,13 @@ const TEST_NAME = /(?:^|[\s·_-])(?:시험|테스트|test|probe|smoke)(?:$|[\s·
 
 class DSU {
   p = new Map<string, string>();
+  w = new Map<string, number>();
   find(a: string): string { let r = a; while (this.p.has(r) && this.p.get(r) !== r) r = this.p.get(r)!; let x = a; while (x !== r) { const n = this.p.get(x)!; this.p.set(x, r); x = n; } if (!this.p.has(r)) this.p.set(r, r); return r; }
-  join(a: string, b: string) { const x = this.find(a), y = this.find(b); if (x !== y) this.p.set(x < y ? y : x, x < y ? x : y); }
+  join(a: string, b: string) {
+    const x = this.find(a), y = this.find(b); if (x === y) return;
+    const wx = this.w.get(x) || 0, wy = this.w.get(y) || 0; if (wx && wy) return;
+    const [r, c] = x < y ? [x, y] : [y, x]; this.p.set(c, r); this.w.set(r, wx + wy);
+  }
 }
 
 const short = (s: string, n = 60) => s.length > n ? s.slice(0, n - 1) + "…" : s;
@@ -133,7 +138,7 @@ export async function group(input: {
   }
 
   const d = new DSU();
-  for (const i of items) d.find(i.key);
+  for (const i of items) { d.find(i.key); if (i.kind === "window") d.w.set(i.key, 1); }
   // ① 이음
   const sessKeys = new Set(items.filter(i => i.kind === "session").map(i => i.key));
   for (const i of items) if (i.session && i.session !== i.key && (sessKeys.has(i.session) || byKey.has(i.session))) d.join(i.key, i.session);

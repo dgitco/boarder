@@ -52,7 +52,7 @@ export async function regroup(env: Env, owner: string) {
     env.DB.prepare("SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR thread != 'primary') AND kind != 'me' ORDER BY at DESC LIMIT 400").bind(owner),
     env.DB.prepare("SELECT id, win, state, question, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 200").bind(owner),
     env.DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(owner),
-    env.DB.prepare("SELECT id, name, pinned_name, area, state, why, counts, created_at, updated_at, archived_at FROM mnode WHERE owner = ?").bind(owner),
+    env.DB.prepare("SELECT id, name, pinned_name, area, state, why, counts, created_at, updated_at, archived_at FROM mnode WHERE owner = ? AND id NOT LIKE 'sl\\_%' ESCAPE '\\'").bind(owner),   // Slack 채널 노드(slack-import.ts)는 묶기 밖 — 보관 · 이름 바꾸기 안 함
     env.DB.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(owner),
     env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT name FROM role WHERE owner = ? UNION SELECT name FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed','gone')").bind(owner, owner),
@@ -73,6 +73,7 @@ export async function regroup(env: Env, owner: string) {
   for (let i = 0; i < gone.length; i += 80) st.push(env.DB.prepare(`DELETE FROM mnode_item WHERE owner = ? AND item IN (${gone.slice(i, i + 80).map(() => "?").join(",")})`).bind(owner, ...gone.slice(i, i + 80)));
   const old = new Map((nd.results as { id: string; name: string; area: string; state: string; why: string; counts: string; updated_at: number; archived_at: number | null }[]).map(n => [n.id, n]));
   for (const n of r.nodes) {
+    if (n.id.startsWith("sl_")) continue;   // 사람이 Slack 노드로 옮겨 넣은 것(pin)이 있어도 그 노드 줄은 slack-import 것
     const o = old.get(n.id), counts = JSON.stringify(n.counts), arch = n.archived ? (o?.archived_at || (set.unit ? Math.min(t, n.updated_at || t) : t)) : null;   // 고른 사람은 보관 시각 = 마지막 움직임 — 옛 세션 수십 개가 「끝난 노드」 목록에 하루 동안 쌓이지 않게
     if (o && o.name === n.name && o.area === n.area && o.state === n.state && o.why === n.why && o.counts === counts && o.updated_at === n.updated_at && (o.archived_at ?? null) === arch) continue;
     st.push(env.DB.prepare(
@@ -146,7 +147,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     for (let i = 0; i < st.length; i += 90) await DB.batch(st.slice(i, i + 90));
     const set = await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner).first<{ data: string }>();
     const cur = json<{ unit?: Unit; unit_by?: string }>(set?.data, {});
-    const fresh = items.length && !cur.unit && !(await DB.prepare("SELECT 1 FROM mnode WHERE owner = ? LIMIT 1").bind(owner).first());
+    const fresh = items.length && !cur.unit && !(await DB.prepare("SELECT 1 FROM mnode WHERE owner = ? AND id NOT LIKE 'sl\\_%' ESCAPE '\\' LIMIT 1").bind(owner).first());
     let picked = fresh ? pickUnit(items, (b.roles || []).map(x => x.name)) : null;
     if (picked) await setUnit(env(c), owner, picked, "auto");
     const r = await regroup(env(c), owner);

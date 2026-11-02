@@ -30,16 +30,17 @@ export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: str
 }
 
 async function load(db: D1Database, me: string) {
-  const [nd, mi, it, tk, lg, cd, dr, ew, ns] = await db.batch([
+  const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw] = await db.batch([
     db.prepare("SELECT id, name, pinned_name, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, device_id, gone_at FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
     db.prepare("SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ORDER BY at DESC LIMIT 600").bind(me),
-    db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
+    db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
     db.prepare("SELECT rowid AS n, id, name, brief, at FROM (SELECT rowid, id, name, brief, created_at AS at FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 30)").bind(me),
     db.prepare("SELECT id, kind, name, state, state_at, note, created_at, closed_at FROM engine_window WHERE owner = ? AND (state NOT IN ('closed','failed','gone') OR state_at > ?) ORDER BY created_at DESC LIMIT 60").bind(me, Date.now() - 12 * 3600_000),
     db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
+    db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me),
   ]);
   const items = new Map((it.results as R[]).map(r => [String(r.key), r]));
   const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(r.win, r.pane);
@@ -60,7 +61,8 @@ async function load(db: D1Database, me: string) {
   // 엔진 창(역할 · 메인): 노드에 안 묶인 역할 창은 제 이름으로 한 노드
   const mainWin = (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
   const engineNodes = (ew.results as R[]).filter(w => w.kind === "role" && !nodes.some(n => n.name === w.name || n.wins.has(w.name)));
-  return { nodes, byId, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes };
+  const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
+  return { defaultNode, primaryWin, nodes, byId, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes };
 }
 
 const STATE: Record<string, string> = { working: "일하는 중", busy: "일하는 중", starting: "일하는 중", opening: "일하는 중", background: "뒤 작업 중" };
@@ -90,11 +92,15 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     else if (["closed", "failed", "gone"].includes(w.state)) closed.push({ pane: p, win: w.name, ago: ago(w.closed_at || w.state_at || w.created_at), msg: w.note || "", area: "primary" });
     else panes.push(pane({ pane: p, win: w.name, kind: "lead", state: STATE[w.state] || "쉼", rows }));
   }
-  const known = new Set(panes.map(p => p.pane)), toPane = (win: string) => { const n = L.nodeOfWin(win); return n && known.has(n.pane) ? n.pane : PRIMARY; };
+  const known = new Set(panes.map(p => p.pane)), dp = L.defaultNode?.pane || (/^ew_/.test(L.primaryWin) ? paneOfId(L.primaryWin) : ""), dflt = dp && known.has(dp) ? dp : PRIMARY,
+    toPane = (win: string) => { const n = L.nodeOfWin(win); return n && known.has(n.pane) ? n.pane : dflt; };
   const decisions: R[] = [], cardlist: R[] = [];
+  const todos: R[] = [];
   for (const c of L.cards) {
     const id = "w" + c.n, ch = json<string[]>(c.choices, []).map(x => cut(x, 90));
-    if (c.state === "open") decisions.push({ id, src: "wlog", pane: toPane(c.win), win: c.win, area: "primary", title: cut(c.question, 200), body: cut(c.body || "", 600), choices: c.recommend && ch.includes(c.recommend) ? [c.recommend, ...ch.filter(x => x !== c.recommend)] : ch, ago: ago(c.at), kind: "결정" });
+    if (c.kind === "todo") { if (c.state === "open") todos.push({ ts: String(c.id), id: String(c.id), area: "primary", title: cut(c.question, 200), body: cut(c.body || "", 600), due: "", win: c.win, pane: toPane(c.win), ago: ago(c.at) }); continue; }
+    const snoozed = Number(c.snooze_until || 0) > now;
+    if (c.state === "open" && !snoozed) decisions.push({ id, src: "wlog", pane: toPane(c.win), win: c.win, area: "primary", title: cut(c.question, 200), body: cut(c.body || "", 600), choices: c.recommend && ch.includes(c.recommend) ? [c.recommend, ...ch.filter(x => x !== c.recommend)] : ch, ago: ago(c.at), kind: "결정" });
     cardlist.push({ ts: CARD_TS.test(String(c.id)) ? c.id : "w:" + c.n, ref: "w:" + c.n, thread: null, channel: "primary", kind: "decision", area: "primary", state: c.state === "open" ? "open" : "answered", title: cut(c.question, 80), at: c.at / 1000 });
   }
   for (const d of L.drafts) {
@@ -106,7 +112,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const feed = L.logs.filter(r => !OWN.test(r.win) && r.thread !== "primary" && r.kind !== "me").slice(0, 40).map(r => ({ id: r.id, ago: ago(r.at), pane: L.nodeOfWin(r.win)?.pane || PRIMARY, win: cut(r.win, 30), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 160) }));
   return { generated: kst(now), areas: [{ key: "primary", name: "Primary", lead: PRIMARY }], panes, closed, parked, archived: [], decisions, to_check: [], promises: [], feed,
     park_metrics: { at: Math.floor(now / 1000), open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
-    cards: [], cardlist, attn: null, relinks: {}, todos: [], bthreads: [] };
+    cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [] };
 }
 
 // ── 채팅(chat.py norm 꼴) ──
@@ -115,6 +121,11 @@ function msg(r: R, me: string, mainName: string) {
   return { ts: tsOf(r.at, r.id), thread: null, who: mine ? "owner" : "agent", name: mine ? "Owner" : r.win === "보더" ? "보더" : mainName, board: false, text: String(r.text || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null, ...(mine ? { src: String(r.text || "") } : {}) };
 }
 const CARD_TS = /^\d{10}\.\d{6}$/;
+export const TODO_DONE = "했어요";
+export function nextMorning(now: number) {
+  const k = now + 9 * 3600_000, day = Math.floor(k / 86_400_000) * 86_400_000, eight = day + 8 * 3600_000;
+  return (k < eight ? eight : eight + 86_400_000) - 9 * 3600_000;
+}
 const replyTs = (c: R) => tsOf(Number(c.answered_at || c.at), Number(c.n));
 function cardMsg(c: R, said: R[] = []) {   // said = 에이전트가 그 카드 스레드에 쓴 줄(boarder say · log)
   const buttons = [...json<string[]>(c.choices, []).map(label => ({ label })), ...(OWN.test(String(c.win)) ? [] : [{ label: "기타", other: true }])];   // 들여오기 질문은 고르기만
@@ -123,7 +134,7 @@ function cardMsg(c: R, said: R[] = []) {   // said = 에이전트가 그 카드 
   return { ts: String(c.id), thread: null, who: "agent", name: String(c.win), board: false, text: [c.question, c.body].filter(Boolean).join("\n\n"), buttons, files: [], replies: said.length + (c.answer ? 1 : 0), latest, rnames: c.answer ? ["Owner"] : [], reactions: [], owner: null, ...(c.state !== "open" ? { picked: String(c.answer || "·") } : {}) };
 }
 const cardReply = (c: R) => ({ ts: replyTs(c), thread: String(c.id), who: "owner", name: "Owner", board: false, text: String(c.answer || ""), src: String(c.answer || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null });
-const cardBy = (db: D1Database, me: string, ts: string) => db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>();
+const cardBy = (db: D1Database, me: string, ts: string) => db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>();
 
 // 들여온 대화 한 줄 → 노드 채팅 글. 세션 = 그 사람이 처음 물은 한 줄(들여오기가 보낸 것만 — 대화 내용은 안 옴), 스레드 · 이슈 = 제목.
 // 어디서 왔는지는 노드 채널 옮긴 글과 같은 「↪ #… 에서 옮겨 옴」(moved) 줄로
@@ -226,7 +237,8 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     if (onCard && !b.react && b.edit === undefined && !b.delete && !(Array.isArray(b.files) && b.files.length)) {
       const said = String(b.label || b.text || "").trim();
       if (!said) return { error: "내용을 적어요", status: 400 };
-      if (onCard.state !== "open" && String(onCard.answer || "") === said) return { ok: { ok: true, state: "ok" } };   // 답을 잃은 뒤 같은 답을 다시 보낸 것 = 이미 됨
+      if (onCard.state !== "open" && String(onCard.answer || "") === said) return { ok: { ok: true, state: "ok" } };
+      if (!b.label && (onCard.state !== "open" || onCard.kind === "todo")) return { path: `/api/me/cards/${onCard.id}/reply`, body: { text: said } };
       return onCard.state === "open" ? post(db, me, "/api/answer", { item: "w" + onCard.n, text: said }) : { error: onCard.state === "closed" ? "닫힌 결정이에요" : "이미 답한 결정이에요", status: 400 };   // 확정 실패 — 409 면 화면이 「올라갔나」를 확인하다 보낸 것으로 보고 글을 잃음
     }
     if (b.delete) {   // 내 글 지우기: 내가 쓴 줄만(ts = at 초 + id 뒤 여섯 자리)
@@ -272,10 +284,20 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     }
     const c = await db.prepare("SELECT id FROM board_card WHERE rowid = ? AND owner = ?").bind(n, me).first<{ id: string }>();
     if (!c) return { error: "없는 카드", status: 404 };
-    if (text === "(나중에)") return { error: "아직 안 돼요", status: 400 };
+    if (text === "(나중에)") {
+      await db.prepare("UPDATE board_card SET snooze_until = ? WHERE rowid = ? AND owner = ? AND state = 'open'").bind(nextMorning(Date.now()), n, me).run();
+      return { ok: { ok: true, state: "ok" } };
+    }
     return { path: `/api/me/cards/${c.id}/answer`, body: { choice: text, free: true } };
   }
   if (path === "/api/clientlog") return { ok: { ok: true } };   // 화면 오류 기록(keepalive) — 회원은 PostHog 로만 남김(400 이 또 오류로 쌓이지 않게)
-  if (path === "/api/draft" || path === "/api/cardcheck" || path === "/api/todo" || path === "/api/nodepri") return { ok: { ok: true, state: "ok" } };   // 저장 표 없음 — 화면 쪽(이 기기)에만 남음
+  if (path === "/api/todo") {   // 할 일 끝냄(틀 { area, id }) = 그 할 일 카드에 「했어요」로 답(카드를 낸 창에 넘어감 · 에이전트 wait 가 받음)
+    const id = String(b.id || b.ts || "");
+    const c = CARD_TS.test(id) ? await db.prepare("SELECT id, state FROM board_card WHERE id = ? AND owner = ? AND kind = 'todo'").bind(id, me).first<{ id: string; state: string }>() : null;
+    if (!c) return { error: "없는 할 일이에요", status: 404 };
+    if (c.state !== "open") return { ok: { ok: true, state: "ok" } };   // 이미 끝냄(다시 보낸 것)
+    return { path: `/api/me/cards/${c.id}/answer`, body: { choice: TODO_DONE, free: true } };
+  }
+  if (path === "/api/draft" || path === "/api/cardcheck" || path === "/api/nodepri") return { ok: { ok: true, state: "ok" } };   // 저장 표 없음 — 화면 쪽(이 기기)에만 남음
   return { error: "아직 안 돼요", status: 400 };
 }

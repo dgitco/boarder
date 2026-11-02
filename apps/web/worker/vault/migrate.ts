@@ -44,6 +44,8 @@ const T: Record<string, D1ScopeSpec> = {
   connection: { key: "id", cols: ["auth"], kind: "secret", owner: r => r.owner, pk: r => r.id },
   connection_pending: { key: "state", cols: ["auth"], kind: "secret", owner: r => r.owner, pk: r => r.state },
   hook: { key: "id", cols: ["secret"], kind: "secret", owner: r => r.owner, pk: r => r.id },
+  // 들여온 옛 Slack 글(slack-import.ts): 글 · 첨부 이름, AAD pk = 채널/ts(쓰는 길과 같게)
+  slack_msg: { key: "id", cols: ["text", "files"], kind: "text", owner: r => r.owner, pk: r => `${r.chan}/${r.ts}` },
   // 사람별(owner) = 그 메일의 user 줄('' = 주인 메일들, x:<이름> = 없음)
   account: { key: "id", cols: ["accessToken", "refreshToken"], kind: "text", owner: () => "", pk: r => r.id, codec: betterAuthCodec,
     who: (env, w) => { const ms = w === "" ? ownerMails(env) : w.includes("@") && !w.startsWith("x:") ? [w.toLowerCase()] : [];

@@ -462,6 +462,7 @@ export async function drainOnce({ quiet = false } = {}) {
 export const IMPORT_HELP = `Bring your current work in (keeps your own harness)
   boarder import [--setup] [--days 7] [--print] [--no-gh]   windows · sessions · threads · to-dos → nodes on your board (--setup also reads your MCP servers and roles once)
   boarder import --follow           keep it fresh (every minute) and carry out board commands: move to the Boarder engine · park · reopen · answers into the window
+  boarder import slack <folder> [--dry-run]   old Slack messages from an export folder → one node per channel (resumes where it stopped)
   boarder import --stop             stop importing from this machine and mark what it sent as gone on your board (also turns off the Boarder reader here; \`boarder setup\` turns it back on)`;
 
 const importMark = () => path.join(dir(), 'import.json');
