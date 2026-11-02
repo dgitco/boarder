@@ -140,3 +140,9 @@ test("닫힌 창 다시 열기: 기기가 reopen 성공을 올리면 그 창은 
   const g = await (await call("GET", "/api/device/cmds")).json() as any;
   const c2 = g.cmds.find((x: any) => x.id === "c2"); assert.ok(c2); assert.equal(c2.args.handle.pane, "%9");
 });
+
+test("상위 정하기: parent = top(맨 위 표지)은 노드가 아니어도 받음", async () => {
+  const { db, D1 } = seed(), call = app(D1);
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: "n_keep", parent: "top" })).status, 200);
+  assert.deepEqual(JSON.parse(String(db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(A)!.data)).parent, { n_keep: "top" });
+});

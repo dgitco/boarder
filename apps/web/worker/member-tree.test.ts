@@ -108,6 +108,18 @@ test("노드 상태 한 줄(watch): 창의 가장 새 줄이 status(boarder stat
   assert.equal(w("분기 정산"), "", "더 새 progress 가 있으면 상태 줄은 낡은 것");
 });
 
+test("맨 위 표지(parent = top): 이름이 머리 이름이 아니어도(「회사」 · 「베타랩」) 열 머리, 그 밑 상위 노드도 그 열", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_neo", "회사", "acme"); add(db, A, "n_m", "머지 담당", "acme", "working"); add(db, A, "n_cs", "CS 담당", "acme");
+  add(db, A, "n_hc", "베타랩", "hbeta"); add(db, A, "n_pa", "개인 비서", ".team-hq"); add(db, A, "n_p", "personal", "personal", "working");
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_neo: "top", n_hc: "top", n_pa: "top", n_m: "n_neo", n_cs: "n_neo", n_p: "n_pa" } }), T);
+  const d = await data(d1, A, null) as any;
+  assert.deepEqual(d.areas.slice(1).map((a: any) => a.lead_name).sort(), ["개인 비서", "회사", "베타랩"].sort());
+  const col = (name: string) => d.areas.find((a: any) => a.lead_name === name).key, areaOf = (w: string) => d.panes.find((p: any) => p.win === w).area;
+  assert.deepEqual([areaOf("머지 담당"), areaOf("CS 담당"), areaOf("personal")], [col("회사"), col("회사"), col("개인 비서")]);
+  assert.ok(!d.panes.some((p: any) => p.area === "primary" && p.kind === "lead"), "메인 봇 밑에 남은 노드 없음");
+});
+
 test("영역이 하나뿐이면 예전처럼 Primary 한 열", async () => {
   const { db, d1 } = fakeD1();
   add(db, A, "n_1", "가", "acme"); add(db, A, "n_2", "나", "acme");

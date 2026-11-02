@@ -49,6 +49,7 @@ export function cleanFace(v: unknown): Face | null {
 }
 const faceRow = (r: R | undefined | null) => r ? cleanFace(r) : null;
 // 사람이 정한 상위 노드(node_setting.data.parent = { 노드 id: 상위 노드 id } — /api/me/nodes/parent, 노드 정의 꼴의 parent 칸): 트리에서 그 노드를 상위 노드의 열 밑으로
+export const TOP = "top";   // parent 칸의 「맨 위」(열 머리 = 메인 봇 바로 밑 에이전트) 표지 — 노드 id 는 늘 n_ · sl_ … 로 시작해 안 겹침
 export function parentsOf(data: unknown): Record<string, string> {
   const p = json<{ parent?: unknown }>(data as string, {}).parent;
   if (!p || typeof p !== "object" || Array.isArray(p)) return {};
@@ -213,7 +214,8 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
       if (groups.has("")) order.push("");
       const HEAD = /팀장|리드|총괄|비서|lead/i, TEST = /^\s*\[(시험|test)\]/i, BUSY = new Set(["일하는 중", "질문", "뒤 작업 중"]);
       const ok = (p: R) => !TEST.test(String(p.win));
-      const hn = new Map(order.map(a => [a, groups.get(a)!.find(p => HEAD.test(String(p.win)) && ok(p))]));
+      const top = (p: R) => L.parents[nodeOfPane.get(p.pane) || ""] === TOP;
+      const hn = new Map(order.map(a => [a, groups.get(a)!.find(p => top(p) && ok(p)) || groups.get(a)!.find(p => HEAD.test(String(p.win)) && ok(p))]));
       const org = [...hn.values()].some(Boolean);
       const heads = new Map(order.map(a => { const ps = groups.get(a)!; return [a, hn.get(a) || (org ? undefined : ps.find(p => ok(p) && BUSY.has(String(p.state))) || ps.find(ok) || ps[0])]; }));
       const keyOfArea = new Map<string, string>();

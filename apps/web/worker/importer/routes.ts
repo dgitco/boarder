@@ -216,7 +216,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     const b = await c.req.json<{ node?: unknown; parent?: unknown }>().catch(() => ({} as { node?: unknown; parent?: unknown }));
     const node = typeof b.node === "string" ? b.node : "", parent = b.parent === null ? null : typeof b.parent === "string" ? b.parent : undefined;
     if (!node || node.length > 80 || parent === undefined || (parent && (parent.length > 80 || parent === node))) return c.json({ error: "노드 · 상위" }, 400);
-    const DB = env(c).DB, want = parent ? [node, parent] : [node];
+    const DB = env(c).DB, want = parent && parent !== "top" ? [node, parent] : [node];   // "top" = 맨 위(열 머리) 표지
     const mine = ((await DB.prepare("SELECT id FROM mnode WHERE owner = ? AND id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(want)).all()).results as { id: string }[]).length;
     if (mine !== want.length) return c.json({ error: "없는 노드" }, 404);
     const cur = json<{ parent?: Record<string, string> }>((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data, {}).parent || {};
