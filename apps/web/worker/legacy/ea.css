@@ -280,3 +280,28 @@ html.bx-ea #ans .ibfeed .inbr{box-sizing:border-box;width:max-content;max-width:
 html.bx-ea #ans .ibfeed .inbr:hover{background:color-mix(in srgb,var(--ink) 10%,var(--surface))}
 html.bx-ea #ans .ibfeed .inbr.on{background:color-mix(in srgb,var(--accent) 16%,var(--surface))}
 html.bx-ea #ans .ibfeed .inbr > .av,html.bx-ea #ans .ibfeed .inbr > .dav{display:none}
+html.bx-ea .bx-ea-h{background:linear-gradient(color-mix(in srgb,var(--surface) 88%,transparent) 0%,color-mix(in srgb,var(--surface) 55%,transparent) 62%,transparent 100%);pointer-events:none}
+html.bx-ea .bx-ea-h > *{pointer-events:auto}
+html.bx-ea .bx-ea-back,html.bx-ea .bx-ea-h .bx-ea-ib,html.bx-ea .bx-ea-who{background:color-mix(in srgb,var(--surface) 82%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+@media (min-width:861px){html.bx.bx-ea #ans.ans{top:var(--ea-b)!important;height:calc(100dvh - var(--ea-b))!important}}
+@media (min-width:861px){html.bx.bx-ea:has(#ans .cth) #ans.ans{top:calc(var(--ea-h) + var(--ea-b))!important;height:calc(100dvh - var(--ea-h) - var(--ea-b))!important}}   /* PC 스레드 판(#ans 안 top:0)이 머리 · 띠 밑에 깔리지 않게 예전 자리로 */
+@media (max-width:860px){html.bx.bx-ea #ans.ans{top:calc(var(--vvt,0px) + var(--ea-b))!important;height:calc(var(--vvh,100dvh) - var(--ea-b))!important}}
+html.bx-ea #ans .cfeed{padding-top:calc(var(--ea-h) + 8px)}
+@media (max-width:860px){html.bx-ea #ans .cfeed{padding-top:calc(var(--ea-h) + env(safe-area-inset-top,0px) + 8px)}}
+html.bx-ea:has(#ans .cth) #ans .cfeed{padding-top:8px}
+html.bx-ea #ans .msg{padding:8px 16px}
+html.bx-ea #ans .msg .bd,html.bx-ea #ans .msg .btns,html.bx-ea #ans .msg .rep{max-width:min(86%,560px)}
+html.bx-ea #ans .msg .btns{width:min(86%,560px)}
+html.bx-ea #ans .ccomp{padding:16px 18px calc(12px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,var(--surface) 42%)}
+html.bx-ea #ans .ccomp .box:not(.ibpx .box){margin-left:52px;min-height:44px;padding:0!important;border-radius:22px!important;background:var(--surface)!important;box-shadow:0 2px 12px var(--shadow)!important}
+html.bx-ea #ans .ccomp .crow{min-height:44px;padding:0 6px 0 0;align-items:center}
+html.bx-ea #ans .ccomp .crow .plus{left:-52px;bottom:0}
+html.bx-ea #ans .ccomp textarea{min-height:36px;padding:6px 0 6px 16px;font-size:17px;line-height:24px}   /* 높이 36 은 보드 JS 가 줄 수만큼 늘림 — 한 줄 = 24 + 위아래 6 */
+html.bx-ea #ans .ccomp textarea::placeholder{color:var(--muted)}
+html.bx-ea #ans .ccomp .crow > .vmemo,html.bx-ea #ans .ccomp .crow > .send{flex:none;width:32px!important;height:32px!important;border-radius:50%}
+html.bx-ea #ans .ccomp .crow:has(textarea:not(:placeholder-shown)) > .vmemo{display:none}   /* 글이 있으면 마이크 대신 보내기 하나(Grok · 메시지)*/
+html.bx-ea #ans .ccomp .crow > .vmemo{background:color-mix(in srgb,var(--ink) 7%,transparent);color:var(--muted)}
+/* 다크: 흰 알약 대신 한 단 밝은 회색(Grok 다크 꼴) — 바탕(--surface)과 같으면 알약이 묻힘 */
+@media (prefers-color-scheme:dark){html.bx-ea:not([data-theme="light"]) #ans .ccomp .box:not(.ibpx .box),html.bx-ea:not([data-theme="light"]) .bx-ea-h :is(.bx-ea-back,.bx-ea-ib,.bx-ea-who),html.bx-ea:not([data-theme="light"]) #ans .ccomp .crow .plus{background:var(--bubble)!important}}
+html.bx-ea[data-theme="dark"] #ans .ccomp .box:not(.ibpx .box),html.bx-ea[data-theme="dark"] .bx-ea-h :is(.bx-ea-back,.bx-ea-ib,.bx-ea-who),html.bx-ea[data-theme="dark"] #ans .ccomp .crow .plus{background:var(--bubble)!important}
+html.bx-ea .bx-ea-rows{padding-top:6px}   /* Grok 목록: 위 줄 아래 첫 줄 가운데까지 51(전 46) */
