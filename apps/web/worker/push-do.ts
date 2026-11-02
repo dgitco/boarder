@@ -13,7 +13,7 @@ export type PushApi = {
 };
 // 회원 칸(이름 = 회원 메일, index.ts memberPusher): 늘 그 사람 메일(세션)을 첫 값으로 — 칸에 적힌 주인과 다르면 거절
 export type MemberPushApi = {
-  key(): Promise<string>; mSubscribe(me: string, b: unknown): Promise<Res>; mUnsubscribe(me: string, b: unknown): Promise<Res>; mTrial(me: string, b: unknown, welcome?: boolean): Promise<Res>; mAck(me: string, b: unknown): Promise<Res>; mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }): Promise<Res>;
+  key(): Promise<string>; mSubscribe(me: string, b: unknown): Promise<Res>; mUnsubscribe(me: string, b: unknown): Promise<Res>; mTrial(me: string, b: unknown, welcome?: boolean): Promise<Res>; mAck(me: string, b: unknown): Promise<Res>; mLog(me: string): Promise<unknown[] | null>; mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }): Promise<Res>;
 };
 
 async function rows(db: D1Database) {
@@ -194,6 +194,11 @@ export class Pusher extends DurableObject<Env> {
     });
   }
   async mAck(me: string, body: Record<string, unknown>): Promise<Res> { return this.bind(me) ? this.ack(body) : this.no(); }
+  /** 시험 회원 알림 기록(관리 토큰 · @example.com 만 — index.ts /api/admin/member-push-log): 보낸 · 구독 · 시험 알림 사건 최근 40개. 운영에서 「급한 것만 갔나」를 확인 */
+  async mLog(me: string) {
+    if (!this.bind(me)) return null;
+    return this.ctx.storage.sql.exec<{ at: string; ev: string }>("SELECT at, ev FROM log ORDER BY id DESC LIMIT 40").toArray().map(r => ({ at: r.at, ...JSON.parse(r.ev) }));
+  }
   // 새 카드 한 장: 카드를 만든 요청이 그 자리에서 부름. 구독이 없으면 할 일 없음(이 칸은 알람을 안 씀)
   mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }): Promise<Res> {
     return this.lock(async () => {

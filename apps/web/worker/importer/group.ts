@@ -3,6 +3,7 @@ export type Item = {
   engine?: string; title?: string; cwd?: string; repo?: string; branch?: string;
   refs?: string[]; state?: string; state_at?: number | null; win?: string; session?: string;
   seen_at: number; gone_at?: number | null;
+  handle?: string | Record<string, unknown> | null;
 };
 export type Log = { win: string; kind: string; text: string; at: number };
 export type Card = { id: string; win: string; state: string; question: string; at: number };
@@ -115,15 +116,36 @@ export function pickUnit(items: Pick<Item, "title" | "kind">[], known: string[] 
   return known.length >= 3 || new Set(named.map(i => roleOf(i.title || "", known)).filter(Boolean)).size >= 3 ? "agent" : "goal";
 }
 
+export const PRIMARY_NAME = /^(?:\d{1,3}[\s:.-]+)?(?:primary|main|메인(?:\s*봇)?|프라이머리)$/i;
+const handleOf = (i: Pick<Item, "handle">): Record<string, unknown> => { const h = i.handle; if (!h) return {}; if (typeof h === "object") return h; try { const v = JSON.parse(h); return v && typeof v === "object" ? v : {}; } catch { return {}; } };
+export function primaryScore(i: Item): number {
+  if (i.kind !== "window" || i.gone_at || i.state === "gone" || i.engine === "report" || i.engine === "tmux") return 0;
+  const h = handleOf(i);
+  if (!["tmux-own", "herdr-own"].includes(String(i.engine || h.engine || ""))) return 0;
+  if (h.primary === true || h.primary === 1 || h.primary === "1") return 3;
+  if ([i.title, h.name].some(v => typeof v === "string" && PRIMARY_NAME.test(v.trim()))) return 2;
+  if (base(i.cwd) === "primary" || base(typeof h.cwd === "string" ? h.cwd : "") === "primary") return 1;
+  return 0;
+}
+/** 들여온 것 중 메인 봇 자리인 창(없으면 null) */
+export function primaryOf<T extends Item>(items: T[]): T | null {
+  const c = items.map(i => ({ i, s: primaryScore(i) })).filter(x => x.s > 0);
+  c.sort((a, b) => b.s - a.s || Number(b.i.state === "working") - Number(a.i.state === "working") || (b.i.state_at || b.i.seen_at || 0) - (a.i.state_at || a.i.seen_at || 0) || (a.i.key < b.i.key ? -1 : 1));
+  return c[0]?.i || null;
+}
+
 const nodeId = async (seed: string) => "n_" + [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed)))].slice(0, 6).map(b => b.toString(16).padStart(2, "0")).join("");
 
 export async function group(input: {
   items: Item[]; logs: Log[]; cards: Card[]; prev: Prev[]; prevNodes: PrevNode[];
-  winNames?: Record<string, string>; now: number; archiveH?: number; unit?: Unit; agents?: string[];
-}): Promise<{ nodes: Node[]; map: Prev[]; audit: Audit }> {
+  winNames?: Record<string, string>; now: number; archiveH?: number; unit?: Unit; agents?: string[]; engineMain?: boolean;
+}): Promise<{ nodes: Node[]; map: Prev[]; audit: Audit; primary: string | null }> {
   const { now, unit } = input, agentUnit = unit === "agent", archiveMs = (input.archiveH ?? 6) * 3600_000;
   const usedWins = new Set([...input.logs.map(l => l.win), ...input.cards.map(c => c.win)]);
-  const items = input.items.filter(i => !i.gone_at || now - i.gone_at < archiveMs || (i.win && usedWins.has(i.win)));
+  const kept0 = input.items.filter(i => !i.gone_at || now - i.gone_at < archiveMs || (i.win && usedWins.has(i.win)));
+  const prim = input.engineMain ? null : primaryOf(kept0);   // 보더 메인 봇 창이 이미 떠 있으면 그게 메인 봇(들여온 primary 는 노드로 — 메인 봇이 둘이 되지 않게)
+  const primSess = prim?.session || "", primWins = new Set(prim?.win ? [prim.win] : []);
+  const items = kept0.filter(i => !prim || !(i.key === prim.key || (primSess && (i.key === primSess || i.session === primSess)) || (i.win && primWins.has(i.win))));
   const byKey = new Map(items.map(i => [i.key, i]));
   const notes: string[] = [];
 
@@ -131,7 +153,7 @@ export async function group(input: {
   for (const i of items) if (i.win && (i.kind === "window" || !winOwner.has(i.win))) winOwner.set(i.win, i.key);
   let fixed = 0;
   for (const w of new Set([...input.logs.map(l => l.win), ...input.cards.map(c => c.win)].filter(Boolean))) {
-    if (winOwner.has(w)) continue;
+    if (winOwner.has(w) || primWins.has(w)) continue;
     const key = `win:${w}`, last = Math.max(0, ...input.logs.filter(l => l.win === w).map(l => l.at), ...input.cards.filter(c => c.win === w).map(c => c.at));
     const it: Item = { key, kind: "window", engine: "report", title: input.winNames?.[w] || w.split(":").slice(1).join(":") || w, win: w, state: "", seen_at: last };
     items.push(it); byKey.set(key, it); winOwner.set(w, key); fixed++;
@@ -242,7 +264,7 @@ export async function group(input: {
   const assigned = new Set(map.map(m => m.item));
   const kept = new Set(history);
   const missing = items.filter(i => !assigned.has(i.key) && !kept.has(i.key)).length;
-  return { nodes, map, audit: { items: items.length, nodes: nodes.filter(n => !n.archived).length, missing, fixed, mixed, moved, empty, history: history.length, notes: notes.slice(0, 8) } };
+  return { nodes, map, primary: prim?.key ?? null, audit: { items: items.length, nodes: nodes.filter(n => !n.archived).length, missing, fixed, mixed, moved, empty, history: history.length, notes: notes.slice(0, 8) } };
 }
 
 /** 고르기 전(unit 없음) 이름 — 고른 적 없는 사람의 노드 이름이 배포만으로 바뀌지 않게 */
@@ -266,12 +288,16 @@ export function stateOf(live: Item[], logs: Log[], cards: Card[], now: number): 
   if (q) return { state: "turn", why: `${short(q.title || "창", 40)} 이 묻고 있어요` };
   const last = logs[0];
   if (last && (last.kind === "blocked" || last.kind === "incident")) return { state: "blocked", why: short(last.text, 80) };
-  const work = live.find(i => (i.kind === "window" || i.kind === "session") && (i.state === "working" || (i.kind === "session" && i.state_at && now - i.state_at < LIVE_MS && i.state !== "idle")));
+  const work = live.find(i => (i.kind === "window" || i.kind === "session") && (i.state === "working" || (i.kind === "session" && i.state_at && now - i.state_at < LIVE_MS && i.state !== "idle" && i.state !== "done" && i.state !== "gone")));   // 끝난 세션은 방금이어도 도는 중이 아님
   if (work) return { state: "working", why: last && last.kind !== "done" ? short(last.text, 80) : `${short(work.title || "창", 40)} 도는 중` };
   if (last && last.kind === "done") return { state: "done", why: short(last.text, 80) };
   const wins = live.filter(i => i.kind === "window");
   if (wins.length && wins.every(i => i.state === "parked")) return { state: "parked", why: "주차 — 답이나 조건이 오면 다시 열어요" };
+  const moved = Math.max(last?.at || 0, ...live.filter(i => i.kind === "window" || i.kind === "session").map(i => i.state_at || i.seen_at || 0));
+  if (now - moved >= PARK_QUIET_MS) return { state: "parked", why: `${Math.floor(PARK_QUIET_MS / 3600_000)}시간 넘게 조용해 주차 — 다시 일하면 살아나요` };
+  if (!wins.length && !live.some(i => i.kind === "session" && i.state !== "done" && i.state !== "gone") && (live.some(i => i.kind === "session") || !live.length))
+    return { state: "parked", why: last ? short(last.text, 80) : "창 · 세션이 끝나 주차 — 다시 일하면 살아나요" };
   if (wins.some(i => i.state && i.state !== "parked" && i.state !== "gone")) return { state: "idle", why: last ? short(last.text, 80) : "쉬는 중" };
-  if (!live.length) return { state: "done", why: last ? short(last.text, 80) : "열린 창 없음" };
   return { state: "idle", why: last ? short(last.text, 80) : "열린 창 없음" };
 }
+export const PARK_QUIET_MS = 6 * 3600_000;

@@ -63,7 +63,7 @@
   // ── 줄 그리기 — 서명이 바뀐 때만(shell.js sync 처럼)
   const LOCK = '<svg class="bx-ea-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-label="비밀값 요청" role="img"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
   const row = (k, name, av_, when, pre, dot, cur_, lock, chip) => `<button type="button" class="bx-ea-row" role="listitem" data-k="${E(k)}"${cur_ ? ' aria-current="true"' : ''}>`
-    + (dot ? '<i class="bx-ea-dot" aria-label="내 차례"></i>' : '')
+    + (dot ? `<i class="bx-ea-dot" aria-label="${window.HB_MEMBER ? '내 차례' : '내 차례'}"></i>` : '')
     + `<span class="bx-ea-ava">${av_}</span><span class="bx-ea-tx"><span class="bx-ea-l1"><b>${E(name)}</b>${chip ? `<span class="bx-ea-status${['막힘', '멈춤'].includes(chip) ? ' bx-ea-warning' : ''}">${E(chip)}</span>` : ''}${lock ? LOCK : ''}<time>${E(when)}</time>${lu('chevron-right', 14)}</span><span class="bx-ea-pv">${E(pre)}</span></span></button>`;
   const pin = (k, ud, cur_, lock) => `<button type="button" class="bx-ea-pin" role="listitem" data-k="${E(k)}"${cur_ ? ' aria-current="true"' : ''} aria-label="${E(pinName(k) + (ud ? ' · 읽지 않음' : '') + (lock ? ' · 비밀값 요청' : ''))}">`
     + `<span class="bx-ea-pa">${av(pinAv(k), 56)}${ud ? '<i class="bx-ea-ud"></i>' : ''}${lock ? `<i class="bx-ea-pl">${LOCK}</i>` : ''}</span><span class="bx-ea-pn">${E(pinName(k))}</span></button>`;
@@ -87,7 +87,7 @@
   const BOTS = [
     {k: 'c:primary', name: () => pinName('primary'), av: () => pinAv('primary'), pre: () => lastOf('primary')?.text || '무엇이든 맡겨 주세요', at: () => lastOf('primary')?.ts, n: () => 0, open: () => fn('openChan') && openChan('primary')},
     {k: 'c:i:unread', name: () => '슬랙 인박스', av: () => 'slack inbox', pre: () => IBC().unread ? `읽지 않은 글 ${IBC().unread}개` : '새 글이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.unread || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => IBC().unread || 0, open: () => window.HBInbox?.openFeed?.('unread')},
-    {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => ATTN() ? `내 차례 ${ATTN()}개` : '할 일이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.turn || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => ATTN(), open: () => window.HBInbox?.openFeed?.('turn')},
+    {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => ATTN() ? `${window.HB_MEMBER ? '내 차례' : '내 차례'} ${ATTN()}개` : '할 일이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.turn || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => ATTN(), open: () => window.HBInbox?.openFeed?.('turn')},
     {k: 'c:shop', name: () => '상담봇', av: () => 'counsel bot', pre: () => lastOf('shop')?.text || '채널톡 상담 답 초안을 올려요', at: () => lastOf('shop')?.ts, n: () => 0, open: () => fn('openChan') && openChan('shop')},
   ];
   function data(){

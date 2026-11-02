@@ -4,9 +4,19 @@ export function installPrompt(server: string): string {
   return `Set up Boarder on this machine for me. Boarder (${host}) is where my AI agents report progress and ask me questions.
 
 1. Install the CLI: \`curl -fsSL ${host}/install.sh | sh\` (Windows PowerShell: \`irm ${host}/install.ps1 | iex\`). If \`boarder\` isn't found afterwards, use \`~/.local/bin/boarder\` (Windows: \`%USERPROFILE%\\.local\\bin\\boarder.cmd\`).
-2. Run \`boarder setup --yes${flag}\` with a long timeout (up to 10 minutes). It signs me in and only reads: it does not change my AI tools (CLAUDE.md, AGENTS.md, hooks, settings, MCP, skills), my harness (Herdr, tmux) or my shell files. It opens my browser for one 「허용」; without a browser (SSH) it prints a code and a link — show me both right away.
-3. Run \`boarder import --setup\` and tell me the summary line it prints — my open windows, sessions and to-dos show up as nodes on my board.
-4. Ask me once whether I also want either of these (both are off, and each can be turned off again): my agents reporting to Boarder themselves (\`boarder enable report\` — adds Boarder to my AI tools, backed up first), or Boarder opening and managing AI windows here (\`boarder enable engine\`). Run only what I say yes to. \`boarder uninstall\` removes everything.
+2. Run \`boarder setup --yes${flag}\` with a long timeout (up to 10 minutes). It signs me in. It opens my browser for one 「허용」; without a browser (SSH) it prints a code and a link — show me both right away.
+3. Run \`boarder enable report\` — my agents report to Boarder themselves: it adds Boarder's MCP server, a session-start hook and the Boarder skill (the working rules below) to my AI tools, backed up first. Don't ask me first; it is the default.
+4. Run \`boarder enable engine\` — Boarder opens, wakes, parks and closes AI windows here in its own tmux (the default harness). My own windows and harness (Herdr, tmux) keep running as they are.
+5. Run \`boarder import --setup\` and tell me the summary line it prints — my open windows, sessions and to-dos show up as nodes on my board, and my existing main (primary) window becomes my main bot.
+6. Tell me in one line how to turn things off: \`boarder disable report\` or \`boarder disable engine\` takes one back out, \`boarder uninstall\` removes everything.
+
+The rules my agents follow from now on (the Boarder skill):
+- One window = one goal.
+- Report to Boarder at start, while working (at least every 30 minutes), when blocked and when done.
+- When a window is done, or only waits for a person's answer or someone else's work: save the conversation to Boarder (\`boarder session save\`), then park it (close the window). Hand the waiting condition to a watcher outside the window, and reopen the window when it is met.
+- Never print, log or post passwords or tokens.
+- A question to me says on the first line what I must decide, then the options (recommended first), in plain words without internal ids or numbers.
+- Anything sent to people outside: show me the draft and send only after I say yes.
 
 Only use the boarder CLI for this; don't edit tool config files by hand.`;
 }
@@ -26,6 +36,15 @@ description: Use whenever you start, make progress on, get blocked on or finish 
 
 The human follows your work on their Boarder board instead of reading every terminal. Report there through the \`boarder\` CLI (or the \`boarder\` MCP tools, which are the same).
 
+## Working rules
+
+1. One window = one goal. A new goal gets its own window.
+2. Report to Boarder at the start, while working (at least once every 30 minutes), when blocked and when done (see below).
+3. Done, or only waiting for a person's answer or someone else's work? Save this conversation to Boarder (\`boarder session save\`), then park: close the window. Hand what you wait for to a watcher outside the window (a Boarder card, \`boarder wait\`, the engine or a scheduled check) and reopen the window when it is met.
+4. Never print, log or post passwords, tokens or other secrets.
+5. A question to the human: the first line says what they must decide, then the options (recommended first), in plain words without internal ids or numbers.
+6. Anything sent to people outside (mail, chat, issues, customers): show the human the draft and send only after they say yes.
+
 ## Report progress
 
 - Start of a task: \`boarder log start "<what you're doing, one line>"\`
@@ -37,7 +56,7 @@ The human follows your work on their Boarder board instead of reading every term
 ## Ask the human
 
 - A decision only they can make: \`boarder ask "<question>" --choice "<A (recommended)>" --choice "<B>"\`. It prints a card id.
-- Wait for the answer with \`boarder wait <card id>\`, or keep working on something else and check later.
+- Keep working on something else and check later (\`boarder wait <card id>\`). If the answer is all you have left, save and park the window (rule 3) instead of sitting open.
 - Don't ask what you can decide yourself; recommend first.
 
 ## Bring existing work in

@@ -529,7 +529,7 @@
     const archRow = x => `<div class="bxs-li"><div><b>${esc(x.name)}</b><span>끝 ${esc(kst(x.at * 1000))} · 닫힌 지 ${esc(ago(x.at * 1000).replace(' 전', ''))}${x.msg ? ' · ' + esc(x.msg) : ''}</span></div>${x.reopen ? btn('다시 열기', `data-nro="${esc(x.id || x.name)}"`, 'sm ghost') : '<span class="bxs-mut" title="닫힌 창 목록(7일)에서 빠져 다시 열 수 없어요">다시 열 수 없음</span>'}</div>`;
     const draw = () => {
       const a = j.archive || [], shown = more ? a : a.slice(0, 30);
-      el.innerHTML = header('노드', '창(노드)을 언제 나누고 · 합치고 · 이름 바꾸고 · 보관할지. 바꾸면 다음 점검부터 — 처음 값은 기본값이에요.')
+      el.innerHTML = header('노드', '창(노드)을 언제 나누고 · 합치고 · 이름 바꾸고 · 보관할지. 바꾸면 다음 점검부터' + (OWNER ? ' — 처음 값은 기본값이에요.' : '.'))
         + (OWNER ? '' : `<div class="bxs-sech">채널 묶기</div><div class="bxs-list"><div class="bxs-li"><div><b>무엇을 채널로 볼까요</b><span>화면은 같고 묶는 단위만 달라요. 들여올 때 쓰던 방식을 보고 골라 뒀어요</span></div>`
           + `<select class="bxs-in sm bxs-sel" data-nu aria-label="채널 묶기">${j.unit ? '' : '<option value="" selected>고르지 않음</option>'}<option value="agent"${j.unit === 'agent' ? ' selected' : ''}>에이전트마다 채널 · 일은 스레드</option><option value="goal"${j.unit === 'goal' ? ' selected' : ''}>일마다 채널</option></select></div></div>`)
         + `<div class="bxs-sech bxs-row between"><span>정리 기준</span><span class="bxs-row"><a class="bxs-btn sm ghost" style="text-decoration:none" href="/node-rules.md" download="node-rules.md" title="쓰던 하네스의 총괄에 붙여 넣는 노드 = 목표 규칙">노드 규칙 묶음 내려받기</a>${btn('기본값으로', 'data-ndef', 'sm ghost')}</span></div><div class="bxs-list">${NRULES.map(num).join('')}</div>`
@@ -561,7 +561,7 @@
     el.onkeydown = e => { if (e.key === 'Enter' && e.target.matches('input[data-nk]')) e.target.blur(); };
     el.onclick = async e => {
       if (e.target.closest('[data-nmore]')) { more = true; return draw(); }
-      if (e.target.closest('[data-ndef]') && await confirmBox('정리 기준 · 보관 시간을 기본값으로 되돌릴까요?', '되돌리기')) return save({...j.defaults});
+      if (e.target.closest('[data-ndef]') && await confirmBox(OWNER ? '정리 기준 · 보관 시간을 기본값으로 되돌릴까요?' : '정리 기준 · 보관 시간을 처음 값으로 되돌릴까요?', '되돌리기')) return save({...j.defaults});
       const ro = e.target.closest('[data-nro]');
       const key = x => x.id || x.name, roRow = ro && j.archive.find(x => key(x) === ro.dataset.nro);
       if (ro && await confirmBox(`<b>${esc(roRow?.name || ro.dataset.nro)}</b> 노드를 다시 열까요? ${roRow?.id ? '트리에 돌아와요.' : '같은 대화로 창이 열리고 트리에 돌아와요.'}`, '다시 열기')) {

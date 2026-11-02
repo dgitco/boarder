@@ -44,12 +44,12 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   }
   function logoEl(which){
     const st = logoState(), c = LG[which];
-    if (c && c.key === st.key){ c.el.title = c.el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`; return c.el; }
+    if (c && c.key === st.key){ c.el.title = c.el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : window.HB_MEMBER ? '내 차례' : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`; return c.el; }
     const el = mk('button', 'lg lgb mood-' + st.key); el.type = 'button'; el.dataset.go = 'chan:primary';
     const ex = window.HB_EXPR || {};
     el.innerHTML = window.HB_BLOB_ANIM ? window.HB_BLOB_ANIM('primary', {size: 34, background: false, animate: 'always', ...(st.key === 'sad' ? {expression: ex.sad} : st.key === 'think' ? {expression: ex.thinking} : {})})
       : window.HB_BLOB ? window.HB_BLOB('primary', {size: 34, background: false}) : '<img src="icons/icon-192.png" alt="" width="32" height="32">';
-    el.title = el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`;
+    el.title = el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : window.HB_MEMBER ? '내 차례' : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`;
     LG[which] = {key: st.key, el}; return el;
   }
   const placeLogo = () => { for (const [w, box] of [['sb', sb], ['dr', dr]]){ const slot = box.querySelector('.lgslot'); if (slot) slot.replaceWith(logoEl(w)); } };
@@ -101,7 +101,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const tn = typeof attnCount === 'function' ? attnCount() : 0;
     const ib = it('turn', I.flag, '결정 · 할 일', cnt(tn, true), ibChat() === 'turn') + IBK.map(k => it(k, I[k], IBN[k], cnt(c[k], k === 'unread'), S.ib === k || ibChat() === k)).join('');
     const ch = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('');
-    const nd = myNodes().map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), nodeRows(p.pane).length ? '<i class="ud" aria-label="내 차례"></i>' : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
+    const nd = myNodes().map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), nodeRows(p.pane).length ? `<i class="ud" aria-label="${window.HB_MEMBER ? '내 차례' : '내 차례'}"></i>` : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
     const qa = !ans.hidden && cur?.chan, ss = window.HB_MEMBER || typeof openGpt !== 'function' ? '' : `<div class="bx-sech"><button type="button" class="bx-sec bx-fh" data-fold="ss" aria-expanded="${!SB.fold.ss}">세션${I.fold}</button><button type="button" class="bx-secadd" data-chatnew aria-label="새 세션" title="새 세션"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>`
       + `<div class="bx-sbody" data-sec="ss"${SB.fold.ss ? ' hidden' : ''}>${chats().map(c => `<button type="button" class="bx-it bx-chat" data-chat="${esc(c.sid)}" title="${esc(c.title)}"${qa === 'q:' + c.sid ? ' aria-current="page"' : ''}><span>${esc(c.title)}</span></button>`).join('')}</div>`;
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');

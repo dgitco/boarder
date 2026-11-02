@@ -1,7 +1,7 @@
 // node --test apps/web/worker/importer/group.test.ts (Node 24 타입 지우기)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { group, pickUnit, roleOf, type Item } from "./group.ts";
+import { group, pickUnit, roleOf, primaryOf, primaryScore, stateOf, PARK_QUIET_MS, type Item } from "./group.ts";
 
 const now = 1_793_200_000_000;
 const it = (o: Partial<Item> & { key: string; kind: Item["kind"] }): Item => ({ seen_at: now - 60_000, ...o });
@@ -309,7 +309,6 @@ test("역할이 시킨 일 창이 세션 제목에 역할을 달고 있어도 �
   assert.equal(r.nodes.find(n => n.name === "팀장")!.counts.main, "window:b");
 });
 
-
 test("창 하나 = 노드 하나: 닫힌 창은 창으로 세지 않음 — 이어 연 창과 옛 창(같은 세션)이 한 노드, 세션 · 할 일은 산 창 쪽", async () => {
   const items = [
     it({ key: "window:m:old", kind: "window", engine: "tmux", title: "#7010 정산", win: "m:old", session: "session:claude:s9", state: "gone", gone_at: now - 600_000 }),
@@ -325,4 +324,78 @@ test("창 하나 = 노드 하나: 닫힌 창은 창으로 세지 않음 — 이�
     assert.equal(nodeOf("session:claude:s9"), nodeOf("window:m:new"), `${unit}: 세션은 산 창 쪽`);
     assert.equal(nodeOf("todo:claude:s9:1"), nodeOf("window:m:new"), `${unit}: 할 일은 산 창 쪽`);
   }
+});
+
+test("primary 창 알아보기: 들여오기 표시 > 창 이름 > 폴더, 우리 엔진 · 보고 창 · 닫힌 창 · tmux 세션 이름은 아님", () => {
+  const w = (o: Partial<Item> & { key: string }) => it({ kind: "window", engine: "herdr-own", ...o });
+  assert.equal(primaryScore(w({ key: "a", title: "아무거나", handle: JSON.stringify({ primary: true }) })), 3);
+  for (const t of ["primary", "Primary", "main", "메인", "메인 봇", "1 primary"]) assert.equal(primaryScore(w({ key: "b", title: t })), 2, t);
+  assert.equal(primaryScore(w({ key: "c", title: "x", handle: { name: "primary" } })), 2, "손잡이 이름");
+  assert.equal(primaryScore(w({ key: "d", title: "claude · primary", cwd: "/home/m/boarder/primary" })), 1, "폴더");
+  assert.equal(primaryScore(w({ key: "e", title: "primary", engine: "tmux" })), 0, "보더 엔진 창(메인 봇은 engine_window 가 셈)");
+  assert.equal(primaryScore(w({ key: "f", title: "primary", engine: "report" })), 0);
+  assert.equal(primaryScore(w({ key: "f2", title: "primary", engine: "terminal" })), 0, "일반 터미널(글을 못 넣음)");
+  assert.equal(primaryScore(w({ key: "f3", title: "Primary", engine: "herdr", cwd: "/home/m/boarder/primary" })), 0, "보더 엔진 Herdr 창");
+  assert.equal(primaryScore(w({ key: "g", title: "primary", gone_at: now - 1000 })), 0, "닫힌 창");
+  assert.equal(primaryScore(w({ key: "h", title: "#3720 uptime", handle: { tsession: "main", workspace: "main" } })), 0, "tmux 세션 · 작업 공간 이름은 안 봄");
+  assert.equal(primaryScore(it({ key: "session:claude:x", kind: "session", title: "primary" })), 0, "창만");
+  assert.equal(primaryScore(w({ key: "i", title: "primary 정리 일" })), 0, "이름 전체만");
+  const pick = primaryOf([w({ key: "w1", title: "main", state: "idle" }), w({ key: "w2", title: "x", handle: { primary: true } }), w({ key: "w3", title: "메인", state: "working" })]);
+  assert.equal(pick?.key, "w2", "표시가 이김");
+  assert.equal(primaryOf([w({ key: "w1", title: "main", state: "idle" }), w({ key: "w3", title: "메인", state: "working" })])?.key, "w3", "같은 셈이면 일하는 창");
+  assert.equal(primaryOf([w({ key: "w1", title: "#1 일" })]), null);
+});
+
+test("있던 primary 창 · 그 세션 · 그 창의 보고 줄은 노드가 아님(메인 봇 자리) — 남은 일은 그대로 노드", async () => {
+  const items = [
+    it({ key: "window:lap:herdr:p1", kind: "window", engine: "herdr-own", title: "primary", win: "lap:herdr:p1", session: "session:claude:m1", state: "working", repo: "github.com/acme/app", branch: "feat/x" }),
+    it({ key: "session:claude:m1", kind: "session", title: "오늘 할 일", state_at: now - 30_000 }),
+    it({ key: "todo:claude:m1:1", kind: "todo", title: "정리", session: "session:claude:m1" }),
+    it({ key: "window:lap:herdr:p2", kind: "window", engine: "herdr-own", title: "#3720 uptime", win: "lap:herdr:p2", state: "working", repo: "github.com/acme/app", branch: "feat/x" }),
+  ];
+  for (const unit of [undefined, "goal", "agent"] as const) {
+    const r = await group({ items, now, prev: [], prevNodes: [], unit,
+      logs: [{ win: "lap:herdr:p1", kind: "progress", text: "봇이 정리 중", at: now - 1000 }], cards: [] });
+    assert.equal(r.primary, "window:lap:herdr:p1", String(unit));
+    const all = r.nodes.flatMap(n => n.items);
+    for (const k of ["window:lap:herdr:p1", "session:claude:m1", "todo:claude:m1:1", "win:lap:herdr:p1"]) assert.ok(!all.includes(k), `${unit}: ${k} 는 노드에 없음`);
+    assert.ok(all.includes("window:lap:herdr:p2"), `${unit}: 같은 브랜치여도 일 창은 따로 노드`);
+    assert.equal(r.audit.missing, 0);
+  }
+  const none = await group({ items: items.slice(1), now, prev: [], prevNodes: [], logs: [], cards: [] });
+  assert.equal(none.primary, null);
+  const eng = await group({ items, now, prev: [], prevNodes: [], logs: [], cards: [], engineMain: true });
+  assert.equal(eng.primary, null);
+  assert.ok(eng.nodes.flatMap(n => n.items).includes("window:lap:herdr:p1"));
+});
+
+test("primary 창이 지난번 노드였으면 다시 묶을 때 그 노드에서 빠짐(사람이 옮긴 pin 도)", async () => {
+  const items = [it({ key: "window:p1", kind: "window", engine: "tmux-own", title: "main", win: "p1", state: "idle" }), it({ key: "window:p2", kind: "window", engine: "tmux-own", title: "#12 버그", win: "p2", state: "working" })];
+  const r = await group({ items, now, logs: [], cards: [], prev: [{ item: "window:p1", node: "n_old", how: "pin" }, { item: "window:p2", node: "n_old", how: "auto" }], prevNodes: [{ id: "n_old", created_at: now - 9e6 }] });
+  assert.ok(!r.map.some(m => m.item === "window:p1"));
+  assert.deepEqual(r.nodes.map(n => n.items), [["window:p2"]]);
+});
+
+test("창이 PARK_QUIET_MS(6시간) 넘게 조용하면 주차 — 지우지 않고, 다시 일하면 바로 살아남(Herdr 창도 같음)", async () => {
+  assert.equal(PARK_QUIET_MS, 6 * 3600_000);
+  const old = now - PARK_QUIET_MS - 60_000;
+  for (const engine of ["tmux-own", "herdr-own", "terminal"]) {
+    const w = it({ key: "window:a", kind: "window", engine, title: "#7 일", win: "a", state: "idle", state_at: old, seen_at: old });
+    assert.equal(stateOf([w], [], [], now).state, "parked", engine);
+    assert.equal(stateOf([{ ...w, state_at: now - 60_000 }], [], [], now).state, "idle", `${engine}: 방금 움직임`);
+    assert.equal(stateOf([w], [{ win: "a", kind: "progress", text: "다시 함", at: now - 1000 }], [], now).state, "idle", `${engine}: 새 보고 줄`);
+    assert.equal(stateOf([{ ...w, state: "working" }], [], [], now).state, "working", `${engine}: 일하는 중이면 조용해도 일함`);
+    assert.equal(stateOf([{ ...w, state: "question" }], [], [], now).state, "turn");
+  }
+  const r = await group({ items: [it({ key: "window:a", kind: "window", engine: "herdr-own", title: "#7 일", win: "a", session: "session:claude:s", state: "idle", state_at: old, seen_at: old }), it({ key: "session:claude:s", kind: "session", title: "#7 일", state_at: old, seen_at: old })],
+    now, prev: [], prevNodes: [], logs: [], cards: [], unit: "goal" });
+  assert.equal(r.nodes.length, 1); assert.equal(r.nodes[0].state, "parked"); assert.equal(r.nodes[0].archived, false, "지우지 않음 · 보관도 아님");
+});
+
+test("창 · 세션이 끝나면 주차(끝 줄이 있으면 끝)", () => {
+  const s = it({ key: "session:claude:s", kind: "session", title: "일", state: "done", state_at: now - 60_000 });
+  assert.equal(stateOf([s], [], [], now).state, "parked", "세션이 끝남");
+  assert.equal(stateOf([], [{ win: "a", kind: "progress", text: "하던 것", at: now - 60_000 }], [], now).state, "parked", "창이 닫힘");
+  assert.equal(stateOf([], [{ win: "a", kind: "done", text: "끝냄", at: now - 60_000 }], [], now).state, "done", "끝 줄은 끝");
+  assert.equal(stateOf([{ ...s, state: "", state_at: now - 3600_000 }], [], [], now).state, "idle", "안 끝난 세션은 6시간 전엔 쉼");
 });

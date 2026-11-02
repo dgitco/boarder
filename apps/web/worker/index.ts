@@ -58,7 +58,7 @@ import { boardHead, HEAD_RE } from "./board-head";
 import * as memberInbox from "./member-inbox";
 import * as memberFiles from "./member-files";
 import { importedWindow, queueToImported } from "./member-imported";
-import { claimEndpoint, pushKind, releaseEndpoint } from "./member-push";
+import { claimEndpoint, memberPushWanted, releaseEndpoint, type PushCard } from "./member-push";
 import * as emoji from "./emoji";
 import * as memberSearch from "./member-search";
 import { newMeter, meterEnv, meterProps, sampleOf } from "./perf";
@@ -632,7 +632,7 @@ app.post("/api/device/code", async c => {
   const em = clean(b.email, 200).toLowerCase();
   if (em && !cb && !isOwner(c.env, em)) c.executionCtx.waitUntil((async () => {
     const card = await devCard.askOnBoard(c.env, { userCode: uc, email: em, isMember: await member(c.env, em), name: clean(b.name, 80), country, now });
-    if (card) await memberCardPush(c.env, em, { id: card.id, question: `새 기기 「${card.name}」 허용?` });
+    if (card) await memberCardPush(c.env, em, { id: card.id, question: `새 기기 「${card.name}」 허용?`, secret: true });   // 사람이 방금 기기에서 시작한 허용(코드 만료) — 늘 보냄
   })().catch(e => console.error("기기 카드", String(e).slice(0, 200))));
   return c.json({ device_code: dc, user_code: uc, verify_url: `${c.env.PUBLIC_URL}/device?code=${uc}`, expires_in: 600, interval: 3, mode: cb ? "local" : "code", ...(em && !cb ? { board: "asked" } : {}) });
 });
@@ -914,7 +914,7 @@ mountSlackConnector(app as never, { device: async c => { const d = await deviceO
 // 기기에서 커넥터 넣기(connect-request.ts, 온보딩 3층): 회원 기기(scope full)만 — 넣기는 그 회원 보드 카드의 허용 뒤
 connReq.mountConnectRequests(app as never, {
   device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
-  card: (env, owner, card) => void memberCardPush(env as never, owner, card),
+  card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허용 — 늘 보냄(비밀 넣기와 같음)
 });
 mountSecrets(app as never, {
   human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s ? { email: s.user.email, owner: isOwner(c.env as never, s.user.email) } : null; },
@@ -933,7 +933,7 @@ mountSecrets(app as never, {
     return await member(e, d.owner) ? { id: d.id, key: d.owner.toLowerCase(), scope: d.scope } : null;
   },
   admin: c => admin(c as never),
-  card: (env, owner, card) => void memberCardPush(env as never, owner, card),
+  card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 비밀 넣기 허용: 에이전트가 멈춰 기다림 — 급함 · 온보딩 조용히와 상관없이 보냄
 });
 const memberBot = (env: Env, me: string) => env.DB.prepare("SELECT seed, hue, name, photo, icon, fav FROM member_bot WHERE owner = ?").bind(me).first<Bot>();
 const BLOB_ID = /^[0-9a-f]{32}$/;
@@ -1207,6 +1207,14 @@ app.post("/api/admin/invites", async c => {
   const e = await invite(c.env, b.email || "", "admin"); return e ? c.json({ ok: true, email: e }) : c.json({ error: "메일 주소" }, 400);
 });
 const TEST_EMAIL = /^[a-z0-9][a-z0-9._+-]{0,60}@example\.com$/;
+// 시험 회원 알림 기록(관리 토큰): 운영 확인 도구(push-quiet-prod)가 「급한 카드만 보냈나」를 봄 — 진짜 회원 기록은 못 읽게 @example.com 만
+app.post("/api/admin/member-push-log", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const e = String((await c.req.json<{ email?: string }>().catch(() => ({} as { email?: string }))).email || "").trim().toLowerCase();
+  if (!TEST_EMAIL.test(e)) return c.json({ error: "시험 주소(@example.com)만" }, 400);
+  const pu = memberPusher(c.env, e); if (!pu) return c.json({ error: "no" }, 404);
+  return c.json({ log: await pu.mLog(e) ?? [] });
+});
 app.post("/api/admin/test-session", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ email?: string; revoke?: boolean }>().catch(() => ({} as { email?: string; revoke?: boolean }));
@@ -1778,7 +1786,8 @@ app.all("*", async c => {
         if (url.pathname === "/api/data") await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드
         if (sl) return sl;
-        const r = await memberBoard.get(c.env.DB, me, await memberBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"));
+        const r = await memberBoard.get(c.env.DB, me, await memberBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"),
+          async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name);   // 내 글 · 답 이름 = 회원 이름(HB_MEMBER.name 과 같게 — 세션엔 메일만 있어 user 표에서)
         if (r) return r;
       }
       if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {   // 몸통이 파일 · 녹음(JSON 아님) — 회원 쓰기와 같은 문
@@ -1935,9 +1944,8 @@ app.post("/api/admin/sales-digest", async c => {
   if (!only && !b.dry) return c.json({ error: "모두에게 보내기는 아침 자동만 — only 나 dry 를 주세요" }, 400);
   return c.json({ ok: true, ...(await runDigest(c.env.DB, c.env.PUBLIC_URL, salesSend(c.env), { only, dry: !!b.dry })) });
 });
-const memberCardPush = async (env: Env, me: string, card: { id: string; question: string; kind?: string }) => {
-  if (!pushKind(card.kind)) return;   // 할 일은 알림 안 감(보드 「할 일」 줄에만)
-  try { if (await ledger.f7On(env.DB, "member_push")) await memberPusher(env, me)?.mNotify(me.toLowerCase(), card); } catch (e) { console.log(JSON.stringify({ ev: "member_push", error: String(e).slice(0, 200) })); }
+const memberCardPush = async (env: Env, me: string, card: PushCard) => {
+  try { if (await memberPushWanted(env.DB, me, card) && await ledger.f7On(env.DB, "member_push")) await memberPusher(env, me)?.mNotify(me.toLowerCase(), { id: card.id, question: card.question }); } catch (e) { console.log(JSON.stringify({ ev: "member_push", error: String(e).slice(0, 200) })); }
 };
 // 회원 웹 푸시(pushRoute 와 같은 답 꼴): 칸 = 세션 메일 · 원천 = 그 사람 board_card. POST 는 주인 길과 같은 x-hb 문 + 회원 쓰기와 같은 sameSite(다른 사이트 폼 · 링크 막기)
 async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: URL) {

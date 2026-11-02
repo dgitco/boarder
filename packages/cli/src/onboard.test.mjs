@@ -33,6 +33,7 @@ async function setupWith(fail) {
   const H = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-onb-')), B = path.join(H, 'boarder');
   const env = { ...process.env, HOME: H, BOARDER_HOME: B, XDG_CONFIG_HOME: path.join(H, 'xdg'), DISPLAY: ':99', PATH: path.dirname(process.execPath) };   // 화면 있는 기기(로컬 콜백 길) · 브라우저 여는 명령은 없음
   delete env.SSH_CONNECTION; delete env.SSH_TTY; delete env.BOARDER_URL; delete env.BOARDER_TOKEN;
+  delete env.CLAUDE_CONFIG_DIR; delete env.BOARDER_CLAUDE_DIRS; fs.mkdirSync(path.join(H, '.claude'), { recursive: true });
   try {
     return await new Promise(res => {
       const c = spawn(process.execPath, [BIN, 'setup', '--yes', '--only', 'claude', '--no-watch', '--server', `http://127.0.0.1:${srv.address().port}`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -73,6 +74,7 @@ test('setup 로그인: 영구 실패(verifier 400)는 다시 보내지 않고 �
   const H = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-onb-'));
   const env = { ...process.env, HOME: H, BOARDER_HOME: path.join(H, 'b'), DISPLAY: ':99', PATH: path.dirname(process.execPath) };
   delete env.SSH_CONNECTION; delete env.SSH_TTY;
+  delete env.CLAUDE_CONFIG_DIR; delete env.BOARDER_CLAUDE_DIRS; delete env.BOARDER_URL; delete env.BOARDER_TOKEN; fs.mkdirSync(path.join(H, '.claude'), { recursive: true });   // 위와 같은 까닭
   try {
     const r = await new Promise(res => {
       const c = spawn(process.execPath, [BIN, 'setup', '--yes', '--only', 'claude', '--no-watch', '--server', `http://127.0.0.1:${srv.address().port}`], { env, stdio: ['ignore', 'pipe', 'pipe'] });

@@ -51,8 +51,8 @@ const json = <T>(v: string | null | undefined, d: T): T => { try { return v ? JS
 
 export async function regroup(env: Env, owner: string) {
   const t = now();
-  const [it, lg, cd, mp, nd, wn, ns, rl] = await env.DB.batch([
-    env.DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at FROM imp_item WHERE owner = ?").bind(owner),
+  const [it, lg, cd, mp, nd, wn, ns, rl, em] = await env.DB.batch([
+    env.DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) AND kind != 'me' ORDER BY at DESC LIMIT 400").bind(owner),
     env.DB.prepare("SELECT id, win, state, question, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 200").bind(owner),
     env.DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(owner),
@@ -60,6 +60,7 @@ export async function regroup(env: Env, owner: string) {
     env.DB.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(owner),
     env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT name FROM role WHERE owner = ? UNION SELECT name FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed','gone')").bind(owner, owner),
+    env.DB.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(owner),   // 보더 메인 봇이 떠 있나(있으면 들여온 primary 는 노드)
   ]);
   const items = (it.results as (Item & { refs: string })[]).map(r => ({ ...r, refs: json<string[]>(r.refs as unknown as string, []) }));
   const winNames = Object.fromEntries((wn.results as { pane: string; win: string }[]).map(r => [r.pane, r.win]));
@@ -68,7 +69,7 @@ export async function regroup(env: Env, owner: string) {
   const logs = (lg.results as { win: string }[]).filter(l => !own(l.win)).map(l => ({ ...l, win: keyOf(l.win) }));
   const cards = (cd.results as { win: string }[]).filter(c => !own(c.win)).map(c => ({ ...c, win: keyOf(c.win) }));
   const set = json<{ archive_h?: number; unit?: Unit }>((ns.results[0] as { data?: string } | undefined)?.data, {}), archiveH = set.archive_h ?? 6;
-  const r = await group({ items, logs: logs as never, cards: cards as never, prev: mp.results as never, prevNodes: nd.results as never, winNames, now: t, archiveH, unit: set.unit, agents: (rl.results as { name: string }[]).map(x => x.name) });
+  const r = await group({ items, logs: logs as never, cards: cards as never, prev: mp.results as never, prevNodes: nd.results as never, winNames, now: t, archiveH, unit: set.unit, engineMain: em.results.length > 0, agents: (rl.results as { name: string }[]).map(x => x.name) });
   const keep = new Set(r.nodes.map(n => n.id));
   const was = new Map((mp.results as { item: string; node: string; how: string }[]).map(m => [m.item, m]));
   const st: D1PreparedStatement[] = [];

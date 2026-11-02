@@ -2,6 +2,7 @@ import { boardHead, stripHead } from "./board-head";
 import { DurableObject } from "cloudflare:workers";
 import { bumpMember } from "./live";
 import { envelopeOn, getDek, openField, sealFieldNow, type VaultEnv } from "./vault/index";
+import { primaryOf, type Item } from "./importer/group";
 
 export type EngEnv = { DB: D1Database; ENGINE: DurableObjectNamespace<Engine>; PUBLIC_URL: string };
 type Win = { id: string; owner: string; device_id: string; kind: string; role_id: string | null; name: string; state: string; state_at: number | null; handle: string | null; woke_at: number | null; created_at: number; dialog: string | null };
@@ -219,6 +220,7 @@ export class Engine extends DurableObject<EngEnv> {
     const db = this.env.DB;
     const main = await db.prepare("SELECT id, state, device_id FROM engine_window WHERE owner = ? AND kind = 'main' AND state NOT IN ('closed','failed') ORDER BY created_at DESC LIMIT 1").bind(owner).first<{ id: string; state: string; device_id: string }>();
     if (main) return main.id;
+    if (await importedPrimary(db, owner)) return null;
     const bot = await db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(owner).first<{ name: string }>().catch(() => null);
     const name = bot?.name || "Primary";
     const { rules } = await ownerCfg(db, owner).catch(() => ({ rules: RULES }));
@@ -484,11 +486,28 @@ export async function deliverTo(env: EngEnv, owner: string, wid: string, text: s
   if (!w) throw new EngineError(4, "없는 창");
   return engineOf(env, w.device_id).deliver(wid, text);
 }
+type Imp = Item & { device_id: string; handle: string | null };
+export async function importedPrimary(db: D1Database, owner: string): Promise<Imp | null> {
+  if (await db.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(owner).first().catch(() => null)) return null;
+  const rows = (await db.prepare("SELECT i.key, i.kind, i.engine, i.title, i.cwd, i.state, i.state_at, i.seen_at, i.win, i.session, i.handle, i.device_id, i.gone_at FROM imp_item i JOIN device d ON d.id = i.device_id WHERE i.owner = ? AND i.kind = 'window' AND i.gone_at IS NULL AND d.revoked_at IS NULL").bind(owner).all<Imp>().catch(() => ({ results: [] as Imp[] }))).results;
+  return primaryOf(rows);
+}
+export const PRIMARY_HINT = `(This is the person's Boarder Primary chat; this window is their main bot. They don't see this terminal — answer with \`boarder chat "<text>"\` — if the head above says 「스레드 <id>」, answer under that message with \`boarder chat --thread <id> "<text>"\` — short, in their language.)`;
+async function toImported(env: EngEnv, owner: string, w: Imp, text: string) {
+  const id = crypto.randomUUID().replace(/-/g, "").slice(0, 20), handle = (() => { try { return w.handle ? JSON.parse(w.handle) : null; } catch { return null; } })();
+  await env.DB.prepare("INSERT INTO engine_cmd(id, owner, device_id, verb, args, at) VALUES (?,?,?,?,?,?)")
+    .bind(id, owner, w.device_id, w.state === "parked" ? "reopen" : "send", JSON.stringify({ item: w.key, engine: w.engine, handle, title: w.title, text, post: true }), Date.now()).run();
+  try { await (engineOf(env, w.device_id) as unknown as { drainCmds(): Promise<unknown> }).drainCmds(); } catch {}   // 엔진 소켓이 붙어 있으면 바로, 아니면 boarder import --follow 가 가져감
+  return { queued: true, primary: w.key };
+}
+
 async function mainOf(env: EngEnv, owner: string) {
   return env.DB.prepare(`SELECT w.id, w.device_id, d.engine_at FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed') AND d.revoked_at IS NULL ORDER BY (d.engine_at > ?) DESC, w.created_at DESC LIMIT 1`).bind(owner, Date.now() - 120_000).first<{ id: string; device_id: string; engine_at: number | null }>();
 }
 /** 회원 Primary 채팅 글 → 메인 봇 판(없으면 엔진 기기에서 새로) */
 export async function chatToMain(env: EngEnv, owner: string, text: string, head = boardHead({})) {
+  const imp = await importedPrimary(env.DB, owner);
+  if (imp) return toImported(env, owner, imp, `${head} [Boarder chat] ${text}\n${PRIMARY_HINT}`);
   const main = await mainOf(env, owner), msg = `${head} [Boarder chat] ${text}`;   // 머리 줄 「[보드 · Primary( · 스레드 <ts>)]」(board-head.ts)
   const dev = await liveDevice(env.DB, owner, true);
   if (main && (!dev || Date.now() - (main.engine_at || 0) < 120_000)) return engineOf(env, main.device_id).deliver(main.id, msg);
@@ -496,9 +515,15 @@ export async function chatToMain(env: EngEnv, owner: string, text: string, head 
   if (main) await env.DB.prepare("UPDATE engine_window SET state = 'closed', state_at = ?, closed_at = ?, note = ? WHERE id = ?").bind(Date.now(), Date.now(), "다른 기기로 옮김", main.id).run();   // 옛 기기 창은 그 데몬이 다시 붙을 때 hello 가 닫음
   const stub = engineOf(env, dev), id = await stub.ensureMain(owner, dev);
   if (id) await stub.deliver(id, msg);
+  else {
+    const imp2 = await importedPrimary(env.DB, owner);
+    if (imp2) return toImported(env, owner, imp2, `${msg}\n${PRIMARY_HINT}`);
+  }
   return { started: !!id };
 }
 export async function noteMain(env: EngEnv, owner: string, text: string) {
+  const imp = await importedPrimary(env.DB, owner);
+  if (imp) return toImported(env, owner, imp, text);
   const main = await mainOf(env, owner);
   return main ? engineOf(env, main.device_id).deliver(main.id, text) : null;
 }

@@ -33,7 +33,9 @@ ${VIEW_HELP}
 
 Report (from an AI tool's session)
   boarder log <start|progress|blocked|done|decision|incident|deadline> "<one line>" [--evidence <url>]...
-  boarder ask "<question>" --choice "<A>" --choice "<B>" [--rec A] [--wait <s>]
+  boarder ask "<question>" --choice "<A>" --choice "<B>" [--rec A] [--wait <s>] [--urgent] [--asked-at <time>] [--backlog]
+                                    --urgent = phone notification: only when a person must handle it now (security incident,
+                                    customer-facing outage, a schedule that must be acted on now). --asked-at / --backlog: re-posting an older question (no notification)
   boarder wait <card id> [--timeout <s>]      exit 0 = answered or closed, 2 = timed out
   boarder close <card id> "<how it was handled>"
   boarder say <card id|thread id> "<text>"
@@ -83,7 +85,7 @@ function parse(rest) {
     const a = rest[i];
     if (!a.startsWith('--')) { pos.push(a); continue; }
     const k = a.slice(2);
-    if (['no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay'].includes(k)) { flags[k] = true; continue; }
+    if (['no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay'].includes(k)) { flags[k] = true; continue; }
     const v = rest[++i];
     if (['choice', 'evidence'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
   }
@@ -216,7 +218,7 @@ export async function main(argv) {
     if (cmd === 'hook' && (pos[0] === 'stop' || pos[0] === 'codex-turn')) { await turnHook(pos[0], pos[1]).catch(() => {}); return; }
     const num = v => v === undefined ? undefined : Number(v);
     const plan = {
-      ask: () => ['inbox_ask', { question: pos[0], choices: flags.choice || [], recommend: flags.rec, urgency: flags.urgency, body: flags.body, due: flags.due, wait_s: num(flags.wait) }],
+      ask: () => ['inbox_ask', { question: pos[0], choices: flags.choice || [], recommend: flags.rec, urgency: flags.urgency, urgent: !!flags.urgent, backlog: !!flags.backlog, asked_at: flags['asked-at'], body: flags.body, due: flags.due, wait_s: num(flags.wait) }],
       wait: () => ['inbox_wait', { card_id: pos[0], timeout_s: num(flags.timeout) ?? 600 }],
       log: () => ['inbox_log', { kind: KIND[pos[0]] || pos[0], text: pos[1], unblocks: flags.me ? 'me' : undefined, evidence: flags.evidence }],
       close: () => ['inbox_close', { card_id: pos[0], done: pos[1] }],

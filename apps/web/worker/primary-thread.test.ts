@@ -91,6 +91,6 @@ test("사람이 그 스레드에 더 쓴 글(POST /api/chat thread) → /api/me/
   assert.equal(boardHead({ thread: mine }), `[보드 · Primary · 스레드 ${mine}]`);
   const list = await get(D1, A, "/api/chat/primary");
   const root = list.messages.find((m: any) => m.ts === mine);
-  assert.equal(root.replies, 1); assert.deepEqual(root.rnames, ["Owner"]);
+  assert.equal(root.replies, 1); assert.deepEqual(root.rnames, ["a"]);
   assert.ok(!list.messages.some((m: any) => m.ts === r2));
 });
