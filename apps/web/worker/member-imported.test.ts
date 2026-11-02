@@ -46,9 +46,9 @@ test("닫힌 창에 답이 연달아 와도 다시 열기는 하나: 대기 중�
   assert.equal(rows.length, 1); assert.equal(rows[0].verb, "reopen"); assert.match(JSON.parse(rows[0].args).text, /답 하나 \/ 답 둘/);
   db.prepare("UPDATE engine_cmd SET state = 'taken', taken_at = ? WHERE owner = ?").run(Date.now(), A);   // 기기가 가져가 여는 중
   await queueToImported(D1, A, (await importedWindow(D1, A, { wid: "ew_old1", win: "" }))!, "답 셋", "1793000000.000001");
-  rows = db.prepare("SELECT verb, args FROM engine_cmd WHERE owner = ? ORDER BY at").all(A) as any[];
+  rows = db.prepare("SELECT verb, args FROM engine_cmd WHERE owner = ? ORDER BY rowid").all(A) as any[];
   assert.equal(rows.length, 2); assert.equal(rows[1].verb, "send"); const a = JSON.parse(rows[1].args); assert.equal(a.fresh, true); assert.equal(a.handle, null); assert.equal(a.text, "답 셋");
   db.prepare("UPDATE imp_item SET gone_at = NULL, state = 'working', handle = ? WHERE owner = ? AND key = ?").run('{"engine":"tmux-own","pane":"%9"}', A, "window:k1");
   const w = await importedWindow(D1, A, { wid: "ew_old1", win: "" }); assert.equal(w?.state, "working");
-  await queueToImported(D1, A, w!, "답 넷"); assert.equal((db.prepare("SELECT verb FROM engine_cmd WHERE owner = ? ORDER BY at DESC LIMIT 1").get(A) as any).verb, "send");
+  await queueToImported(D1, A, w!, "답 넷"); assert.equal((db.prepare("SELECT verb FROM engine_cmd WHERE owner = ? ORDER BY rowid DESC LIMIT 1").get(A) as any).verb, "send");
 });

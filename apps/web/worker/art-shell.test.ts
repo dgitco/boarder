@@ -119,3 +119,32 @@ test("큰 캔버스 댓글: 같은 rid 로 다시 보내면(답을 잃은 뒤) �
   assert.equal((JSON.parse(t2) as { notes: unknown[] }).notes.length, 41, "댓글이 두 번 들어가거나 목록이 다름");
   assert.equal((db.prepare("SELECT count(*) n FROM wl_art_note WHERE art = ?").get(ART) as { n: number }).n, 41, "같은 rid 의 댓글이 두 번 들어감");
 });
+
+test("끼운 /art: 주인만 그 /art 표를 받고, 표가 붙은 첫 화면(껍데기 · 페이지)은 쿠키 없이 sandbox 로 열림 · 다른 /art 표로는 안 열림", async () => {
+  const A = newId("G"), P = newId("H"), arts: Record<string, { kind: string }> = { [A]: { kind: "canvas" }, [P]: { kind: "page" } };
+  const { D1 } = d1(), env = { DB: D1, BRIDGE: bridgeNs(arts, { artsDown: false, artsCalls: 0 }), BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+  const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
+  const call = (path: string, h: Record<string, string> = {}) => app.fetch(new Request("https://example.test" + path, { headers: { accept: "text/html", ...h } }), env, ctx);
+  const tok = async (id: string, h: Record<string, string>) => { const r = await call(`/api/arttok/${id}`, { accept: "application/json", ...h }); return { status: r.status, t: r.status === 200 ? (await r.json() as { t: string }).t : "" }; };
+  const ck = { cookie: await cookie() };
+  assert.equal((await tok(A, {})).status, 401, "로그인 안 한 사람");
+  assert.equal((await tok(newId("Z"), ck)).status, 404, "없는 아티팩트");
+  assert.equal((await tok("짧음", ck)).status, 404);
+  const ta = await tok(A, ck), tp = await tok(P, ck);
+  assert.equal(ta.status, 200); assert.match(ta.t, /^\d{10,13}\.[0-9a-f]{32}$/);
+  const shell = await call(`/art/${A}/?bxt=${encodeURIComponent(ta.t)}`, { "sec-fetch-dest": "iframe" });
+  assert.equal(shell.status, 200, "표가 붙은 캔버스 첫 화면");
+  assert.match(shell.headers.get("content-security-policy") || "", /^sandbox /, "판 안에서 연 것도 같은 sandbox");
+  const page = await call(`/art/${P}/?bxt=${encodeURIComponent(tp.t)}`, { "sec-fetch-dest": "iframe" });
+  assert.equal(page.status, 200, "표가 붙은 페이지 첫 화면");
+  const wrong = await call(`/art/${P}/?bxt=${encodeURIComponent(ta.t)}`, { "sec-fetch-dest": "iframe" });   // A 표로 P 를
+  assert.notEqual(wrong.status, 200, "다른 /art 표로 열림");
+  const deep = await call(`/art/${A}/sub/x.html?bxt=${encodeURIComponent(ta.t)}`, { "sec-fetch-dest": "iframe" });
+  assert.notEqual(deep.status, 200, "캔버스 표로 하위 폴더까지 열림");
+  const pdeep = await call(`/art/${P}/img/a.png?bxt=${encodeURIComponent(tp.t)}`, { "sec-fetch-dest": "image" });
+  assert.notEqual(pdeep.status, 401); assert.notEqual(pdeep.headers.get("location") || "", "/login", "페이지 표로 그 페이지 하위 그림은 표 길로(로그인 화면 아님)");
+  const trav = await call(`/art/${P}/../${A}/x.html?bxt=${encodeURIComponent(tp.t)}`, { "sec-fetch-dest": "iframe" });
+  assert.notEqual(trav.status, 200, "점점으로 다른 /art");
+  const D = newId("I"); arts[D] = { kind: "doc" }; later(6_000);
+  assert.equal((await tok(D, ck)).status, 404, "글(doc)은 끼우지 않음");
+});

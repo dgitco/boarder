@@ -182,6 +182,13 @@ app.use("*", async (c, next) => {
   const s = await signedIn(c); if (!s) return next();
   return queue.idem(c as never, s.user.email, next, ms => seg(c.req.raw, "claim", ms));
 });
+app.get("/api/arttok/:id", async c => {
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  if (!isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  const id = c.req.param("id");
+  if (!/^[A-Za-z0-9]{16,40}$/.test(id) || !["canvas", "page"].includes(await artKind(c.env, chOf(c), id))) return c.json({ error: "not found" }, 404);
+  return c.json({ t: await artTok(c.env, id, Date.now() + 2 * 3600_000) }, 200, { "cache-control": "no-store" });
+});
 app.get("/api/rid/:rid", async c => { const s = await signedIn(c); return s ? queue.look(c as never, s.user.email) : c.json({ error: "로그인" }, 401); });
 app.post("/api/admin/rid/drop", async c => {   // 배포 뒤 옛 코드로 남은 rid 칸 DO 를 내림(live/drop 처럼) — { who: 메일 }
   if (!admin(c)) return c.json({ error: "no" }, 403);
@@ -1572,21 +1579,24 @@ app.post("/api/dev/ch", async c => {
 });
 
 let artKinds: { at: number; ch: string; kinds: Record<string, string> } | null = null;
-async function isCanvas(env: Env, ch: string, id: string) {
-  if (ch === "owner" && await ledger.f7On(env.DB, "read_files")) { const ix = await files.index(env); if (ix) return ix.arts[id]?.kind === "canvas"; }
+async function isCanvas(env: Env, ch: string, id: string) { return (await artKind(env, ch, id)) === "canvas"; }
+async function artKind(env: Env, ch: string, id: string): Promise<string> {
+  if (ch === "owner" && await ledger.f7On(env.DB, "read_files")) { const ix = await files.index(env); if (ix) return ix.arts[id]?.kind || ""; }
   const age = artKinds && artKinds.ch === ch ? Date.now() - artKinds.at : Infinity;
   if (age > 60_000 || (age > 5_000 && !(id in artKinds!.kinds))) {
     const r = await boardCall(env, ch, { method: "GET", path: "/api/arts", headers: { accept: "application/json" } }).catch(() => null);
     let j: Record<string, { kind?: string }> | null = null;
     try { j = r?.status === 200 ? JSON.parse(new TextDecoder().decode(r.body)) : null; } catch { j = null; }
     if (j) artKinds = { at: Date.now(), ch, kinds: Object.fromEntries(Object.entries(j).map(([k, v]) => [k, v?.kind || ""])) };
-    else if (artKinds?.ch !== ch) return false;
+    else if (artKinds?.ch !== ch) return "";
   }
-  return artKinds!.kinds[id] === "canvas";
+  return artKinds!.kinds[id] || "";
 }
 
 const PASS_REQ = ["accept", "content-type", "if-none-match", "x-hb", "range", "x-file-name", "x-request-id"];
 const PASS_RES = ["x-retry-safe", "content-type", "content-encoding", "etag", "cache-control", "content-disposition", "last-modified", "content-range", "accept-ranges", "x-request-id"];
+const ART_ROOT = /^\/art\/([A-Za-z0-9]{16,40})\/$/;
+const ART_DEEP = /^\/art\/([A-Za-z0-9]{16,40})\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*\/){1,4}[A-Za-z0-9_-][^/?#]*\.(?:html|js|css|json|png|jpe?g|webp|gif|avif|svg|woff2?)$/;   // 마디 첫 글자는 점이 아님(.. 막음)
 const edgeCache = () => (caches as unknown as { default: Cache }).default;   // Workers 입구 캐시(DOM 타입엔 없음)
 const ART_FILE = /^\/art\/([A-Za-z0-9]{16,40})\/(?:project\/)?(?:canvas\.json|[^/?#]+\.(?:html|js|css|png|jpe?g|webp|gif|avif|svg)|_assets\/[A-Za-z0-9_-]{1,80}\.(?:png|jpe?g|webp|gif|avif|svg))$/;
 const artTagHtml = (id: string, t: string, body: ReadableStream) => {
@@ -1845,7 +1855,8 @@ app.all("*", async c => {
     if (r === undefined) return c.json({ error: "일시적인 오류가 발생했어요" }, 503);
     return r ?? c.text("not found", 404, { "cache-control": "no-store" });
   }
-  const aj = c.req.method === "GET" && url.searchParams.has("bxt") && !/%2f|%5c/i.test(url.pathname) ? ART_FILE.exec(url.pathname) : null;
+  let aj = c.req.method === "GET" && url.searchParams.has("bxt") && !/%2f|%5c/i.test(url.pathname) ? ART_FILE.exec(url.pathname) || ART_ROOT.exec(url.pathname) : null;
+  if (!aj && c.req.method === "GET" && url.searchParams.has("bxt") && !/%2f|%5c/i.test(url.pathname)) { const d = ART_DEEP.exec(url.pathname); if (d && (await artKind(c.env, chOf(c), d[1])) === "page") aj = d; }
   if (aj && await artOk(c.env, aj[1], url.searchParams.get("bxt"))) {
     try {
       const fh = { accept: c.req.header("accept") || "*/*", "accept-encoding": "gzip" }, fr = await filesFirst(c, url.pathname, fh);
@@ -1853,7 +1864,7 @@ app.all("*", async c => {
       const h = new Headers({ "access-control-allow-origin": "*", "x-content-type-options": "nosniff", "content-security-policy": "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads", "cache-control": "private, no-store" });
       for (const k of ["content-type", "content-encoding"]) if (r.headers[k]) h.set(k, r.headers[k]);
       if (fr) fromR2(h);
-      if (r.status === 200 && url.pathname.endsWith(".html")) {
+      if (r.status === 200 && (url.pathname.endsWith(".html") || (url.pathname.endsWith("/") && (r.headers["content-type"] || "").includes("text/html")))) {
         let b = new Response(r.body as unknown as BodyInit).body!;
         if (h.get("content-encoding") === "gzip") { b = b.pipeThrough(new DecompressionStream("gzip")); h.delete("content-encoding"); }
         h.delete("content-length");
