@@ -1,5 +1,5 @@
 // node --test --no-warnings --experimental-transform-types apps/web/worker/es-route.test.ts (Node 22.18+ · node:sqlite · apps/web 의존성 설치된 채)
-// 비서(/es) 길: 진짜 index.ts(app.fetch) 그대로 — 주인 /es 는 / 와 같은 몸통(다리 path 「/」)에 틀 + BX_EA · ea.js/css, /es/ 는 301 /es, 회원은 302 /, / 몸통엔 BX_EA 없음.
+// 비서(/es) 길: 진짜 index.ts(app.fetch) 그대로 — 주인 /es 는 / 와 같은 몸통(다리 path 「/」)에 틀 + BX_EA · ea.js/css, /es/ 는 301 /es, 회원 /es 는 자기 보드 몸통 + 비서 배치(주인 다리 안 감), / 몸통엔 BX_EA 없음.
 // 가짜 D1 = 메모리 SQLite + migrations 전부, 다리 = 부른 path 를 적어 두는 가짜. HTMLRewriter = head · body 앞뒤에 끼우는 것만 흉내. 자료는 다 지어낸 것.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -120,11 +120,12 @@ test("/es/ → 301 /es(상대 주소 api/… 가 깨지지 않게) — 쿼리 �
   }
 });
 
-test("회원 /es → 302 / (주인 보드 · 다리에 안 감)", async () => {
+test("회원 /es → 자기 화면(주인 보드 · 다리에 안 감) — 메인 봇을 아직 안 골랐으면 온보딩부터", async () => {
   const { paths, get } = setup();
   const r = await get("/es", MEMBER);
-  assert.equal(r.status, 302);
-  assert.equal(new URL(r.headers.get("location")!, "https://example.test").pathname, "/");
+  assert.equal(r.status, 200);
+  const html = await r.text();
+  assert.ok(html.includes("메인 봇 만들기") && !html.includes("BX_EA"), "첫 회원은 온보딩 한 화면");
   assert.deepEqual(paths, []);
 });
 

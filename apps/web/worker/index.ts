@@ -1630,7 +1630,7 @@ async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) 
     .replace("__BX_DATA__", () => dt.body.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(dt.etag));
   return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } as Record<string, string>, body: new TextEncoder().encode(html) };
 }
-async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot) {
+async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea = false) {
   const pg = await snap(c.env).get("page"); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
   await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
   const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot)), tag = await memberBoard.etag(d);
@@ -1638,7 +1638,7 @@ async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: strin
   // 회원 값: 채널은 Primary 하나(보드 CH) · 내 이름 · 메인 봇 이름. 영역 칸이 하나라 트리 줄을 한 칸으로
   const member = `<script>window.HB_CH = ["primary"]; window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name, push: await ledger.f7On(c.env.DB, "member_push").catch(() => false) }).replace(/</g, "\\u003c")}</script><style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>`;
   const res = new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "frame-ancestors 'self'", "x-frame-options": "SAMEORIGIN", "x-boarder-src": "member" } });
-  return boardShell(c, res, me, member, await ledger.f7On(c.env.DB, "write_queue"));
+  return boardShell(c, res, me, member, await ledger.f7On(c.env.DB, "write_queue"), ea);
 }
 // 회원 쓰기: 보드 몸통을 회원 길(/api/me/*)로 바꿔 같은 앱에 다시 부름(같은 쿠키 · 같은 문 검사) — 답은 보드 꼴(rid · state ok)
 async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
@@ -1750,11 +1750,10 @@ app.all("*", async c => {
   }
   if (!isOwner(c.env, s.user.email)) {
     if (/^\/(assets|icons)\//.test(url.pathname)) return c.env.ASSETS.fetch(c.req.raw);
-    if (url.pathname === "/es") return c.redirect("/", 302);   // 비서 화면은 주인만 — 회원은 자기 보드로
-    if (url.pathname === "/" && c.req.method === "GET") {
+    if ((url.pathname === "/" || url.pathname === "/es") && c.req.method === "GET") {
       const bot = await memberBot(c.env, s.user.email.toLowerCase()), js = { blob: blobJs, pick: botPickJs };
       if (!bot) return c.html(memberOnboard(s.user.email, js), 200, { ...NOFRAME, "cache-control": "no-store" });
-      const pg = await memberPage(c, s.user.email.toLowerCase(), (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>().catch(() => null))?.name, bot);
+      const pg = await memberPage(c, s.user.email.toLowerCase(), (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>().catch(() => null))?.name, bot, url.pathname === "/es");
       return pg ?? c.html("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><p style='font:15px system-ui;padding:40px'>일시적인 오류가 발생했어요</p>", 503, { ...NOFRAME, "cache-control": "no-store", "retry-after": "5" });
     }
     {

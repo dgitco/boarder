@@ -7,6 +7,8 @@ const FREQ = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart",
 const PRIMARY = "%1";
 const ME = "나";        // 회원이 Primary 채팅에 쓴 줄의 win(/api/me/chat)
 const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;
+const NODE_PRI = ["급함", "높음", "보통", "낮음"];
+const priOf = (m: Record<string, { pri?: string }>, name: string) => String(m[name]?.pri || m[name.replace(/^\d+\s+/, "")]?.pri || "");
 const PTH = /^p:\d{10}\.\d{6}$/;
 export const primaryThread = (ts: string) => "p:" + ts;
 const inPrim = (r: { thread?: string | null }) => r.thread === "primary" || PTH.test(String(r.thread || ""));
@@ -66,7 +68,7 @@ async function load(db: D1Database, me: string) {
   const mainWin = (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
   const engineNodes = (ew.results as R[]).filter(w => w.kind === "role" && !nodes.some(n => n.name === w.name || n.wins.has(w.name)));
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
-  return { defaultNode, primaryWin, nodes, byId, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes };
+  return { defaultNode, primaryWin, nodes, byId, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes };
 }
 
 // 채널(pane)마다 에이전트 글 — 모아 보기 읽지 않음 · 저장(member-inbox.ts)이 씀. 채널 = 노드 + 노드에 안 묶인 역할 창(메인 봇은 따로), 이름은 틀 노드 채팅 열쇠(「n:<이름>」)와 같음.
@@ -103,7 +105,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     const last = o.rows[0] ? line(o.rows[0]) : null, blk = last && last.kind === "막힘" ? last : null;
     return { win: o.win, area: "primary", role: "리드", pane: o.pane, acct: "", state: o.state, dur: "", stuck: "", cwd: o.cwd || "", branch: o.branch || "", kind: o.kind, last, blocked: blk,
       recent: o.rows.slice(0, 5).reverse().map(r => ({ ago: ago(r.at), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 260) })),
-      hist: o.rows.filter(r => now - r.at < 86_400_000).reverse().map(r => ({ m: ago(r.at), k: KIND_KO[r.kind] || r.kind })), topics: [], pri: "", owner: !!blk, watch: "" };
+      hist: o.rows.filter(r => now - r.at < 86_400_000).reverse().map(r => ({ m: ago(r.at), k: KIND_KO[r.kind] || r.kind })), topics: [], pri: priOf(L.pri, o.win), owner: !!blk, watch: "" };
   };
   const mainName = bot?.name || "Primary";
   const panes: R[] = [pane({ pane: PRIMARY, win: mainName, kind: "primary", state: STATE[L.mainWin?.state] || "쉼", rows: L.logs.filter(r => inPrim(r) && r.win !== ME && r.win !== "보더") })];
@@ -111,12 +113,12 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   for (const n of L.nodes) {
     const rows = logsOf(n), w0 = n.windows[0];
     if (n.archived_at || n.state === "done") { closed.push({ pane: n.pane, win: n.name, ago: ago(n.archived_at || n.updated_at), msg: rows[0] ? cut(rows[0].text, 200) : n.why, area: "primary" }); continue; }
-    if (n.state === "parked") { parked.push({ id: "c" + n.pane.slice(1), name: n.name, area: "primary", msg: n.why || "주차", owner: false, ago: ago(n.updated_at), stale: null, wait: n.why || "주차", topics: [], pri: "", pane: n.pane, short: n.why || "주차", watch: "" }); continue; }
+    if (n.state === "parked") { parked.push({ id: "c" + n.pane.slice(1), name: n.name, area: "primary", msg: n.why || "주차", owner: false, ago: ago(n.updated_at), stale: null, wait: n.why || "주차", topics: [], pri: priOf(L.pri, n.name), pane: n.pane, short: n.why || "주차", watch: "" }); continue; }
     panes.push(pane({ pane: n.pane, win: n.name, kind: "lead", state: STATE[n.state] || (n.state === "turn" ? "질문" : "쉼"), cwd: w0?.cwd, branch: w0?.branch, rows }));
   }
   for (const w of L.engineNodes) {
     const rows = logsOf(null, [w.name]), p = paneOfId(w.id);
-    if (w.state === "parked") parked.push({ id: "c" + p.slice(1), name: w.name, area: "primary", msg: w.note || "주차", owner: false, ago: ago(w.state_at || w.created_at), stale: null, wait: "주차", topics: [], pri: "", pane: p, short: "주차", watch: "" });
+    if (w.state === "parked") parked.push({ id: "c" + p.slice(1), name: w.name, area: "primary", msg: w.note || "주차", owner: false, ago: ago(w.state_at || w.created_at), stale: null, wait: "주차", topics: [], pri: priOf(L.pri, String(w.name)), pane: p, short: "주차", watch: "" });
     else if (["closed", "failed", "gone"].includes(w.state)) closed.push({ pane: p, win: w.name, ago: ago(w.closed_at || w.state_at || w.created_at), msg: w.note || "", area: "primary" });
     else panes.push(pane({ pane: p, win: w.name, kind: "lead", state: STATE[w.state] || "쉼", rows }));
   }
@@ -156,7 +158,9 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   }
   cardlist.sort((a, b) => a.at - b.at);
   const feed = L.logs.filter(r => !OWN.test(r.win) && !inPrim(r) && r.kind !== "me").slice(0, 40).map(r => ({ id: r.id, ago: ago(r.at), pane: L.nodeOfWin(r.win)?.pane || PRIMARY, win: cut(r.win, 30), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 160) }));
-  return { generated: kst(now), areas, panes, closed, parked, archived: [], decisions, to_check: [], promises: [], feed,
+  // 보관한 노드 이름(주인 D.archived 와 같은 꼴) — 찾기 · 타임라인 · 「보관」 띠가 씀
+  const archived = ((await db.prepare("SELECT COALESCE(pinned_name, name) AS n FROM mnode WHERE owner = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 300").bind(me).all<R>()).results).map(r => String(r.n || "노드"));
+  return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check: [], promises: [], feed,
     park_metrics: { at: Math.floor(now / 1000), open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
     cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [] };
 }
@@ -323,7 +327,10 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
   if (p === "/api/inbox") return j({ unread: [], drafts: [], saved: [], saved_ids: [] });
   if (p === "/api/arts") return j({});
   if (/^\/api\/artnotes\/[A-Za-z0-9]{16,40}$/.test(p)) return j({ notes: [] });
-  if (p === "/api/emoji/frequent") return j({ names: FREQ });
+  if (p === "/api/emoji/frequent") {   // 내가 자주 단 반응 먼저(주인 owner-read 와 같은 꼴), 모자라면 기본 순서로 채움
+    const mine = ((await db.prepare("SELECT emoji, count(*) AS n FROM member_react WHERE owner = ? GROUP BY emoji ORDER BY n DESC, max(at) DESC LIMIT 18").bind(me).all<R>()).results).map(r => String(r.emoji));
+    return j({ names: [...new Set([...mine, ...FREQ])].slice(0, Math.max(FREQ.length, mine.length)) });
+  }
   if (p === "/api/drafts") return j({});
   if (p === "/api/push/key") return j({ key: "" });   // 빈 키 = 화면이 푸시를 조용히 끔(회원 푸시 길 없음)
   if (p === "/api/voice/modes") return j({});
@@ -482,6 +489,19 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     if (c.state !== "open") return { ok: { ok: true, state: "ok" } };   // 이미 끝냄(다시 보낸 것)
     return { path: `/api/me/cards/${c.id}/answer`, body: { choice: TODO_DONE, free: true } };
   }
-  if (path === "/api/draft" || path === "/api/cardcheck" || path === "/api/nodepri") return { ok: { ok: true, state: "ok" } };   // 저장 표 없음 — 화면 쪽(이 기기)에만 남음
+  if (path === "/api/nodepri") {
+    const title = cut(String(b.title || "").replace(/^\d+\s+/, "").trim(), 80), pri = String(b.pri || "");
+    if (!title || (pri && !NODE_PRI.includes(pri))) return { error: "노드 이름 · 단계", status: 400 };
+    const patch = JSON.stringify({ [title]: pri ? { pri, at: Math.floor(Date.now() / 1000) } : null });   // json_patch: null 이면 그 칸 지움 — 이름에 따옴표가 있어도 안전
+    await db.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('pri', json_patch('{}', json(?2))), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.pri', json_patch(CASE WHEN json_valid(data) AND json_type(data, '$.pri') = 'object' THEN json_extract(data, '$.pri') ELSE '{}' END, json(?2))), updated_at = ?3").bind(me, patch, Date.now()).run();
+    return { ok: { ok: true, state: "ok", title, pri } };
+  }
+  if (path === "/api/nodereopen") {   // 닫힌 · 보관한 노드 「다시 열기」(틀 { name }) → 회원 보관함 다시 열기(/api/me/nodes/edit reopen)와 같은 길
+    const t = String(b.name || "").replace(/^\d+\s+/, "").trim().slice(0, 80);
+    const n = t ? await db.prepare("SELECT id FROM mnode WHERE owner = ? AND (pinned_name = ?2 OR (pinned_name IS NULL AND name = ?2)) AND (archived_at IS NOT NULL OR state = 'done') ORDER BY updated_at DESC LIMIT 1").bind(me, t).first<R>() : null;
+    if (!n) return { error: "없는 노드예요", status: 404 };
+    return { path: "/api/me/nodes/edit", body: { op: "reopen", node: String(n.id) } };
+  }
+  if (path === "/api/draft" || path === "/api/cardcheck") return { ok: { ok: true, state: "ok" } };   // 저장 표 없음 — 화면 쪽(이 기기)에만 남음
   return { error: "아직 안 돼요", status: 400 };
 }

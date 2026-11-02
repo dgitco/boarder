@@ -17,8 +17,8 @@
   const BY = () => typeof byPane !== 'undefined' && byPane ? byPane : {};
   const C = () => typeof cur !== 'undefined' ? cur : null;
   const AN = () => typeof AREA_NAME === 'object' && AREA_NAME ? AREA_NAME : {};
-  const PINS = ['primary', 'company', 'shop', 'dgit', 'personal'], PIN0 = {primary: '비서', company: '회사', shop: '가게', dgit: 'DGit', personal: '퍼스널'};
-  const pinName = k => k === 'primary' ? '비서' : String(AN()[k] || '').replace(/\s*리드\s*/g, ' ').trim() || PIN0[k];
+  const PINS = ['primary', 'company', 'shop', 'dgit', 'personal'].filter(k => !Array.isArray(window.HB_CH) || window.HB_CH.includes(k)), PIN0 = {primary: '비서', company: '회사', shop: '가게', dgit: 'DGit', personal: '퍼스널'};
+  const pinName = k => k === 'primary' ? (window.HB_MEMBER?.bot || '비서') : String(AN()[k] || '').replace(/\s*리드\s*/g, ' ').trim() || PIN0[k];
   const pinAv = k => AN()[k] || PIN0[k];
   // 읽지 않음 = shell.js lists() 의 by(k) 와 같은 판정
   const unread = k => { try { return (window.HBInbox?.state?.unread || []).some(x => x && x.chan === k); } catch { return false; } };
