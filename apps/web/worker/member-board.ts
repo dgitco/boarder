@@ -204,10 +204,14 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     if (named.length >= 2 || (named.length === 1 && groups.has(""))) {
       const order = named.sort((a, b) => groups.get(b)!.length - groups.get(a)!.length || a.localeCompare(b));
       if (groups.has("")) order.push("");
-      const HEAD = /팀장|리드|총괄|lead/i, BUSY = new Set(["일하는 중", "질문", "뒤 작업 중"]);
-      order.forEach((a, i) => {
+      const HEAD = /팀장|리드|총괄|비서|lead/i, TEST = /^\s*\[(시험|test)\]/i, BUSY = new Set(["일하는 중", "질문", "뒤 작업 중"]);
+      const ok = (p: R) => !TEST.test(String(p.win));
+      const hn = new Map(order.map(a => [a, groups.get(a)!.find(p => HEAD.test(String(p.win)) && ok(p))]));
+      const org = [...hn.values()].some(Boolean);
+      const heads = new Map(order.map(a => { const ps = groups.get(a)!; return [a, hn.get(a) || (org ? undefined : ps.find(p => ok(p) && BUSY.has(String(p.state))) || ps.find(ok) || ps[0])]; }));
+      order.filter(a => heads.get(a)).forEach((a, i) => {
         const ps = groups.get(a)!, key = "m" + i;
-        const head = ps.find(p => HEAD.test(String(p.win))) || ps.find(p => BUSY.has(String(p.state))) || ps[0];
+        const head = heads.get(a)!;
         for (const p of ps) p.area = key;
         // 열 머리 얼굴 = 머리 노드에 고른 얼굴, 없으면 열 이름에서 정한 얼굴(같은 이름 → 같은 얼굴) — 머리 판에도 같은 값
         const avatar = L.faces[nodeOfPane.get(head.pane) || ""] || faceOf(a || "기타");

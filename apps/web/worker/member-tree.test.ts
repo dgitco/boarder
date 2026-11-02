@@ -28,13 +28,34 @@ test("영역마다 한 열, 열 머리는 팀장 · 기타는 맨 뒤", async ()
   add(db, A, "n_4", "베타 팀장", "hbeta"); add(db, A, "n_5", "개인 비서", ".team-hq"); add(db, A, "n_6", "시험", "기타", "working");
   add(db, B, "n_9", "남의 노드", "zeta");
   const d = await data(d1, A, null) as { areas: { key: string; name: string; lead: string; lead_name?: string }[]; panes: { pane: string; win: string; area: string; kind: string }[] };
-  assert.deepEqual(d.areas.map(a => a.name), ["Primary", "acme", ".team-hq", "hbeta", "기타"]);
+  assert.deepEqual(d.areas.map(a => a.name), ["Primary", "acme", ".team-hq", "hbeta"]);   // 「기타」엔 팀장 · 비서 노드가 없어 Primary 열에
+  assert.equal(d.panes.find(p => p.win === "시험")!.area, "primary");
   const acme = d.areas[1]; assert.equal(acme.lead_name, "팀장");
   const inAcme = d.panes.filter(p => p.area === acme.key);
   assert.equal(inAcme.length, 3); assert.ok(inAcme.every(p => p.kind === "lead"), "머리도 보통 노드 — 제 채팅 · 채널 목록 그대로");
   assert.ok(d.areas.every(a => /^(primary|m\d+)$/.test(a.key)), "열 키는 m0 · m1 …");
   assert.ok(!d.panes.some(p => p.win === "남의 노드"));
   assert.ok(d.areas.slice(1).every(a => d.panes.some(p => p.pane === a.lead && p.area === a.key)), "열 머리 판이 그 열에 있음");
+});
+
+test("열 머리는 팀장 · 리드 · 총괄 · 비서 이름만 — 일하는 중인 시험 · 담당 노드가 머리가 되지 않고, 그런 영역은 Primary 열에", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_1", "[시험] 새 보드 기기", "acme", "working"); add(db, A, "n_2", "자료 정리", "acme"); add(db, A, "n_3", "운영 담당", "acme", "working");
+  add(db, A, "n_4", "베타 팀장", "hbeta"); add(db, A, "n_5", "beta-main", "hbeta", "working");
+  add(db, A, "n_6", "개인 비서", ".team-hq"); add(db, A, "n_7", "[시험] 팀장 흉내", ".team-hq", "working");
+  const d = await data(d1, A, null) as { areas: { key: string; name: string; lead: string; lead_name?: string }[]; panes: { pane: string; win: string; area: string }[] };
+  assert.deepEqual(d.areas.map(a => [a.name, a.lead_name ?? null]), [["Primary", null], [".team-hq", "개인 비서"], ["hbeta", "베타 팀장"]]);
+  const areaOf = (w: string) => d.panes.find(p => p.win === w)!.area;
+  assert.deepEqual(["[시험] 새 보드 기기", "자료 정리", "운영 담당"].map(areaOf), ["primary", "primary", "primary"], "머리 없는 acme 영역 노드는 Primary 열 — 시험 창이 그 위로 안 올라감");
+  assert.equal(areaOf("[시험] 팀장 흉내"), d.areas[1].key, "[시험] 이름은 머리가 안 되고 그 열의 보통 노드");
+});
+
+test("팀장 이름 노드가 아무 데도 없으면 예전처럼 영역마다 열 — 머리는 일하는 노드, 단 「[시험]」 이름은 빼고", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_1", "[시험] 새 보드", "가 리포", "working"); add(db, A, "n_2", "정리", "가 리포"); add(db, A, "n_3", "보고서", "가 리포", "working");
+  add(db, A, "n_4", "나 일", "나 리포");
+  const d = await data(d1, A, null) as { areas: { name: string; lead_name?: string }[] };
+  assert.deepEqual(d.areas.map(a => [a.name, a.lead_name ?? null]), [["Primary", null], ["가 리포", "보고서"], ["나 리포", "나 일"]]);
 });
 
 test("영역이 하나뿐이면 예전처럼 Primary 한 열", async () => {
