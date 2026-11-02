@@ -217,6 +217,15 @@ export async function main(argv) {
     if (cmd === 'status' && !pos.length) return await status();
     if (cmd === 'headers') { const w = await windowToken(); return console.log(JSON.stringify({ Authorization: `Bearer ${w.token}` })); }
     if (cmd === 'hook' && ['session-start', 'stop'].includes(pos[0]) && /^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT || '')) return;
+    if (cmd === 'hook' && pos[0] === 'artifact') {
+      try {
+        const { artifactHook } = await import('./artifact.mjs'), { canvasPut } = await import('./canvas.mjs');
+        let j; try { j = JSON.parse(await readStdin()); } catch { return; }
+        if (!loadDevice()?.token) return;
+        await artifactHook(j, { put: (f, fl) => canvasPut(f, fl, { log: m => console.error(`boarder artifact: ${String(m).split('\n')[0]}`) }), log: m => console.error(m) });
+      } catch (e) { console.error(`boarder artifact: ${e.message}`); }
+      process.exit(0);   // 시간 상한에 걸려 남은 올리기 연결이 있어도 바로 끝
+    }
     if (cmd === 'hook' && pos[0] === 'session-start') {
       let note = 'Boarder: report this session on the human\'s board — `boarder log start|progress|blocked|done "<one line>"`, decisions with `boarder ask` (skill: boarder).';
       try { await windowToken({ timeoutMs: 6000 }); } catch (e) { note = `Boarder: ${e.name === 'TimeoutError' ? 'the Boarder server did not answer in time — reports may fail until the network is back' : e.message}`; }

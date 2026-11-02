@@ -44,6 +44,8 @@ test('enable report: 폴더 전부에 MCP · 훅 · 스킬, 옛 경로 칸은 �
       assert.deepEqual(e.args, [BIN, 'mcp'], `${d} MCP`);
       assert.match(JSON.stringify(rd(path.join(d, 'settings.json')).hooks.SessionStart), /hook session-start/);
       assert.match(JSON.stringify(rd(path.join(d, 'settings.json')).hooks.Stop), /boarder\.mjs' hook stop/, `${d} Stop 훅(보드 글의 답을 채널로)`);
+      const pt = rd(path.join(d, 'settings.json')).hooks.PostToolUse;
+      assert.equal(pt?.length, 1, `${d} 아티팩트 게시 훅`); assert.match(pt[0].matcher, /rtifact/); assert.match(JSON.stringify(pt), /boarder\.mjs' hook artifact/);
       assert.ok(fs.existsSync(path.join(d, 'skills', 'boarder', 'SKILL.md')), `${d} skill`);
     }
     const base = rd(path.join(H, '.claude.json'));
@@ -98,7 +100,7 @@ test('restore(인자 없음): setup 때 CLAUDE_CONFIG_DIR · BOARDER_CLAUDE_DIRS
     assert.ok(!fs.existsSync(path.join(env3, 'settings.json')), 'CLAUDE_CONFIG_DIR 폴더 훅이 남음');
     assert.ok(!fs.existsSync(path.join(env3, 'skills', 'boarder')), 'CLAUDE_CONFIG_DIR 폴더 스킬이 남음');
     assert.equal(fs.readFileSync(path.join(env4, '.claude.json'), 'utf8'), '{"keep":1}\n', 'BOARDER_CLAUDE_DIRS 폴더 MCP 가 남음');
-    const st = rd(s4); assert.equal(st.theme, 'dark'); assert.doesNotMatch(JSON.stringify(st), /hook (session-start|stop)/, 'BOARDER_CLAUDE_DIRS 폴더 훅이 남음');
+    const st = rd(s4); assert.equal(st.theme, 'dark'); assert.doesNotMatch(JSON.stringify(st), /hook (session-start|stop|artifact)/, 'BOARDER_CLAUDE_DIRS 폴더 훅이 남음');
     assert.ok(!fs.existsSync(path.join(env4, 'skills', 'boarder')));
   });
 });
