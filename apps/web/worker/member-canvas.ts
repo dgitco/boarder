@@ -1,6 +1,8 @@
 import type { Context, Hono } from "hono";
+import * as files from "./files";
+import { ridBatch } from "./queue";
 
-type Env = { RESULTS: R2Bucket; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string; [k: string]: unknown };
+type Env = { RESULTS: R2Bucket; DB: D1Database; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string; [k: string]: unknown };
 type C = Context<{ Bindings: Env }>;
 export type CanvasHooks = { device: (c: C) => Promise<{ id: string; owner: string } | null> };
 
@@ -36,7 +38,12 @@ const marker = (mk: string, id: string) => `mart/${mk}/_c/${id}`;
 const fileKey = (mk: string, id: string, ver: string, p: string) => `mart/${mk}/${id}/${ver}/${p}`;
 const titleOf = (html: string) => { const m = /<title[^>]*>([^<]{1,400})<\/title>/i.exec(html); return m ? m[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : ""; };
 
-type Meta = { title: string; acct: string; at: string; ver: string; n: string; bytes: string };
+type Meta = { title: string; acct: string; at: string; ver: string; n: string; bytes: string; kind?: string; cv?: string };
+export function kindOf(paths: string[]): { kind: "canvas" | "page"; cv: string } {
+  if (paths.includes("project/canvas.json")) return { kind: "canvas", cv: "project" };
+  if (paths.includes("canvas.json")) return { kind: "canvas", cv: "" };
+  return { kind: "page", cv: "" };
+}
 async function metaOf(env: Env, mk: string, id: string): Promise<Meta | null> {
   const h = await env.RESULTS.head(marker(mk, id));
   return h?.customMetadata?.ver ? h.customMetadata as unknown as Meta : null;
@@ -60,20 +67,87 @@ async function dropVer(env: Env, mk: string, id: string, ver: string) {
   } while (cursor);
 }
 
+const autoFolder = (m: Meta) => m.acct || "캔버스";
 export async function list(env: Env, email: string) {
-  const out: Record<string, { kind: "page"; title: string; at: string; acct: string; folder: string; moved: false; notes: 0 }> = {};
-  for (const { id, m } of (await all(env, await keyOf(email))).sort((a, b) => Number(b.m.at) - Number(a.m.at)))
-    out[id] = { kind: "page", title: m.title || id, at: m.at, acct: m.acct || "", folder: m.acct || "캔버스", moved: false, notes: 0 };
+  const me = email.toLowerCase();
+  const [rows, fr, nr] = await Promise.all([all(env, await keyOf(email)),
+    env.DB.prepare("SELECT art, folder FROM member_artfolder WHERE owner = ?").bind(me).all<{ art: string; folder: string }>(),
+    env.DB.prepare("SELECT art, count(*) AS n FROM member_artnote WHERE owner = ? AND deleted_at IS NULL GROUP BY art").bind(me).all<{ art: string; n: number }>()]);
+  const mv = new Map(fr.results.map(r => [r.art, r.folder])), cnt = new Map(nr.results.map(r => [r.art, Number(r.n)]));
+  const out: Record<string, { kind: "page" | "canvas"; title: string; at: string; acct: string; folder: string; moved: boolean; notes: number }> = {};
+  for (const { id, m } of rows.sort((a, b) => Number(b.m.at) - Number(a.m.at)))
+    out[id] = { kind: m.kind === "canvas" ? "canvas" : "page", title: m.title || id, at: m.at, acct: m.acct || "", folder: mv.get(id) || autoFolder(m), moved: mv.has(id), notes: cnt.get(id) || 0 };
   return out;
 }
 
-export async function file(env: Env, mk: string, id: string, rel: string) {
+export type Got = { body: ReadableStream | Uint8Array; ct: string; html: boolean; shell?: boolean };
+const te2 = new TextEncoder(), td = new TextDecoder();
+export async function file(env: Env, mk: string, id: string, rel: string): Promise<Got | null> {
   if (!ID.test(id)) return null;
+  const m = await metaOf(env, mk, id); if (!m) return null;
+  if (m.kind === "canvas") {
+    if (!rel) {
+      const o = await env.RESULTS.get("art/_sys/artcanvas.html"); if (!o) return null;
+      const t = (m.title || id).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      return { body: te2.encode(td.decode(await o.arrayBuffer()).split("__TITLE__").join(t)), ct: "text/html; charset=utf-8", html: true, shell: true };
+    }
+    if (rel.endsWith("/") || !okPath(rel)) return null;
+    if (rel === "support.js" || rel.endsWith("/support.js")) return { body: te2.encode(files.SUPPORT_JS), ct: "text/javascript; charset=utf-8", html: false };
+    for (const p of [...new Set([m.cv ? `${m.cv}/${rel}` : rel, rel, `project/${rel}`])]) {
+      if (!okPath(p)) continue;
+      const o = await env.RESULTS.get(fileKey(mk, id, m.ver, p)); if (!o) continue;
+      const ct = o.httpMetadata?.contentType || typeOf(p);
+      if (!isHtml(p)) return { body: o.body, ct, html: false };
+      const ix = await files.index(env).catch(() => null), b = new Uint8Array(await o.arrayBuffer());
+      return { body: ix?.shim ? files.shim(ix, b) : b, ct, html: true };
+    }
+    return null;
+  }
   const p = !rel || rel.endsWith("/") ? rel + "index.html" : rel;
   if (!okPath(p)) return null;
-  const m = await metaOf(env, mk, id); if (!m) return null;
   const o = await env.RESULTS.get(fileKey(mk, id, m.ver, p)); if (!o) return null;
-  return { o, ct: o.httpMetadata?.contentType || typeOf(p), html: isHtml(p) };
+  return { body: o.body, ct: o.httpMetadata?.contentType || typeOf(p), html: isHtml(p) };
+}
+
+const ARTNOTE_MAX = 4000;
+const nowS = () => Date.now() / 1000;
+const NOART: [number, object] = [404, { ok: false, error: "없는 아티팩트" }];
+const mine = async (env: Env, me: string, art: string) => ID.test(art) ? metaOf(env, await keyOf(me), art) : null;
+async function noteRows(db: D1Database, me: string, art: string) {
+  const r = await db.prepare("SELECT id, target, page, who, text, at FROM member_artnote WHERE owner = ? AND art = ? AND deleted_at IS NULL ORDER BY at, id").bind(me, art).all();
+  return r.results;
+}
+/** GET /api/artnotes/<id> → [상태, {notes}] */
+export async function artnotes(env: Env, email: string, art: string): Promise<[number, object]> {
+  const me = email.toLowerCase();
+  if (!(await mine(env, me, art))) return NOART;
+  return [200, { notes: await noteRows(env.DB, me, art) }];
+}
+/** POST /api/artnote {art, target, page, text} · {art, del} → [상태, {ok, notes}] */
+export async function artnote(env: Env, email: string, body: { art?: unknown; del?: unknown; target?: unknown; page?: unknown; text?: unknown }, rid = ""): Promise<[number, object]> {
+  const me = email.toLowerCase(), art = String(body.art || "");
+  if (!(await mine(env, me, art))) return NOART;
+  if (body.del) {
+    const id = Number(body.del); if (!Number.isInteger(id)) return [400, { ok: false, error: "빈 댓글" }];
+    await ridBatch(env.DB, rid, [env.DB.prepare("UPDATE member_artnote SET deleted_at = ? WHERE id = ? AND owner = ? AND art = ? AND who = 'owner' AND deleted_at IS NULL").bind(nowS(), id, me, art)]);
+  } else {
+    const text = String(body.text || "").trim().slice(0, ARTNOTE_MAX), target = String(body.target || "").slice(0, 200);
+    if (!text || !target) return [400, { ok: false, error: "빈 댓글" }];
+    const n = (await env.DB.prepare("SELECT count(*) n FROM member_artnote WHERE owner = ? AND art = ? AND deleted_at IS NULL").bind(me, art).first<{ n: number }>())?.n || 0;
+    if (n >= 500) return [400, { ok: false, error: "댓글이 너무 많아요 — 지난 댓글을 지우고 다시 써 주세요" }];
+    await ridBatch(env.DB, rid, [env.DB.prepare("INSERT INTO member_artnote(owner, art, target, page, who, text, at) VALUES (?, ?, ?, ?, 'owner', ?, ?)")
+      .bind(me, art, target, String(body.page || "").slice(0, 200), text, nowS())]);
+  }
+  return [200, { ok: true, notes: await noteRows(env.DB, me, art) }];
+}
+/** POST /api/artfolder {art, folder} → [상태, {ok, folder}] — 「영역/종류」 칸마다 공백 줄이고 40자 · 전체 120자, '' 면 자동 분류로(주인과 같음) */
+export async function artfolder(env: Env, email: string, body: { art?: unknown; folder?: unknown }, rid = ""): Promise<[number, object]> {
+  const me = email.toLowerCase(), art = String(body.art || "");
+  const m = await mine(env, me, art); if (!m) return NOART;
+  const folder = String(body.folder || "").split("/").map(p => p.replace(/\s+/g, " ").trim().slice(0, 40)).filter(Boolean).join("/").slice(0, 120);
+  if (folder) await ridBatch(env.DB, rid, [env.DB.prepare("INSERT INTO member_artfolder(owner, art, folder, at) VALUES (?, ?, ?, ?) ON CONFLICT(owner, art) DO UPDATE SET folder = excluded.folder, at = excluded.at").bind(me, art, folder, nowS())]);
+  else await ridBatch(env.DB, rid, [env.DB.prepare("DELETE FROM member_artfolder WHERE owner = ? AND art = ?").bind(me, art)]);
+  return [200, { ok: true, folder: folder || autoFolder(m) }];
 }
 
 /** /art/<id>/<나머지> 를 칸으로: 인코딩된 「/」 「\」 · . · .. 는 거절(null). 끝 「/」 는 남김(index.html) */
@@ -112,7 +186,8 @@ export function mountMemberCanvas(app: Hono<{ Bindings: Env }>, h: CanvasHooks) 
     const paths = man.map(x => (x as { path?: unknown })?.path);
     const bad = paths.find(p => !okPath(p)); if (bad !== undefined) return c.json({ error: `경로: ${String(bad).slice(0, 80)}` }, 400);
     if (new Set(paths).size !== paths.length) return c.json({ error: "같은 경로가 둘" }, 400);
-    if (!paths.includes("index.html")) return c.json({ error: "index.html 이 없어요" }, 400);
+    const kd = kindOf(paths as string[]);
+    if (kd.kind === "page" && !paths.includes("index.html")) return c.json({ error: "index.html 이 없어요" }, 400);
     const blobs: Blob[] = []; let total = 0;
     for (let i = 0; i < paths.length; i++) {
       const f = fd.get(`f${i}`);
@@ -130,14 +205,16 @@ export function mountMemberCanvas(app: Hono<{ Bindings: Env }>, h: CanvasHooks) 
     // 파일은 Blob 그대로 R2 에(몸통을 한 번 더 복사하지 않음 — 25MB 묶음이 isolate 메모리를 두 배로 먹지 않게)
     for (let i = 0; i < paths.length; i += 20)
       await Promise.all(paths.slice(i, i + 20).map((p, j) => c.env.RESULTS.put(fileKey(mk, id, ver, p as string), blobs[i + j], { httpMetadata: { contentType: typeOf(p as string) } })));
-    const idx = paths.indexOf("index.html");
-    const title = clean(fd.get("title"), LIMITS.title) || clean(titleOf(await blobs[idx].slice(0, 65536).text()), LIMITS.title) || id;
+    const idx = paths.indexOf("index.html"), cj = paths.indexOf(kd.cv ? `${kd.cv}/canvas.json` : "canvas.json");
+    const cvTitle = async () => { try { return String(JSON.parse(await blobs[cj].slice(0, 2 << 20).text())?.title || "").slice(0, 80); } catch { return ""; } };   // 주인 _canvas_title 과 같음
+    const title = clean(fd.get("title"), LIMITS.title) || clean(kd.kind === "canvas" ? await cvTitle() : "", LIMITS.title)
+      || (idx >= 0 ? clean(titleOf(await blobs[idx].slice(0, 65536).text()), LIMITS.title) : "") || id;
     const acct = clean(fd.get("acct"), LIMITS.acct);
-    const meta: Meta = { title, acct, at: String(Math.floor(Date.now() / 1000)), ver, n: String(paths.length), bytes: String(total) };
+    const meta: Meta = { title, acct, at: String(Math.floor(Date.now() / 1000)), ver, n: String(paths.length), bytes: String(total), kind: kd.kind, cv: kd.cv };
     try { await c.env.RESULTS.put(marker(mk, id), JSON.stringify({ ...meta, files: paths }), { httpMetadata: { contentType: "application/json" }, customMetadata: meta }); }
     catch (e) { c.executionCtx.waitUntil(dropVer(c.env, mk, id, ver).catch(() => {})); throw e; }
     if (old && old.ver !== ver) c.executionCtx.waitUntil(dropVer(c.env, mk, id, old.ver).catch(() => {}));
-    return c.json({ ok: true, id, ver, title, files: paths.length, bytes: total, replaced: !!old, url: `${c.env.PUBLIC_URL || new URL(c.req.url).origin}/art/${id}/` });
+    return c.json({ ok: true, id, ver, title, kind: kd.kind, files: paths.length, bytes: total, replaced: !!old, url: `${c.env.PUBLIC_URL || new URL(c.req.url).origin}/art/${id}/` });
   });
   app.get("/api/me/canvas", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);

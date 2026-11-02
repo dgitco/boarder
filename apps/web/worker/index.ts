@@ -1530,13 +1530,19 @@ async function artOk(env: Env, id: string, t: string | null) {
 const artFetchShim = (id: string, t: string) => `<script>(()=>{const T=${JSON.stringify(t)},B=location.protocol+"//"+location.host,A="/art/${id}/",tag=u=>{try{const x=new URL(u,location.href);if(x.protocol+"//"+x.host===B&&x.pathname.startsWith(A)&&x.pathname!==A){x.searchParams.set("bxt",T);return x.href}}catch(e){}return u};const F=window.fetch;window.fetch=(u,o)=>F(typeof u==="string"||u instanceof URL?tag(String(u)):u,o);const d=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,"src");Object.defineProperty(HTMLIFrameElement.prototype,"src",{get(){return d.get.call(this)},set(v){d.set.call(this,tag(String(v)))},configurable:true})})()</script>`;
 
 const ART_CSP = "sandbox allow-scripts allow-popups allow-downloads; form-action 'none'";
-async function memberArt(c: Context<{ Bindings: Env }>, mk: string, id: string, rel: string, tok?: string) {
-  const f = await memberCanvas.file(c.env, mk, id, rel); if (!f) return null;
+async function memberArt(c: Context<{ Bindings: Env }>, mk: string, id: string, rel: string, tok?: string, self?: () => Promise<string>) {
+  const f = await memberCanvas.file(c.env as never, mk, id, rel); if (!f) return null;
   const h = new Headers({ "content-type": f.ct, "x-content-type-options": "nosniff", "content-security-policy": ART_CSP, "cache-control": "private, no-store", "x-boarder-src": "member" });
   if (tok) h.set("access-control-allow-origin", "*");
   if (c.req.method === "HEAD") return new Response(null, { status: 200, headers: h });
-  if (f.html) return new Response(artTagHtml(id, tok || await memberCanvas.token(c.env.BETTER_AUTH_SECRET, mk, id), f.o.body), { status: 200, headers: h });
-  return new Response(f.o.body, { status: 200, headers: h });
+  let body = f.body;
+  if (f.shell && self && body instanceof Uint8Array) {
+    const name = await self().catch(() => "");
+    if (name) body = new TextEncoder().encode(new TextDecoder().decode(body).replace(/<head(?:\s[^>]*)?>/i, m => `${m}<script>window.HB_SELF=${JSON.stringify(name.slice(0, 40)).replace(/</g, "\\u003c")}</script>`));   // <head> 안에(문서 앞에 두면 quirks)
+  }
+  const stream = () => body instanceof Uint8Array ? new Response(body as unknown as BodyInit).body! : body;
+  if (f.html) return new Response(artTagHtml(id, tok || await memberCanvas.token(c.env.BETTER_AUTH_SECRET, mk, id), stream()), { status: 200, headers: h });
+  return new Response(stream(), { status: 200, headers: h });
 }
 
 const MANIFEST = JSON.stringify({ name: "보더", short_name: "보더", start_url: "/", scope: "/", display: "standalone", background_color: "#fafafa", theme_color: "#fafafa", lang: "ko",
@@ -1683,6 +1689,12 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
   const b = await c.req.json<Record<string, unknown>>().catch(() => null);
   if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
+  if (url.pathname === "/api/artnote" || url.pathname === "/api/artfolder") {
+    let r: [number, object]; const rid = queue.ridOfBody(b);
+    try { r = await (url.pathname === "/api/artnote" ? memberCanvas.artnote(c.env as never, me, b, rid) : memberCanvas.artfolder(c.env as never, me, b, rid)); }
+    catch { return rid ? queue.retrySafe(c) : c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503); }   // rid 가 있으면 다시 보내도 한 번 — 없으면 됐을 수도 있어 다시 보내기 표시 없음(주인과 같음)
+    return c.json(r[1], r[0] as 200);
+  }
   try { const mi = await memberInbox.route(c as never, me, url, b); if (mi) return mi; } catch { return queue.retrySafe(c); }   // 반응 · 고치기 · 읽음 · 모아 보기 · 초안(member-inbox.ts)
   // 파일 붙은 글: 창이 받아 갈 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 보냄 — 내 파일만(member-files.ts)
   if (url.pathname === "/api/chat" && Array.isArray(b.files) && b.files.length && !b.delete && !b.react && b.edit === undefined) {
@@ -1811,7 +1823,10 @@ app.all("*", async c => {
         if (url.pathname === "/api/arts") return c.json(await memberCanvas.list(c.env, me), 200, { "cache-control": "no-store" });
         const pa = url.pathname.startsWith("/art/") ? memberCanvas.parseArt(url.pathname) : null;
         if (pa?.bare) return c.redirect(`/art/${pa.id}/`, 302);
-        if (pa) { const r = await memberArt(c, await memberCanvas.keyOf(me), pa.id, pa.rel); if (r) return r; }
+        const an = /^\/api\/artnotes\/([A-Za-z0-9]{16,40})$/.exec(url.pathname);
+        if (an) { try { const [st, o] = await memberCanvas.artnotes(c.env as never, me, an[1]); return c.json(o, st as 200, { "cache-control": "no-store" }); } catch { return queue.retrySafe(c); } }
+        if (pa) { const r = await memberArt(c, await memberCanvas.keyOf(me), pa.id, pa.rel, undefined,
+          async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name || ""); if (r) return r; }
         if (url.pathname.startsWith("/art/")) return docNav(c, url) ? c.redirect("/#nf", 302) : c.text("not found", 404, { "cache-control": "no-store" });
         if (url.pathname === "/api/data") await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드

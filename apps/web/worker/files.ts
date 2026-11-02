@@ -37,7 +37,7 @@ function find(h: Uint8Array, n: Uint8Array) {
   return -1;
 }
 // artview._html: </head> 앞(없으면 <body 앞, 둘 다 없으면 맨 앞)에 SHIM
-function shim(ix: Index, data: Uint8Array) {
+export function shim(ix: Pick<Index, "shim">, data: Uint8Array) {
   const s = Uint8Array.from(atob(ix.shim), c => c.charCodeAt(0));
   for (const tag of ["</head>", "<body"]) {
     const i = find(data, te.encode(tag));
