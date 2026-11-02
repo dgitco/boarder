@@ -452,3 +452,62 @@ test("주차 시간은 사람마다(parkH) — 기본 6시간, 0 이면 조용�
   const off = await group({ items: [old], now, prev: [], prevNodes: [], logs: [], cards: [], parkH: 0 });
   assert.equal(off.nodes[0].state, "idle");
 });
+
+test("에이전트 채널은 지난번 이름이 같은 노드 id 를 이어받음 — 같은 폴더의 더 큰 다른 역할 묶음이 팀장 id 를 표로 못 가져감", async () => {
+  const w = (k: string, title: string, sess = "") => it({ key: `window:m:${k}`, kind: "window", engine: "tmux", title, win: `m:${k}`, cwd: "/w/ledger", session: sess, state: "idle" });
+  const ss = (k: string, title: string) => it({ key: `session:claude:${k}`, kind: "session", title, cwd: "/w/ledger", state: "idle" });
+  const items = [w("1", "팀장", "session:claude:a"), ss("a", "팀장"), w("2", "머지 담당", "session:claude:b"), ss("b", "머지 담당"), ss("c", "머지 담당 정리"), ss("d", "머지 담당 끝")];
+  const prev = items.map(i => ({ item: i.key, node: "n_lead", how: "auto" }));   // 예전엔 다 「팀장」 노드 하나에
+  const r = await group({ items, logs: [], cards: [], prev, prevNodes: [{ id: "n_lead", name: "팀장", created_at: now - 86400_000 }], now, unit: "agent" });
+  const lead = r.nodes.find(n => n.name === "팀장")!, merge = r.nodes.find(n => n.name === "머지 담당")!;
+  assert.ok(lead && merge, JSON.stringify(r.nodes.map(n => [n.id, n.name, n.items.length])));
+  assert.equal(lead.id, "n_lead", "팀장은 제 id 를 지킴(상위 · 닫힘 · 얼굴 · 우선순위 · 읽음이 안 끊김)");
+  assert.notEqual(merge.id, "n_lead");
+  // 이름이 같은 지난 노드가 없으면 예전처럼 표로
+  const r2 = await group({ items, logs: [], cards: [], prev, prevNodes: [{ id: "n_lead", name: "옛 이름", created_at: now - 86400_000 }], now, unit: "agent" });
+  assert.ok(r2.nodes.some(n => n.id === "n_lead"), "표로 누군가는 이어받음");
+  const r3 = await group({ items, logs: [], cards: [], prev, prevNodes: [{ id: "n_lead", name: "회사", pinned_name: "회사", counts: JSON.stringify({ main: "window:m:1" }), created_at: now - 86400_000 }], now, unit: "agent" });   // 실제 저장 꼴: 묶기가 그 채널 주 창을 counts.main 에 남김
+  assert.equal(r3.nodes.find(n => n.items.includes("window:m:1"))!.id, "n_lead");
+});
+
+test("팀장 노드로 사람이 옮겨 넣은(pin) 묶음이 팀장 묶음보다 커도 팀장은 제 id 를 지키고 둘이 같은 노드", async () => {
+  const w = (k: string, title: string, sess = "") => it({ key: `window:m:${k}`, kind: "window", engine: "tmux", title, win: `m:${k}`, cwd: "/w/ledger", session: sess, state: "idle" });
+  const ss = (k: string, title: string) => it({ key: `session:claude:${k}`, kind: "session", title, cwd: "/w/other", state: "idle" });
+  const items = [w("1", "팀장", "session:claude:a"), it({ key: "session:claude:a", kind: "session", title: "팀장", cwd: "/w/ledger", state: "idle" }), ss("p1", "옮긴 일 1"), ss("p2", "옮긴 일 2"), ss("p3", "옮긴 일 3"), ss("p4", "옮긴 일 4")];
+  const prev = [...items.slice(0, 2).map(i => ({ item: i.key, node: "n_lead", how: "auto" })), ...items.slice(2).map(i => ({ item: i.key, node: "n_lead", how: "pin" }))];
+  const r = await group({ items, logs: [], cards: [], prev, prevNodes: [{ id: "n_lead", name: "팀장", created_at: now - 86400_000 }], now, unit: "agent" });
+  const lead = r.nodes.find(n => n.items.includes("window:m:1"))!;
+  assert.equal(lead.id, "n_lead"); assert.ok(lead.items.includes("session:claude:p1"), "옮겨 넣은 것도 같은 노드");
+});
+
+test("이어받기는 항목 순서와 상관없음 — 정순 · 역순 · 뒤섞음 모두 팀장이 제 id, 역할 창이 닫히고 이름까지 바뀌어도 지난 노드의 주 창(counts.main)으로 지킴", async () => {
+  const w = (k: string, title: string, sess = "", gone?: number) => it({ key: `window:m:${k}`, kind: "window", engine: "tmux", title, win: `m:${k}`, cwd: "/w/ledger", session: sess, state: gone ? "gone" : "idle", ...(gone ? { gone_at: gone } : {}) });
+  const ss = (k: string, title: string) => it({ key: `session:claude:${k}`, kind: "session", title, cwd: "/w/ledger", state: "idle" });
+  const base = [w("1", "팀장", "session:claude:a"), ss("a", "팀장"), w("2", "머지 담당", "session:claude:b"), ss("b", "머지 담당"), ss("c", "머지 담당 정리"), ss("d", "머지 담당 끝")];
+  const prev = base.map(i => ({ item: i.key, node: "n_lead", how: "auto" }));
+  const pn = [{ id: "n_lead", name: "회사", pinned_name: "회사", counts: JSON.stringify({ main: "window:m:1" }), created_at: now - 86400_000 }];
+  const orders = [base, [...base].reverse(), [base[3], base[0], base[5], base[2], base[4], base[1]]];
+  for (const items of orders) {
+    const r = await group({ items, logs: [], cards: [], prev, prevNodes: pn, now, unit: "agent" });
+    assert.equal(r.nodes.find(n => n.items.includes("window:m:1"))!.id, "n_lead", items.map(i => i.key).join(","));
+  }
+  const closed = [w("1", "팀장", "session:claude:a", now - 3600_000), ...base.slice(1)];
+  for (const items of [closed, [...closed].reverse()]) {
+    const r = await group({ items, logs: [], cards: [], prev, prevNodes: pn, now, unit: "agent" });
+    const lead = r.nodes.find(n => n.items.includes("session:claude:a"));
+    if (lead) assert.notEqual(r.nodes.find(n => n.items.includes("window:m:2"))!.id, "n_lead", "머지 담당이 팀장 id 를 안 가져감");
+  }
+});
+
+test("같은 주 창 기록을 가진 보관된 옛 노드가 있어도 보관 안 된 팀장 노드가 이어받음 — 지난 노드 목록 순서와 상관없음", async () => {
+  const w = (k: string, title: string, sess = "") => it({ key: `window:m:${k}`, kind: "window", engine: "tmux", title, win: `m:${k}`, cwd: "/w/ledger", session: sess, state: "idle" });
+  const ss = (k: string, title: string) => it({ key: `session:claude:${k}`, kind: "session", title, cwd: "/w/ledger", state: "idle" });
+  const items = [w("1", "팀장", "session:claude:a"), ss("a", "팀장"), w("2", "머지 담당", "session:claude:b"), ss("b", "머지 담당"), ss("c", "머지 담당 정리")];
+  const prev = items.map(i => ({ item: i.key, node: "n_lead", how: "auto" }));
+  const main = JSON.stringify({ main: "window:m:1" });
+  const pn = [{ id: "n_old", name: "팀장(옛)", counts: main, created_at: now - 9 * 86400_000, archived_at: now - 2 * 86400_000 }, { id: "n_lead", name: "회사", pinned_name: "회사", counts: main, created_at: now - 86400_000 }];
+  for (const p of [pn, [...pn].reverse()]) for (const its of [items, [...items].reverse()]) {
+    const r = await group({ items: its, logs: [], cards: [], prev, prevNodes: p, now, unit: "agent" });
+    assert.equal(r.nodes.find(n => n.items.includes("window:m:1"))!.id, "n_lead");
+  }
+});

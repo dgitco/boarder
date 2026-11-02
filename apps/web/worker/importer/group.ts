@@ -8,7 +8,7 @@ export type Item = {
 export type Log = { win: string; kind: string; text: string; at: number };
 export type Card = { id: string; win: string; state: string; question: string; at: number };
 export type Prev = { item: string; node: string; how: string };
-export type PrevNode = { id: string; pinned_name?: string | null; created_at: number; archived_at?: number | null };
+export type PrevNode = { id: string; name?: string | null; pinned_name?: string | null; counts?: string | null; created_at: number; archived_at?: number | null };
 export type Node = {
   id: string; name: string; area: string; state: State; why: string; items: string[];
   counts: Record<string, number | string>; updated_at: number; created_at: number; archived: boolean;
@@ -228,17 +228,37 @@ export async function group(input: {
   const prevOf = new Map(input.prev.map(p => [p.item, p.node]));
   const prevNodes = new Map(input.prevNodes.map(n => [n.id, n]));
   const used = new Set<string>();
-  const ordered = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1));
+  const owned = new Map<string, string>();   // 묶음 키 → 이어받을 id
+  {
+    const fresh = [...input.prevNodes].sort((a, b) => Number(!!a.archived_at) - Number(!!b.archived_at) || b.created_at - a.created_at);
+    const mainOf = new Map<string, string>(); for (const n of fresh) { try { const m = JSON.parse(n.counts || "{}")?.main; if (typeof m === "string" && m && !mainOf.has(m)) mainOf.set(m, n.id); } catch {} }
+    const byName = new Map<string, string>();
+    for (const n of [...input.prevNodes].sort((a, b) => Number(!!a.archived_at) - Number(!!b.archived_at) || a.created_at - b.created_at)) {
+      for (const nm of [n.pinned_name, n.name].map(x => String(x || "").trim())) if (nm && !byName.has(nm)) byName.set(nm, n.id); }
+    const cand: { g: string; id: string; s: number; role: number; size: number }[] = [];
+    for (const [g, keys] of groups) {
+      if (!g.startsWith("agent:")) continue;
+      const nm = g.slice(6), its = keys.map(k => byKey.get(k)!).filter(Boolean), role = roleChans.has(nm) ? 1 : 0;
+      for (const k of keys) { const id = mainOf.get(k); if (id) cand.push({ g, id, s: 3, role, size: keys.length }); }
+      const byN = byName.get(nm); if (byN) cand.push({ g, id: byN, s: 2, role, size: keys.length });
+      const mw = mainWindow(its, nm, !!role, input.agents || []), pv = mw && prevOf.get(mw); if (pv) cand.push({ g, id: pv, s: 1, role, size: keys.length });
+    }
+    cand.sort((a, b) => b.s - a.s || b.role - a.role || b.size - a.size || (a.g < b.g ? -1 : a.g > b.g ? 1 : a.id < b.id ? -1 : 1));
+    const taken = new Set<string>();
+    for (const c of cand) if (!owned.has(c.g) && !taken.has(c.id)) { owned.set(c.g, c.id); taken.add(c.id); }
+  }
+  const reserved = new Set(owned.values());
+  const ordered = [...groups.entries()].sort((a, b) => Number(owned.has(b[0])) - Number(owned.has(a[0])) || b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1));
   const nodeOf = new Map<string, string[]>();
   const chanName = new Map<string, string>();
   let moved = 0;
   for (const [g, keys] of ordered) {
-    let id = g.startsWith("pin:") ? g.slice(4) : "";
+    let id = g.startsWith("pin:") ? g.slice(4) : owned.get(g) && !used.has(owned.get(g)!) ? owned.get(g)! : "";
     if (!id) {
       const votes = new Map<string, number>();
       for (const k of keys) { const n = prevOf.get(k); if (n) votes.set(n, (votes.get(n) || 0) + 1); }
       // 채널 하나 = 노드 하나: 사람이 옮겨 넣은 노드라도 다른 채널이 차지했으면 안 씀
-      const best = [...votes.entries()].filter(([n]) => !used.has(n) || (pinTargets.has(n) && !(g.startsWith("agent:") && chanName.has(n)))).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
+      const best = [...votes.entries()].filter(([n]) => !reserved.has(n) && (!used.has(n) || (pinTargets.has(n) && !(g.startsWith("agent:") && chanName.has(n))))).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
       id = best ? best[0] : await nodeId(keys.slice().sort()[0]);
       while (used.has(id) && (!pinTargets.has(id) || chanName.has(id))) id = await nodeId(id + "+");
     }
