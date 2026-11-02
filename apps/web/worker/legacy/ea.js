@@ -234,8 +234,7 @@
   scrim.addEventListener('keydown', composeKey);
   document.addEventListener('keydown', composeKey);
   for (const b of list.querySelectorAll('.bx-ea-compose')) b.addEventListener('click', openCompose);
-  // 찾기 = 틀의 찾기(⌘K) 그대로 — 사이드바 찾기 단추를 누름, 없으면 ⌘K. /ea 는 뺌(틀 찾기가 회사 채널 · 노드 · 카드까지 찾음 — 회사 일 안 섞음)
-  if (PERSONAL) for (const b of list.querySelectorAll('.bx-ea-find')) b.remove();
+  if (PERSONAL) window.BX_FIND_SCOPE = {ch: k => k === 'personal', area: a => a === 'personal', folder: f => /^퍼스널(\/|$)/.test(String(f || ''))};
   for (const find of list.querySelectorAll('.bx-ea-find')) find.addEventListener('click', () => {
     const b = document.querySelector('.bx-sb [data-go="find"]');
     if (b) return b.click();
@@ -329,4 +328,6 @@
   try { window.HBInbox?.on?.(() => { try { draw(); } catch {} }); } catch {}   // 읽지 않음 바뀜(shell.js lists 와 같은 알림)
   addEventListener('bx-ea-lock', () => { try { draw(); } catch {} });
   draw(true);
+  // /ea: 퍼스널 채널은 보드가 처음에 안 불러 비서 줄 미리보기 · 시각이 빔 — 한 번 불러 둠(/es 의 Primary 는 보드가 늘 불러 둠)
+  if (PERSONAL) try { const lc = fn('loadCh'); if (lc) Promise.resolve(lc('personal')).then(() => draw(true), () => {}); } catch {}
 })();

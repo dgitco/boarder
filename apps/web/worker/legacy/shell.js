@@ -320,8 +320,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     toast('그 카드는 이미 처리됐어요');
   }
   const KIND = {decision: '결정', todo: '할 일', queue: '질문', choice: '결정'};
+  const SC = () => window.BX_FIND_SCOPE || null;
   function serverItems(r){
-    const out = [];
+    const out = [], sc = SC();
+    if (sc) r = {...r, nodes: (r.nodes || []).filter(n => sc.area(n.area)), cards: [], chats: [], arts: (r.arts || []).filter(a => sc.folder(a.folder))};
     for (const n of r.nodes || []) out.push({g: '노드', n: n.title, i: I.hash, tag: n.turn, hot: /^내 차례/.test(n.turn || ''),
       sub: [n.line || (n.hit && n.hit.text), agoS(n.line_at || (n.hit && n.hit.at))].filter(Boolean).join(' · '), go: () => nodeGo(n.title)});
     for (const c of r.cards || []) out.push({g: '결정 · 할 일', n: c.title, i: I.flag, tag: c.state === 'open' ? (KIND[c.ckind] || '열림') : '닫힘', hot: c.state === 'open',
@@ -335,15 +337,15 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   function findItems(q){
     q = q.trim().toLowerCase();
     const hit = s => !q || String(s || '').toLowerCase().includes(q);
-    const out = [];
-    for (const k of CH) if (hit(AREA_NAME[k]) || hit(k)) out.push({g: '에이전트', n: AREA_NAME[k], i: blob(AREA_NAME[k], 18), go: () => openChan(k)});
-    for (const k of IBK) if (q && hit(IBN[k])) out.push({g: '모아 보기', n: IBN[k], i: I[k], go: () => FEED(k) ? (ibClose(), window.HBInbox.openFeed(k)) : ibOpen(k)});
+    const out = [], sc = SC();
+    for (const k of CH) if ((!sc || sc.ch(k)) && (hit(AREA_NAME[k]) || hit(k))) out.push({g: '에이전트', n: AREA_NAME[k], i: blob(AREA_NAME[k], 18), go: () => openChan(k)});
+    for (const k of IBK) if ((!sc || k === 'unread' || k === 'turn') && q && hit(IBN[k])) out.push({g: '모아 보기', n: IBN[k], i: I[k], go: () => FEED(k) ? (ibClose(), window.HBInbox.openFeed(k)) : ibOpen(k)});   // 범위가 있으면 거르개가 걸린 둘만(초안 · 저장은 영역을 안 거름)
     const sr = q && FS.r && q.startsWith(FS.r.q.toLowerCase()) ? FS.r : null;   // 서버 답(앞 글자가 같으면 새 답이 올 때까지 그대로 — 깜빡임 없게)
     if (sr && !window.HB_MEMBER) return out.concat(serverItems(sr)).slice(0, 60);
     const live = t => (t.panes || []).find(p => byPane[p]);
-    if (q) for (const t of (CS.T.topics || [])) { const p = t.state !== 'done' && live(t); if (p && (hit(t.title) || hit(t.id))) out.push({g: '노드', n: t.title || t.id, i: I.hash, go: () => openAns({p})}); }
-    if (q) for (const n of (typeof D !== 'undefined' && D.archived || []).filter(hit).slice(0, 8)) out.push({g: '노드', n: n + ' · 보관', i: I.hash, go: () => nodeGo(n)});
-    const arts = Object.entries(ARTS || {}).map(([id, x]) => ({id, ...x})).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+    if (q) for (const t of (CS.T.topics || [])) { const p = t.state !== 'done' && live(t); if (p && (!sc || sc.area(byPane[p]?.area)) && (hit(t.title) || hit(t.id))) out.push({g: '노드', n: t.title || t.id, i: I.hash, go: () => openAns({p})}); }
+    if (q && !sc) for (const n of (typeof D !== 'undefined' && D.archived || []).filter(hit).slice(0, 8)) out.push({g: '노드', n: n + ' · 보관', i: I.hash, go: () => nodeGo(n)});
+    const arts = Object.entries(ARTS || {}).map(([id, x]) => ({id, ...x})).filter(r => !sc || sc.folder(r.folder)).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
     for (const r of (q ? arts.filter(r => hit(r.title) || hit(r.id)) : arts.slice(0, 5))) out.push({g: q ? '캔버스' : '최근 캔버스', n: r.title || r.id, i: `<i class="ki k-${esc(r.kind || 'doc')}"></i>`, go: () => ARTS[r.id] && openArt(r.id)});
     if (sr){
       const sv = serverItems(sr), names = new Set(sv.filter(r => r.g === '노드').map(r => r.n)), G = ['에이전트', '모아 보기', '노드', '결정 · 할 일', '대화', '캔버스', '최근 캔버스'];

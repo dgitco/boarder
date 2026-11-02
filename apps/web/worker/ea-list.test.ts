@@ -174,7 +174,9 @@ test("/ea(퍼스널 비서) — 비서 = 퍼스널 리드 채널 · 읽지 않�
   assert.deepEqual(t.calls, ["chan:personal", "feed:turn"]);
   assert.doesNotMatch(t.body.textContent, /상담봇|슬랙 인박스/);
   assert.equal(only!("primary", "personal"), true, "메인 채널에 올라간 퍼스널 카드도 퍼스널");
-  assert.equal(t.body.querySelectorAll(".bx-ea-find").length, 0, "/ea 찾기 없음(틀 찾기가 회사 것까지 찾음)");
+  assert.equal(t.body.querySelectorAll(".bx-ea-find").length, 1, "/ea 찾기 있음 — 범위는 퍼스널");
+  const sc = t.ctx.BX_FIND_SCOPE; assert.ok(sc, "틀 찾기에 퍼스널 범위");
+  assert.deepEqual([sc.ch("personal"), sc.ch("company"), sc.area("personal"), sc.area("dgit"), sc.folder("퍼스널/디자인"), sc.folder("회사/리포트"), sc.folder("")], [true, false, true, false, true, false, false]);
 });
 
 test("/ea 전화 · 미팅은 퍼스널로 — 모아 보기 비서에서 걸어도 퍼스널 리드 판, 미팅은 퍼스널 폴더 캔버스만", () => {

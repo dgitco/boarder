@@ -263,7 +263,7 @@ html.bx-ea #ans .ibfeed .ibi .msg,html.bx-ea #ans .ibfeed .ibi .msg:hover,html.b
 html.bx-ea #ans .ibfeed .ibth{padding-left:0}
 html.bx-ea #ans .ibfeed .ibth.ibbox{padding:2px 16px 0}
 html.bx-ea #ans .ibfeed .ibpx .ccomp{margin:0;padding:0;background:none}
-html.bx-ea #ans .ibfeed .ibpx .box{margin:0;padding:0 6px;min-height:0;border:0;border-radius:0;background:none;box-shadow:none}
+html.bx-ea #ans .ibfeed .ibpx .box{margin:0;padding:0 6px;min-height:0;border:0!important;border-radius:0;background:none!important;box-shadow:none!important}   /* 틀(shell.css)이 입력칸 상자에 !important 그림자 · 배경을 줌 */
 html.bx-ea #ans .ibfeed .ibpx .crow{display:flex;align-items:center;gap:4px;min-height:0;padding:0;color:var(--muted)}
 html.bx-ea #ans .ibfeed .ibpx .crow::before{content:"\21AA\FE0E";font-size:13px}
 html.bx-ea #ans .ibfeed .ibpx :is(.plus,.vmemo,.ctip,.send,.cvoice,.xpand,.att){display:none!important}
