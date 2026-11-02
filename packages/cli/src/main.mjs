@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadDevice, server } from './config.mjs';
 import { windowKey, windowToken } from './window.mjs';
-import { setup, restore, found, configured, TOOLS } from './setup.mjs';
+import { setup, restore, targets, reportState } from './setup.mjs';
+import { label } from './targets.mjs';
 import { mcp } from './mcp.mjs';
 import { profileCommand, PROFILE_HELP } from './profile.mjs';
 import { sessionCommand, SESSION_HELP } from './session.mjs';
@@ -20,10 +21,11 @@ const KIND = { 시작: 'start', 진행: 'progress', 막힘: 'blocked', 끝: 'don
 const HELP = `boarder ${VERSION} — Boarder for your AI tools
 
 Set up
-  boarder setup [--yes] [--server <url>] [--only claude,codex,cursor,gemini] [--device-auth] [--no-browser] [--no-watch] [--report] [--engine]
+  boarder setup [--yes] [--server <url>] [--only claude,codex,cursor,gemini|<folder>] [--skip <folder>] [--device-auth] [--no-browser] [--no-watch] [--report] [--engine]
                                     signs in and reads — changes nothing in your AI tools, harness or shell files
-  boarder status                    sign-in, this window, what Boarder may do here
-  boarder restore                   remove Boarder from your AI tools (keeps your other settings)
+                                    (every Claude Code folder counts: ~/.claude, CLAUDE_CONFIG_DIR, ~/.claude-accounts/*/)
+  boarder status                    sign-in, this window, each AI tool folder and whether it reports
+  boarder restore [<folder>]        remove Boarder from your AI tools, or from one folder (keeps your other settings)
 
 ${VIEW_HELP}
 
@@ -80,6 +82,8 @@ function parse(rest) {
   return { flags, pos };
 }
 
+const csv = v => v ? v.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+
 async function callJson(tool, args) {
   let w = await windowToken();
   const go = t => fetch(`${server()}/api/agent/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${t}`, ...(process.env.BOARDER_CHANNEL ? { 'x-boarder-channel': process.env.BOARDER_CHANNEL } : {}) }, body: JSON.stringify(args), signal: AbortSignal.timeout(90000) });
@@ -116,10 +120,13 @@ async function status() {
   let me = null;
   if (d?.token) { try { const r = await fetch(`${srv}/api/device/me`, { headers: { authorization: `Bearer ${d.token}` }, signal: AbortSignal.timeout(15000) }); me = r.ok ? await r.json() : null; } catch {} }
   lines.push(me ? ok(`signed in as ${me.email} (device ${me.device.name || me.device.id}${me.scope === 'watch' ? ', watch only' : ''})`) : todo(d?.token ? 'this device was revoked or the server is unreachable' : 'not signed in', 'boarder setup --yes [agent]'));
-  const tools = found();
-  if (!tools.length) lines.push(todo('no AI tools found', 'install Claude Code, Codex, Cursor or Gemini CLI [you]'));
-  // 보기 · 누르기 전용이 기본 — 도구에 안 넣은 건 할 일이 아님(켜려면 boarder enable report)
-  for (const t of tools) lines.push(configured(t) ? ok(`${TOOLS[t].label}: reports to Boarder`) : `· ${TOOLS[t].label}: view only (unchanged) — \`boarder enable report\` lets it report`);
+  const list = targets();
+  if (!list.length) lines.push(todo('no AI tools found', 'install Claude Code, Codex, Cursor or Gemini CLI [you]'));
+  // 보기 · 누르기 전용이 기본 — 도구에 안 넣은 건 할 일이 아님(켜려면 boarder enable report). 설정 폴더마다 한 줄(Claude 계정이 여럿이면 계정마다)
+  for (const t of list) {
+    const s = reportState(t), name = label(t);
+    lines.push(s.state === 'on' ? ok(`${name}: reports to Boarder`) : s.state === 'stale' ? todo(`${name}: Boarder points to an old CLI path (${s.was})`, `boarder enable report --only ${t.id}`) : `· ${name}: view only (unchanged) — \`boarder enable report --only ${t.id}\` lets it report`);
+  }
   const w = windowKey();
   if (me) { try { await windowToken(); lines.push(ok(`this window: ${w.name}`)); } catch (e) { lines.push(todo(`this window: ${e.message}`)); } }
   else lines.push(todo(`this window: ${w.name} (needs sign-in)`));
@@ -137,15 +144,15 @@ export async function main(argv) {
     if (cmd === 'profile') return await profileCommand(rest);
     if (cmd === 'connect') return connectCommand(pos, flags);
     if (cmd === 'session') return await sessionCommand(pos[0], pos.slice(1), flags);
-    if (cmd === 'setup') return await setup({ yes: !!flags.yes, server: flags.server, only: flags.only?.split(',').map(s => s.trim()), noBrowser: !!flags['no-browser'], deviceAuth: !!flags['device-auth'], noWatch: !!flags['no-watch'], noEngine: !!flags['no-engine'], report: !!flags.report, engine: !!flags.engine });
-    if (cmd === 'enable' || cmd === 'disable') { if (!['report', 'engine'].includes(pos[0])) { console.error(VIEW_HELP); process.exit(64); } if (cmd === 'enable' && !loadDevice()?.token) { console.error('not signed in — run `boarder setup --yes` first'); process.exit(3); } const r = await (cmd === 'enable' ? enable : disable)(pos[0]); console.log(`${pos[0]}: ${cmd === 'enable' ? 'on' : 'off'}`); if (!r.ok) process.exitCode = 1; return; }
+    if (cmd === 'setup') return await setup({ yes: !!flags.yes, server: flags.server, only: csv(flags.only), skip: csv(flags.skip), noBrowser: !!flags['no-browser'], deviceAuth: !!flags['device-auth'], noWatch: !!flags['no-watch'], noEngine: !!flags['no-engine'], report: !!flags.report, engine: !!flags.engine });
+    if (cmd === 'enable' || cmd === 'disable') { if (!['report', 'engine'].includes(pos[0])) { console.error(VIEW_HELP); process.exit(64); } if (cmd === 'enable' && !loadDevice()?.token) { console.error('not signed in — run `boarder setup --yes` first'); process.exit(3); } const r = await (cmd === 'enable' ? enable : disable)(pos[0], { only: csv(flags.only), skip: csv(flags.skip), yes: !!flags.yes }); console.log(`${pos[0]}: ${cmd === 'enable' ? 'on' : 'off'}`); if (!r.ok) process.exitCode = 1; return; }
     if (cmd === 'uninstall') return void await uninstall();
     if (cmd === 'engine') return await engineCommand(pos[0], pos.slice(1), flags);
     if (cmd === 'watch') return await watchCommand(pos[0], flags);
     if (cmd === 'import' && pos[0] === 'slack') { const r = await slackImport(pos[1], flags); if (r.stopped) process.exitCode = 75; return; }   // 옛 Slack 글(채널 = 노드)
     if (cmd === 'canvas') return void await canvasCommand(pos[0], pos.slice(1), flags);
     if (cmd === 'import') return await importCommand(flags);   // 들여오기 · 경우 (가)(A-2 · A-3 · A-4)
-    if (cmd === 'restore') return await restore(pos[0]);
+    if (cmd === 'restore') return await restore(pos[0], { only: csv(flags.only) });
     if (cmd === 'secret') return await secretCommand(pos[0], pos.slice(1), flags);   // 비밀 넣기(값은 안 찍음)
     if (cmd === 'mcp') return await mcp();
     if (cmd === 'status' && !pos.length) return await status();

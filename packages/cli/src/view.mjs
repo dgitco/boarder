@@ -65,12 +65,12 @@ const engineMod = () => import('./engine/index.mjs').catch(() => null);
 export async function features() {
   const S = await setupMod(), E = await engineMod();
   const cfg = E?.loadCfg?.() || {};
-  return { report: S.found().filter(t => S.configured(t)), engine: !!cfg.tmux, view: true };
+  return { report: [...new Set(S.targets().filter(t => S.reportState(t).state !== 'off').map(t => t.tool))], engine: !!cfg.tmux, view: true };
 }
 
-export async function enable(what, { log = console.log } = {}) {
+export async function enable(what, { log = console.log, only, skip, yes = true } = {}) {
   if (what === 'report') {
-    const S = await setupMod(), r = await S.writeReport({ log });
+    const S = await setupMod(), r = await S.writeReport({ log, only, skip, yes });
     return { ok: true, report: r.tools };
   }
   if (what === 'engine') {
@@ -80,8 +80,8 @@ export async function enable(what, { log = console.log } = {}) {
   }
   throw new Error('enable report | engine');
 }
-export async function disable(what, { log = console.log } = {}) {
-  if (what === 'report') { const S = await setupMod(), d = S.dropReport(); for (const p of d) log(`removed Boarder from ${p}`); return { ok: true, removed: d.length }; }
+export async function disable(what, { log = console.log, only, skip } = {}) {
+  if (what === 'report') { const S = await setupMod(), d = S.dropReport({ only, skip, note: log }); for (const p of d) log(`removed Boarder from ${p}`); return { ok: true, removed: d.length }; }
   if (what === 'engine') {
     const { removeService } = await import('./engine/daemon.mjs');
     // engine.json 은 남김(그 사람이 붙인 커스텀 엔진 · 할 일 목록이 거기 있음) — 켰다는 표시(tmux 경로)만 뺌
@@ -130,7 +130,9 @@ export async function uninstall({ log = console.log } = {}) {
 }
 
 export const VIEW_HELP = `What Boarder may change on this machine (all off after setup — setup only signs in and reads)
-  boarder enable report             let your agents report to Boarder (adds its MCP server, a session-start hook and a skill to your AI tools, backed up first)
+  boarder enable report [--only <tool|folder>,…] [--skip <folder>] [--yes]
+                                    let your agents report to Boarder (adds its MCP server, a session-start hook and a skill to each AI tool folder —
+                                    every Claude account folder too — backed up first; fixes entries that point to an old Boarder path)
   boarder enable engine             let Boarder open, wake, park and close AI windows here (Boarder's own tmux and engine service)
-  boarder disable report|engine     take that back out again
+  boarder disable report|engine [--only <folder>]   take that back out again (report: all folders, or the ones named)
   boarder uninstall                 remove Boarder from this machine (leaves no trace)`;

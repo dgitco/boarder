@@ -8,19 +8,15 @@ import { installTimer, removeTimer, watchOnce } from './watch.mjs';
 import { ensureEngine } from './engine/cmd.mjs';
 import { removeService } from './engine/daemon.mjs';
 import { installFollow, removeFollow, missingDirs, noteMade } from './view.mjs';
+import { targets, pick, label, state, LABELS } from './targets.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/boarder.mjs', import.meta.url));
 const NODE = process.execPath;
-const which = cmd => { try { execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; } };
-const H = (...p) => path.join(home(), ...p);
 
-export const TOOLS = {
-  claude: { label: 'Claude Code', found: () => existsSync(H('.claude')) || which('claude') },
-  codex: { label: 'Codex', found: () => existsSync(H('.codex')) || which('codex') },
-  cursor: { label: 'Cursor', found: () => existsSync(H('.cursor')) || which('cursor') },
-  gemini: { label: 'Gemini CLI', found: () => existsSync(H('.gemini')) || which('gemini') },
-};
-export const found = () => Object.keys(TOOLS).filter(t => TOOLS[t].found());
+// 도구 넷 — 설정을 쓰는 단위는 도구가 아니라 설정 폴더(targets.mjs: Claude 계정이 여럿이면 폴더마다)
+export const TOOLS = Object.fromEntries(Object.entries(LABELS).map(([k, l]) => [k, { label: l }]));
+export const found = () => [...new Set(targets().map(t => t.tool))];
+export { targets };
 
 // ── 백업: 한 번 돌릴 때 백업 하나, 파일마다 원래 있었는지 · 사본
 function backup() {
@@ -43,19 +39,29 @@ function backup() {
     drop() { if (!files.length) rmSync(root, { recursive: true, force: true }); },
   };
 }
-/** Boarder 가 AI 도구에 넣은 칸(MCP · 시작 훅 · 스킬)만 뺌 — `boarder disable report` · restore · uninstall */
-export function dropReport() {
+export function dropReport({ only, skip, note = console.log } = {}) {
   const done = [], exact = new Set(), made = new Set();
+  const all = targets(), whole = !only?.length && !skip?.length, list = pick(all, only, skip);
+  const filesOf = t => [t.files.mcp, t.files.settings, t.files.toml, ...t.files.skills].filter(Boolean).map(p => path.resolve(p));
+  const real = p => { try { return realpathSync(p); } catch { return path.resolve(p); } };
+  const mine = new Set(list.flatMap(filesOf));
+  const others = new Map(whole ? [] : all.filter(t => !list.includes(t)).flatMap(t => filesOf(t).filter(p => existsSync(p)).map(p => [real(p), t])));
+  const shared = new Map();
+  const isShared = p => { if (whole || !existsSync(p)) return false; const o = others.get(real(p)); if (o && !shared.has(p)) shared.set(p, o); return !!o; };
   // 1) 우리가 쓴 뒤 아무도 안 바꾼 파일은 쓰기 전 바이트 그대로(없던 파일은 지움). 두 번 켰으면(새 백업 사본 = 앞서 우리가 쓴 것) 더 옛 백업까지 이어서 — 끄면 흔적 0
-  const bdir = path.join(dir(), 'backups'), byPath = new Map();
+  const bdir = path.join(dir(), 'backups'), byPath = new Map(), extra = new Set();
   for (const id of (existsSync(bdir) ? readdirSync(bdir) : []).sort().reverse()) {
     for (const f of readJson(path.join(bdir, id, 'manifest.json'))?.files || []) {
       for (const d of f.made || []) made.add(d);
-      if (f.wrote) (byPath.get(f.path) || byPath.set(f.path, []).get(f.path)).push(f);   // 새것부터
+      if (!f.wrote) continue;
+      const p = path.resolve(f.path);
+      if (!whole && !mine.has(p)) continue;   // 고른 폴더의 파일만
+      if (!mine.has(p)) extra.add(p);   // 지금 targets() 가 못 찾는 폴더(setup 때만 보이던 것)
+      (byPath.get(f.path) || byPath.set(f.path, []).get(f.path)).push(f);   // 새것부터
     }
   }
   for (const [p, list] of byPath) {
-    if (!existsSync(p)) continue;
+    if (!existsSync(p) || isShared(p)) continue;
     let cur = sha(readFileSync(p, 'utf8')), text, hit = false;
     for (const f of list) {
       if (cur !== f.wrote) break;
@@ -66,26 +72,40 @@ export function dropReport() {
     if (text === null) rmSync(p, { force: true }); else atomic(p, text);
     exact.add(p); done.push(p);
   }
-  const dropJson = (p, fn) => { if (!existsSync(p)) return; let j; try { j = JSON.parse(readFileSync(p, 'utf8')); } catch { return; } const before = JSON.stringify(j); fn(j); if (JSON.stringify(j) !== before) { atomic(p, JSON.stringify(j, null, 2) + '\n'); done.push(p); } };
-  dropJson(H('.claude.json'), j => { if (j.mcpServers) delete j.mcpServers.boarder; });
-  dropJson(H('.claude', 'settings.json'), j => { const l = j.hooks?.SessionStart; if (Array.isArray(l)) { const k = l.filter(x => !(JSON.stringify(x).includes('hook session-start') && JSON.stringify(x).includes('boarder'))); if (k.length === l.length) return; if (k.length) j.hooks.SessionStart = k; else delete j.hooks.SessionStart; } });
-  dropJson(H('.cursor', 'mcp.json'), j => { if (j.mcpServers) delete j.mcpServers.boarder; });
-  dropJson(H('.gemini', 'settings.json'), j => { if (j.mcpServers) delete j.mcpServers.boarder; });
-  const toml = H('.codex', 'config.toml');
-  if (existsSync(toml)) { const old = readFileSync(toml, 'utf8'), t = old.replace(TOML_SEC_END, '').replace(TOML_SEC, ''); if (t !== old) { atomic(toml, t); done.push(toml); } }
-  for (const t of Object.keys(TOOLS)) for (const f of skillFiles(t)) if (existsSync(f)) { rmSync(path.dirname(f), { recursive: true, force: true }); done.push(f); }
+  const dropJson = (p, fn) => { if (!existsSync(p) || isShared(p)) return; let j; try { j = JSON.parse(readFileSync(p, 'utf8')); } catch { return; } const before = JSON.stringify(j); fn(j); if (JSON.stringify(j) !== before) { atomic(p, JSON.stringify(j, null, 2) + '\n'); done.push(p); } };
+  const noMcp = j => { if (j.mcpServers) delete j.mcpServers.boarder; };
+  const noHook = j => { const l = j.hooks?.SessionStart; if (Array.isArray(l)) { const k = l.filter(x => !(JSON.stringify(x).includes('hook session-start') && JSON.stringify(x).includes('boarder'))); if (k.length === l.length) return; if (k.length) j.hooks.SessionStart = k; else delete j.hooks.SessionStart; } };
+  const dropToml = toml => { if (!existsSync(toml) || isShared(toml)) return; const old = readFileSync(toml, 'utf8'), x = old.replace(TOML_SEC_END, '').replace(TOML_SEC, ''); if (x !== old) { atomic(toml, x); done.push(toml); } };
+  const dropSkill = f => { if (!existsSync(f) || isShared(f)) return; rmSync(path.dirname(f), { recursive: true, force: true }); done.push(f); };
+  for (const t of list) {
+    if (t.tool === 'claude' || t.tool === 'cursor' || t.tool === 'gemini') dropJson(t.files.mcp, noMcp);
+    if (t.tool === 'claude') dropJson(t.files.settings, noHook);
+    if (t.tool === 'codex') dropToml(t.files.toml);
+    for (const f of t.files.skills) dropSkill(f);
+  }
+  // 지금 못 찾는 폴더의 파일 — 도구를 모르니 파일 꼴로(.json 은 MCP 칸 · 시작 훅, .toml 은 MCP 칸, skills/boarder/SKILL.md 는 그 폴더)
+  for (const p of extra) {
+    if (p.endsWith('.json')) { dropJson(p, noMcp); dropJson(p, noHook); }
+    else if (p.endsWith('.toml')) dropToml(p);
+    else if (p.endsWith(path.join('skills', 'boarder', 'SKILL.md'))) dropSkill(p);
+  }
   for (const d of [...made].sort((a, b) => b.length - a.length)) { try { if (!readdirSync(d).length) rmdirSync(d); } catch {} }   // 우리가 만든 폴더 — 빈 것만(깊은 것부터)
+  for (const [p, o] of shared) note(`kept ${p} — it is the same file as ${label(o)} (shared by a link); \`boarder restore\` with no folder removes it from all`);
   return [...new Set(done)];
 }
-export async function restore(id) {
-  const done = dropReport();
-  for (const p of removeTimer()) done.push(p);
-  for (const p of await removeService()) done.push(p);   // 엔진 데몬(B-1)
-  for (const p of removeFollow()) done.push(p);   // 읽어 올리기 서비스(보기 · 누르기 전용)
+export async function restore(id, { only } = {}) {
+  // 폴더 하나만: boarder restore <폴더|id> — 그 폴더의 Boarder 칸만 빼고 서비스 · 타이머는 그대로
+  const one = only?.length ? only : id ? [id] : null;
+  const done = dropReport({ only: one });
+  if (!one) {
+    for (const p of removeTimer()) done.push(p);
+    for (const p of await removeService()) done.push(p);   // 엔진 데몬(B-1)
+    for (const p of removeFollow()) done.push(p);   // 읽어 올리기 서비스(보기 · 누르기 전용)
+  }
   for (const p of done) console.log(`removed Boarder from ${p}`);
   const b = path.join(dir(), 'backups');
-  console.log(done.length ? 'Boarder is removed from your AI tools. Restart them.' : 'Boarder was not in your AI tools.');
-  if (existsSync(b)) console.log(`Full copies from before setup are kept in ${b}${id ? '' : ' (pass nothing — restore only removes what Boarder added)'}.`);
+  console.log(done.length ? `Boarder is removed from ${one ? one.join(', ') : 'your AI tools'}. Restart them.` : `Boarder was not in ${one ? one.join(', ') : 'your AI tools'}.`);
+  if (existsSync(b)) console.log(`Full copies from before setup are kept in ${b} (restore only removes what Boarder added).`);
 }
 
 // ── 도구마다 쓰기
@@ -107,26 +127,21 @@ function editJson(bk, p, fn) {
   const text = JSON.stringify(j, null, 2) + '\n';
   return writeText(bk, p, text);
 }
-function skillFiles(t) {
-  if (t === 'claude') return [H('.claude', 'skills', 'boarder', 'SKILL.md')];
-  if (t === 'codex') return [H('.codex', 'skills', 'boarder', 'SKILL.md'), H('.agents', 'skills', 'boarder', 'SKILL.md')];
-  return [];
-}
 function writeTool(bk, t, skill) {
   const done = [];
-  if (t === 'claude') {
-    if (editJson(bk, H('.claude.json'), j => { j.mcpServers = { ...(j.mcpServers || {}), boarder: { type: 'stdio', ...mcpEntry, env: {} } }; })) done.push('MCP');
+  if (t.tool === 'claude') {
+    if (editJson(bk, t.files.mcp, j => { j.mcpServers = { ...(j.mcpServers || {}), boarder: { type: 'stdio', ...mcpEntry, env: {} } }; })) done.push('MCP');
     const sq = v => `'${v.replace(/'/g, `'\\''`)}'`;   // 경로에 " $ ` 가 있어도 셸이 안 풀게
     const hook = `${sq(NODE)} ${sq(BIN)} hook session-start`;
-    if (editJson(bk, H('.claude', 'settings.json'), j => {
+    if (editJson(bk, t.files.settings, j => {
       j.hooks ||= {}; const list = (j.hooks.SessionStart ||= []);
       const mine = list.findIndex(x => JSON.stringify(x).includes('hook session-start') && JSON.stringify(x).includes('boarder'));
       const entry = { hooks: [{ type: 'command', command: hook, timeout: 10 }] };
       if (mine >= 0) list[mine] = entry; else list.push(entry);
     })) done.push('hook');
   }
-  if (t === 'codex') {
-    const p = H('.codex', 'config.toml'), old = existsSync(p) ? readFileSync(p, 'utf8') : '';
+  if (t.tool === 'codex') {
+    const p = t.files.toml, old = existsSync(p) ? readFileSync(p, 'utf8') : '';
     const nl = old.includes('\r\n') ? '\r\n' : '\n';
     const sec = `[mcp_servers.boarder]${nl}command = ${JSON.stringify(NODE)}${nl}args = [${JSON.stringify(BIN)}, "mcp"]${nl}`;
     const re = TOML_SEC;
@@ -134,19 +149,16 @@ function writeTool(bk, t, skill) {
     const text = re.test(old) ? old.replace(re, (m, at) => sec + (at + m.length < old.length ? nl : '')) : (old && !old.endsWith('\n') ? old + nl : old) + (old ? nl : '') + sec;
     if (writeText(bk, p, text)) done.push('MCP');
   }
-  if (t === 'cursor' && editJson(bk, H('.cursor', 'mcp.json'), j => { j.mcpServers = { ...(j.mcpServers || {}), boarder: mcpEntry }; })) done.push('MCP');
-  if (t === 'gemini' && editJson(bk, H('.gemini', 'settings.json'), j => { j.mcpServers = { ...(j.mcpServers || {}), boarder: mcpEntry }; })) done.push('MCP');
-  for (const f of skillFiles(t)) if (writeText(bk, f, skill)) { if (!done.includes('skill')) done.push('skill'); }
+  if ((t.tool === 'cursor' || t.tool === 'gemini') && editJson(bk, t.files.mcp, j => { j.mcpServers = { ...(j.mcpServers || {}), boarder: mcpEntry }; })) done.push('MCP');
+  for (const f of t.files.skills) if (writeText(bk, f, skill)) { if (!done.includes('skill')) done.push('skill'); }
   return done;
 }
+/** 그 자리(폴더)의 보고 상태: on · off · stale(옛 CLI 경로) */
+export const reportState = t => state(t, BIN, NODE);
+/** 도구 이름이면 그 도구 폴더 가운데 하나라도 켜졌는지(옛 호출 — features 등) */
 export function configured(t) {
-  try {
-    if (t === 'claude') return !!readJson(H('.claude.json'))?.mcpServers?.boarder;
-    if (t === 'codex') return /^\[mcp_servers\.boarder\][ \t]*\r?$/m.test(readFileSync(H('.codex', 'config.toml'), 'utf8'));
-    if (t === 'cursor') return !!readJson(H('.cursor', 'mcp.json'))?.mcpServers?.boarder;
-    if (t === 'gemini') return !!readJson(H('.gemini', 'settings.json'))?.mcpServers?.boarder;
-  } catch {}
-  return false;
+  const list = typeof t === 'string' ? targets().filter(x => x.tool === t) : [t];
+  return list.some(x => reportState(x).state !== 'off');
 }
 
 // ── 로그인: 기기 코드
@@ -236,30 +248,50 @@ async function watcher(opts) {
   try { await watchOnce({ interactive: !!process.stdout.isTTY }); } catch (e) { console.log(`Device watcher: first send failed (${e.message}) — it retries on the timer`); }
 }
 
-/** 켜기(report): AI 도구마다 MCP · 시작 훅 · 스킬(먼저 백업) — 옛 setup 기본, 지금은 `boarder enable report` · `setup --report` */
-export async function writeReport({ srv = (loadDevice()?.server || DEFAULT_SERVER).replace(/\/+$/, ''), tools = found(), log = console.log } = {}) {
+// 여럿이면 번호로 고르기(Enter = 전부). 터미널이 아니거나 --yes 면 묻지 않고 전부
+async function choose(list, log) {
+  if (list.length < 2 || !process.stdin.isTTY || !process.stdout.isTTY) return list;
+  const rl = (await import('node:readline/promises')).createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (;;) {
+      const a = (await rl.question(`Add Boarder to which? Enter = all ${list.length}, or numbers like 1,3: `)).trim();
+      if (!a) return list;
+      const n = a.split(/[\s,]+/).map(Number);
+      if (n.every(x => Number.isInteger(x) && x >= 1 && x <= list.length)) return [...new Set(n)].map(x => list[x - 1]);
+      log('  numbers from the list, separated by commas');
+    }
+  } finally { rl.close(); }
+}
+
+/** 켜기(report): 고른 설정 폴더마다 MCP · 시작 훅 · 스킬(먼저 백업). 옛 CLI 경로를 가리키던 boarder 칸은 지금 경로로 고쳐 씀 */
+export async function writeReport({ srv = (loadDevice()?.server || DEFAULT_SERVER).replace(/\/+$/, ''), only, skip, yes = true, log = console.log } = {}) {
+  let list = pick(targets(), only, skip);
+  if (!list.length) throw new Error('No AI tool folders found. Install Claude Code, Codex, Cursor or Gemini CLI, then run this again.');
+  log(`\nAI tool folders on this machine:\n${list.map((t, i) => `  ${i + 1}. ${label(t)}  ${t.where}  — ${({ on: 'reports to Boarder', off: 'not yet', stale: `old Boarder path (${reportState(t).was}) — will fix` })[reportState(t).state]}`).join('\n')}`);
+  if (!yes) list = await choose(list, log);
   let skill;
   try { const r = await fetch(`${srv}/api/install/skill`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw 0; skill = await r.text(); }
   catch { throw new Error(`Could not get the Boarder skill from ${srv}`); }
   const bk = backup(), lines = [];
-  for (const t of tools) { const d = writeTool(bk, t, skill); lines.push(`  ${TOOLS[t].label}: ${d.length ? d.join(', ') + ' added' : 'already set up'}`); }
+  for (const t of list) { const was = reportState(t), d = writeTool(bk, t, skill); lines.push(`  ${label(t)}: ${!d.length ? 'already set up' : was.state === 'stale' ? `fixed old path (${d.join(', ')})` : d.join(', ') + ' added'}`); }
   log('\n' + lines.join('\n'));
-  if (bk.count) log(`\nBacked up first — undo with: boarder disable report`); else bk.drop();
-  return { tools: tools.filter(t => configured(t)) };
+  if (bk.count) log(`\nBacked up first — undo with: boarder disable report  (one folder: boarder restore <folder>)`); else bk.drop();
+  return { tools: [...new Set(list.filter(t => reportState(t).state === 'on').map(t => t.tool))], targets: list.map(t => ({ id: t.id, state: reportState(t).state })) };
 }
 
 export async function setup(opts) {
   const srv = (opts.server || process.env.BOARDER_URL || loadDevice()?.server || DEFAULT_SERVER).replace(/\/+$/, '');
   console.log('Boarder setup');
   const pre = missingDirs(dir());
-  const tools = opts.only?.length ? opts.only.filter(t => TOOLS[t]) : found();
+  const sel = pick(targets(), opts.only, opts.skip), tools = [...new Set(sel.map(t => t.tool))];
   if (!tools.length) { console.error('No AI tools found. Install Claude Code, Codex, Cursor or Gemini CLI, then run this again.'); process.exit(1); }
   console.log(`Tools: ${tools.map(t => TOOLS[t].label).join(', ')}`);
   const who = (await signedIn(srv)) || await login(srv, tools, { browser: !opts.noBrowser, deviceAuth: !!opts.deviceAuth }), email = who.email;
   noteMade(pre);
   console.log(`Signed in as ${email}${who.scope === 'watch' ? ' (watch only)' : ''}`);
   if (who.scope === 'watch') { await watcher(opts); return console.log('\nThis device only reports memory · CPU · disk · agents · Claude limits to Settings › Devices. Your AI tools were not changed.'); }
-  if (opts.report) await writeReport({ srv, tools });
+  if (sel.length > 1) console.log(`Folders: ${sel.map(t => t.where).join(', ')}`);
+  if (opts.report) await writeReport({ srv, only: opts.only, skip: opts.skip, yes: !!opts.yes });
   else console.log(`\nView mode: Boarder reads your AI windows, sessions and to-dos and shows them as nodes on your board. Nothing in ${tools.map(t => TOOLS[t].label).join(', ')} (CLAUDE.md, AGENTS.md, hooks, settings, MCP, skills), your harness (Herdr, tmux) or your shell files was changed.`);
   if (!opts.noWatch) { const f = installFollow(); console.log(`\nReader: ${f.ok ? f.how : f.why}`); }
   if (opts.engine && !opts.noEngine && tools.includes('claude')) {
