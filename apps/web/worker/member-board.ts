@@ -48,6 +48,12 @@ export function cleanFace(v: unknown): Face | null {
   return { seed, hue, ...(photo ? { photo } : {}) };
 }
 const faceRow = (r: R | undefined | null) => r ? cleanFace(r) : null;
+// 사람이 정한 상위 노드(node_setting.data.parent = { 노드 id: 상위 노드 id } — /api/me/nodes/parent, 노드 정의 꼴의 parent 칸): 트리에서 그 노드를 상위 노드의 열 밑으로
+export function parentsOf(data: unknown): Record<string, string> {
+  const p = json<{ parent?: unknown }>(data as string, {}).parent;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return {};
+  return Object.fromEntries(Object.entries(p as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string" && e[0] !== e[1]));
+}
 function facesOf(data: unknown): Record<string, Face> {
   const f = json<{ faces?: Record<string, unknown> }>(data, {}).faces, out: Record<string, Face> = {};
   if (f && typeof f === "object") for (const [k, v] of Object.entries(f)) { const c = cleanFace(v); if (c) out[k] = c; }
@@ -133,7 +139,7 @@ export async function load(db: D1Database, me: string) {
   const shown = (primary ? nodes.filter(n => !onlyPrim(n.id)) : nodes).filter(n => !closedIds.has(n.id));
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
   return { defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
-    faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
+    parents: parentsOf((ns.results[0] as R | undefined)?.data), faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
 // 채널(pane)마다 에이전트 글 — 모아 보기 읽지 않음 · 저장(member-inbox.ts)이 씀. 채널 = 노드 + 노드에 안 묶인 역할 창(메인 봇은 따로), 이름은 틀 노드 채팅 열쇠(「n:<이름>」)와 같음.
@@ -210,6 +216,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
       const hn = new Map(order.map(a => [a, groups.get(a)!.find(p => HEAD.test(String(p.win)) && ok(p))]));
       const org = [...hn.values()].some(Boolean);
       const heads = new Map(order.map(a => { const ps = groups.get(a)!; return [a, hn.get(a) || (org ? undefined : ps.find(p => ok(p) && BUSY.has(String(p.state))) || ps.find(ok) || ps[0])]; }));
+      const keyOfArea = new Map<string, string>();
       order.filter(a => heads.get(a)).forEach((a, i) => {
         const ps = groups.get(a)!, key = "m" + i;
         const head = heads.get(a)!;
@@ -218,7 +225,21 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
         const avatar = L.faces[nodeOfPane.get(head.pane) || ""] || faceOf(a || "기타");
         head.avatar = avatar;
         areas.push({ key, name: a || "기타", lead: head.pane, lead_name: head.win, avatar });
+        keyOfArea.set(a, key);
       });
+      // 상위가 정해진 노드는 상위 노드가 있는 열로(열 머리는 제 열을 지키므로 옮기지 않음). 상위가 안 보이면(닫힘 · 보관) 그대로
+      const paneOfNode = new Map([...nodeOfPane].map(([pn, id]) => [id, pn])), headPanes = new Set(areas.map(x => x.lead));
+      for (const p of panes) {
+        const up = L.parents[nodeOfPane.get(p.pane) || ""], upPane = up ? paneOfNode.get(up) : undefined, target = upPane ? panes.find(x => x.pane === upPane) : undefined;
+        if (p.kind === "lead" && target && !headPanes.has(p.pane)) p.area = target.area;
+      }
+      const nodeById = new Map(L.nodes.map(n => [n.id, n]));
+      for (const q of parked) {
+        const n = L.nodes.find(x => x.pane === q.pane); if (!n) continue;
+        const up = L.parents[n.id], upPane = up && nodeById.get(up)?.pane, target = upPane ? panes.find(x => x.pane === upPane) : undefined;
+        const k = target ? target.area : keyOfArea.get(areaOf.get(n.pane) ?? "");
+        if (k) q.area = k;
+      }
     }
   }
   const known = new Set(panes.map(p => p.pane)), dp = L.defaultNode?.pane || (/^ew_/.test(L.primaryWin) ? paneOfId(L.primaryWin) : ""), dflt = dp && known.has(dp) ? dp : PRIMARY,

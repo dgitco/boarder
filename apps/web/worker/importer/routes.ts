@@ -208,7 +208,22 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     const me = await closer(c, false); if (!me) return c.json({ error: "로그인" }, 401);
     const DB = env(c).DB, closed = await closedOf(DB, me);
     const rows = (await DB.prepare("SELECT id, name, pinned_name, area, state, archived_at FROM mnode WHERE owner = ? ORDER BY updated_at DESC LIMIT 1000").bind(me).all()).results as { id: string; name: string; pinned_name: string | null; area: string | null; state: string; archived_at: number | null }[];
-    return c.json({ nodes: rows.map(r => ({ id: r.id, name: r.pinned_name || r.name, area: r.area || "", state: r.state, archived: !!r.archived_at, closed: closed.has(r.id) })) }, 200, { "cache-control": "no-store" });
+    const parent = json<{ parent?: Record<string, string> }>((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data, {}).parent || {};
+    return c.json({ nodes: rows.map(r => ({ id: r.id, name: r.pinned_name || r.name, area: r.area || "", state: r.state, archived: !!r.archived_at, closed: closed.has(r.id), parent: parent[r.id] || null })) }, 200, { "cache-control": "no-store" });
+  });
+  app.post("/api/me/nodes/parent", async c => {
+    const me = await closer(c, true); if (!me) return c.json({ error: "로그인" }, 401);
+    const b = await c.req.json<{ node?: unknown; parent?: unknown }>().catch(() => ({} as { node?: unknown; parent?: unknown }));
+    const node = typeof b.node === "string" ? b.node : "", parent = b.parent === null ? null : typeof b.parent === "string" ? b.parent : undefined;
+    if (!node || node.length > 80 || parent === undefined || (parent && (parent.length > 80 || parent === node))) return c.json({ error: "노드 · 상위" }, 400);
+    const DB = env(c).DB, want = parent ? [node, parent] : [node];
+    const mine = ((await DB.prepare("SELECT id FROM mnode WHERE owner = ? AND id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(want)).all()).results as { id: string }[]).length;
+    if (mine !== want.length) return c.json({ error: "없는 노드" }, 404);
+    const cur = json<{ parent?: Record<string, string> }>((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data, {}).parent || {};
+    if (parent && cur[parent] === node) return c.json({ error: "서로 상위가 될 수 없어요" }, 400);
+    const patch = JSON.stringify({ [node]: parent });   // json_patch: null 이면 그 칸 지움
+    await DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('parent', json_patch('{}', json(?2))), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.parent', json_patch(CASE WHEN json_valid(data) AND json_type(json_extract(data, '$.parent')) = 'object' THEN json_extract(data, '$.parent') ELSE '{}' END, json(?2))), updated_at = ?3").bind(me, patch, now()).run();
+    return c.json({ ok: true, node, parent });
   });
   app.post("/api/me/nodes/close", async c => {
     const me = await closer(c, true); if (!me) return c.json({ error: "로그인" }, 401);

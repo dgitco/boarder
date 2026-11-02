@@ -112,3 +112,18 @@ test("닫고 보관된 노드를 보관함 「다시 열기」(edit reopen)로 �
   const { data } = await import("../member-board.ts");
   assert.ok(((await data(D1, A, null)) as any).panes.some((p: any) => p.win === "tmp 2d"), "다시 보임");
 });
+
+test("상위 정하기: 내 노드끼리만 · 자기 자신 · 서로 상위면 400 · null 이면 지움 · 목록에 parent", async () => {
+  const { db, D1 } = seed(), call = app(D1);
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: "n_tmp", parent: "n_keep" })).status, 200);
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: "n_keep", parent: "n_tmp" })).status, 400, "서로 상위");
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: "n_tmp", parent: "n_tmp" })).status, 400);
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: "n_tmp", parent: "n_other" })).status, 404, "남의 노드");
+  const l = await (await call("GET", "/api/me/nodes/list")).json() as any;
+  assert.equal(l.nodes.find((n: any) => n.id === "n_tmp").parent, "n_keep");
+  await call("POST", "/api/me/nodes/close", { nodes: ["sl_C01"] });
+  const data = JSON.parse(String(db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(A)!.data));
+  assert.deepEqual([data.parent, data.closed], [{ n_tmp: "n_keep" }, ["sl_C01"]], "닫기와 상위가 서로 안 지움");
+  await call("POST", "/api/me/nodes/parent", { node: "n_tmp", parent: null });
+  assert.deepEqual(JSON.parse(String(db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(A)!.data)).parent, {});
+});

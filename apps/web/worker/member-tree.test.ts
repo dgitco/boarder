@@ -58,6 +58,20 @@ test("팀장 이름 노드가 아무 데도 없으면 예전처럼 영역마다 
   assert.deepEqual(d.areas.map(a => [a.name, a.lead_name ?? null]), [["Primary", null], ["가 리포", "보고서"], ["나 리포", "나 일"]]);
 });
 
+test("상위 노드(node_setting.data.parent): 그 노드는 상위 열 밑으로, 주차한 노드도 제 열(상위 열) 밑 — Primary 맨 위에 뜨지 않음", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_lead", "팀장", "acme"); add(db, A, "n_ops", "운영 담당", "acme", "working");
+  add(db, A, "n_pa", "개인 비서", ".team-hq"); add(db, A, "n_p", "personal", "personal", "working");
+  add(db, A, "n_sales", "영업 총괄", "", "parked"); add(db, A, "n_park2", "쉬는 담당", "acme", "parked");
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_p: "n_pa", n_sales: "n_lead" } }), T);
+  const d = await data(d1, A, null) as any;
+  const col = (name: string) => d.areas.find((a: any) => a.lead_name === name).key;
+  assert.equal(d.panes.find((p: any) => p.win === "personal").area, col("개인 비서"), "personal → 개인 비서 열");
+  assert.equal(d.panes.find((p: any) => p.win === "운영 담당").area, col("팀장"));
+  assert.equal(d.parked.find((p: any) => p.name === "영업 총괄").area, col("팀장"), "주차 + 상위 → 상위 열");
+  assert.equal(d.parked.find((p: any) => p.name === "쉬는 담당").area, col("팀장"), "주차 → 제 영역 열");
+});
+
 test("영역이 하나뿐이면 예전처럼 Primary 한 열", async () => {
   const { db, d1 } = fakeD1();
   add(db, A, "n_1", "가", "acme"); add(db, A, "n_2", "나", "acme");
