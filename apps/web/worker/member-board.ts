@@ -18,7 +18,7 @@ export function paneOfId(id: string) {
 const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;
 const kst = (ms: number) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(ms);
 
-type Node = { id: string; pane: string; name: string; state: string; why: string; updated_at: number; archived_at: number | null; wins: Set<string>; windows: R[]; convos: R[] };
+type Node = { id: string; pane: string; name: string; area: string; state: string; why: string; updated_at: number; archived_at: number | null; wins: Set<string>; windows: R[]; convos: R[] };
 
 export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
   const [la, lw] = await env.DB.batch([
@@ -31,7 +31,7 @@ export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: str
 
 async function load(db: D1Database, me: string) {
   const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw] = await db.batch([
-    db.prepare("SELECT id, name, pinned_name, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
+    db.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, device_id, gone_at FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
@@ -46,7 +46,7 @@ async function load(db: D1Database, me: string) {
   const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(r.win, r.pane);
   const itemOfWin = new Map<string, string>(); for (const i of items.values()) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(i.win, i.key);
   const nodeOfItem = new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)]));
-  const nodes: Node[] = (nd.results as R[]).map(n => ({ id: n.id, pane: paneOfId(n.id), name: String(n.pinned_name || n.name || "노드"), state: n.state, why: n.why || "", updated_at: n.updated_at, archived_at: n.archived_at, wins: new Set<string>(), windows: [], convos: [] }));
+  const nodes: Node[] = (nd.results as R[]).map(n => ({ id: n.id, pane: paneOfId(n.id), name: String(n.pinned_name || n.name || "노드"), area: String(n.area || "").trim(), state: n.state, why: n.why || "", updated_at: n.updated_at, archived_at: n.archived_at, wins: new Set<string>(), windows: [], convos: [] }));
   const byId = new Map(nodes.map(n => [n.id, n]));
   for (const [item, node] of nodeOfItem) {
     const n = byId.get(node); if (!n) continue;
@@ -116,6 +116,24 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     else if (["closed", "failed", "gone"].includes(w.state)) closed.push({ pane: p, win: w.name, ago: ago(w.closed_at || w.state_at || w.created_at), msg: w.note || "", area: "primary" });
     else panes.push(pane({ pane: p, win: w.name, kind: "lead", state: STATE[w.state] || "쉼", rows }));
   }
+  const areas: R[] = [{ key: "primary", name: "Primary", lead: PRIMARY }];
+  {
+    const areaOf = new Map(L.nodes.map(n => [n.pane, n.area && n.area !== "기타" ? n.area : ""]));
+    const groups = new Map<string, R[]>();
+    for (const p of panes) if (p.kind === "lead") { const a = areaOf.get(p.pane) ?? ""; (groups.get(a) || groups.set(a, []).get(a)!).push(p); }
+    const named = [...groups.keys()].filter(a => a);
+    if (named.length >= 2 || (named.length === 1 && groups.has(""))) {
+      const order = named.sort((a, b) => groups.get(b)!.length - groups.get(a)!.length || a.localeCompare(b));
+      if (groups.has("")) order.push("");
+      const HEAD = /팀장|리드|총괄|lead/i, BUSY = new Set(["일하는 중", "질문", "뒤 작업 중"]);
+      order.forEach((a, i) => {
+        const ps = groups.get(a)!, key = "m" + i;
+        const head = ps.find(p => HEAD.test(String(p.win))) || ps.find(p => BUSY.has(String(p.state))) || ps[0];
+        for (const p of ps) p.area = key;
+        areas.push({ key, name: a || "기타", lead: head.pane, lead_name: head.win });
+      });
+    }
+  }
   const known = new Set(panes.map(p => p.pane)), dp = L.defaultNode?.pane || (/^ew_/.test(L.primaryWin) ? paneOfId(L.primaryWin) : ""), dflt = dp && known.has(dp) ? dp : PRIMARY,
     toPane = (win: string) => { const n = L.nodeOfWin(win); return n && known.has(n.pane) ? n.pane : dflt; };
   const decisions: R[] = [], cardlist: R[] = [];
@@ -134,7 +152,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   }
   cardlist.sort((a, b) => a.at - b.at);
   const feed = L.logs.filter(r => !OWN.test(r.win) && r.thread !== "primary" && r.kind !== "me").slice(0, 40).map(r => ({ id: r.id, ago: ago(r.at), pane: L.nodeOfWin(r.win)?.pane || PRIMARY, win: cut(r.win, 30), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 160) }));
-  return { generated: kst(now), areas: [{ key: "primary", name: "Primary", lead: PRIMARY }], panes, closed, parked, archived: [], decisions, to_check: [], promises: [], feed,
+  return { generated: kst(now), areas, panes, closed, parked, archived: [], decisions, to_check: [], promises: [], feed,
     park_metrics: { at: Math.floor(now / 1000), open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
     cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [] };
 }

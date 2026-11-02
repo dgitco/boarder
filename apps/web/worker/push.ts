@@ -211,8 +211,8 @@ self.addEventListener('notificationclick', e => {
 // 주인 규칙(위)은 그대로 두고 회원 것만 따로: 카드가 생길 때 그 자리에서 보냄(틱 · 알람 없음 — 회원 칸은 알람을 안 걸어 비용이 없고, 되돌려도 옛 주인 틱이 회원 칸에서 돌 일이 없음).
 // 제목은 늘 M_TITLE. 주소는 주인과 같은 ./?open=card:<id> — 열린 창이면 pushOpen, 없으면 첫 화면이 resolve 로 그 글을 엶
 export const M_TITLE = "내 차례", M_BURST = 3, M_WINDOW = 60_000, M_SUBS = 10;
-export function memberMsg(r: { id: string; question: string }): Msg {
-  return { title: M_TITLE, body: cut(String(r.question || "").trim(), 180) || "새 카드", url: `./?open=card:${r.id}`, tag: `card:${r.id}` };
+export function memberMsg(r: { id: string; question: string; url?: string; title?: string }): Msg {
+  return { title: r.title || M_TITLE, body: cut(String(r.question || "").trim(), 180) || "새 카드", url: r.url && /^\.\/[a-z]/.test(r.url) ? r.url : `./?open=card:${r.id}`, tag: `card:${r.id}` };
 }
 // 한 시간대에 카드가 많이 생기면 같은 tag 로 바꿔 끼워 알림 한 통으로(1분에 M_BURST 넘으면)
 export function memberBurst(prev: { t: number; n: number } | null, now: number, m: Msg): { state: { t: number; n: number }; msg: Msg } {

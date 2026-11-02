@@ -13,7 +13,7 @@ export type PushApi = {
 };
 // 회원 칸(이름 = 회원 메일, index.ts memberPusher): 늘 그 사람 메일(세션)을 첫 값으로 — 칸에 적힌 주인과 다르면 거절
 export type MemberPushApi = {
-  key(): Promise<string>; mSubscribe(me: string, b: unknown): Promise<Res>; mUnsubscribe(me: string, b: unknown): Promise<Res>; mTrial(me: string, b: unknown, welcome?: boolean): Promise<Res>; mAck(me: string, b: unknown): Promise<Res>; mNotify(me: string, card: { id: string; question: string }): Promise<Res>;
+  key(): Promise<string>; mSubscribe(me: string, b: unknown): Promise<Res>; mUnsubscribe(me: string, b: unknown): Promise<Res>; mTrial(me: string, b: unknown, welcome?: boolean): Promise<Res>; mAck(me: string, b: unknown): Promise<Res>; mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }): Promise<Res>;
 };
 
 async function rows(db: D1Database) {
@@ -195,7 +195,7 @@ export class Pusher extends DurableObject<Env> {
   }
   async mAck(me: string, body: Record<string, unknown>): Promise<Res> { return this.bind(me) ? this.ack(body) : this.no(); }
   // 새 카드 한 장: 카드를 만든 요청이 그 자리에서 부름. 구독이 없으면 할 일 없음(이 칸은 알람을 안 씀)
-  mNotify(me: string, card: { id: string; question: string }): Promise<Res> {
+  mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }): Promise<Res> {
     return this.lock(async () => {
       if (!this.bind(me)) return this.no();
       if (!this.subs().length || !(await this.vapid())) return [200, { ok: true, sent: 0 }] as Res;

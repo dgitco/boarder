@@ -30,6 +30,8 @@ import { mcp } from "./mcp/server";
 import { run as runTool, hasTool, addTools } from "./mcp/tools";
 import { registry, view, dropCache, diff } from "./mcp/registry";
 import { mountConnectors } from "./connectors/routes";
+import { mountSales } from "./sales/routes";
+import { runDigest, type Send as SalesSend } from "./sales/digest";
 import { mountHooks } from "./connectors/hooks";
 import * as sessions from "./connectors/sessions";
 import { catalog } from "./connectors/store";
@@ -1368,6 +1370,7 @@ app.post("/api/admin/connections/expire", async c => {
 mountHooks(app, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? { owner: allowed(c.env as unknown as Env, s.user.email) ? "" : s.user.email, email: s.user.email } : null; },
   async (env, _ctx, target, text) => { const r = await (boardTool(env as unknown as Env, "owner", "hook_wake", { target, text }, "boarder@worker") as Promise<{ delivered?: string }>); return String(r?.delivered || "woke"); });
 mountConnectors(app, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? { owner: allowed(c.env as unknown as Env, s.user.email) ? "" : s.user.email, email: s.user.email } : null; });
+mountSales(app as never, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? s.user.email.toLowerCase() : null; }, (c, email) => member(c.env as never, email));
 
 app.post("/api/dev/ch", async c => {
   if (c.req.header("x-hb") !== "1" || !["same-origin", "none", undefined].includes(c.req.header("sec-fetch-site"))) return c.json({ error: "no" }, 403);
@@ -1648,7 +1651,7 @@ app.all("*", async c => {
     return new HTMLRewriter().on("head", { element: e => { e.append(snippet(c.env), { html: true }); } }).transform(page);
   }
   if (url.pathname === "/login" && c.req.method === "GET") return c.redirect("/", 302);   // 이미 들어온 사람이 랜딩의 「로그인」을 누르면 보드로
-  if (url.pathname === "/device" && c.req.method === "GET") {
+  if ((url.pathname === "/device" || url.pathname === "/sales") && c.req.method === "GET") {
     const page = await c.env.ASSETS.fetch(new Request(new URL("/", url), c.req.raw)), h = new Headers(page.headers);
     for (const [k, v] of Object.entries(NOFRAME)) h.set(k, v);
     return new Response(page.body, { status: 200, headers: h });
@@ -1823,6 +1826,18 @@ async function pushRoute(c: Context<{ Bindings: Env }>, url: URL) {
   return c.json(r[1], r[0] as 200);
 }
 
+const salesSend = (env: Env): SalesSend => ({
+  mail: (to, m) => env.EMAIL.send({ to, from: { email: "login@0bridge.dev", name: "Boarder 영업 보드" }, ...m } as never),
+  push: async (to, n) => { if (await ledger.f7On(env.DB, "member_push")) return memberPusher(env, to)?.mNotify(to, { ...n, title: "영업 보드" }); },
+});
+// 관리 토큰으로 한 번 돌리기 — only = 그 한 사람만(시험), dry = 안 보내고 묶음 수만. 모두에게 보내기는 아침 자동만
+app.post("/api/admin/sales-digest", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ only?: string; dry?: boolean }>().catch(() => ({} as { only?: string; dry?: boolean }));
+  const only = b.only ? String(b.only).trim().toLowerCase() : undefined;
+  if (!only && !b.dry) return c.json({ error: "모두에게 보내기는 아침 자동만 — only 나 dry 를 주세요" }, 400);
+  return c.json({ ok: true, ...(await runDigest(c.env.DB, c.env.PUBLIC_URL, salesSend(c.env), { only, dry: !!b.dry })) });
+});
 const memberCardPush = async (env: Env, me: string, card: { id: string; question: string; kind?: string }) => {
   if (!pushKind(card.kind)) return;   // 할 일은 알림 안 감(보드 「할 일」 줄에만)
   try { if (await ledger.f7On(env.DB, "member_push")) await memberPusher(env, me)?.mNotify(me.toLowerCase(), card); } catch (e) { console.log(JSON.stringify({ ev: "member_push", error: String(e).slice(0, 200) })); }
@@ -1862,4 +1877,13 @@ async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: U
   return c.json(r[1], r[0] as 200);
 }
 
-export default app;
+// app 에 scheduled 를 붙여 내보냄 — 시험이 default 로 받는 app(onError · request)이 그대로 Hono 앱이게
+export default Object.assign(app, {
+  async scheduled(_e: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil((async () => {
+      if (!(await ledger.f7On(env.DB, "member_salesmail"))) return;
+      const r = await runDigest(env.DB, env.PUBLIC_URL, salesSend(env));
+      console.log(JSON.stringify({ ev: "sales_digest", today: r.today, to: r.sent.length, fail: r.sent.filter(x => x.mail !== "ok").length }));
+    })().catch(e => console.log(JSON.stringify({ ev: "sales_digest", error: String(e).slice(0, 200) }))));
+  },
+});
