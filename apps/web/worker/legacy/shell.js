@@ -108,7 +108,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       + `<div class="bx-sbody" data-sec="ss"${SB.fold.ss ? ' hidden' : ''}>${chats().map(c => `<button type="button" class="bx-it bx-chat" data-chat="${esc(c.sid)}" title="${esc(c.title)}"${qa === 'q:' + c.sid ? ' aria-current="page"' : ''}><span>${esc(c.title)}</span></button>`).join('')}</div>`;
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas');
-    const body = '<div class="bx-sbsc">' + head + sec('ib', '모아 보기', ib) + (nd ? sec('nd', '채널', nd) : '') + sec('ch', '에이전트', ch) + (rc ? sec('rc', '최근 캔버스', rc) : '') + ss + '</div>';
+    const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = (nd ? sec('nd', '채널', nd) : ''), ags = sec('ch', '에이전트', ch);
+    const body = '<div class="bx-sbsc">' + head + sec('ib', '모아 보기', ib) + (agentsFirst ? ags + chs : chs + ags) + (rc ? sec('rc', '최근 캔버스', rc) : '') + ss + '</div>';
     const foot = `<div class="bx-foot"><button type="button" class="bx-me" data-me aria-haspopup="true" aria-expanded="false">${meAv()}<span>${esc(window.HB_MEMBER?.name || ME()?.name || 'Owner')}</span></button></div>`;
     const fb = `<button type="button" class="bx-colb" data-go="find" aria-label="찾기" title="찾기 ⌘K">${I.search}</button>`;
     const keep = [sb, dr].map(x => x.querySelector('.bx-sbsc')?.scrollTop || 0);
