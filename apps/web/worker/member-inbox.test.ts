@@ -99,6 +99,55 @@ test("읽지 않음: 내 채널 에이전트 글 — 읽음(read) · 모두 읽�
   assert.equal((await MI.inbox(s.db, B)).unread.length, 1);
 });
 
+test("읽지 않음: 모찌(Primary)에 쓴 내 글의 스레드 답도 모임 — 내 답 · 반응 · 그 스레드 읽음 · 모두 읽음 뒤 빠짐, 다른 스레드 · 남의 것은 따로", async () => {
+  const s = setup();
+  const r1 = s.log(A, MB.ME, "분기 자료 모아 줘", s.now - 120_000, "me", "primary"), root1 = tsOf(s.now - 120_000, r1);
+  const r2 = s.log(A, MB.ME, "급여도 봐 줘", s.now - 110_000, "me", "primary"), root2 = tsOf(s.now - 110_000, r2);
+  const a1 = s.log(A, "모찌", "모았어요", s.now - 100_000, "chat", "p:" + root1);
+  s.log(A, "모찌", "급여 확인 중", s.now - 90_000, "chat", "p:" + root2);
+  s.log(B, "남의 봇", "남의 답", s.now - 80_000, "chat", "p:" + root1);
+  s.log(A, "보더 들여오기", "들여옴", s.now - 70_000, "sys", "p:" + root1);   // 보더 자신 줄은 안 셈
+  let ib = await MI.inbox(s.db, A);
+  const prim = ib.unread.filter((x: any) => x.chan === "primary");
+  assert.equal(prim.length, 2); assert.deepEqual(prim.map((x: any) => x.thread).sort(), [root1, root2].sort());
+  assert.equal(prim.find((x: any) => x.thread === root1).ts, tsOf(s.now - 100_000, a1)); assert.equal(prim[0].author, "Primary");   // 메인 봇 이름(고른 이름 없으면 Primary)
+  s.log(A, MB.ME, "고마워요", s.now - 60_000, "me", "p:" + root1);   // 내가 그 스레드에 답 = 그 앞 답은 읽음
+  ib = await MI.inbox(s.db, A); assert.deepEqual(ib.unread.filter((x: any) => x.chan === "primary").map((x: any) => x.thread), [root2]);
+  const a3 = s.log(A, "모찌", "하나 더 왔어요", s.now - 50_000, "chat", "p:" + root1);   // 내 답 뒤 새 답 = 다시 읽지 않음
+  assert.equal((await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === root1).length, 1);
+  await MI.chatPost(s.db, A, { react: "eyes", ts: tsOf(s.now - 50_000, a3) });   // 반응 = 읽음
+  assert.equal((await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === root1).length, 0);
+  await MI.chatPost(s.db, A, { channel: "primary", thread: root2, seen: true });   // 그 스레드 읽음(답 · 반응 때 화면이 보냄)
+  assert.equal((await MI.inbox(s.db, A)).unread.filter((x: any) => x.chan === "primary").length, 0);
+  await new Promise(r => setTimeout(r, 30)); s.log(A, "모찌", "급여 끝", Date.now(), "chat", "p:" + root2); await new Promise(r => setTimeout(r, 30));   // 읽음 뒤 새 답(읽음은 「지금」까지만 남음)
+  const it = (await MI.inbox(s.db, A)).unread.find((x: any) => x.thread === root2);
+  assert.ok(it); await MI.inboxPost(s.db, A, { op: "read", items: [{ chan: "primary", thread: root2, ts: it.ts }] });
+  assert.equal((await MI.inbox(s.db, A)).unread.filter((x: any) => x.chan === "primary").length, 0);
+  await new Promise(r => setTimeout(r, 30)); s.log(A, "모찌", "또 하나", Date.now(), "chat", "p:" + root2); await new Promise(r => setTimeout(r, 30));
+  await MI.inboxPost(s.db, A, { op: "readall" });
+  assert.equal((await MI.inbox(s.db, A)).unread.length, 0);
+  assert.equal((await MI.inbox(s.db, B)).unread.filter((x: any) => x.chan === "primary").length, 1);   // B 몫 줄만 B 에게(A 것 안 섞임)
+});
+
+test("읽지 않음: 에이전트 채널(노드) 내 글의 스레드 답 — 채널을 열어 둔 채(노드 채팅 다시 부름)여도 남고, 반응 · 내 답 · 모두 읽음 뒤 빠짐", async () => {
+  const s = setup(), sl = (ms: number) => new Promise(r => setTimeout(r, ms));
+  const r0 = s.log(A, "예시 팀 영업", "자료 확인해 줘", s.now - 120_000, "me"), root = tsOf(s.now - 120_000, r0);
+  await MI.seenByLabel(s.db, A, "예시 팀 영업", Date.now() - 60_000); await sl(20);   // 채널을 연 화면
+  const a1 = s.log(A, "영업 창", "확인했어요", Date.now(), "say", root); await sl(20);
+  await MI.seenByLabel(s.db, A, "예시 팀 영업", Date.now() + 40_000);   // 열어 둔 화면이 다시 부름(30초 뒤)
+  let it = (await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === root);
+  assert.equal(it.length, 1); assert.equal(it[0].chan, "n:예시 팀 영업"); assert.equal(it[0].ts, tsOf(Date.now(), a1).slice(0, 0) + it[0].ts); assert.equal(it[0].author, "예시 팀 영업");
+  await MI.chatPost(s.db, A, { react: "eyes", ts: it[0].ts });
+  assert.equal((await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === root).length, 0);
+  await sl(20); s.log(A, "영업 창", "하나 더", Date.now(), "say", root); await sl(20);
+  assert.equal((await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === root).length, 1);
+  await sl(20); s.log(A, "예시 팀 영업", "고마워요", Date.now(), "me", root); await sl(20);   // 내가 그 스레드에 답
+  assert.equal((await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === root).length, 0);
+  await sl(20); s.log(A, "영업 창", "끝났어요", Date.now(), "say", root); await sl(20);
+  await MI.inboxPost(s.db, A, { op: "readall" });
+  assert.equal((await MI.inbox(s.db, A)).unread.length, 0);
+});
+
 test("저장: 내 글 · 내 카드만, 남의 것 404, 풀면 빠짐", async () => {
   const s = setup(); const mine = s.log(A, "영업 창", "저장할 글", s.now - 5000), theirs = s.log(B, "남의 창", "남의 글", s.now - 4000);
   s.card("1793400000.000001", A); s.card("1793400000.000002", B, "남의 창");

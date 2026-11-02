@@ -202,6 +202,30 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     return c.json({ nodes, audit, devices, cmds: cmds.map(x => ({ ...x, args: json(x.args, {}) })), imports: await imported(env(c), me) }, 200, { "cache-control": "no-store" });
   });
 
+  const closer = async (c: C, write: boolean) => (!write || h.sameSite(c) ? await h.member(c) : null) || (await h.device(c))?.owner || null;
+  const closedOf = async (DB: D1Database, me: string) => new Set(json<{ closed?: unknown }>((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data, {}).closed as string[] || []);
+  app.get("/api/me/nodes/list", async c => {
+    const me = await closer(c, false); if (!me) return c.json({ error: "로그인" }, 401);
+    const DB = env(c).DB, closed = await closedOf(DB, me);
+    const rows = (await DB.prepare("SELECT id, name, pinned_name, area, state, archived_at FROM mnode WHERE owner = ? ORDER BY updated_at DESC LIMIT 1000").bind(me).all()).results as { id: string; name: string; pinned_name: string | null; area: string | null; state: string; archived_at: number | null }[];
+    return c.json({ nodes: rows.map(r => ({ id: r.id, name: r.pinned_name || r.name, area: r.area || "", state: r.state, archived: !!r.archived_at, closed: closed.has(r.id) })) }, 200, { "cache-control": "no-store" });
+  });
+  app.post("/api/me/nodes/close", async c => {
+    const me = await closer(c, true); if (!me) return c.json({ error: "로그인" }, 401);
+    const b = await c.req.json<{ nodes?: unknown; open?: boolean }>().catch(() => ({} as { nodes?: unknown; open?: boolean }));
+    const ids = Array.isArray(b.nodes) ? [...new Set(b.nodes.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 80))] : [];
+    if (!ids.length || ids.length > 300) return c.json({ error: "노드 1~300개" }, 400);
+    const DB = env(c).DB;
+    const mine = new Set(((await DB.prepare("SELECT id FROM mnode WHERE owner = ? AND id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(ids)).all()).results as { id: string }[]).map(r => r.id));
+    const missing = ids.filter(id => !mine.has(id));
+    if (missing.length) return c.json({ error: "없는 노드", missing }, 404);   // 남의 노드 · 없는 id — 하나라도 있으면 아무것도 안 바꿈
+    const closed = await closedOf(DB, me);
+    for (const id of ids) b.open ? closed.delete(id) : closed.add(id);
+    const list = JSON.stringify([...closed].slice(-2000));
+    await DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('closed', json(?2)), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.closed', json(?2)), updated_at = ?3").bind(me, list, now()).run();
+    return c.json({ ok: true, closed: closed.size, changed: ids.length });
+  });
+
   // 이름 짓기 · 옮기기 · 합치기 — 사람이 정한 것은 pin(다시 묶어도 이김)
   app.post("/api/me/nodes/edit", async c => {
     if (!h.sameSite(c)) return c.json({ error: "no" }, 403);
@@ -240,6 +264,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
       if (!json<{ unit?: Unit }>(set?.data, {}).unit) return c.json({ error: "다시 열 수 없어요" }, 409);   // 고르기 전엔 보관함이 없음(예전 그대로)
       if (!(await DB.prepare("SELECT 1 FROM mnode_item m JOIN imp_item i ON i.owner = m.owner AND i.key = m.item WHERE m.owner = ? AND m.node = ? AND i.gone_at IS NULL LIMIT 1").bind(me, b.node).first())) return c.json({ error: "다시 열 수 없어요" }, 409);
       await DB.prepare("UPDATE mnode SET archived_at = NULL, pinned_name = COALESCE(pinned_name, ?), updated_at = ? WHERE owner = ? AND id = ?").bind(n.name, now(), me, b.node).run();
+      await DB.prepare("UPDATE node_setting SET data = json_set(data, '$.closed', (SELECT json_group_array(value) FROM json_each(data, '$.closed') WHERE value != ?2)), updated_at = ?3 WHERE owner = ?1 AND json_valid(data) AND json_type(data, '$.closed') = 'array'").bind(me, b.node, now()).run();
       await regroup(env(c), me);
       return c.json({ ok: true, node: b.node });
     }

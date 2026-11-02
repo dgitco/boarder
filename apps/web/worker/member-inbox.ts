@@ -2,7 +2,7 @@
 // 예전 회원 길은 반응 · 고치기 「아직 안 돼요」(400), 모아 보기(/api/inbox) · 초안(/api/drafts)은 늘 빈 답, 저장 · 읽음 · 초안 저장은 저장 없이 ok 였음.
 // 표: member_react · member_saved · member_draft · member_seen(0041). 모두 owner = 나, 남의 것은 404 · 빈 답
 import type { Context } from "hono";
-import { paneLogs } from "./member-board";
+import { paneLogs, ME, OWN, NOT_CHAT } from "./member-board";
 
 type Env = { DB: D1Database };
 type C = Context<{ Bindings: Env }>;
@@ -10,6 +10,9 @@ type R = Record<string, any>;
 
 export const SAVED_MAX = 500, DRAFT_MAX = 4000, UNREAD_MAX = 50, FIRST_DAY = 86_400_000;
 const PRIMARY = "%1";
+const PRIM_ALL = "t:*", thKey = (root: string) => "t:" + root, PTH = /^p:(\d{10}\.\d{6})$/;
+const TH_ROWS = 1000;
+const rootOf = (thread: unknown) => { const t = String(thread || ""); return PTH.exec(t)?.[1] || (TS.test(t) ? t : null); };
 const TS = /^(\d{10})\.(\d{6})$/, RX = /^[a-z0-9_+-]{1,40}$/;
 const CTRL = /[\x00-\x08\x0b-\x1f\x7f]/g;
 // 파일 붙은 글 끝의 첨부 줄(member-files.ts fileLines 꼴): 「📎 이름: <주소>/f/<id>?e=<초>&t=<서명>」
@@ -49,8 +52,9 @@ export async function inbox(db: D1Database, me: string) {
   const unread: R[] = [];
   for (const c of P.chans) {
     const s = seen.get(c.pane) ?? now - FIRST_DAY;   // 처음 보는 채널은 하루 안 글만
-    for (const r of c.rows) if (Number(r.at) > s) unread.push({ ts: tsOf(r.at, r.id), chan: key.get(c.pane), thread: TS.test(String(r.thread || "")) ? r.thread : null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author: c.name });
+    for (const r of c.rows) if (!TS.test(String(r.thread || "")) && Number(r.at) > s) unread.push({ ts: tsOf(r.at, r.id), chan: key.get(c.pane), thread: null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author: c.name });   // 스레드 답은 아래 threadUnread(채널 읽음과 따로)
   }
+  unread.push(...await threadUnread(db, me, seen, now, P, key));
   unread.sort((a, b) => b.at - a.at);
   // 저장: 글은 board_log id, 카드는 board_card id(= 카드 글 ts)
   const savedRows = sv.results as R[], logIds = savedRows.filter(r => r.kind === "log").map(r => Number(r.ref)), cardIds = savedRows.filter(r => r.kind === "card").map(r => String(r.ref));
@@ -88,15 +92,37 @@ export async function inboxPost(db: D1Database, me: string, b: R): Promise<{ sta
   }
   if (op === "read" || op === "readall") {
     const { P, byKey } = await chans(db, me);
-    if (op === "readall") { for (const c of P.chans) await seeUpTo(db, me, c.pane, Date.now()); return { status: 200, body: { ok: true } }; }
+    if (op === "readall") { for (const c of P.chans) await seeUpTo(db, me, c.pane, Date.now()); await seeUpTo(db, me, PRIM_ALL, Date.now()); return { status: 200, body: { ok: true } }; }
     const items = Array.isArray(b.items) ? (b.items as R[]).slice(0, 200) : [];
     for (const it of items) {
       const r = await logByTs(db, me, it?.ts); if (!r) continue;
+      const pt = r.thread !== "primary" ? rootOf(r.thread) : null; if (pt) { await seeUpTo(db, me, thKey(pt), Number(r.at)); continue; }   // 스레드 답 = 그 스레드만(그 답까지)
       const pane = byKey.get(String(it?.chan || "")) || P.paneOfLog(r as { win: string }); if (pane) await seeUpTo(db, me, pane, Number(r.at));
     }
     return { status: 200, body: { ok: true } };
   }
   return { status: 400, body: { ok: false, error: "모르는 요청" } };
+}
+
+async function threadUnread(db: D1Database, me: string, seen: Map<string, number>, now: number, P: Awaited<ReturnType<typeof paneLogs>>, key: Map<string, string>): Promise<R[]> {
+  const all = seen.get(PRIM_ALL) ?? now - FIRST_DAY;
+  const rows = ((await db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IS NOT NULL AND thread != 'primary' AND at > ? ${NOT_CHAT} ORDER BY at DESC, id DESC LIMIT ?`).bind(me, all, TH_ROWS).all<R>()).results || []) as R[];
+  if (!rows.length) return [];
+  const reacted = new Set(((await db.prepare("SELECT DISTINCT log_id FROM member_react WHERE owner = ? AND log_id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(rows.map(r => Number(r.id)))).all<{ log_id: number }>()).results || []).map(r => Number(r.log_id)));
+  const mine = (r: R) => r.kind === "me" || r.win === ME;
+  const bot = String((await db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(me.toLowerCase()).first<{ name: string | null }>().catch(() => null))?.name || "Primary");
+  const floor = new Map<string, number>();
+  for (const r of rows) { const root = rootOf(r.thread); if (root && (mine(r) || reacted.has(Number(r.id)))) floor.set(root, Math.max(floor.get(root) ?? 0, Number(r.at))); }
+  const out: R[] = [];
+  for (const r of rows) {
+    const root = rootOf(r.thread); if (!root || mine(r) || OWN.test(String(r.win)) || r.win === "보더") continue;
+    if (Number(r.at) <= Math.max(all, seen.get(thKey(root)) ?? 0, floor.get(root) ?? 0)) continue;
+    const prim = PTH.test(String(r.thread)), pane = prim ? null : P.paneOfLog({ win: String(r.win), kind: r.kind, thread: null }), chan = prim ? "primary" : pane && pane !== PRIMARY ? key.get(pane) : null;
+    if (!chan) continue;
+    const author = prim ? bot : P.chans.find(c => c.pane === pane)?.name || String(r.win || "");
+    out.push({ ts: tsOf(r.at, r.id), chan, thread: root, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author });
+  }
+  return out;
 }
 
 // ── 초안(/api/drafts · /api/draft) ──
@@ -135,7 +161,11 @@ export async function chatPost(db: D1Database, me: string, b: R): Promise<{ stat
   }
   if (b.seen) {   // 스레드 · 글을 봄 — 그 글의 채널을 그 글까지 읽음으로
     const ts = String(b.thread || b.ts || ""), r = await logByTs(db, me, ts) || await cardByTs(db, me, ts);
-    if (r) { const { P } = await chans(db, me), pane = P.paneOfLog({ win: String(r.win), kind: r.kind, thread: r.thread }); if (pane) await seeUpTo(db, me, pane, Date.now()); }
+    // 스레드(뿌리 · 답 어느 ts 든) — 그 스레드 답을 지금까지 읽음으로. 뿌리 글이면 그 채널도 예전처럼(반응 · 답 = 읽음)
+    const root = r && r.thread && r.thread !== "primary" ? rootOf(r.thread) : r && TS.test(ts) ? ts : null;
+    if (root) await seeUpTo(db, me, thKey(root), Date.now());
+    if (r && !r.thread) {   // 노드 채널 글 · 카드(Primary 줄은 채널 읽음 없음 — 위 스레드만)
+      const { P } = await chans(db, me), pane = P.paneOfLog({ win: String(r.win), kind: r.kind, thread: r.thread }); if (pane) await seeUpTo(db, me, pane, Date.now()); }
     return { status: 200, body: { ok: true, state: "ok", seen: true } };
   }
   return null;
