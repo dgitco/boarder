@@ -1,7 +1,7 @@
 
 import { regroup } from "./importer/routes";
 import { boardHead, withHead } from "./board-head";
-import { primaryOf, type Item } from "./importer/group";
+import { primaryOf, notChat, type Item } from "./importer/group";
 import { history, topics, promiseRows } from "./member-views";
 
 type R = Record<string, any>;
@@ -95,7 +95,7 @@ export async function load(db: D1Database, me: string) {
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
-    db.prepare("SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ORDER BY at DESC LIMIT 600").bind(me),
+    db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT 600`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
     db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
     db.prepare("SELECT rowid AS n, id, name, brief, at FROM (SELECT rowid, id, name, brief, created_at AS at FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 30)").bind(me),
     db.prepare("SELECT id, kind, name, state, state_at, note, created_at, closed_at FROM engine_window WHERE owner = ? AND (state NOT IN ('closed','failed','gone') OR state_at > ?) ORDER BY created_at DESC LIMIT 60").bind(me, Date.now() - 12 * 3600_000),
@@ -388,6 +388,49 @@ export async function folderOk(db: D1Database, me: string, folder: string) {
   return (await sessFolders(db, me)).some(f => f.path === folder);
 }
 
+export const CHAT_DIR = "~/boarder/chat";
+export const CHAT_ID = /^ew_[a-z0-9]{6,30}$/;
+export const NOT_CHAT = notChat("board_log");
+/** 주인 server.py _chat_title 과 같음 — 제어 글자 · 빈칸을 한 칸으로, 28자 넘으면 「…」 */
+export function chatTitle(text: string) {
+  const t = Array.from(String(text || "").replace(/[\x00-\x1f\x7f]/g, " ").split(/\s+/).filter(Boolean).join(" "));
+  return t.length > 28 ? t.slice(0, 28).join("") + "…" : t.join("") || "새 대화";
+}
+export const chatText = (v: unknown) => String(v ?? "").replace(/\r/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").trim().slice(0, 4000);
+export async function chatOf(db: D1Database, me: string, sid: string) {
+  if (!CHAT_ID.test(sid)) return null;
+  return db.prepare("SELECT id, name, state, created_at FROM engine_window WHERE id = ? AND owner = ? AND kind = 'chat' AND state NOT IN ('closed','failed')").bind(sid, me).first<R>();
+}
+export const CHAT_MAX = 20;
+export async function chatCount(db: D1Database, me: string) {
+  return Number((await db.prepare("SELECT count(*) n FROM engine_window WHERE owner = ? AND kind = 'chat' AND state NOT IN ('closed','failed')").bind(me).first<{ n: number }>())?.n || 0);
+}
+export const chatRidKey = (rid: string, wid: string) => `${rid}.w.${wid}`;
+export async function chatOfRid(db: D1Database, me: string, rid: string) {
+  const k = await db.prepare("SELECT rid FROM f7_rid WHERE rid > ? AND rid < ? LIMIT 1").bind(rid + ".w.", rid + ".w/").first<{ rid: string }>();   // 앞붙임 범위(PK 색인) — LIKE 는 rid 의 _ 가 와일드카드
+  const wid = k ? String(k.rid).slice(rid.length + 3) : "";
+  return CHAT_ID.test(wid) ? db.prepare("SELECT id, name FROM engine_window WHERE id = ? AND owner = ? AND kind = 'chat'").bind(wid, me).first<R>() : null;
+}
+/** rid 잡기 — 새로 잡았거나 잡은 지 2분 넘게 창이 없으면(그 요청이 죽음) true */
+export async function chatClaim(db: D1Database, rid: string, now = Date.now()) {
+  const r = await db.prepare("INSERT INTO f7_rid(rid, at) VALUES (?1, ?2) ON CONFLICT(rid) DO UPDATE SET at = ?2 WHERE f7_rid.at < ?3").bind(rid, now, now - 120_000).run();
+  return Number(r.meta?.changes || 0) > 0;
+}
+// GET /api/chats — 최근에 말한 것 먼저(주인 chats_get: last · at 차례), at = 연 때(초)
+export async function chatList(db: D1Database, me: string) {
+  const rs = (await db.prepare("SELECT w.id, w.name, w.created_at, (SELECT MAX(l.at) FROM board_log l WHERE l.wid = w.id AND l.owner = w.owner) AS last FROM engine_window w WHERE w.owner = ? AND w.kind = 'chat' AND w.state NOT IN ('closed','failed') ORDER BY COALESCE(last, w.created_at) DESC LIMIT 100").bind(me).all<R>()).results;
+  return rs.map(r => ({ sid: String(r.id), title: String(r.name || "새 대화"), at: Number(r.created_at) / 1000 }));
+}
+const CHAT_BUSY = new Set(["opening", "starting", "busy"]);
+export async function chatLog(db: D1Database, me: string, sid: string, now = Date.now()) {
+  const w = await chatOf(db, me, sid); if (!w) return null;
+  const rows = ((await db.prepare("SELECT id, kind, text, at FROM board_log WHERE owner = ? AND wid = ? AND kind NOT IN ('sys','status','role') ORDER BY at DESC, id DESC LIMIT 200").bind(me, sid).all<R>()).results).reverse();
+  const last = rows.at(-1);
+  // 답을 쓰는 중: 창이 일하는 중이거나, 마지막 줄이 내 글(아직 답 없음) — 10분 넘게 답이 없으면 점 셋을 거둠(턴 훅이 못 올린 때 끝없이 돌지 않게)
+  const working = CHAT_BUSY.has(String(w.state)) || (!!last && last.kind === "me" && now - Number(last.at) < 10 * 60_000);
+  return { messages: rows.map(r => ({ ts: tsOf(Number(r.at), Number(r.id)), who: r.kind === "me" ? "owner" : "agent", text: String(r.text || "") })), working, title: String(w.name || "새 대화") };
+}
+
 // 회원 GET — 보드 화면 길만. null = 이 길은 회원 보드 것이 아님(→ 403)
 export async function etag(b: string) { return '"m' + [...new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(b)))].slice(0, 8).map(x => x.toString(16).padStart(2, "0")).join("") + '"'; }
 export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>)): Promise<Response | null> {
@@ -471,6 +514,8 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     await withReacts(db, me, out as R[]);
     return j({ channel: "n:" + t, messages: out, stale_min: 0, more: false });
   }
+  if (p === "/api/chats") return j({ chats: await chatList(db, me) });
+  if (p === "/api/chatlog") { const r = await chatLog(db, me, url.searchParams.get("sid") || ""); return r ? j(r) : j({ error: "없는 대화예요" }, 404); }
   if (p === "/api/sesslog") { const s = await sessLog(db, me, url.searchParams.get("pane") || "", mainName, my); return s ? j(s) : j({ error: "없는 판" }, 404); }
   if (p === "/api/session/folders") return j({ folders: await sessFolders(db, me) });
   return null;
@@ -488,6 +533,17 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     const folder = String(b.folder || "");
     if (!(await folderOk(db, me, folder))) return { error: "없는 폴더", status: 404 };
     return { path: "/api/me/session/new", body: { folder, text: String(b.text || "").slice(0, 4000) } };
+  }
+  if (path === "/api/chat/new") {
+    const text = chatText(b.text);
+    if (!text) return { error: "첫 글이 없어요", status: 400 };
+    return { path: "/api/me/chats/new", body: { text } };
+  }
+  if (path === "/api/chat/send") {
+    const sid = String(b.sid || ""), text = chatText(b.text);
+    if (!text) return { error: "내용을 적어요", status: 400 };
+    if (!(await chatOf(db, me, sid))) return { error: "없는 대화예요", status: 404 };
+    return { path: `/api/me/chats/${sid}/send`, body: { text } };
   }
   if (path === "/api/chat") {
     if (b.seen) return { ok: { ok: true, state: "ok", seen: false } };   // 읽음 표는 아직 없음(보드가 열 때마다 부름 — 오류로 띄우지 않음)

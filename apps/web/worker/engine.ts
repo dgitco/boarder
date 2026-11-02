@@ -200,7 +200,7 @@ export class Engine extends DurableObject<EngEnv> {
   async webSocketError(ws: WebSocket) { await this.webSocketClose(ws); }
 
   async row(id: string) { return this.env.DB.prepare("SELECT * FROM engine_window WHERE id = ?").bind(id).first<Win>(); }
-  async open(o: { owner: string; kind: "main" | "role"; role_id?: string | null; name: string; cwd: string; prompt: string; system?: string; email?: string; config_dir?: string }) {
+  async open(o: { owner: string; kind: "main" | "role" | "chat"; role_id?: string | null; name: string; cwd: string; prompt: string; system?: string; email?: string; config_dir?: string }) {
     const { device, harness } = await this.who(), db = this.env.DB, now = Date.now(), id = rid("ew_");
     if (harness) throw new EngineError(5, "주인 하네스 기기는 서버가 창을 열지 않아요");
     const cfg = await ownerCfg(db, o.owner);

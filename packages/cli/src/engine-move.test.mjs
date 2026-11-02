@@ -142,3 +142,11 @@ test('move-all --yes: 일하는 중인 창은 건너뜀(목록에 상태), --for
     assert.match(w.tmuxWins(), new RegExp(`\\t${SID}\\t`));
   } finally { w.done(); }
 });
+
+test('agentArgv: 첫 글은 -- 뒤에(「-」로 시작해도 글), 글이 없으면 -- 도 없음', async () => {
+  const { agentArgv } = await import('./engine/tmux.mjs');
+  const a = agentArgv({ claude: 'claude' }, { session_id: SID, prompt: '-x --help 해 줘', system: 's' });
+  assert.deepEqual(a.slice(-2), ['--', '-x --help 해 줘']);
+  assert.equal(a.indexOf('--'), a.length - 2);
+  assert.deepEqual(agentArgv({}, { session_id: SID, resume: true }), ['claude', '--resume', SID]);
+});

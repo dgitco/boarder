@@ -1,7 +1,9 @@
 
 type R = Record<string, any>;
 const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;   // 보더 자신의 줄(member-board OWN 과 같음)
-const ME = "나";                                          // 회원이 Primary 채팅에 쓴 줄(member-board ME)
+const ME = "나";
+const notChat = (t: string) => `AND (${t}.wid IS NULL OR ${t}.wid NOT IN (SELECT id FROM engine_window WHERE owner = ${t}.owner AND kind = 'chat'))`;
+const NC_LOG = notChat("board_log"), NC_CARD = notChat("board_card");
 const TURN: Record<string, string> = { turn: "내 차례", blocked: "막힘", working: "일하는 중", parked: "주차" };
 
 export type Ai = { run(model: string, input: { text: string[] }): Promise<unknown> };
@@ -29,8 +31,8 @@ export async function query(db: D1Database, me: string, q0: string, o: { sem?: b
   const all = (col: string) => terms.map(() => `lower(${col}) LIKE ? ESCAPE '\\'`).join(" AND ");
   const CARD = "question || ' ' || COALESCE(body, '') || ' ' || COALESCE(answer, '')", NODE = "COALESCE(pinned_name, '') || ' ' || name || ' ' || why";
   const [lg, cd, td, nd, tk, it, mi, ns] = await db.batch([
-    db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND ${all("text")} ORDER BY at DESC LIMIT 200`).bind(me, ...like),
-    db.prepare(`SELECT rowid AS n, id, win, question, body, answer, state, at, answered_at FROM board_card WHERE owner = ? AND ${all(CARD)} ORDER BY at DESC LIMIT 60`).bind(me, ...like),
+    db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND ${all("text")} ${NC_LOG} ORDER BY at DESC LIMIT 200`).bind(me, ...like),
+    db.prepare(`SELECT rowid AS n, id, win, question, body, answer, state, at, answered_at FROM board_card WHERE owner = ? AND ${all(CARD)} ${NC_CARD} ORDER BY at DESC LIMIT 60`).bind(me, ...like),
     db.prepare(`SELECT key, title, state, state_at, seen_at FROM imp_item WHERE owner = ? AND kind = 'todo' AND gone_at IS NULL AND ${all("title")} ORDER BY seen_at DESC LIMIT 30`).bind(me, ...like),
     db.prepare(`SELECT id, name, pinned_name, state, why, updated_at, archived_at FROM mnode WHERE owner = ? AND ${all(NODE)} ORDER BY updated_at DESC LIMIT 30`).bind(me, ...like),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
@@ -80,8 +82,8 @@ export async function query(db: D1Database, me: string, q0: string, o: { sem?: b
     const t1 = Date.now();
     try {
       const [rl, rc, rn] = await db.batch([
-        db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND kind != 'role' ORDER BY at DESC LIMIT 150").bind(me),
-        db.prepare("SELECT rowid AS n, id, win, question, body, answer, state, at, answered_at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 60").bind(me),
+        db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND kind != 'role' ${NC_LOG} ORDER BY at DESC LIMIT 150`).bind(me),
+        db.prepare(`SELECT rowid AS n, id, win, question, body, answer, state, at, answered_at FROM board_card WHERE owner = ? ${NC_CARD} ORDER BY at DESC LIMIT 60`).bind(me),
         db.prepare("SELECT id, name, pinned_name, state, why, updated_at, archived_at FROM mnode WHERE owner = ? ORDER BY updated_at DESC LIMIT 60").bind(me),
       ]);
       const lexIds = new Set([...lexChats.map(x => x.id), ...lexCards.map(x => x.id)]);

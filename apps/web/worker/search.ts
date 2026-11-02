@@ -32,7 +32,7 @@ export class Search extends DurableObject<Env> {
     s.exec("CREATE INDEX IF NOT EXISTS doc_node ON doc(node)");
     s.exec("CREATE INDEX IF NOT EXISTS doc_at ON doc(at)");
     s.exec("CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, body, tokenize='trigram')");   // rowid = doc.rid
-    // 2글자 낱말(「가산」 → 가산세 · 「위하」)은 trigram 이 못 받음 — 낱말 앞부분 색인(unicode61, 앞 1 · 2글자)으로. 줄 끝 LIKE 훑기는 80ms+ 였음
+    // 2글자 낱말(「회의」 → 회의록 · 「보더」)은 trigram 이 못 받음 — 낱말 앞부분 색인(unicode61, 앞 1 · 2글자)으로. 줄 끝 LIKE 훑기는 80ms+ 였음
     s.exec("CREATE VIRTUAL TABLE IF NOT EXISTS fts2 USING fts5(title, body, tokenize='unicode61 remove_diacritics 0', prefix='1 2')");
     if (!s.exec("SELECT rowid FROM fts2 LIMIT 1").toArray().length) s.exec("INSERT INTO fts2(rowid, title, body) SELECT rid, title, body FROM doc");   // 처음 한 번 채움
     s.exec("CREATE TABLE IF NOT EXISTS vec(rid INTEGER PRIMARY KEY, v BLOB NOT NULL, sig TEXT)");     // sig = 그 벡터를 만든 글의 해시
@@ -143,7 +143,7 @@ export class Search extends DurableObject<Env> {
         WHERE fts MATCH ?${short.length ? " AND d.rid IN (SELECT rowid FROM fts2 WHERE fts2 MATCH ?)" : ""} ORDER BY bm25(fts, 4.0, 1.0) LIMIT 300`, match, ...(short.length ? [pre] : [])).toArray();
     } else {
       lex = s.exec<Row>(`SELECT ${cols} FROM fts2 JOIN doc d ON d.rid=fts2.rowid WHERE fts2 MATCH ? ORDER BY bm25(fts2, 4.0, 1.0) LIMIT 300`, pre).toArray();
-      // 낱말 가운데 2글자(「하고」 → 위하고)는 제목만 LIKE 로(제목은 짧아 빠름)
+      // 낱말 가운데 2글자(「의록」 → 회의록)는 제목만 LIKE 로(제목은 짧아 빠름)
       const seen = new Set(lex.map(r => r.rid));
       for (const r of s.exec<Row>(`SELECT ${cols} FROM doc d WHERE ${short.map(() => "d.title LIKE ? ESCAPE '\\'").join(" AND ")} ORDER BY d.at DESC LIMIT 100`, ...short.map(like)))
         if (!seen.has(r.rid)) lex.push(r);

@@ -34,7 +34,7 @@ const doc = (id: string, body: string) => ({ id, kind: "chat" as const, title: "
 test("AI 가 몇 분 막혀도(한도 · 일시 오류) 다시 열리면 기다리던 글이 뜻 색인에 들어감", async () => {
   const ai = { down: true, calls: 0 };
   const { s, alarm } = mk(ai);
-  await s.upsert([doc("m:1", "가산세 납부서 다시 받기"), doc("m:2", "CMS 자동이체 신청")]);
+  await s.upsert([doc("m:1", "회의록 서류철 다시 받기"), doc("m:2", "CMS 자동이체 신청")]);
   for (let i = 0; i < 8; i++) await alarm();   // 30초 × 8 ≈ 4분 막힘(예전엔 다섯 번째에 줄을 버림)
   assert.equal(s.state().vecs, 0);
   ai.down = false;
@@ -45,10 +45,10 @@ test("AI 가 몇 분 막혀도(한도 · 일시 오류) 다시 열리면 기다�
 test("버려진 뒤에는 같은 글로 다시 올려도 되살아나지 않음 — 그래서 일시 막힘에 버리면 안 됨(위 시험의 까닭)", async () => {
   const ai = { down: true, calls: 0 };
   const { s, alarm } = mk(ai);
-  await s.upsert([doc("m:1", "가산세 납부서 다시 받기")]);
+  await s.upsert([doc("m:1", "회의록 서류철 다시 받기")]);
   for (let i = 0; i < 8; i++) await alarm();
   ai.down = false;
-  const r = await s.upsert([doc("m:1", "가산세 납부서 다시 받기")]);
+  const r = await s.upsert([doc("m:1", "회의록 서류철 다시 받기")]);
   assert.equal(r.changed, 0, "sig 가 같아 건너뜀(정상)");
   await alarm();
   assert.equal(s.state().vecs, 1, "줄이 남아 있으면 막힘이 풀린 뒤 벡터가 생김");
@@ -73,19 +73,19 @@ test("계속 실패하는 글은 늘어나는 간격으로 다시 해보다(최�
 test("(본 경로 확인) 지운 글 · 다시 맞추기(all)에서 빠진 글 · 벡터를 만드는 사이 지운 글은 낱말 · 뜻 찾기에 안 걸림", async () => {
   const ai = { down: false, calls: 0 };
   const { s, alarm } = mk(ai);
-  await s.upsert([doc("m:1", "가산세 납부서 하나"), doc("m:2", "가산세 납부서 둘"), doc("m:3", "가산세 납부서 셋")]);
+  await s.upsert([doc("m:1", "회의록 서류철 하나"), doc("m:2", "회의록 서류철 둘"), doc("m:3", "회의록 서류철 셋")]);
   await alarm();
   assert.equal(s.state().vecs, 3);
   await s.upsert([], ["m:1"]);                        // 지움
   await s.upsert([], [], ["m:3"]);                    // 다시 맞추기: m:3 만 남음(보낸 기록을 잃은 릴레이)
   const ids = (r: any) => r.chats.map((x: { id: string }) => x.id).sort();
-  assert.deepEqual(ids(await s.query("가산세 납부서", false)), ["m:3"]);
+  assert.deepEqual(ids(await s.query("회의록 서류철", false)), ["m:3"]);
   assert.equal(s.state().vecs, 1);
   // 모델을 기다리는 사이 지움 → 벡터를 쓰지 않음
-  await s.upsert([doc("m:4", "가산세 새 글")]);
+  await s.upsert([doc("m:4", "회의록 새 글")]);
   const run = ai as any, orig = s.env.AI.run;
   s.env.AI.run = async (m: string, x: { text: string[] }) => { await s.upsert([], ["m:4"]); return orig(m, x); };
   await alarm(); s.env.AI.run = orig; void run;
   assert.deepEqual({ docs: s.state().docs, vecs: s.state().vecs, pending: s.state().pending }, { docs: 1, vecs: 1, pending: 0 });
-  assert.deepEqual(ids(await s.query("가산세", true)), ["m:3"]);
+  assert.deepEqual(ids(await s.query("회의록", true)), ["m:3"]);
 });

@@ -35,7 +35,7 @@ export function agentArgv(cfg, s) {
   a.push(s.resume ? '--resume' : '--session-id', s.session_id);
   if (s.perm === 'bypass') a.push('--permission-mode', 'bypassPermissions');   // 사람이 화면에서 한 번 허용했을 때만(B-8) — 서버가 정해 보냄
   if (s.system) a.push('--append-system-prompt', s.system);
-  if (s.prompt) a.push(s.prompt);
+  if (s.prompt) a.push('--', s.prompt);
   return a;
 }
 

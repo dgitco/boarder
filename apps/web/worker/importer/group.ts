@@ -17,6 +17,10 @@ export type Unit = "goal" | "agent";
 export type State = "turn" | "blocked" | "working" | "idle" | "parked" | "done";
 export type Audit = { items: number; nodes: number; missing: number; fixed: number; mixed: number; moved: number; empty: number; history: number; notes: string[] };
 
+/** 회원 「세션」 칸 대화 창(engine_window kind 'chat')의 줄 · 카드는 노드 · 소식 · 찾기 밖(그 대화 화면에만) — board_log · board_card 둘 다 wid 로 가림.
+ *  여기 둔 까닭: I/O 없는 이 파일은 member-board · importer/routes · member-search 가 다 읽음(서로 import 하면 돎) */
+export const notChat = (t: "board_log" | "board_card") => `AND (${t}.wid IS NULL OR ${t}.wid NOT IN (SELECT id FROM engine_window WHERE owner = ${t}.owner AND kind = 'chat'))`;
+
 const TRUNK = new Set(["", "main", "master", "develop", "dev", "trunk", "head", "staging", "production"]);
 // 링크 하나가 너무 많은 곳에 나오면(채널 맨 위 글 · 공용 이슈) 묶는 이음으로 쓰지 않음
 const REF_MAX = 6;

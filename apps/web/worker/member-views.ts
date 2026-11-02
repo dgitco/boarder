@@ -1,4 +1,4 @@
-import { load, data, paneOfId, ME, OWN, inPrim, tsOf, cut, json, CARD_TS, myName } from "./member-board";
+import { load, data, paneOfId, ME, OWN, inPrim, tsOf, cut, json, CARD_TS, myName, NOT_CHAT } from "./member-board";
 
 type R = Record<string, any>;
 
@@ -56,7 +56,7 @@ export async function history(db: D1Database, me: string, q?: string | null) {
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, win FROM imp_item WHERE owner = ?").bind(me),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
-    db.prepare("SELECT id, win, kind, thread, at FROM board_log WHERE owner = ? AND at >= ? ORDER BY at DESC, id DESC LIMIT 5000").bind(me, from * 1000),
+    db.prepare(`SELECT id, win, kind, thread, at FROM board_log WHERE owner = ? AND at >= ? ${NOT_CHAT} ORDER BY at DESC, id DESC LIMIT 5000`).bind(me, from * 1000),
     db.prepare("SELECT id, win, kind, state, answered_at, at FROM board_card WHERE owner = ? AND (at >= ? OR state = 'open') ORDER BY at DESC LIMIT 500").bind(me, from * 1000),
     db.prepare("SELECT id, kind, name, state, state_at, created_at, closed_at FROM engine_window WHERE owner = ? AND kind = 'role' AND (closed_at IS NULL OR closed_at > ?)").bind(me, from * 1000),
     db.prepare("SELECT MIN(at) at FROM board_log WHERE owner = ?").bind(me),

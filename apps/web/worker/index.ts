@@ -746,7 +746,7 @@ app.get("/api/me/board", async c => {
   const [dv, wn, lg, cd] = await c.env.DB.batch([
     c.env.DB.prepare("SELECT d.id, d.name, d.tools, d.created_at, d.last_at, m.at metrics_at, m.data metrics FROM device d LEFT JOIN device_metric m ON m.device_id = d.id WHERE d.owner = ? AND d.revoked_at IS NULL ORDER BY d.created_at DESC").bind(me),
     c.env.DB.prepare("SELECT t.device_id, t.win FROM agent_token t JOIN device d ON d.id = t.device_id WHERE d.owner = ? AND d.revoked_at IS NULL AND t.revoked_at IS NULL ORDER BY t.created_at DESC").bind(me),
-    c.env.DB.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) ORDER BY at DESC LIMIT 100").bind(me),   // p:<ts> = Primary 글 스레드 답
+    c.env.DB.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) ${memberBoard.NOT_CHAT} ORDER BY at DESC LIMIT 100`).bind(me),   // p:<ts> = Primary 글 스레드 답 · 「세션」 칸 대화 줄은 그 대화 화면에만
     c.env.DB.prepare("SELECT id, win, question, choices, recommend, body, state, answer, done, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 50").bind(me),
   ]);
   const wins = (wn.results as { device_id: string; win: string }[]);
@@ -1104,6 +1104,44 @@ app.post("/api/me/session/new", async c => {
     await sysLine(c.env.DB, me, `「${name}」 새 대화를 열었어요`, w.id);
     return c.json({ ok: true, pane: memberBoard.paneOfId(w.id), name, window: w.id });
   } catch (e) { return engErr(c, e); }
+});
+app.post("/api/me/chats/new", async c => {
+  const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ text?: string; rid?: string }>().catch(() => ({} as { text?: string; rid?: string }));
+  const t = memberBoard.chatText(b.text);
+  if (!t) return c.json({ ok: false, error: "첫 글이 없어요" }, 400);
+  const db = c.env.DB, rid = queue.ridOfBody(b);
+  if (rid) {
+    try {
+      const got = await memberBoard.chatOfRid(db, me, rid);
+      if (got) return c.json({ ok: true, sid: got.id, title: String(got.name || "새 대화"), already: true });
+    } catch { return queue.retrySafe(c); }
+  }
+  const dev = await liveDevice(db, me); if (!dev) return c.json({ ok: false, error: "엔진이 켜진 기기가 없어요" }, 409);
+  if (await memberBoard.chatCount(db, me) >= memberBoard.CHAT_MAX) return c.json({ ok: false, error: `열린 대화가 ${memberBoard.CHAT_MAX}개예요. 안 쓰는 대화를 닫고 다시 해 주세요` }, 409);
+  // rid 를 먼저 잡음: 같은 rid 가 동시에 오면 하나만 창을 엶 — 다른 쪽은 다시 보내라(503 x-retry-safe)고 해 끝난 뒤 위 「이미 연 대화」로 받음. 잡고 2분 넘게 창이 없으면(Worker 가 죽음) 다시 잡음
+  if (rid) { try { if (!(await memberBoard.chatClaim(db, rid))) return queue.retrySafe(c); } catch { return queue.retrySafe(c); } }
+  const title = memberBoard.chatTitle(t), at = Date.now();
+  let w: { id: string };
+  try { w = await engineOf(c.env, dev).open({ owner: me, kind: "chat", name: title, cwd: memberBoard.CHAT_DIR, prompt: t }); }
+  catch (e) { if (rid) await db.prepare("DELETE FROM f7_rid WHERE rid = ?").bind(rid).run().catch(() => {}); return engErr(c, e); }   // 못 열었으면 rid 를 놓아 다시 보내면 다시 엶
+  const st = [db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, title, "me", t, null, at, w.id)];
+  if (rid) st.push(db.prepare("INSERT OR IGNORE INTO f7_rid(rid, at) VALUES (?, ?)").bind(memberBoard.chatRidKey(rid, w.id), at));
+  // 창은 이미 열림 — 줄을 못 남겨도 대화는 있음(목록 · 기록은 창으로 읽음). 오류로 돌려 다시 열게 하지 않음
+  await db.batch(st).catch(e => console.error("새 대화 줄", e));
+  return c.json({ ok: true, sid: w.id, title });
+});
+app.post("/api/me/chats/:id/send", async c => {
+  const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
+  const id = c.req.param("id"), b = await c.req.json<{ text?: string; rid?: string }>().catch(() => ({} as { text?: string; rid?: string }));
+  const t = memberBoard.chatText(b.text);
+  if (!t) return c.json({ ok: false, error: "내용을 적어요" }, 400);
+  const w = await memberBoard.chatOf(c.env.DB, me, id); if (!w) return c.json({ ok: false, error: "없는 대화예요" }, 404);
+  const rid = queue.ridOfBody(b);
+  try { if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, String(w.name), "me", t, null, Date.now(), id)], p => c.executionCtx.waitUntil(p)))) return c.json({ ok: true, already: true }); }
+  catch (e) { if (rid) return queue.retrySafe(c); throw e; }
+  try { return c.json({ ok: true, ...(await deliverTo(c.env, me, id, t) as object || {}) }); }
+  catch (e) { return engErr(c, e); }
 });
 app.post("/api/me/windows/:id/say", async c => {
   const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
