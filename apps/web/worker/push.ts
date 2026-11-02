@@ -4,7 +4,7 @@ export const URGENT = ":rotating_light: *급함*";
 const KIND_KO: Record<string, string> = { choice: "결정", question: "질문", decision: "창 결정", draft: "채널톡 초안", todo: "할 일" };
 const AREA_KO: Record<string, string> = { primary: "Primary", company: "회사", dgit: "DGit", shop: "가게", shopco: "가게", personal: "퍼스널" };
 export const SETTLE = 8, MAX_AGE = 86400, BURST = 3, TRIES = 5;
-export const KINDS = ["choice", "question", "decision", "draft", "todo"];
+export const KINDS: string[] = [];
 
 export type Msg = { title: string; body?: string; url?: string; tag?: string };
 export type Card = { ts: string; area: string; kind: string; title: string | null; label: string | null; shape: string | null; state: string; replaced_by: string | null; dup_of: string | null; ref: string | null; posted_at: number | null };

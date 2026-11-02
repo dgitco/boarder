@@ -58,9 +58,14 @@ test("암호화 · VAPID: 받는 쪽이 풀고 서명이 맞음", async () => {
   assert.ok(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, pub, P.unb64u(sig), te.encode(`${head}.${claims}`)));
 });
 
-test("새 카드 · 급함은 한 번만, 첫 실행은 밀린 것 안 보냄", () => {
+test("KINDS 는 빈 목록(새 카드 푸시 끔)", () => {
+  assert.deepEqual(P.KINDS, []);
+});
+
+test("새 카드는 안 나가고 급함 글만 한 번, 첫 실행은 밀린 것 안 보냄", () => {
   const s = new Sim();
   s.card("0.9", { label: "옛 카드" });
+  s.msg({ id: "8.1", chan: "dgit", thread: null, text: ":rotating_light: *급함* 옛 급함", at: s.t - 5 });
   assert.deepEqual(s.tick(s.t), []);
   s.card("1.1", { area: "company", label: "맥 실측 방 정하기" });
   s.card("1.2", { kind: "question", state: "done", label: "처리된 것" });
@@ -69,80 +74,49 @@ test("새 카드 · 급함은 한 번만, 첫 실행은 밀린 것 안 보냄", 
   s.msg({ id: "9.1", chan: "dgit", thread: null, text: ":rotating_light: *급함* 서버 감시 • `x.service` 실패", at: s.t });
   assert.deepEqual(s.tick(s.t + 1), []);   // 처음 본 직후는 기다림
   const sent = Object.fromEntries(s.tick(s.t + 20));
-  assert.deepEqual(Object.keys(sent).sort(), ["card:1.1", "card:1.5", "urgent:dgit:" + P.fmt6(s.t)]);
-  assert.equal(sent["card:1.1"].title, "회사 · 결정");
-  assert.equal(sent["card:1.5"].body, "서류 내기");
+  assert.deepEqual(Object.keys(sent), ["urgent:dgit:" + P.fmt6(s.t)]);
   assert.deepEqual(sent["urgent:dgit:" + P.fmt6(s.t)], { title: "급함 · DGit", body: "서버 감시 • x.service 실패", url: "./?open=thread:dgit:9.1", tag: "urgent:9.1" });
-  assert.equal(s.got.length, 3);
+  assert.equal(s.got.length, 1);
   assert.deepEqual(s.tick(s.t + 40), []);
 });
 
-test("q: 가상 카드가 1초 안에 Slack 카드로 바뀌면 새 카드로 한 번", () => {
+test("옛 KINDS 카드(choice · question · decision · draft · todo)와 q: · 창 결정 · rekey · dup_of 모두 안 나감", () => {
   const s = new Sim(); s.tick(s.t);
-  s.card("q:company:Q-1", { area: "company", kind: "question", label: "질문", ref: "company:Q-1", posted_at: s.t - 40000 });
-  s.tick(s.t + 0.5);
+  for (const kind of ["choice", "question", "decision", "draft", "todo"]) s.card(`17${kind.length}.${kind}`, { kind, label: kind, ref: kind });
+  s.card("q:company:Q-1", { area: "company", kind: "question", label: "질문", ref: "company:Q-1" });
+  s.card("w:9350", { kind: "decision", label: "창 결정", ref: "w:9350" });
+  assert.deepEqual(s.later(), []);
   Object.assign(s.cards.get("q:company:Q-1")!, { state: "replaced", replaced_by: "1792.000001" });
   s.card("1792.000001", { area: "company", kind: "question", label: "질문", ref: "company:Q-1" });
-  assert.deepEqual(s.later(), ["card:1792.000001"]);
-  assert.deepEqual(s.later(), []);
-});
-
-test("창 결정 알림 뒤 choice 카드로 바뀌어도 두 번 안 감", () => {
-  const s = new Sim(); s.tick(s.t);
-  s.card("w:9350", { kind: "decision", label: "창 결정", ref: "w:9350" });
-  assert.deepEqual(s.later(), ["card:w:9350"]);
-  Object.assign(s.cards.get("w:9350")!, { state: "replaced", replaced_by: "1793.000001" });
-  s.card("1793.000001", { kind: "choice", label: "창 결정을 버튼으로", ref: "" });
-  assert.deepEqual(s.later(), []);
-});
-
-test("rekey · dup_of 은 두 번 안 감", () => {
-  const s = new Sim(); s.tick(s.t);
-  s.card("1794.000001", { label: "카드", ref: "r1" });
-  s.tick(s.t + 1);
-  const r = s.cards.get("1794.000001")!; s.cards.delete(r.ts); r.ts = "1794.999999"; s.cards.set(r.ts, r);
-  assert.deepEqual(s.later(), ["card:1794.999999"]);
+  const r = s.cards.get("w:9350")!; s.cards.delete(r.ts); r.ts = "1794.999999"; s.cards.set(r.ts, r);
   s.card("1795.000001", { kind: "decision", label: "같은 일 다른 말", ref: "w:1", dup_of: "1794.999999" });
   assert.deepEqual(s.later(), []);
+  assert.equal(s.got.length, 0);
 });
 
-test("같은 창의 두 번째 결정은 감", () => {
-  const s = new Sim(); s.tick(s.t);
-  s.card("w:1", { kind: "decision", label: "PR #1 판정", ref: "review-watch" });
-  assert.deepEqual(s.later(), ["card:w:1"]);
-  s.card("w:2", { kind: "decision", label: "PR #2 판정", ref: "review-watch" });
-  assert.deepEqual(s.later(), ["card:w:2"]);
-});
-
-test("한꺼번에 많으면 한 통", () => {
+test("카드가 한꺼번에 많이 와도 「내 차례」 한 통 없음 — 같이 온 급함 글은 나감", () => {
   const s = new Sim(); s.tick(s.t);
   for (let n = 0; n < 6; n++) s.card(`18${n}.000001`, { label: `카드 ${n}`, ref: `r${n}` });
-  assert.equal(s.later().length, 1);
+  s.msg({ id: "9.2", chan: "company", thread: "9.0", text: ":rotating_light: *급함* 결제 실패", at: s.t });
+  const at = s.t;
+  assert.deepEqual(s.later(), ["urgent:company:" + P.fmt6(at)]);
   assert.equal(s.got.length, 1);
-  assert.equal(s.got[0].title, "내 차례");
+  assert.ok(!s.got.some(m => m.title === "내 차례" || m.tag?.startsWith("card")));
+  assert.equal(s.got[0].url, "./?open=thread:company:9.0");
   assert.deepEqual(s.later(), []);
 });
 
-test("일시 실패(503)는 다시", () => {
+test("급함 글 일시 실패(503)는 다시, 카드는 그 사이에도 안 나감", () => {
   const s = new Sim(); s.tick(s.t);
   s.code = 503;
   s.card("1796.000001", { label: "카드", ref: "r" });
+  s.msg({ id: "9.3", chan: "dgit", thread: null, text: ":rotating_light: *급함* 다시", at: s.t });
+  const k = "urgent:dgit:" + P.fmt6(s.t);
   assert.deepEqual(s.later(), []);
   s.code = 201;
-  assert.deepEqual(s.later(), ["card:1796.000001"]);
+  assert.deepEqual(s.later(), [k]);
   assert.deepEqual(s.later(), []);
-});
-
-test("한꺼번에 많은 한 통이 일시 실패(503)해도 다시 감", () => {
-  const s = new Sim(); s.tick(s.t);
-  s.code = 503;
-  for (let n = 0; n < 6; n++) s.card(`19${n}.000001`, { label: `카드 ${n}`, ref: `r${n}` });
-  assert.deepEqual(s.later(), []);
-  s.code = 201;
-  assert.deepEqual(s.later(), ["card:190.000001"]);
-  assert.equal(s.got.at(-1)!.title, "내 차례");
-  assert.deepEqual(s.later(), []);
-  for (let n = 0; n < 6; n++) assert.ok(s.st.notified.includes(`card:19${n}.000001`));
+  assert.ok(!s.got.some(m => m.tag?.startsWith("card")));
   assert.deepEqual(s.st.tries, {});
 });
 
