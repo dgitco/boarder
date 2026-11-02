@@ -91,12 +91,13 @@ function setup(width = 390, enabled = true) {
   return { ctx, body, html, doc, calls, panes, input, tick: () => intervals.forEach(f => f()) };
 }
 
-test("작업 노드는 /es 목록에 없음 — 고정 원만", () => {
+test("목록 = 기능별 비서 넷(Grok Bot 꼴) — 작업 노드 · 고정 원 없음", () => {
   const t = setup();
-  assert.equal(t.body.querySelectorAll(".bx-ea-row").length, 0);
-  assert.equal(t.body.querySelectorAll(".bx-ea-pin").length, 5);
+  assert.deepEqual(t.body.querySelectorAll(".bx-ea-row b").map(e => e.textContent), ["비서", "슬랙 인박스", "할 일 관리", "상담봇"]);
+  assert.equal(t.body.querySelectorAll(".bx-ea-pin").length, 0);
   t.panes[0].g = "wait"; t.tick();
-  assert.equal(t.body.querySelectorAll(".bx-ea-row").length, 0);
+  assert.equal(t.body.querySelectorAll(".bx-ea-row").length, 4);
+  t.ctx.ans.hidden = true; t.tick(); t.body.querySelectorAll(".bx-ea-row")[0].click(); assert.deepEqual(t.calls, ["chan:primary"]);   // 이미 연 대화면 다시 열지 않음 — 닫은 뒤 누름
 });
 
 test("영상 메뉴 → 전화 HBV.start · 미팅 openArt · 통화 중 바로 layout", () => {
@@ -123,13 +124,13 @@ test("메뉴 바깥 · Esc · 방향키 · Enter · Tab · 대화 닫힘", () =>
   trigger.click(); t.ctx.ans.hidden = true; t.tick(); assert.equal(menu.hidden, true);
 });
 
-test("390 폰 찾기 · 새 대화 시트 · PC 제목 단추", () => {
+test("위 줄 찾기 · 새 대화 원(Grok Bot 꼴, 폰 · PC 같음) · 새 대화 시트", () => {
   for (const width of [390, 1200]) {
-    const t = setup(width), float = t.body.querySelector(".bx-ea-float");
+    const t = setup(width), top = t.body.querySelector(".bx-ea-title");
     let found = false;
     t.doc.addEventListener("keydown", (e: any) => { if (e.key === "k") found = true; });
-    float.querySelector(".bx-ea-find").click(); assert.equal(found, true);
-    const compose = width === 390 ? float.querySelector(".bx-ea-compose") : t.body.querySelector(".bx-ea-title .bx-ea-compose");
+    top.querySelector(".bx-ea-find").click(); assert.equal(found, true);
+    const compose = top.querySelector(".bx-ea-compose");
     assert.equal(compose.getAttribute("aria-label"), "새 대화"); compose.click();
     assert.deepEqual(t.calls, []);
     assert.equal(t.body.querySelector(".bx-en-scrim").hidden, false);
@@ -141,9 +142,8 @@ test("390 폰 찾기 · 새 대화 시트 · PC 제목 단추", () => {
   }
   assert.match(CSS, /@media \(max-width:860px\)/);
   assert.match(CSS, /\.bx-ea-open \.bx-ea-list\{visibility:hidden\}/);
-  assert.match(CSS, /\.bx-ea-sc > \.bx-ea-find\{display:none\}/);
-  assert.match(CSS, /padding-bottom:calc\(88px \+ env\(safe-area-inset-bottom,0px\)\)/);
-  assert.match(CSS, /backdrop-filter:blur\(20px\)/);
+  assert.match(CSS, /\.bx-ea-bar,html\.bx-ea \.bx-ea-big,html\.bx-ea \.bx-ea-float,html\.bx-ea \.bx-ea-pins\{display:none!important\}/);
+  assert.match(CSS, /\.bx-ea-circ/);
 });
 
 test("BX_EA가 없으면 DOM과 호출이 그대로", () => {

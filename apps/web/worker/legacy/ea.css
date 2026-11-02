@@ -208,3 +208,38 @@ html.bx-ea .bx-en-pending .bx-es-spin{flex:none;color:var(--muted)}
 }
 @keyframes bx-en-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
 @media (prefers-reduced-motion:reduce){html.bx-ea .bx-en-sheet{animation:none}}
+
+html.bx-ea .bx-ea-bar,html.bx-ea .bx-ea-big,html.bx-ea .bx-ea-float,html.bx-ea .bx-ea-pins{display:none!important}
+html.bx-ea .bx-ea-top{flex:none;display:flex;align-items:center;gap:8px;height:64px;margin:0;padding:0 18px 0 20px}
+html.bx-ea .bx-ea-gap{flex:1}
+html.bx-ea .bx-ea-me{flex:none;width:40px;height:40px;border-radius:50%;overflow:hidden;display:block;box-shadow:0 0 0 3px var(--surface),0 2px 10px var(--shadow)}
+html.bx-ea .bx-ea-me > *,html.bx-ea .bx-ea-me svg,html.bx-ea .bx-ea-me img{width:40px!important;height:40px!important;display:block}
+html.bx-ea .bx-ea-circ,html.bx-ea .bx-ea-top .bx-ea-find,html.bx-ea .bx-ea-top .bx-ea-keys{flex:none;display:grid;place-items:center;width:44px;height:44px;margin:0;padding:0;border:0;border-radius:50%;background:var(--surface);color:var(--ink);box-shadow:0 2px 12px var(--shadow);cursor:pointer}
+html.bx-ea .bx-ea-top .bx-ea-find span{display:none}
+html.bx-ea .bx-ea-row{min-height:76px;padding:0 0 0 20px;gap:18px}
+html.bx-ea .bx-ea-tx{padding:12px 20px 12px 0;border-bottom:0;gap:3px}
+html.bx-ea .bx-ea-l1 b{font-size:17px;font-weight:500}
+html.bx-ea .bx-ea-l1 time{font-size:14px}
+html.bx-ea .bx-ea-l1 > svg:last-child{display:none}   /* › 없음 */
+html.bx-ea .bx-ea-pv{font-size:15px;line-height:1.35;min-height:0;-webkit-line-clamp:1}
+html.bx-ea .bx-ea-status{height:22px;line-height:22px;padding:0 7px;border-radius:7px;font-size:14px;background:color-mix(in srgb,var(--ink) 7%,transparent)}
+html.bx-ea .bx-ea-dot{left:6px;width:8px;height:8px;margin-top:-4px}
+/* 대화 머리 */
+html.bx-ea .bx-ea-h{height:64px;grid-template-columns:44px minmax(0,1fr) 44px;gap:8px;padding:0 18px;border-bottom:0;background:linear-gradient(var(--surface) 70%,transparent)}
+html.bx-ea .bx-ea-back,html.bx-ea .bx-ea-h .bx-ea-ib{width:44px;height:44px;border-radius:50%;background:var(--surface);box-shadow:0 2px 12px var(--shadow)}
+html.bx-ea .bx-ea-who{justify-self:start;height:44px;padding:0 16px 0 8px;border-radius:22px;background:var(--surface);box-shadow:0 2px 12px var(--shadow);gap:8px}
+html.bx-ea .bx-ea-who b{font-size:17px;font-weight:500}
+html.bx-ea .bx-ea-chev{display:none}
+html.bx-ea{--ea-h:64px}
+/* 대화 = 말풍선(보드 채팅 글 그대로, 모양만) */
+html.bx.bx-ea #ans > .ah{display:none!important}   /* 보드 머리(이름 · 세션 · ⋯) — /es 는 위 알약 머리 하나 */
+html.bx-ea #ans .msg{display:block;padding:3px 18px;background:none!important}
+html.bx-ea #ans .msg > .av,html.bx-ea #ans .msg .mh{display:none!important}
+html.bx-ea #ans .msg .mbody{display:flex;flex-direction:column;align-items:flex-start}
+html.bx-ea #ans .msg .bd{max-width:min(78%,560px);box-sizing:border-box;padding:10px 14px;border-radius:20px;background:color-mix(in srgb,var(--ink) 6%,var(--surface));color:var(--ink);font-size:17px;line-height:1.35}
+html.bx-ea #ans .msg.me .mbody{align-items:flex-end}
+html.bx-ea #ans .msg.me .bd{background:var(--ink);color:var(--surface)}
+html.bx-ea #ans .msg.me .bd a{color:inherit}
+html.bx-ea #ans .msg .btns,html.bx-ea #ans .msg .rep{margin-top:6px}
+html.bx-ea .bx-ea-top .bx-ea-compose{display:grid!important}
+html.bx-ea .bx-ea-row .bx-ea-dot{display:none}   /* Grok 줄엔 점이 없음 — 수는 미리보기 글로 */

@@ -148,7 +148,7 @@ test('폴더 POST 몸통 · 스피너 · 중복 방지 · 임시 줄 → panes �
   assert.equal(req.init.headers['content-type'], 'application/json'); assert.equal(req.init.headers['x-hb'], '1'); assert.equal(req.init.credentials, 'same-origin');
   resolve(J({ok: true, pane: 'new-pane', name: '새 작업'})); await t.settle();
   assert.equal(t.one('.bx-en-scrim').hidden, true); assert.match(t.one('.bx-en-pending').textContent, /새 작업여는 중/);
-  assert.equal(t.one('.bx-ea-rows').children[0], t.one('.bx-en-pending'));
+  assert.ok([...t.one('.bx-ea-rows').children].includes(t.one('.bx-en-pending')));   // 기능별 비서 줄 아래
   t.one('.bx-en-pending').click(); assert.deepEqual(t.opened, []);
   t.advance(1000); assert.deepEqual(t.opened, []); t.panes.push({pane: 'new-pane', win: '새 작업'}); t.advance(1000);
   assert.equal(t.one('.bx-en-pending'), null); assert.deepEqual(t.opened, ['node:new-pane']); assert.doesNotMatch(t.one('.bx-ea-rows').textContent, /새 작업/);

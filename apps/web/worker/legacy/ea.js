@@ -45,9 +45,10 @@
   // ── 만들기: 목록(머리 · 찾기 · 줄) · 대화 머리 · 빈 오른쪽
   const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
   const list = mk('nav', 'bx-ea-list'); list.setAttribute('aria-label', '비서 대화');
-  list.innerHTML = `<div class="bx-ea-bar" aria-hidden="true"><b>비서</b></div><div class="bx-ea-sc"><div class="bx-ea-title"><h1 class="bx-ea-big">비서</h1><button type="button" class="bx-ea-compose bx-ea-ib" aria-label="새 대화">${lu('pencil', 20)}</button></div>`
-    + `<button type="button" class="bx-ea-find" aria-label="찾기">${lu('search', 16)}<span>찾기</span></button><div class="bx-ea-pins" role="list" aria-label="고정된 대화"></div><div class="bx-ea-rows" role="list"></div></div>`
-    + `<div class="bx-ea-float"><button type="button" class="bx-ea-find" aria-label="찾기">${lu('search', 20)}<span>찾기</span></button><button type="button" class="bx-ea-compose bx-ea-ib" aria-label="새 대화">${lu('pencil', 22)}</button></div>`;
+  const PLUS = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+  const meName = () => window.HB_MEMBER?.name || window.BX_ME?.name || 'Owner';
+  list.innerHTML = `<div class="bx-ea-bar" aria-hidden="true"><b>비서</b></div><div class="bx-ea-title bx-ea-top"><span class="bx-ea-me" aria-hidden="true"></span><span class="bx-ea-gap"></span><button type="button" class="bx-ea-find bx-ea-circ" aria-label="찾기">${lu('search', 20)}</button><button type="button" class="bx-ea-compose bx-ea-circ" aria-label="새 대화">${PLUS}</button></div>`
+    + `<div class="bx-ea-sc"><div class="bx-ea-pins" role="list" aria-label="고정된 대화" hidden></div><div class="bx-ea-rows" role="list"></div></div>`;
   const sc = list.querySelector('.bx-ea-sc'), rowsEl = list.querySelector('.bx-ea-rows'), pinsEl = list.querySelector('.bx-ea-pins'), bar = list.querySelector('.bx-ea-bar');
   const head = mk('div', 'bx-ea-h'); head.hidden = true;
   head.innerHTML = `<button type="button" class="bx-ea-back" aria-label="목록으로">${lu('chevron-left', 26)}</button>`
@@ -72,16 +73,23 @@
     for (const x of a){
       const q = low(x); if (!q) continue;
       const k = PINS.find(k => q === k || q === low(AN()[k]) || q === low(pinName(k)));
-      if (k){ out.add('c:' + k); continue; }
-      const p = ws.find(p => q === low(p.pane) || q === low(nm(p)) || (p.win && q === low(p.win)));
-      out.add(p ? 'n:' + p.pane : 'c:primary');
+      out.add('c:primary');   // 목록 = 기능별 비서라 영역 · 일 줄이 없음 — 비서 줄에 자물쇠
+      if (k) continue;
     }
     return out;
   }
+  const IBC = () => { try { return window.HBInbox?.counts?.() || {}; } catch { return {}; } };
+  const ATTN = () => { try { return typeof attnCount === 'function' ? attnCount() || 0 : 0; } catch { return 0; } };
+  const BOTS = [
+    {k: 'c:primary', name: () => pinName('primary'), av: () => pinAv('primary'), pre: () => '무엇이든 맡겨 주세요', n: () => 0, open: () => fn('openChan') && openChan('primary')},
+    {k: 'c:i:unread', name: () => '슬랙 인박스', av: () => 'slack inbox', pre: () => IBC().unread ? `읽지 않은 글 ${IBC().unread}개` : '새 글이 없어요', n: () => IBC().unread || 0, open: () => window.HBInbox?.openFeed?.('unread')},
+    {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => ATTN() ? `내 차례 ${ATTN()}개` : '할 일이 없어요', n: () => ATTN(), open: () => window.HBInbox?.openFeed?.('turn')},
+    {k: 'c:i:drafts', name: () => '상담봇', av: () => 'counsel bot', pre: () => IBC().drafts ? `보낼 초안 ${IBC().drafts}개` : '보낼 초안이 없어요', n: () => IBC().drafts || 0, open: () => window.HBInbox?.openFeed?.('drafts')},
+  ];
   function data(){
     const ws = work(), lk = locks(ws);
     return {ws, lk, open: openKey(),
-      sig: [PINS.map(k => pinName(k) + (unread(k) ? '*' : '')).join(','), [...lk].sort().join(','), ...ws.map(p => [p.pane, nm(p), status(p), preview(p), ago(p.last?.ago), rows(p.pane)].join('\u0001'))].join('\u0002')};
+      sig: [BOTS.map(b => b.name() + b.pre() + (unread(b.k.slice(2)) ? '*' : '')).join(','), meName(), PINS.map(k => pinName(k) + (unread(k) ? '*' : '')).join(','), [...lk].sort().join(','), ...ws.map(p => [p.pane, nm(p), status(p), preview(p), ago(p.last?.ago), rows(p.pane)].join('\u0001'))].join('\u0002')};
   }
   const opening = [];
   let sig = null;
@@ -89,8 +97,9 @@
     const d = data(), s = d.sig + '#' + d.open + '#' + (PC.matches ? 1 : 0) + '#' + JSON.stringify(opening);
     if (!force && s === sig) return;
     sig = s;
-    pinsEl.innerHTML = PINS.map(k => pin(k, unread(k), d.open === 'c:' + k, d.lk.has('c:' + k))).join('');
-    rowsEl.innerHTML = opening.map(p => `<div class="bx-ea-row bx-en-pending" role="listitem"><span class="bx-ea-ava">${av(p.name, 44)}</span><span class="bx-ea-tx"><span class="bx-ea-l1"><b>${E(p.name)}</b>${p.error ? '' : '<span class="bx-ea-status">여는 중</span><span class="bx-es-spin" aria-hidden="true"></span>'}</span>${p.error ? '<span class="bx-ea-pv" role="alert">일시적인 오류가 발생했어요</span>' : ''}</span></div>`).join('') + d.ws.map(p => row('n:' + p.pane, nm(p), av(nm(p), 44), ago(p.last?.ago), preview(p) === status(p) ? '' : preview(p), rows(p.pane) > 0, d.open === 'n:' + p.pane, d.lk.has('n:' + p.pane), status(p))).join('');
+    pinsEl.innerHTML = '';
+    const me = list.querySelector('.bx-ea-me'); if (me && me.dataset.n !== meName()){ me.dataset.n = meName(); me.innerHTML = av(meName(), 40); }
+    rowsEl.innerHTML = BOTS.map(b => row(b.k, b.name(), av(b.av(), 44), '', b.pre(), b.n() > 0 || unread(b.k.slice(2)), d.open === b.k, d.lk.has(b.k), '')).join('') + opening.map(p => `<div class="bx-ea-row bx-en-pending" role="listitem"><span class="bx-ea-ava">${av(p.name, 44)}</span><span class="bx-ea-tx"><span class="bx-ea-l1"><b>${E(p.name)}</b>${p.error ? '' : '<span class="bx-ea-status">여는 중</span><span class="bx-es-spin" aria-hidden="true"></span>'}</span>${p.error ? '<span class="bx-ea-pv" role="alert">일시적인 오류가 발생했어요</span>' : ''}</span></div>`).join('') + d.ws.map(p => row('n:' + p.pane, nm(p), av(nm(p), 44), ago(p.last?.ago), preview(p) === status(p) ? '' : preview(p), rows(p.pane) > 0, d.open === 'n:' + p.pane, d.lk.has('n:' + p.pane), status(p))).join('');
     lay();
   }
   // 대화 머리 · 열림 표시
@@ -102,8 +111,10 @@
     if (!open) return;
     const c = C(), p = k.startsWith('n:') ? BY()[k.slice(2)] : null;
     const ck = k.startsWith('c:') && PINS.includes(k.slice(2)) ? k.slice(2) : '';
-    const name = ck ? pinName(ck) : p ? nm(p) : AN()[c?.chan] || c?.chan || '';
-    const avn = ck ? pinAv(ck) : name;
+    const bot = BOTS.find(b => b.k === k);
+    const name = bot ? bot.name() : ck ? pinName(ck) : p ? nm(p) : AN()[c?.chan] || c?.chan || '';
+    const avn = bot ? bot.av() : ck ? pinAv(ck) : name;
+    const ta = document.getElementById('cnew'); if (ta && name && ta.placeholder !== name + '에게 묻기') ta.placeholder = name + '에게 묻기';   // Grok 「Ask SLMob」 꼴
     if (head.dataset.k !== k + '|' + name){ head.dataset.k = k + '|' + name; head.querySelector('.bx-ea-av').innerHTML = av(avn, 28); head.querySelector('.bx-ea-who b').textContent = name; }
     for (const r of rowsEl.querySelectorAll('.bx-ea-row')) r.toggleAttribute('aria-current', r.dataset.k === k);
     for (const r of pinsEl.querySelectorAll('.bx-ea-pin')) r.toggleAttribute('aria-current', 'c:' + r.dataset.k === k);
@@ -115,7 +126,7 @@
     if (fn('openNode')) { try { openNode(pane); } catch {} }
     setTimeout(() => { const c = C(); if ((ans.hidden || !c || c.p !== pane) && fn('openAns')) openAns({p: pane, page: true}); }, 0);   // openNode 가 판이 아니라 이름을 받는 판이어도 — 틀(shell.js)과 같은 길로
   }
-  rowsEl.addEventListener('click', e => { const r = e.target.closest('.bx-ea-row'); if (!r?.dataset.k) return; if (openKey() === r.dataset.k) return; go(r.dataset.k); });
+  rowsEl.addEventListener('click', e => { const r = e.target.closest('.bx-ea-row'); if (!r?.dataset.k) return; if (openKey() === r.dataset.k) return; const b = BOTS.find(x => x.k === r.dataset.k); if (b) return b.open(); go(r.dataset.k); });
   pinsEl.addEventListener('click', e => { const r = e.target.closest('.bx-ea-pin'); if (!r || openKey() === 'c:' + r.dataset.k) return; if (fn('openChan')) openChan(r.dataset.k); });
   // 새 대화: 비밀값 시트와 같은 틀, 입력과 받는 곳만 여기서 그림.
   const scrim = mk('div', 'bx-es-scrim bx-en-scrim'); scrim.hidden = true;
