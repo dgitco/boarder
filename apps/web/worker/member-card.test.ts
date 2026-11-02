@@ -97,3 +97,15 @@ test("에이전트 inbox_ask kind 가 카드에 남고 inbox_cards 가 그 kind 
   const cs = await run("inbox_cards", { query: "", limit: 10 }) as { cards: { card_id: string; kind: string }[] };
   assert.equal(cs.cards.find(c => c.card_id === t.card_id)?.kind, "todo");
 });
+
+test("결정 · 할 일 목록의 채널: 창이 사는 노드를 찾으면 그 노드 채널(n:<이름>), 못 찾으면 primary", async () => {
+  const { db, D1 } = seed(), now = Date.now();
+  db.prepare("INSERT INTO mnode(owner, id, name, pinned_name, state, why, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)").run(A, "n_sales", "매출 팀장", "매출 팀장", "idle", "", now, now);
+  db.prepare("INSERT INTO imp_item(owner, key, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?)").run(A, "window:t1", "window", "tmux-own", "매출 팀장", "idle", "일 창", now);
+  db.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?)").run(A, "window:t1", "n_sales", "pin");
+  db.prepare("INSERT INTO board_card(id, owner, win, kind, question, choices, state, at) VALUES (?,?,?,?,?,?,?,?)").run("1793000000.000009", A, "모르는 창", "decision", "창 못 찾음", '["A"]', "open", now);
+  const { data } = await import("./member-board.ts");
+  const d = await data(D1, A, null) as any, ch = (ts: string) => d.cardlist.find((c: any) => c.ts === ts)?.channel;
+  assert.equal(ch("1793000000.000001"), "n:매출 팀장"); assert.equal(ch("1793000000.000002"), "n:매출 팀장");
+  assert.equal(ch("1793000000.000009"), "primary");
+});

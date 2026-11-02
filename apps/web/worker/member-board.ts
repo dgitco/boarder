@@ -223,18 +223,20 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   }
   const known = new Set(panes.map(p => p.pane)), dp = L.defaultNode?.pane || (/^ew_/.test(L.primaryWin) ? paneOfId(L.primaryWin) : ""), dflt = dp && known.has(dp) ? dp : PRIMARY,
     toPane = (win: string) => { const n = L.nodeOfWin(win); return n && known.has(n.pane) ? n.pane : dflt; };
+  const nameN = new Map<string, number>(); for (const n of L.nodes) nameN.set(n.name, (nameN.get(n.name) || 0) + 1);
+  const cardCh = (win: string) => { const n = L.nodeOfWin(win); return n && known.has(n.pane) && nameN.get(n.name) === 1 ? "n:" + n.name : "primary"; };
   const decisions: R[] = [], cardlist: R[] = [];
   const todos: R[] = [];
   for (const c of L.cards) {
     const id = "w" + c.n, ch = json<string[]>(c.choices, []).map(x => cut(x, 90));
     if (c.kind === "todo") {
       if (c.state === "open") todos.push({ ts: String(c.id), id: String(c.id), area: "primary", title: cut(c.question, 200), body: cut(c.body || "", 600), due: "", win: c.win, pane: toPane(c.win), ago: ago(c.at) });
-      if (CARD_TS.test(String(c.id))) cardlist.push({ ts: c.id, ref: "w:" + c.n, thread: null, channel: "primary", kind: "todo", area: "primary", state: c.state === "open" ? "open" : "answered", title: cut(c.question, 80), at: c.at / 1000 });
+      if (CARD_TS.test(String(c.id))) cardlist.push({ ts: c.id, ref: "w:" + c.n, thread: null, channel: cardCh(c.win), kind: "todo", area: "primary", state: c.state === "open" ? "open" : "answered", title: cut(c.question, 80), at: c.at / 1000 });
       continue;
     }
     const snoozed = Number(c.snooze_until || 0) > now;
     if (c.state === "open" && !snoozed) decisions.push({ id, src: "wlog", pane: toPane(c.win), win: c.win, area: "primary", title: cut(c.question, 200), body: cut(c.body || "", 600), choices: c.recommend && ch.includes(c.recommend) ? [c.recommend, ...ch.filter(x => x !== c.recommend)] : ch, ago: ago(c.at), kind: "결정" });
-    cardlist.push({ ts: CARD_TS.test(String(c.id)) ? c.id : "w:" + c.n, ref: "w:" + c.n, thread: null, channel: "primary", kind: "decision", area: "primary", state: c.state === "open" ? "open" : "answered", title: cut(c.question, 80), at: c.at / 1000 });
+    cardlist.push({ ts: CARD_TS.test(String(c.id)) ? c.id : "w:" + c.n, ref: "w:" + c.n, thread: null, channel: CARD_TS.test(String(c.id)) ? cardCh(c.win) : "primary", kind: "decision", area: "primary", state: c.state === "open" ? "open" : "answered", title: cut(c.question, 80), at: c.at / 1000 });
   }
   for (const d of L.drafts) {
     const n = 1_000_000_000 + d.n;
