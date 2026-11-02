@@ -151,3 +151,12 @@ test("BX_EA가 없으면 DOM과 호출이 그대로", () => {
   assert.equal(t.body.children.length, 2); assert.deepEqual(t.calls, []);
   assert.equal(t.html.classList.contains("bx-ea"), false);
 });
+
+test('인박스 비서 대화 꼴 CSS 는 /es(html.bx-ea #ans) 안에서만 — 보드 모아 보기 화면은 그대로', () => {
+  const css = readFileSync(new URL("./legacy/ea.css", import.meta.url), "utf8");
+  const rules = css.split("\n").filter(l => /\.ibfeed|\.inbr|\.ibgh|\.ibctx/.test(l) && !l.startsWith("/*"));
+  assert.ok(rules.length >= 8);
+  for (const l of rules) for (const sel of l.slice(0, l.indexOf("{")).split(/,(?![^(]*\))/)) assert.match(sel.trim(), /^html\.bx-ea #ans /, sel);
+  assert.doesNotMatch(css, /\.ibbox[^{]*\{[^}]*display:none|\.ibpx\{display:none/);
+  assert.match(css, /\.ibpx :is\(\.plus,\.vmemo,\.ctip,\.send,\.cvoice,\.xpand,\.att\)\{display:none!important\}/);
+});

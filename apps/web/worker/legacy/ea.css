@@ -240,7 +240,7 @@ html.bx-ea #ans .msg .bd{max-width:min(78%,560px);box-sizing:border-box;padding:
 html.bx-ea #ans .msg.me .mbody{align-items:flex-end}
 html.bx-ea #ans .msg.me .bd{background:var(--ink);color:var(--surface)}
 html.bx-ea #ans .msg.me .bd a{color:inherit}
-html.bx-ea #ans .msg .btns,html.bx-ea #ans .msg .rep{margin-top:6px}
+html.bx-ea #ans .msg .btns{margin-top:6px}
 html.bx-ea .bx-ea-top .bx-ea-compose{display:grid!important}
 html.bx-ea .bx-ea-row .bx-ea-dot{display:none}   /* Grok 줄엔 점이 없음 — 수는 미리보기 글로 */
 html.bx-ea #ans .bx-ea-tsep{margin:16px 0 8px;text-align:center;font-size:13px;color:var(--muted)}
@@ -251,5 +251,32 @@ html.bx-ea #ans .msg .btns{display:flex;flex-direction:column;align-items:stretc
 html.bx-ea #ans .msg .btns > button{display:block;width:100%;margin:0;padding:11px 14px;border:0;border-top:1px solid var(--line);border-radius:0;background:none;color:var(--ink);font-size:16px;text-align:left}
 html.bx-ea #ans .msg .btns > button:first-child{border-top:0}
 html.bx-ea #ans .msg .btns > button.on{background:color-mix(in srgb,var(--ink) 6%,transparent)}
-html.bx-ea #ans .msg .rep{font-size:13px;color:var(--muted)}
-html.bx-ea #ans .msg .rep .ravs{display:none}
+/* 답글 줄 = Grok 인용 줄(말풍선 위 흐린 ↪ 한 줄, Mobbin Grok Bot 1e751bec) — 누르면 그대로 스레드 */
+html.bx-ea #ans .msg .rep{order:-1;display:flex;align-items:center;gap:4px;max-width:min(78%,560px);min-width:0;margin:8px 0 4px;padding:0 6px;border:0;border-radius:0;background:none;box-shadow:none;font-size:13px;line-height:1.3;color:var(--muted);text-align:left;cursor:pointer}
+html.bx-ea #ans .msg .rep::before{content:"\21AA\FE0E";font-size:13px}
+html.bx-ea #ans .msg .rep b{font-weight:400;color:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html.bx-ea #ans .msg .rep .ravs,html.bx-ea #ans .msg .rep .unr{display:none}
+html.bx-ea #ans .msg .rep:hover{color:var(--ink);background:none}
+/* 인박스 비서(슬랙 인박스 · 할 일 관리) = 비서 말풍선이 이어지는 대화 꼴: 카드 테두리 · 카드마다 댓글 칸을 풀고, 채널 머리는 시각 줄처럼 흐린 한 줄(누르면 접기 그대로), 카드 댓글 칸은 말풍선 아래 흐린 「↪ 댓글 남기기」 한 줄 — 누르면 그 자리에 진짜 답 칸(#cth) */
+html.bx-ea #ans .ibfeed > .ibi{margin:2px auto;padding:0;border:0;border-radius:0;background:none;box-shadow:none}
+html.bx-ea #ans .ibfeed .ibi .msg,html.bx-ea #ans .ibfeed .ibi .msg:hover,html.bx-ea #ans .ibfeed .ibi .msg.hov,html.bx-ea #ans .ibfeed .ibi .msg:focus-within{background:none}
+html.bx-ea #ans .ibfeed .ibth{padding-left:0}
+html.bx-ea #ans .ibfeed .ibth.ibbox{padding:2px 16px 0}
+html.bx-ea #ans .ibfeed .ibpx .ccomp{margin:0;padding:0;background:none}
+html.bx-ea #ans .ibfeed .ibpx .box{margin:0;padding:0 6px;min-height:0;border:0;border-radius:0;background:none;box-shadow:none}
+html.bx-ea #ans .ibfeed .ibpx .crow{display:flex;align-items:center;gap:4px;min-height:0;padding:0;color:var(--muted)}
+html.bx-ea #ans .ibfeed .ibpx .crow::before{content:"\21AA\FE0E";font-size:13px}
+html.bx-ea #ans .ibfeed .ibpx :is(.plus,.vmemo,.ctip,.send,.cvoice,.xpand,.att){display:none!important}
+html.bx-ea #ans .ibfeed .ibpx textarea{min-height:0;height:20px;padding:0;border:0;background:none;color:var(--muted);font-size:13px;line-height:20px;resize:none;cursor:pointer}
+html.bx-ea #ans .ibfeed > .ibgh{position:static;justify-content:center;gap:6px;min-height:0;margin-top:14px;padding:4px 16px;border-top:0;background:none}
+html.bx-ea #ans .ibfeed > .ibgh .ibft{padding:2px 4px;font-size:13px;color:var(--muted)}
+html.bx-ea #ans .ibfeed > .ibgh .ibft b{font-weight:500}
+html.bx-ea #ans .ibfeed > .ibgh .ibgn{margin-left:0;font-size:13px}
+html.bx-ea #ans .ibfeed > .ibgh .ibgn::before{content:"· "}
+html.bx-ea #ans .ibfeed > .ibgh .ibrd{height:auto;padding:2px 4px;border:0;background:none;color:var(--muted);font-size:13px;font-weight:500;text-decoration:underline}
+html.bx-ea #ans .ibfeed .ibctx{margin:8px 16px 4px;padding:0 6px;font-size:13px}
+html.bx-ea #ans .ibfeed > .ibrows{border:0;border-radius:0;background:none;box-shadow:none}
+html.bx-ea #ans .ibfeed .inbr{box-sizing:border-box;width:max-content;max-width:min(78%,560px);margin:4px 0;padding:10px 14px;border:0;border-radius:20px;background:color-mix(in srgb,var(--ink) 6%,var(--surface))}
+html.bx-ea #ans .ibfeed .inbr:hover{background:color-mix(in srgb,var(--ink) 10%,var(--surface))}
+html.bx-ea #ans .ibfeed .inbr.on{background:color-mix(in srgb,var(--accent) 16%,var(--surface))}
+html.bx-ea #ans .ibfeed .inbr > .av,html.bx-ea #ans .ibfeed .inbr > .dav{display:none}

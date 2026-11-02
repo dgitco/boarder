@@ -95,15 +95,14 @@
     return {ws, lk, open: openKey(),
       sig: [BOTS.map(b => b.name() + b.pre() + when(b.at?.()) + (unread(b.k.slice(2)) ? '*' : '')).join(','), meName(), PINS.map(k => pinName(k) + (unread(k) ? '*' : '')).join(','), [...lk].sort().join(','), ...ws.map(p => [p.pane, nm(p), status(p), preview(p), ago(p.last?.ago), rows(p.pane)].join('\u0001'))].join('\u0002')};
   }
-  const opening = [];
   let sig = null;
   function draw(force){
-    const d = data(), s = d.sig + '#' + d.open + '#' + (PC.matches ? 1 : 0) + '#' + JSON.stringify(opening);
+    const d = data(), s = d.sig + '#' + d.open + '#' + (PC.matches ? 1 : 0);
     if (!force && s === sig) return;
     sig = s;
     pinsEl.innerHTML = '';
     const me = list.querySelector('.bx-ea-me'); if (me && me.dataset.n !== meName()){ me.dataset.n = meName(); me.innerHTML = av(meName(), 40); }
-    rowsEl.innerHTML = BOTS.map(b => row(b.k, b.name(), av(b.av(), 44), when(b.at?.()), b.pre(), b.n() > 0 || unread(b.k.slice(2)), d.open === b.k, d.lk.has(b.k), '')).join('') + opening.map(p => `<div class="bx-ea-row bx-en-pending" role="listitem"><span class="bx-ea-ava">${av(p.name, 44)}</span><span class="bx-ea-tx"><span class="bx-ea-l1"><b>${E(p.name)}</b>${p.error ? '' : '<span class="bx-ea-status">여는 중</span><span class="bx-es-spin" aria-hidden="true"></span>'}</span>${p.error ? '<span class="bx-ea-pv" role="alert">일시적인 오류가 발생했어요</span>' : ''}</span></div>`).join('') + d.ws.map(p => row('n:' + p.pane, nm(p), av(nm(p), 44), ago(p.last?.ago), preview(p) === status(p) ? '' : preview(p), rows(p.pane) > 0, d.open === 'n:' + p.pane, d.lk.has('n:' + p.pane), status(p))).join('');
+    rowsEl.innerHTML = BOTS.map(b => row(b.k, b.name(), av(b.av(), 44), when(b.at?.()), b.pre(), b.n() > 0 || unread(b.k.slice(2)), d.open === b.k, d.lk.has(b.k), '')).join('') + d.ws.map(p => row('n:' + p.pane, nm(p), av(nm(p), 44), ago(p.last?.ago), preview(p) === status(p) ? '' : preview(p), rows(p.pane) > 0, d.open === 'n:' + p.pane, d.lk.has('n:' + p.pane), status(p))).join('');
     lay();
   }
   // 대화 머리 · 열림 표시
@@ -141,28 +140,16 @@
   closeB.type = 'button'; closeB.textContent = '×'; closeB.setAttribute('aria-label', '닫기');
   sh.append(mk('span'), title, closeB);
   const body = mk('div', 'bx-es-b'); sheet.append(mk('i', 'bx-es-grab'), sh, body); scrim.append(sheet); document.body.append(scrim);
-  const ERR = '일시적인 오류가 발생했어요';
   let compose = null;
   function closeCompose(){
     if (!compose) return;
     const back = compose.back; compose = null; scrim.hidden = true;
     R.classList.toggle('bx-en-open', false); back?.focus?.();
   }
-  function watchPane(pane, name){
-    const item = {pane, name, error: false}; opening.unshift(item); draw(true);
-    const until = Date.now() + 180000;
-    const remove = () => { const i = opening.indexOf(item); if (i >= 0) opening.splice(i, 1); draw(true); };
-    function check(){
-      if (P().some(p => p.pane === pane)){ remove(); go('n:' + pane); return; }
-      if (Date.now() >= until){ item.error = true; draw(true); setTimeout(remove, 2000); return; }
-      setTimeout(check, 1000);
-    }
-    check();
-  }
   function openCompose(){
     if (compose) return;
     closeMenu();
-    const s = compose = {back: document.activeElement, selected: null, folders: [], options: [], index: -1, busy: false, focus: null};
+    const s = compose = {back: document.activeElement, selected: null, options: [], index: -1, focus: null};
     const textEl = (tag, cls, text) => { const e = mk(tag, cls); e.textContent = text; return e; };
     const to = mk('div', 'bx-en-to'), label = textEl('label', '', '받는 곳:'); label.setAttribute('for', 'bx-en-to');
     const input = mk('input', 'bx-en-input'); input.id = 'bx-en-to'; input.value = '';
@@ -173,8 +160,7 @@
     const pill = mk('div', 'bx-en-pill'), text = mk('textarea', 'bx-en-text'); text.value = ''; text.rows = 1;
     text.placeholder = '첫 말(없어도 돼요)'; text.setAttribute('aria-label', '첫 말(없어도 돼요)');
     const start = textEl('button', 'bx-en-start', '↑'); start.type = 'button'; start.disabled = true; start.setAttribute('aria-label', '시작');
-    const error = mk('p', 'bx-es-err'); error.hidden = true; error.setAttribute('role', 'alert');
-    pill.append(text, start); to.append(label, input, chip); body.replaceChildren(to, options, error, pill);
+    pill.append(text, start); to.append(label, input, chip); body.replaceChildren(to, options, pill);
     function highlight(){
       const els = [...options.querySelectorAll('[role="option"]')];
       els.forEach((el, i) => el.setAttribute('aria-selected', String(i === s.index)));
@@ -183,24 +169,21 @@
     }
     function render(){
       const q = input.value.toLowerCase();
-      s.options = [{title: '비서', primary: true}, ...s.folders].filter(f => !q || [f.title, f.path].some(v => String(v || '').toLowerCase().includes(q)));
+      s.options = BOTS.map(b => ({title: b.name(), bot: b})).filter(f => !q || f.title.toLowerCase().includes(q));
       s.index = -1; input.setAttribute('aria-expanded', String(!s.selected)); highlight();
       options.replaceChildren(...s.options.map((f, i) => {
         const opt = mk('div', 'bx-en-option'); opt.id = 'bx-en-option-' + i; opt.setAttribute('role', 'option'); opt.setAttribute('aria-selected', 'false');
-        if (f.primary) opt.append(mk('span', 'bx-en-avatar', av(pinAv('primary'), 32)));
-        const tx = mk('span', 'bx-es-ct'); tx.append(textEl('b', '', f.title || f.path), textEl('span', 'bx-es-sub', f.primary ? '지금 비서 채널에 이어서' : f.path)); opt.append(tx);
-        if (!f.primary && f.area) opt.append(textEl('span', 'bx-ea-status', PIN0[f.area] || f.area));
+        opt.append(mk('span', 'bx-en-avatar', av(f.bot.av(), 32)));
+        const tx = mk('span', 'bx-es-ct'); tx.append(textEl('b', '', f.title), textEl('span', 'bx-es-sub', f.bot.pre())); opt.append(tx);
         opt.addEventListener('click', () => select(f)); return opt;
       }));
     }
     function select(f){
-      if (s.busy) return;
-      s.selected = f; chipName.textContent = f.title || f.path;
+      s.selected = f; chipName.textContent = f.title;
       chip.hidden = false; input.hidden = true; options.hidden = true; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant');
       start.disabled = false; text.focus();
     }
     clear.addEventListener('click', () => {
-      if (s.busy) return;
       s.selected = null; chip.hidden = true; input.hidden = false; options.hidden = false; input.value = ''; start.disabled = true; render(); input.focus();
     });
     input.addEventListener('input', render);
@@ -214,41 +197,15 @@
     text.addEventListener('keydown', e => {
       if (e.key === 'Enter'){ e.stopPropagation?.(); if (!e.shiftKey && !e.isComposing){ e.preventDefault(); send(); } }
     });
-    async function send(){
-      if (s.busy || !s.selected || compose !== s) return;
-      if (s.selected.primary){
-        const value = text.value; closeCompose();
-        if (fn('openChan')) openChan('primary');
-        const c = document.getElementById('cnew');
-        if (c){ c.value = value; c.dispatchEvent(new Event('input', {bubbles: true})); c.focus(); }
-        return;
-      }
-      s.busy = true; start.disabled = clear.disabled = true; start.setAttribute('aria-busy', 'true'); start.replaceChildren(mk('span', 'bx-es-spin')); error.hidden = true;
-      let result;
-      try {
-        const r = await window.fetch('api/session/new', {method: 'POST', credentials: 'same-origin', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({folder: s.selected.path, text: text.value})});
-        if (r.ok) result = await r.json();
-      } catch {}
-      s.busy = false;
-      if (result?.ok && result.pane){
-        if (compose === s) closeCompose();
-        watchPane(result.pane, result.name || s.selected.title || s.selected.path); return;
-      }
-      if (compose !== s) return;
-      start.disabled = clear.disabled = false; start.removeAttribute('aria-busy'); start.textContent = '↑'; error.textContent = ERR; error.hidden = false;
+    function send(){   // 고른 비서 대화를 열고 첫 말을 그 입력칸에(보내지 않음) — 모아 보기 비서(인박스 · 할 일)는 입력칸이 없어 열기만
+      if (!s.selected || compose !== s) return;
+      const b = s.selected.bot, value = text.value; closeCompose(); b.open();
+      const c = b.k.startsWith('c:i:') ? null : document.getElementById('cnew');
+      if (c){ c.value = value; c.dispatchEvent(new Event('input', {bubbles: true})); c.focus(); }
     }
     start.addEventListener('click', send);
     s.focus = () => [closeB, ...(s.selected ? [clear] : [input]), text, start].filter(e => !e.disabled && !e.hidden);
     render(); scrim.hidden = false; R.classList.toggle('bx-en-open', true); input.focus();
-    (async () => {
-      try {
-        const r = await window.fetch('api/session/folders', {credentials: 'same-origin'});
-        if (!r.ok) return;
-        const j = await r.json();
-        if (compose !== s) return;
-        s.folders = Array.isArray(j?.folders) ? j.folders.filter(f => f && typeof f.path === 'string') : []; render();
-      } catch {}
-    })();
   }
   closeB.addEventListener('click', closeCompose);
   scrim.addEventListener('click', e => { if (e.target === scrim) closeCompose(); });

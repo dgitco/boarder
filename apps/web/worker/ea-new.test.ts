@@ -68,9 +68,8 @@ class El {
   click() { if (!this.disabled) this.dispatch("click"); }
   focus() { active = this; }
 }
-const FOLDERS = {folders: [{path: '/projects/acme', title: '세금 업무', area: 'company'}, {path: '/projects/DGit/boarder', title: '보더', area: 'dgit'}]};
 const J = (value: unknown, status = 200) => new Response(JSON.stringify(value), {status});
-function setup(answer = (url: string, _init: any): Response | Promise<Response> => url.endsWith('folders') ? J(FOLDERS) : J({ok: true, pane: 'new-pane', name: '새 작업'})) {
+function setup(answer = (_url: string, _init: any): Response | Promise<Response> => J({}, 404)) {
   active = null;
   const doc = new El('document'), html = new El('html'), body = new El('body'), ans = new El('div'), cnew = new El('textarea');
   doc.append(html); html.append(body); body.append(ans, cnew);
@@ -102,28 +101,26 @@ function setup(answer = (url: string, _init: any): Response | Promise<Response> 
     now = end;
   };
   const open = async () => { pencil.focus(); pencil.click(); await settle(); };
-  const chooseFolder = () => one('[role="listbox"]').querySelectorAll('[role="option"]')[1].click();
-  return {ctx, body, doc, cnew, panes, calls, opened, one, pencil, settle, advance, open, chooseFolder};
+  return {ctx, body, doc, cnew, panes, calls, opened, one, pencil, settle, advance, open};
 }
 
-test('연필 → dialog · folders 한 번 · 비서 blob과 폴더 · 거르기 · 키보드 선택 칩과 해제', async () => {
-  const t = setup(); assert.equal(t.calls.length, 0); await t.open();
+test('연필 → dialog · 기능별 비서 넷(폴더 · 세션 조회 없음) · 거르기 · 키보드 선택 칩과 해제', async () => {
+  const t = setup(); await t.open();
   const dialog = t.one('[role="dialog"]'), input = t.one('[role="combobox"]'), opts = t.one('[role="listbox"]');
   assert.equal(dialog.getAttribute('aria-modal'), 'true'); assert.equal(t.one('.bx-es-title').textContent, '새 대화');
   assert.equal(input.getAttribute('aria-autocomplete'), 'list'); assert.equal(active, input);
-  assert.equal(t.calls.length, 1); assert.equal(t.calls[0].url, 'api/session/folders');
-  assert.equal(opts.querySelectorAll('[role="option"]').length, 3); assert.match(opts.textContent, /비서지금 비서 채널에 이어서/);
-  assert.ok(t.one('.bx-en-avatar').querySelector('svg'));
-  assert.deepEqual(opts.querySelectorAll('.bx-ea-status').map(e => e.textContent), ['회사', 'DGit']);
-  input.value = 'dGiT'; input.dispatch('input'); assert.equal(opts.querySelectorAll('[role="option"]').length, 1); assert.match(opts.textContent, /보더/);
-  input.value = '세금'; input.dispatch('input'); assert.equal(opts.querySelectorAll('[role="option"]').length, 1);
+  assert.equal(t.calls.length, 0);
+  assert.deepEqual(opts.querySelectorAll('[role="option"]').map(o => o.querySelector('b').textContent), ['비서', '슬랙 인박스', '할 일 관리', '상담봇']);
+  assert.ok(t.one('.bx-en-avatar').querySelector('svg')); assert.equal(opts.querySelectorAll('.bx-ea-status').length, 0);
+  input.value = '상담'; input.dispatch('input'); assert.equal(opts.querySelectorAll('[role="option"]').length, 1);
   input.dispatch('keydown', {key: 'ArrowDown'}); assert.equal(input.getAttribute('aria-activedescendant'), 'bx-en-option-0');
   input.dispatch('keydown', {key: 'Enter', isComposing: true}); assert.equal(input.hidden, false);
-  input.dispatch('keydown', {key: 'Enter'}); assert.equal(opts.hidden, true); assert.equal(input.hidden, true); assert.match(t.one('.bx-en-chip').textContent, /세금 업무/);
+  input.dispatch('keydown', {key: 'Enter'}); assert.equal(opts.hidden, true); assert.equal(input.hidden, true); assert.match(t.one('.bx-en-chip').textContent, /상담봇/);
   assert.equal(t.one('.bx-en-start').disabled, false);
   t.one('.bx-en-chip').querySelector('.bx-es-ib').click(); assert.equal(opts.hidden, false); assert.equal(input.hidden, false);
-  assert.equal(t.one('.bx-en-start').disabled, true); assert.equal(t.calls.length, 1);
-  input.dispatch('keydown', {key: 'ArrowUp'}); input.dispatch('keydown', {key: 'Enter'}); assert.match(t.one('.bx-en-chip').textContent, /보더/);
+  assert.equal(t.one('.bx-en-start').disabled, true);
+  input.dispatch('keydown', {key: 'ArrowUp'}); input.dispatch('keydown', {key: 'Enter'}); assert.match(t.one('.bx-en-chip').textContent, /상담봇/);
+  assert.equal(t.calls.length, 0);
 });
 
 test('비서 시작 = primary + cnew 값과 input만 · 조합 Enter와 Shift+Enter 무시', async () => {
@@ -134,60 +131,25 @@ test('비서 시작 = primary + cnew 값과 input만 · 조합 Enter와 Shift+En
   text.scrollHeight = 500; text.dispatch('input'); assert.equal(text.style.height, '154px');
   text.dispatch('keydown', {key: 'Enter'});
   assert.deepEqual(t.opened, ['chan:primary']); assert.equal(t.cnew.value, text.value); assert.equal(inputs, 1);
-  assert.equal(t.calls.length, 1); assert.equal(t.one('.bx-en-scrim').hidden, true); assert.equal(active, t.cnew);
+  assert.equal(t.calls.length, 0); assert.equal(t.one('.bx-en-scrim').hidden, true); assert.equal(active, t.cnew);
 });
 
-test('폴더 POST 몸통 · 스피너 · 중복 방지 · 임시 줄 → panes 도착 후 openNode', async () => {
-  let resolve!: (r: Response) => void;
-  const t = setup(url => url.endsWith('folders') ? J(FOLDERS) : new Promise(r => { resolve = r; }));
-  await t.open(); t.chooseFolder(); const text = t.one('.bx-en-text'); text.value = '작업 시작';
-  const start = t.one('.bx-en-start'); start.click(); start.click(); text.dispatch('keydown', {key: 'Enter'});
-  assert.equal(start.disabled, true); assert.ok(start.querySelector('.bx-es-spin')); assert.equal(start.textContent.includes('중'), false); assert.equal(t.calls.length, 2);
-  const req = t.calls[1]; assert.equal(req.url, 'api/session/new'); assert.equal(req.init.method, 'POST');
-  assert.deepEqual(JSON.parse(req.init.body), {folder: '/projects/acme', text: '작업 시작'});
-  assert.equal(req.init.headers['content-type'], 'application/json'); assert.equal(req.init.headers['x-hb'], '1'); assert.equal(req.init.credentials, 'same-origin');
-  resolve(J({ok: true, pane: 'new-pane', name: '새 작업'})); await t.settle();
-  assert.equal(t.one('.bx-en-scrim').hidden, true); assert.match(t.one('.bx-en-pending').textContent, /새 작업여는 중/);
-  assert.ok([...t.one('.bx-ea-rows').children].includes(t.one('.bx-en-pending')));   // 기능별 비서 줄 아래
-  t.one('.bx-en-pending').click(); assert.deepEqual(t.opened, []);
-  t.advance(1000); assert.deepEqual(t.opened, []); t.panes.push({pane: 'new-pane', win: '새 작업'}); t.advance(1000);
-  assert.equal(t.one('.bx-en-pending'), null); assert.deepEqual(t.opened, ['node:new-pane']); assert.doesNotMatch(t.one('.bx-ea-rows').textContent, /새 작업/);
+test('상담봇 = shop 채널에 첫 말, 슬랙 인박스 = 모아 보기만 열고 입력칸은 그대로 · 세션 POST 없음', async () => {
+  const t = setup(); await t.open();
+  t.one('[role="listbox"]').querySelectorAll('[role="option"]')[3].click(); t.one('.bx-en-text').value = '오늘 상담 정리'; t.one('.bx-en-start').click();
+  assert.deepEqual(t.opened, ['chan:shop']); assert.equal(t.cnew.value, '오늘 상담 정리');
+  const u = setup(); u.ctx.HBInbox = {openFeed: (k: string) => u.opened.push('feed:' + k)}; await u.open();
+  u.one('[role="listbox"]').querySelectorAll('[role="option"]')[1].click(); u.one('.bx-en-text').value = '남는 말'; u.one('.bx-en-start').click();
+  assert.deepEqual(u.opened, ['feed:unread']); assert.equal(u.cnew.value, ''); assert.equal(u.one('.bx-en-scrim').hidden, true);
+  assert.equal(t.calls.length + u.calls.length, 0); assert.equal(u.one('.bx-en-pending'), null);
 });
 
-test('실패 답 · 네트워크 실패는 한 줄 오류와 입력 유지', async () => {
-  for (const fail of [() => J({ok: false}), () => J({}, 500), () => { throw Error('network'); }]) {
-    const t = setup(url => url.endsWith('folders') ? J(FOLDERS) : fail()); await t.open(); t.chooseFolder();
-    t.one('.bx-en-text').value = '보존할 말'; t.one('.bx-en-start').click(); await t.settle();
-    assert.equal(t.one('.bx-es-err').hidden, false); assert.equal(t.one('.bx-es-err').textContent, '일시적인 오류가 발생했어요');
-    assert.equal(t.one('.bx-en-text').value, '보존할 말'); assert.equal(t.one('.bx-en-chip').hidden, false);
-    assert.equal(t.one('.bx-en-start').disabled, false); assert.equal(t.one('.bx-en-scrim').hidden, false);
-  }
-});
-
-test('folders 404 · 실패면 비서 하나 · 다시 열면 다시 조회', async () => {
-  for (const answer of [() => J({}, 404), () => { throw Error('network'); }]) {
-    const t = setup(answer); await t.open(); assert.equal(t.one('[role="listbox"]').querySelectorAll('[role="option"]').length, 1);
-    t.doc.dispatch('keydown', {key: 'Escape'}); await t.open(); assert.equal(t.calls.length, 2);
-  }
-});
-
-test('Esc · 바깥 닫기 · 포커스 가둠과 복귀 · 오래된 folders 답 무시', async () => {
-  let resolve!: (r: Response) => void;
-  const t = setup(() => new Promise(r => { resolve = r; })); await t.open(); const dialog = t.one('[role="dialog"]');
+test('Esc · 바깥 닫기 · 포커스 가둠과 복귀', async () => {
+  const t = setup(); await t.open(); const dialog = t.one('[role="dialog"]');
   for (let i = 0; i < 10; i++) { t.doc.dispatch('keydown', {key: 'Tab', shiftKey: i % 2 === 0}); assert.ok(dialog.contains(active!)); }
   dialog.click(); assert.equal(t.one('.bx-en-scrim').hidden, false);
   t.doc.dispatch('keydown', {key: 'Escape'}); assert.equal(t.one('.bx-en-scrim').hidden, true); assert.equal(active, t.pencil);
-  const old = resolve; await t.open(); old(J(FOLDERS)); await t.settle();
-  assert.equal(t.one('[role="listbox"]').querySelectorAll('[role="option"]').length, 1);
-  t.one('.bx-en-scrim').click(); assert.equal(t.one('.bx-en-scrim').hidden, true);
-});
-
-test('3분 넘으면 임시 줄 오류 후 제거, 판을 열지 않음', async () => {
-  const t = setup(); await t.open(); t.chooseFolder(); t.one('.bx-en-start').click(); await t.settle();
-  t.advance(179000); assert.match(t.one('.bx-en-pending').textContent, /여는 중/);
-  t.advance(1000); assert.match(t.one('.bx-en-pending').textContent, /일시적인 오류가 발생했어요/);
-  assert.equal(t.one('.bx-en-pending').querySelector('.bx-es-spin'), null);
-  t.advance(2000); assert.equal(t.one('.bx-en-pending'), null); assert.deepEqual(t.opened, []);
+  await t.open(); t.one('.bx-en-scrim').click(); assert.equal(t.one('.bx-en-scrim').hidden, true);
 });
 
 test('480 PC · 390 넘침 방지 · 토큰만 사용', () => {
