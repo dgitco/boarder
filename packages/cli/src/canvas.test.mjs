@@ -5,7 +5,7 @@ import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-canvas-'));
 process.env.BOARDER_HOME = path.join(tmp, 'home');   // 실제 기기 설정은 안 읽음
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
-const { canvasPut, canvasList, collect, normId, LIMITS } = await import('./canvas.mjs');
+const { canvasPut, canvasList, canvasRm, collect, normId, LIMITS } = await import('./canvas.mjs');
 
 function folder(files) {
   const d = fs.mkdtempSync(path.join(tmp, 'c-'));
@@ -97,4 +97,14 @@ test('put --todo: 나쁜 할 일 글은 올리기 전에 멈춤 · 카드를 못
     await assert.rejects(canvasPut(folder({ 'index.html': 'x' }), { todo: '확인해 주세요' }, { log: () => {} }), /캔버스는 올렸지만 할 일 카드를 못 세웠어요: 보드가 잠깐 안 돼요/);
     assert.equal(hits[0].url, '/api/me/canvas');
   }, { askStatus: 503 });
+});
+
+test('rm: DELETE /api/me/canvas/<id> 에 Bearer · id 꼴이 틀리면 보내기 전에 멈춤', async () => {
+  await withServer(async hits => {
+    const l = []; await canvasRm('AbcdefAbcdef0123456789', { log: s => l.push(s) });
+    assert.equal(hits.length, 1); assert.equal(hits[0].method, 'DELETE'); assert.equal(hits[0].url, '/api/me/canvas/AbcdefAbcdef0123456789');
+    assert.equal(hits[0].auth, 'Bearer bxd_made_up_token_for_test_000000000'); assert.match(l[0], /AbcdefAbcdef0123456789/);
+    await assert.rejects(canvasRm('../x'), /--id/); await assert.rejects(canvasRm(undefined), /canvas rm/);
+    assert.equal(hits.length, 1);
+  });
 });

@@ -1,13 +1,16 @@
 import path from 'node:path';
 import { lstatSync, readdirSync, readFileSync, existsSync } from 'node:fs';
 import { loadDevice, server } from './config.mjs';
+import { scanFiles, scanText, hitsText, warnsText } from './sensitive.mjs';
 
 export const LIMITS = { files: 200, file: 10 << 20, total: 25 << 20, path: 200, depth: 8 };   // 서버 member-canvas.ts 와 같은 값
 export const CANVAS_HELP = `Canvases (your own HTML pages on your board)
   boarder canvas put <folder> [--id <id>] [--title <name>] [--acct <account label>] [--todo "<one line for the human>"]
-                                    upload index.html and the files next to it; the same --id makes a new version;
+                                    upload index.html and the files next to it; the same --id makes a new version; --id is 16-40 letters/digits (for a claude.ai artifact, its unique id);
                                     --todo also puts a to-do card with the canvas link on the board (the human taps 「했어요」)
-  boarder canvas list               your canvases`;
+  boarder canvas list               your canvases
+  boarder canvas rm <id>            delete one of your canvases (all versions and files)
+  put refuses (exit 1) folders that hold national ID / card / account numbers or keys and tokens; it names the kind, count and file, never the value`;
 const ID = /^[A-Za-z0-9]{16,40}$/;
 const SKIP = new Set(['node_modules']);
 
@@ -38,9 +41,9 @@ function device() {
   const d = loadDevice(); if (!d?.token) { const e = new Error('This machine is not set up for Boarder yet — run `boarder setup --yes`.'); e.code = 'NO_DEVICE'; throw e; }
   return d;
 }
-async function send(method, body) {
+async function send(method, body, suffix = '') {
   const d = device();
-  const r = await fetch(`${server()}/api/me/canvas`, { method, headers: { authorization: `Bearer ${d.token}` }, ...(body ? { body } : {}), signal: AbortSignal.timeout(180_000) });
+  const r = await fetch(`${server()}/api/me/canvas${suffix}`, { method, headers: { authorization: `Bearer ${d.token}` }, ...(body ? { body } : {}), signal: AbortSignal.timeout(180_000) });
   const j = await r.json().catch(() => ({ error: `Boarder ${r.status}` }));
   if (!r.ok) throw Object.assign(new Error(j.error || String(r.status)), { status: r.status });
   return j;
@@ -64,8 +67,16 @@ async function putTodo(todo, j) {
 }
 const TODO_DONE = '했어요';   // 회원 할 일 끝냄 답(apps/web/worker/member-board.ts TODO_DONE)
 
-export async function canvasPut(folder, flags = {}, { log = console.log } = {}) {
+export async function canvasPut(folder, flags = {}, { log = console.log, warn = m => console.error(m), scan = scanFiles } = {}) {
   const id = normId(flags.id), todo = todoLine(flags.todo), { files, total } = collect(folder);
+  // 민감 값 거름(sensitive.mjs): 걸리면 올리지 않음 — 종류 · 개수 · 파일만 말하고 값은 안 찍음. 급여 의심은 경고만
+  const g = scan(files);
+  // 제목(훅이 claude.ai 제목을 넘김) · 할 일 글에도 같은 검사: 제목은 「제목 숨김」으로 바꿔 올리고, 할 일 글은 막음
+  const risky = t => { const n = scanText(String(t)); return n.rrn + n.card + n.acct + n.secret > 0; };
+  if (flags.title && risky(flags.title)) { warn('boarder canvas: 제목에 민감한 값이 있어 「제목 숨김」으로 바꿔 올려요'); flags = { ...flags, title: '제목 숨김' }; }
+  if (todo && risky(todo)) throw Object.assign(new Error('--todo 글에 민감한 값이 있어 올리지 않았어요 (Not uploaded — sensitive value in --todo)'), { code: 'SENSITIVE' });
+  if (g.warns.length) warn(`boarder canvas: ${warnsText(g)}`);
+  if (g.hits.length) throw Object.assign(new Error(`민감한 값이 있어 올리지 않았어요 (Not uploaded — sensitive values found):\n${hitsText(g)}\n지우거나 가린 뒤 다시 올려 주세요.`), { code: 'SENSITIVE', hits: g.hits.map(h => ({ kind: h.kind, count: h.count, files: h.files })) });
   const fd = new FormData();
   fd.set('manifest', JSON.stringify(files.map(f => ({ path: f.path }))));
   files.forEach((f, i) => fd.set(`f${i}`, new Blob([readFileSync(f.abs)]), path.basename(f.path)));
@@ -88,8 +99,15 @@ export async function canvasList({ log = console.log } = {}) {
   for (const c of j.canvases) log(`${c.id}  ${c.title}${c.acct ? `  (${c.acct})` : ''}  · 파일 ${c.files}`);
   return j;
 }
+export async function canvasRm(id, { log = console.log } = {}) {
+  const v = normId(id); if (!v) throw new Error('boarder canvas rm <id>');
+  const j = await send('DELETE', undefined, `/${v}`);
+  log(`지웠어요: ${v} · 파일 ${j.files}`);
+  return j;
+}
 export async function canvasCommand(sub, pos, flags) {
   if (sub === 'put') return canvasPut(pos[0], flags);
   if (sub === 'list') return canvasList();
+  if (sub === 'rm') return canvasRm(pos[0]);
   console.error(CANVAS_HELP); process.exit(64);
 }

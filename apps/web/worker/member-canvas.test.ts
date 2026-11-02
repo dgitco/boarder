@@ -175,3 +175,46 @@ test("올린 창(통화 · 캔버스 미팅): 꼴이 맞는 win · wid 만 표�
   const r2 = await (await s.put(TOK.A, { "index.html": PAGE }, { win: "bad\nwin %1", wid: "%15" })).json() as { id: string };
   assert.deepEqual(await MC.ownerWin(s.env as never, A, r2.id), { win: "", wid: "" });
 });
+
+test("지우기: 내 캔버스만 — 남의 · 없는 id 404, 토큰 없음 401, 모든 판 파일 · 표지 지움, 댓글 숨김, 남의 것 그대로", async () => {
+  const s = await setup();
+  const a = await (await s.put(TOK.A, { "index.html": PAGE, "a.png": new Uint8Array([1]) })).json() as any;
+  const a2 = await (await s.put(TOK.A, { "index.html": PAGE + "2" })).json() as any;
+  const b = await (await s.put(TOK.B, { "index.html": PAGE }, { id: a.id })).json() as any;   // 같은 id 를 남이 올려도 따로
+  s.db.prepare("INSERT INTO member_artnote(owner, art, target, page, who, text, at) VALUES (?,?,?,?,?,?,?)").run(A, a.id, "t", "", "owner", "메모", 1);
+  s.db.prepare("INSERT INTO member_artfolder(owner, art, folder, at) VALUES (?,?,?,?)").run(A, a.id, "폴더", 1);
+  const del = (tok: string | null, id: string) => s.go(`/api/me/canvas/${id}`, { method: "DELETE", headers: tok ? { authorization: `Bearer ${tok}` } : {} });
+  assert.equal((await del(null, a.id)).status, 401);
+  assert.equal((await del(TOK.O, a.id)).status, 401);
+  assert.equal((await del(TOK.A, "x".repeat(24))).status, 404);   // 없는 id
+  const before = s.m.size;
+  const r = await del(TOK.A, a.id);
+  assert.equal(r.status, 200); assert.equal((await r.json() as any).ok, true);
+  const mkA = await MC.keyOf(A), mkB = await MC.keyOf(B);
+  assert.ok(![...s.m.keys()].some(k => k.startsWith(`mart/${mkA}/${a.id}/`) || k === `mart/${mkA}/_c/${a.id}`));
+  assert.ok(s.m.has(`mart/${mkA}/_c/${a2.id}`));
+  assert.ok(s.m.has(`mart/${mkB}/_c/${b.id}`));   // 남의 같은 id 도 그대로
+  assert.ok(s.m.size < before);
+  assert.equal((await s.view(A, `/art/${a.id}/`)).status, 404);
+  assert.equal((await s.view(B, `/art/${b.id}/`)).status, 200);
+  const note = s.db.prepare("SELECT deleted_at FROM member_artnote WHERE owner = ? AND art = ?").get(A, a.id) as any;
+  assert.ok(note.deleted_at > 0);
+  assert.equal((s.db.prepare("SELECT count(*) n FROM member_artfolder WHERE owner = ? AND art = ?").get(A, a.id) as any).n, 0);
+  assert.equal((await del(TOK.A, a.id)).status, 404);   // 두 번째는 없음
+  assert.equal((await del(TOK.A, b.id)).status, 404);   // 남의 id 로 (내겐 같은 id 가 이미 지워짐) — 남의 것은 안 지워짐
+  assert.ok(s.m.has(`mart/${mkB}/_c/${b.id}`));
+});
+
+test("지우기: 파일 지우다 중간에 실패해도 표지가 남아 다시 rm 이 끝까지 지움", async () => {
+  const s = await setup();
+  const a = await (await s.put(TOK.A, { "index.html": PAGE, "a.png": new Uint8Array([1]), "b.css": "a{}" })).json() as any;
+  const mk = await MC.keyOf(A), env = s.env as any, realDelete = env.RESULTS.delete;
+  env.RESULTS.delete = async () => { throw new Error("R2 일시 오류"); };
+  const del = () => s.go(`/api/me/canvas/${a.id}`, { method: "DELETE", headers: { authorization: `Bearer ${TOK.A}` } });
+  assert.equal((await del()).status, 500);
+  assert.ok(s.m.has(`mart/${mk}/_c/${a.id}`));   // 표지가 남아 있음 → 다시 지울 수 있음
+  env.RESULTS.delete = realDelete;
+  assert.equal((await del()).status, 200);
+  assert.ok(![...s.m.keys()].some(k => k.includes(`/${a.id}`)));
+  assert.equal((await del()).status, 404);
+});

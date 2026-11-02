@@ -195,6 +195,25 @@ export async function tokenOk(secret: string, id: string, t: string | null) {
   return d === 0 ? m[1] : null;
 }
 
+export async function remove(env: Env, email: string, id: string): Promise<[number, object]> {
+  const me = email.toLowerCase();
+  if (!ID.test(id)) return [404, { error: "없는 캔버스" }];
+  const mk = await keyOf(email);
+  if (!(await metaOf(env, mk, id))) return [404, { error: "없는 캔버스" }];
+  let cursor: string | undefined, n = 0;
+  do {
+    const r = await env.RESULTS.list({ prefix: `mart/${mk}/${id}/`, limit: 1000, cursor });
+    if (r.objects.length) { await env.RESULTS.delete(r.objects.map(o => o.key)); n += r.objects.length; }
+    cursor = r.truncated ? r.cursor : undefined;
+  } while (cursor);
+  await env.RESULTS.delete(marker(mk, id));   // 표지는 마지막 — 파일을 지우다 중간에 실패해도 표지가 남아 다시 rm 이 끝까지 지움(404 로 막히지 않게)
+  await env.DB.batch([
+    env.DB.prepare("UPDATE member_artnote SET deleted_at = ? WHERE owner = ? AND art = ? AND deleted_at IS NULL").bind(nowS(), me, id),
+    env.DB.prepare("DELETE FROM member_artfolder WHERE owner = ? AND art = ?").bind(me, id),
+  ]);
+  return [200, { ok: true, id, files: n }];
+}
+
 export function mountMemberCanvas(app: Hono<{ Bindings: Env }>, h: CanvasHooks) {
   app.post("/api/me/canvas", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
@@ -242,5 +261,10 @@ export function mountMemberCanvas(app: Hono<{ Bindings: Env }>, h: CanvasHooks) 
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
     const rows = (await all(c.env, await keyOf(d.owner))).sort((a, b) => Number(b.m.at) - Number(a.m.at));
     return c.json({ canvases: rows.map(({ id, m }) => ({ id, title: m.title, acct: m.acct || "", at: Number(m.at), files: Number(m.n), bytes: Number(m.bytes) })), max: LIMITS.canvases }, 200, { "cache-control": "no-store" });
+  });
+  app.delete("/api/me/canvas/:id", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+    const [st, body] = await remove(c.env, d.owner, c.req.param("id"));
+    return c.json(body, st as 200 | 404);
   });
 }
