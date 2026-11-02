@@ -844,13 +844,15 @@ app.post("/api/me/cards/:id/answer", async c => {
 });
 app.post("/api/me/cards/:id/reply", async c => {
   const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
-  const { text } = await c.req.json<{ text?: string }>().catch(() => ({} as { text?: string }));
-  const t = String(text || "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, " ").trim().slice(0, 3000);
+  const { text, rid: rid0 } = await c.req.json<{ text?: string; rid?: string }>().catch(() => ({} as { text?: string; rid?: string }));
+  const t = String(text || "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, " ").trim().slice(0, 3000), rid = queue.ridOfBody({ rid: rid0 });
   if (!t) return c.json({ ok: false, error: "내용을 적어요" }, 400);
   const k = await c.env.DB.prepare("SELECT id, win, question, wid FROM board_card WHERE id = ? AND owner = ?").bind(c.req.param("id"), me).first<{ id: string; win: string; question: string; wid: string | null }>();
   if (!k) return c.json({ ok: false, error: "없는 카드예요" }, 404);
-  await c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "나", "me", t, k.id, Date.now()).run();
+  try { if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "나", "me", t, k.id, Date.now())], p => c.executionCtx.waitUntil(p))) && await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true }); }
+  catch (e) { if (rid) return queue.retrySafe(c); throw e; }
   const delivered = await cardTell(c.env, me, k, `[Boarder] The person replied in the thread of your card ${k.id} ("${k.question.slice(0, 120)}"): ${t}`).then(ok => ok, e => { console.error("카드 스레드 답 넣기", String(e).slice(0, 200)); return false; });
+  if (rid && delivered) c.executionCtx.waitUntil(queue.markSent(c.env.DB, rid).catch(() => {}));
   return c.json({ ok: true, delivered });
 });
 // 카드를 낸 창에 한 줄: 엔진 창(wid)이면 엔진으로, 아니면 들여온 창(import --follow)의 기기 명령 줄로(member-imported.ts). 넣었으면 true, 넣을 창이 없으면 false
@@ -959,16 +961,16 @@ app.post("/api/me/chat", async c => {
   try { const r = await primaryWinSend(c.env, me, t) ?? await chatToMain(c.env, me, t); if (rid) c.executionCtx.waitUntil(queue.markSent(c.env.DB, rid).catch(() => {})); if ((r as { offline?: boolean })?.offline) await sysLine(c.env.DB, me, "엔진이 켜진 기기가 없어 메인 봇에게 아직 못 전했어요 — 기기에서 boarder engine setup 을 돌려요"); return c.json({ ok: true, ...(r as object || {}) }); }
   catch (e) { return engErr(c, e); }
 });
+const LIVE_DEV = "AND device_id IN (SELECT id FROM device WHERE owner = ? AND revoked_at IS NULL)";
 async function ownWindow(db: D1Database, me: string, target: string) {
-  if (/^window:/.test(target)) return !!(await db.prepare("SELECT 1 FROM imp_item WHERE owner = ? AND key = ? AND kind = 'window' AND gone_at IS NULL AND device_id != ''").bind(me, target).first());
-  if (/^ew_[a-z0-9]{3,40}$/i.test(target)) return !!(await db.prepare("SELECT 1 FROM engine_window WHERE owner = ? AND id = ? AND state NOT IN ('closed','failed','gone')").bind(me, target).first());
+  if (/^window:/.test(target)) return !!(await db.prepare(`SELECT 1 FROM imp_item WHERE owner = ? AND key = ? AND kind = 'window' AND gone_at IS NULL AND device_id != '' ${LIVE_DEV}`).bind(me, target, me).first());
+  if (/^ew_[a-z0-9]{3,40}$/i.test(target)) return !!(await db.prepare(`SELECT 1 FROM engine_window WHERE owner = ? AND id = ? AND state NOT IN ('closed','failed','gone') ${LIVE_DEV}`).bind(me, target, me).first());
   return false;
 }
-// 기본 창이 있고 살아 있으면 그 창에 넣고 결과, 아니면 null(→ 메인 봇)
 async function primaryWinSend(env: Env, me: string, text: string) {
   const v = (await env.DB.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me).first<{ v: string }>().catch(() => null))?.v || "";
   if (!v || !(await ownWindow(env.DB, me, v))) return null;
-  if (v.startsWith("ew_")) return deliverTo(env, me, v, `[Boarder chat] ${text}`);
+  if (v.startsWith("ew_")) return deliverTo(env, me, v, `[Boarder chat] ${text}`).catch(e => { if (/없는 창/.test(String((e as Error)?.message || e))) return null; throw e; });   // 확인 뒤 사이에 사라진 창도 메인 봇으로
   const w = await env.DB.prepare("SELECT key, device_id, engine, handle, title, state FROM imp_item WHERE owner = ? AND key = ?").bind(me, v).first<{ key: string; device_id: string; engine: string; handle: string | null; title: string; state: string }>();
   return w ? { cmd: await queueToImported(env.DB, me, w, `[Boarder chat] ${text}`) } : null;
 }
@@ -1420,7 +1422,7 @@ async function artOk(env: Env, id: string, t: string | null) {
 }
 const artFetchShim = (id: string, t: string) => `<script>(()=>{const T=${JSON.stringify(t)},B=location.protocol+"//"+location.host,A="/art/${id}/",tag=u=>{try{const x=new URL(u,location.href);if(x.protocol+"//"+x.host===B&&x.pathname.startsWith(A)&&x.pathname!==A){x.searchParams.set("bxt",T);return x.href}}catch(e){}return u};const F=window.fetch;window.fetch=(u,o)=>F(typeof u==="string"||u instanceof URL?tag(String(u)):u,o);const d=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,"src");Object.defineProperty(HTMLIFrameElement.prototype,"src",{get(){return d.get.call(this)},set(v){d.set.call(this,tag(String(v)))},configurable:true})})()</script>`;
 
-const ART_CSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads";
+const ART_CSP = "sandbox allow-scripts allow-popups allow-downloads; form-action 'none'";
 async function memberArt(c: Context<{ Bindings: Env }>, mk: string, id: string, rel: string, tok?: string) {
   const f = await memberCanvas.file(c.env, mk, id, rel); if (!f) return null;
   const h = new Headers({ "content-type": f.ct, "x-content-type-options": "nosniff", "content-security-policy": ART_CSP, "cache-control": "private, no-store", "x-boarder-src": "member" });
@@ -1713,7 +1715,7 @@ app.all("*", async c => {
       }
       if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {   // 몸통이 파일 · 녹음(JSON 아님) — 회원 쓰기와 같은 문
         if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
-        return url.pathname === "/api/upload" ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never);
+        return url.pathname === "/api/upload" ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
       }
       if (c.req.method === "POST") return memberPost(c, me, url);
     }
@@ -1878,10 +1880,7 @@ async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: U
     if (p === "/api/push/key") return c.json({ key: await pu.key() }, 200, { "cache-control": "no-store" });
     let d = p; try { d = decodeURIComponent(p); } catch {}
     const m = /^\/api\/push\/resolve\/([\w:.-]{1,80})$/.exec(d);   // 회원 카드는 바뀌지 않음 — 그 사람 카드면 그 글 자리(Primary 채팅의 카드 글)
-    if (m) {
-      const r = await c.env.DB.prepare("SELECT state FROM board_card WHERE id = ? AND owner = ?").bind(m[1], me).first<{ state: string }>().catch(() => null);
-      return c.json({ ts: m[1], loc: r ? { c: "primary", t: m[1], m: m[1], state: r.state } : null }, 200, { "cache-control": "no-store" });
-    }
+    if (m) return c.json(await memberBoard.pushLoc(c.env.DB, me, m[1]), 200, { "cache-control": "no-store" });   // 회원 보드 길(member-board.get)과 같은 셈 — w:<n> 카드도
     return c.json({ error: "not found" }, 404);
   }
   const fn = ({ "/api/push/subscribe": 1, "/api/push/unsubscribe": 1, "/api/push/test": 1, "/api/push/ack": 1 } as Record<string, number>)[p];

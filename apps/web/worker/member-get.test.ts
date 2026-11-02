@@ -57,6 +57,17 @@ test("알림 카드 자리(/api/push/resolve/:ts): 내 카드면 자리, 남의 
   assert.equal(other.body.loc, null);
 });
 
+test("알림 카드 자리: 주소가 풀리기 전 꼴(w%3A12 · 1793000000%2E000001)로 와도 403 이 아니라 자리 — w:<n> 카드는 그 사람 카드 줄 번호로", async () => {
+  const { D1, db } = seed();
+  const n = (db.prepare("SELECT rowid AS n FROM board_card WHERE id = ?").get("1793000000.000001") as { n: number }).n;
+  const enc = await call(D1, A, "/api/push/resolve/1793000000%2E000001");
+  assert.equal(enc.body.loc?.t, "1793000000.000001");
+  const w = await call(D1, A, `/api/push/resolve/w%3A${n}`);
+  assert.deepEqual(w.body, { ts: "1793000000.000001", loc: { c: "primary", t: "1793000000.000001", m: "1793000000.000001", state: "open" } });
+  const nb = (db.prepare("SELECT rowid AS n FROM board_card WHERE id = ?").get("1793000000.000002") as { n: number }).n;
+  assert.equal((await call(D1, A, `/api/push/resolve/w%3A${nb}`)).body.loc, null, "남의 카드 줄 번호는 자리 없음");
+});
+
 test("판 주인 · 첨부 · 바깥 주소: 403 대신 빈 답 · 404", async () => {
   const { D1 } = seed();
   assert.deepEqual((await call(D1, A, "/api/artowner/AbCdEfGh12345678")).body, {});

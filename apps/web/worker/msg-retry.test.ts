@@ -133,8 +133,11 @@ test("회원 카드 스레드: 답한 뒤 다른 글은 스레드 답(창에 「
   assert.equal(sent.length, 2);
   assert.match(sent[1].text, /replied in the thread of your card 1793300000\.000001 .*: 뒤따른 글$/);
   assert.deepEqual(db.prepare("SELECT kind, text FROM board_log WHERE thread = '1793300000.000001'").all().map(r => ({ ...r })), [{ kind: "me", text: "뒤따른 글" }]);
+  assert.equal((await post("/api/chat", { ...th, text: "첫 답", rid: "rtest-card-0101" })).status, 200);
+  assert.equal(sent.length, 2, "같은 rid 로 다시 보낸 답은 창에 두 번 안 감");
   assert.equal((await post("/api/chat", { ...th, text: "첫 답", rid: "rtest-card-0103" })).status, 200);
-  assert.equal(sent.length, 2, "같은 답은 창에 두 번 안 감");
+  assert.equal(sent.length, 3, "새 rid 의 같은 글은 스레드 답으로 창에 감");
+  assert.match(sent[2].text, /replied in the thread .*: 첫 답$/);
   assert.equal((await post("/api/chat", { ...th, label: "B", rid: "rtest-card-0104" })).status, 400, "다른 단추는 확정 실패");
 });
 
@@ -233,4 +236,36 @@ test("기본 창: 정하면 일반 채널 글이 그 창으로(들여온 창 = �
   assert.equal((await post("/api/me/primary-window", { target: null })).status, 200);
   assert.equal((await post("/api/chat", { channel: "primary", text: "셋째 글", rid: "rtest-pw-0003" })).status, 200);
   assert.deepEqual(sent.map(x => x.id), ["ew_role1", "ew_main1"], "비우면 메인 봇");
+});
+
+test("회원 카드 스레드 답: D1 에 들어갔는데 답을 잃고 같은 rid 로 다시 보내면 — 스레드 줄 하나 · 창에 한 번", async () => {
+  const { db, st, sent, post } = setup();
+  db.prepare("UPDATE board_card SET state = 'answered', answer = 'A', answered_at = ? WHERE id = '1793300000.000001'").run(Date.now());
+  const th = { channel: "primary", thread: "1793300000.000001" };
+  st.loseNext = true;   // 스레드 줄 + rid batch 는 들어가고 답만 잃음
+  const r1 = await post("/api/chat", { ...th, text: "하나 더 물어요", rid: "rtest-reply-0001" });
+  assert.equal(r1.status, 503); assert.equal(r1.headers.get("x-retry-safe"), "1");
+  assert.equal((await post("/api/chat", { ...th, text: "하나 더 물어요", rid: "rtest-reply-0001" })).status, 200);
+  // 다 끝난 쓰기를 rid 칸이 잊고 안쪽 길로 또 받아도
+  const again = await post("/api/me/cards/1793300000.000001/reply", { text: "하나 더 물어요", rid: "rtest-reply-0001" });
+  assert.equal(again.status, 200); assert.equal((await again.json() as { already?: boolean }).already, true);
+  assert.equal((db.prepare("SELECT count(*) AS n FROM board_log WHERE thread = '1793300000.000001'").get() as { n: number }).n, 1, "스레드 줄 하나");
+  assert.equal(sent.length, 1, "창에 한 번");
+});
+
+test("기본 창의 기기를 끊으면: 일반 채널 글이 400 으로 막히지 않고 메인 봇으로(기본 창 설정은 남음)", async () => {
+  const { db, post, sent, env } = setup(), T = Date.now();
+  db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devMember02", MEMBER, "old desktop", "", "h2", T, T, "full", T);
+  db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, created_at) VALUES (?,?,?,?,?,?,?)").run("ew_lead2", MEMBER, "devMember02", "role", "팀장", "idle", T);
+  db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?,?)").run(MEMBER, "window:lead2", "devMember02", "window", "tmux", "팀장", "idle", "host:lead2", T);
+  for (const [i, target] of ["ew_lead2", "window:lead2"].entries()) {
+    assert.equal((await post("/api/me/primary-window", { target })).status, 200);
+    db.prepare("UPDATE device SET revoked_at = ? WHERE id = 'devMember02'").run(T);   // 설정 › 기기에서 끊음
+    const r = await post("/api/chat", { channel: "primary", text: `끊긴 뒤 글 ${i}`, rid: `rtest-pwgone-000${i}` });
+    assert.equal(r.status, 200, `${target}: 끊긴 기기의 기본 창이면 메인 봇으로`);
+    assert.deepEqual(await getJ(env, "/api/me/primary-window"), { target }, "기본 창 설정은 남겨 둠");
+    db.prepare("UPDATE device SET revoked_at = NULL WHERE id = 'devMember02'").run();
+  }
+  assert.deepEqual(sent.map(x => x.id), ["ew_main1", "ew_main1"]);
+  assert.equal((db.prepare("SELECT count(*) AS n FROM engine_cmd WHERE device_id = 'devMember02'").get() as { n: number }).n, 0, "끊긴 기기 명령 줄엔 안 쌓임");
 });

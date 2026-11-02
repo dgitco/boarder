@@ -309,3 +309,20 @@ test("역할이 시킨 일 창이 세션 제목에 역할을 달고 있어도 �
   assert.equal(r.nodes.find(n => n.name === "팀장")!.counts.main, "window:b");
 });
 
+
+test("창 하나 = 노드 하나: 닫힌 창은 창으로 세지 않음 — 이어 연 창과 옛 창(같은 세션)이 한 노드, 세션 · 할 일은 산 창 쪽", async () => {
+  const items = [
+    it({ key: "window:m:old", kind: "window", engine: "tmux", title: "#7010 정산", win: "m:old", session: "session:claude:s9", state: "gone", gone_at: now - 600_000 }),
+    it({ key: "window:m:new", kind: "window", engine: "tmux", title: "#7010 정산", win: "m:new", session: "session:claude:s9", state: "idle" }),
+    it({ key: "session:claude:s9", kind: "session", title: "정산", state: "idle", state_at: now - 60_000 }),
+    it({ key: "todo:claude:s9:1", kind: "todo", title: "표 맞추기", session: "session:claude:s9" }),
+  ];
+  for (const unit of [undefined, "goal", "agent"] as const) {
+    const r = await group({ items, logs: [], cards: [], prev: [], prevNodes: [], now, ...(unit ? { unit } : {}) });
+    const nodeOf = (k: string) => r.nodes.find(n => n.items.includes(k))?.id;
+    assert.ok(nodeOf("window:m:new"), `${unit}: 산 창은 노드`);
+    assert.equal(nodeOf("window:m:old"), nodeOf("window:m:new"), `${unit}: 옛 창과 이어 연 창은 한 노드`);
+    assert.equal(nodeOf("session:claude:s9"), nodeOf("window:m:new"), `${unit}: 세션은 산 창 쪽`);
+    assert.equal(nodeOf("todo:claude:s9:1"), nodeOf("window:m:new"), `${unit}: 할 일은 산 창 쪽`);
+  }
+});

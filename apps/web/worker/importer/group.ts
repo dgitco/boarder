@@ -138,7 +138,7 @@ export async function group(input: {
   }
 
   const d = new DSU();
-  for (const i of items) { d.find(i.key); if (i.kind === "window") d.w.set(i.key, 1); }
+  for (const i of items) { d.find(i.key); if (i.kind === "window" && !i.gone_at && i.state !== "gone") d.w.set(i.key, 1); }
   // ① 이음
   const sessKeys = new Set(items.filter(i => i.kind === "session").map(i => i.key));
   for (const i of items) if (i.session && i.session !== i.key && (sessKeys.has(i.session) || byKey.has(i.session))) d.join(i.key, i.session);

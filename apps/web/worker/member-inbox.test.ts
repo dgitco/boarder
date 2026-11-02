@@ -57,6 +57,15 @@ test("고치기: 내가 쓴 글(kind me)만 — 에이전트 글 · 남의 글�
   assert.deepEqual(s.q("SELECT text FROM board_log WHERE id IN (?,?) ORDER BY id", me, other).map(r => r.text), ["고친 글", "남의"]);
 });
 
+test("고치기: 파일 붙은 글을 고쳐도 첨부 줄(「📎 이름: 서명 링크」)은 다시 붙음 — 화면이 보낸 글에 이미 있으면 두 번 안 붙임", async () => {
+  const s = setup(), link = "📎 보고서.pdf: https://b.example/f/0123456789abcdef0123456789abcdef?e=1793900000&t=abcdefabcdefabcdefabcdefabcdefab";
+  const me = s.log(A, "예시 팀 영업", `처음 글\n${link}`, s.now - 3000, "me");
+  assert.equal((await MI.chatPost(s.db, A, { edit: "고친 글", ts: tsOf(s.now - 3000, me) }))!.status, 200);
+  assert.equal(s.q("SELECT text FROM board_log WHERE id = ?", me)[0].text, `고친 글\n${link}`);
+  assert.equal((await MI.chatPost(s.db, A, { edit: `다시 고침\n${link}`, ts: tsOf(s.now - 3000, me) }))!.status, 200);
+  assert.equal(s.q("SELECT text FROM board_log WHERE id = ?", me)[0].text, `다시 고침\n${link}`);
+});
+
 test("초안: 내 것만 보임, 빈 글은 지움, 4000자에서 자름", async () => {
   const s = setup();
   await MI.draftPost(s.db, A, { key: "chan:n:예시 팀 영업", text: "쓰던 글" });

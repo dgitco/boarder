@@ -176,6 +176,12 @@ function cardMsg(c: R, said: R[] = []) {   // said = 에이전트가 그 카드 
   return { ts: String(c.id), thread: null, who: "agent", name: String(c.win), board: false, text: [c.question, c.body].filter(Boolean).join("\n\n"), buttons, files: [], replies: said.length + (c.answer ? 1 : 0), latest, rnames: c.answer ? ["Owner"] : [], reactions: [], owner: null, ...(c.state !== "open" ? { picked: String(c.answer || "·") } : {}) };
 }
 const cardReply = (c: R) => ({ ts: replyTs(c), thread: String(c.id), who: "owner", name: "Owner", board: false, text: String(c.answer || ""), src: String(c.answer || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null });
+export async function pushLoc(db: D1Database, me: string, ts: string) {
+  const w = /^w:(\d{1,12})$/.exec(ts);
+  const r = await (w ? db.prepare("SELECT id, state FROM board_card WHERE rowid = ? AND owner = ?").bind(Number(w[1]), me) : db.prepare("SELECT id, state FROM board_card WHERE id = ? AND owner = ?").bind(ts, me)).first<{ id: string; state: string }>().catch(() => null);
+  const id = r ? String(r.id) : ts;
+  return { ts: id, loc: r ? { c: "primary", t: id, m: id, state: r.state } : null };
+}
 const cardBy = (db: D1Database, me: string, ts: string) => db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>();
 
 // 들여온 대화 한 줄 → 노드 채팅 글. 세션 = 그 사람이 처음 물은 한 줄(들여오기가 보낸 것만 — 대화 내용은 안 옴), 스레드 · 이슈 = 제목.
@@ -226,11 +232,9 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     let pk = pm[1]; try { pk = decodeURIComponent(pk); } catch {}
     return j({ rows: await paneRows(db, me, pk) });
   }
-  pm = /^\/api\/push\/resolve\/([\w:.-]{1,80})$/.exec(p);
-  if (pm) {   // 알림을 누른 카드 → 글 자리(회원 푸시가 꺼져 있어도 — 켜진 때는 index.ts memberPushRoute 가 먼저 받음)
-    const r = await db.prepare("SELECT state FROM board_card WHERE id = ? AND owner = ?").bind(pm[1], me).first<{ state: string }>().catch(() => null);
-    return j({ ts: pm[1], loc: r ? { c: "primary", t: pm[1], m: pm[1], state: r.state } : null });
-  }
+  let dp = p; try { dp = decodeURIComponent(p); } catch {}
+  pm = /^\/api\/push\/resolve\/([\w:.-]{1,80})$/.exec(dp);
+  if (pm) return j(await pushLoc(db, me, pm[1]));   // 알림을 누른 카드 → 글 자리(회원 푸시가 꺼져 있어도 — 켜진 때는 index.ts memberPushRoute 가 먼저 받음)
   if (/^\/api\/artowner\/[A-Za-z0-9]{16,40}$/.test(p)) return j({});
   if (/^\/api\/file\/[\w.-]{1,80}$/.test(p)) return j({ error: "없는 파일" }, 404);   // 회원 글엔 아직 첨부가 없음 — 403 대신 「없음」
   if (/^\/api\/permalink\//.test(p)) return j({ error: "회원 글엔 바깥 주소가 없어요" }, 404);
@@ -281,7 +285,7 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     if (onCard && !b.react && b.edit === undefined && !b.delete && !(Array.isArray(b.files) && b.files.length)) {
       const said = String(b.label || b.text || "").trim();
       if (!said) return { error: "내용을 적어요", status: 400 };
-      if (onCard.state !== "open" && String(onCard.answer || "") === said) return { ok: { ok: true, state: "ok" } };
+      if (onCard.state !== "open" && String(onCard.answer || "") === said && (b.label || !b.rid)) return { ok: { ok: true, state: "ok" } };
       if (!b.label && (onCard.state !== "open" || onCard.kind === "todo")) return { path: `/api/me/cards/${onCard.id}/reply`, body: { text: said } };
       return onCard.state === "open" ? post(db, me, "/api/answer", { item: "w" + onCard.n, text: said }) : { error: onCard.state === "closed" ? "닫힌 결정이에요" : "이미 답한 결정이에요", status: 400 };   // 확정 실패 — 409 면 화면이 「올라갔나」를 확인하다 보낸 것으로 보고 글을 잃음
     }

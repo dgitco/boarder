@@ -12,6 +12,8 @@ export const SAVED_MAX = 500, DRAFT_MAX = 4000, UNREAD_MAX = 50, FIRST_DAY = 86_
 const PRIMARY = "%1";
 const TS = /^(\d{10})\.(\d{6})$/, RX = /^[a-z0-9_+-]{1,40}$/;
 const CTRL = /[\x00-\x08\x0b-\x1f\x7f]/g;
+// 파일 붙은 글 끝의 첨부 줄(member-files.ts fileLines 꼴): 「📎 이름: <주소>/f/<id>?e=<초>&t=<서명>」
+const FILE_LINE = /^📎 .{1,200}: https?:\/\/\S+\/f\/[0-9a-f]{32}\?e=\d{9,11}&t=[0-9a-f]{32}$/u;
 const cut = (s: unknown, n: number) => { const a = Array.from(String(s ?? "")); return a.length <= n ? a.join("") : a.slice(0, n - 1).join("") + "…"; };
 const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;   // member-board 채팅 글 ts 와 같은 꼴
 
@@ -126,7 +128,8 @@ export async function chatPost(db: D1Database, me: string, b: R): Promise<{ stat
     if (!text) return { status: 400, body: { ok: false, error: "내용을 적어요" } };
     const r = await logByTs(db, me, b.ts);
     if (!r || (r.kind !== "me" && r.win !== "나")) return { status: 404, body: { ok: false, error: "내 글만 고칠 수 있어요" } };
-    const fl: string[] = [];
+    const has = new Set(text.split("\n").map(l => l.trim()));
+    const fl = String(r.text || "").split("\n").map(l => l.trim()).filter(l => FILE_LINE.test(l) && !has.has(l));
     await db.prepare("UPDATE board_log SET text = ? WHERE id = ? AND owner = ? AND (kind = 'me' OR win = '나')").bind([text, ...fl].join("\n"), r.id, me).run();
     return { status: 200, body: { ok: true, state: "ok" } };
   }
