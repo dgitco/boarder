@@ -4,6 +4,7 @@ import { boardHead, withHead } from "./board-head";
 import { primaryPick, notChat, type Item } from "./importer/group";
 import { prefsOf } from "./node-prefs";
 import { history, topics, promiseRows } from "./member-views";
+import { splitMarks, splitMove } from "./member-split";
 
 type R = Record<string, any>;
 const FREQ = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];   // owner-read FREQ_DEFAULT
@@ -346,7 +347,7 @@ async function nodeThread(db: D1Database, me: string, raw: string, ts: string, m
   const r = await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? LIMIT 1").bind(me, Number(id), Number(s) * 1000, Number(s) * 1000 + 1000).first<R>();
   if (!r || inPrim(r) || CARD_TS.test(String(r.thread || "")) || OWN.test(String(r.win)) || !mineWin(String(r.win), String(r.kind))) return null;
   const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, ts).all<R>()).results;
-  return { channel: ch, root: ts, owner: null, home, messages: [{ ...withThread(msg(r, my, String(r.win)), said, my), ch }, ...said.map(x => ({ ...msg(x, my, String(x.win)), thread: ts, ch }))] };
+  return { channel: ch, root: ts, owner: null, home, messages: await splitMarks(db, me, [{ ...withThread(msg(r, my, String(r.win)), said, my), ch }, ...said.map(x => ({ ...msg(x, my, String(x.win)), thread: ts, ch }))], my, L) };   // 나눠 온 몫 글이면 split_from
 }
 async function primaryRows(db: D1Database, me: string, before?: string) {
   const m = before ? /^(\d{10})\.(\d{6})$/.exec(before) : null, sec = m ? Number(m[1]) * 1000 : 0;
@@ -487,7 +488,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
       const pr = await primaryRoot(db, me, m[2]);
       if (pr) {
         const said = (await primaryReplies(db, me, [m[2]])).get(m[2]) || [];
-        return j({ channel: "primary", root: m[2], owner: null, messages: [withPrimaryThread(msg(pr, my, mainName), said, mainName, my), ...said.map(r => ({ ...msg(r, my, mainName), thread: m![2] }))] });
+        return j({ channel: "primary", root: m[2], owner: null, messages: await splitMarks(db, me, [withPrimaryThread(msg(pr, my, mainName), said, mainName, my), ...said.map(r => ({ ...msg(r, my, mainName), thread: m![2] }))], my) });   // 나눈 글이면 갈래 칩
       }
       const rows = await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary' AND id % 1000000 = ? AND at >= ? AND at < ?").bind(me, Number(m[2].split(".")[1]), Number(m[2].split(".")[0]) * 1000, Number(m[2].split(".")[0]) * 1000 + 1000).all<R>();
       return j({ channel: "primary", root: m[2], owner: null, messages: rows.results.map(r => msg(r, my, mainName)) });
@@ -496,6 +497,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     const th = await primaryReplies(db, me, page.filter(r => r.win === ME).map(r => tsOf(r.at, r.id)));   // 내 글마다 스레드 답 수 · 마지막 답
     const msgs = page.map(r => withPrimaryThread(msg(r, my, mainName), th.get(tsOf(r.at, r.id)), mainName, my)).reverse();
     await withReacts(db, me, msgs);
+    await splitMarks(db, me, msgs, my);   // 나눈 내 글 = 갈래 칩(splits, 주인 owner-read splitMarks 꼴)
     return j({ channel: "primary", messages: msgs, more: rows.length > 100, cursor: msgs.length ? msgs[0].ts : null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
   }
   if (p === "/api/nodechat") {
@@ -514,6 +516,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     const fold = n ? convoFold(n, mainName, my) : null;
     if (fold) out.unshift(fold.root);
     await withReacts(db, me, out as R[]);
+    await splitMarks(db, me, out as R[], my, L);   // Primary 에서 나눠 온 몫 글 = split_from(인용 상자)
     return j({ channel: "n:" + t, messages: out, stale_min: 0, more: false });
   }
   if (p === "/api/chats") return j({ chats: await chatList(db, me) });
@@ -615,6 +618,7 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     }
     return { path: `/api/me/cards/${c.id}/answer`, body: { choice: text, free: true } };
   }
+  if (path === "/api/split/move") return splitMove(db, me, String(b.post || ""), String(b.pane || ""));   // 갈래 칩 끌어 옮기기(주인 split_move_post 와 같은 몸통 · 답 { ok, splits }) — 내 몫 글 · 내 노드만, 아니면 404
   if (path === "/api/clientlog") return { ok: { ok: true } };   // 화면 오류 기록(keepalive) — 회원은 PostHog 로만 남김(400 이 또 오류로 쌓이지 않게)
   if (path === "/api/todo") {   // 할 일 끝냄(틀 { area, id }) = 그 할 일 카드에 「했어요」로 답(카드를 낸 창에 넘어감 · 에이전트 wait 가 받음)
     const id = String(b.id || b.ts || "");

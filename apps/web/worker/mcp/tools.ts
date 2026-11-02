@@ -58,6 +58,7 @@ export const SCHEMAS = {
   session_search: z.object({ query: safe(80).optional(), limit: z.number().int().min(1).max(30).default(10) }),
   session_handoff: z.object({ session_id: z.string().regex(/^[\w-]{3,20}:[\w.-]{6,120}$/), last: z.number().int().min(1).max(80).default(30) }),
   chat_say: z.object({ text: safe(3000, true), thread: z.string().regex(/^\d{10}\.\d{6}$/).optional() }),
+  chat_split: z.object({ thread: z.string().regex(/^\d{10}\.\d{6}$/), parts: z.array(z.object({ node: line(80), text: safe(3000, true) })).min(1).max(6) }),
   role_draft: z.object({ name: line(40), brief: safe(200).optional(), instructions: safe(3000, true), cwd: z.string().regex(/^~?[\w./ -]{1,200}$/).refine(v => !v.includes(".."), "..").optional() }),
   role_list: z.object({}),
   // 약속(회원 보드, 0047 member_promise — 주인 promise add 와 같은 칸): who 누구에게 · what 무엇 · check 확인 장치 · due 기한(YYYY-MM-DD[ HH:MM], 한국 시각이면 지남 판정)
@@ -68,7 +69,7 @@ export const SCHEMAS = {
 } as const;
 export type ToolName = keyof typeof SCHEMAS;
 
-export const MEMBER_ONLY = new Set<string>(["chat_say", "role_draft", "role_list", "promise_add", "promise_done", "promise_list"]);
+export const MEMBER_ONLY = new Set<string>(["chat_say", "chat_split", "role_draft", "role_list", "promise_add", "promise_done", "promise_list"]);
 const READS = new Set<string>(["role_list", "promise_list", "inbox_wait", "inbox_cards", "hook_events", "hook_event", "session_search", "session_handoff"]);
 export const onlyReads = (n: string) => READS.has(n);
 
@@ -121,6 +122,10 @@ const CORE_TOOLS: (Tool & { name: ToolName })[] = [
   { name: "chat_say", title: "Answer in the Primary chat",
     description: "Post a message (markdown) in the person's Primary chat on Boarder — the main bot's answers, and any window's answer to a message headed [보드 · Primary]. For a head [보드 · Primary · 스레드 <id>], pass thread = that id: the answer goes under the person's message. Short, in their language.",
     inputSchema: { type: "object", properties: { text: { type: "string" }, thread: { type: "string", description: "The id after 「스레드」 in a [보드 · Primary · 스레드 <id>] head — answer under that message" } }, required: ["text"] },
+    annotations: { readOnlyHint: false, destructiveHint: false } },
+  { name: "chat_split", title: "Split a Primary message across nodes",
+    description: "Main bot only: when ONE message the person wrote in the Primary chat clearly holds several separate asks for different nodes (agent windows), record the split. thread = the id after 「스레드」 in its [보드 · Primary · 스레드 <id>] head; parts = one per node: node (a node name on the board or a role window name from role_list) and text (that node's share, copied from the message as written — no summary, no other node's share). Each part shows in that node's channel quoting the message, and the message gets one chip per node that the person can drag to another node. Don't use it for a single ask; a node that already has a part of this message is skipped. Returns splits [{ node, pane, post, at, state }].",
+    inputSchema: { type: "object", properties: { thread: { type: "string", description: "The person's Primary message id (from its head)" }, parts: { type: "array", items: { type: "object", properties: { node: { type: "string" }, text: { type: "string" } }, required: ["node", "text"] } } }, required: ["thread", "parts"] },
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "role_draft", title: "Propose a role (agent window)",
     description: "Main bot only: put a role draft card in the Primary chat — name (short), brief (one line: what it handles), instructions (what the agent does, how it reports, what it must not do), optional cwd. The person approves it with one tap and Boarder opens a Claude Code window for it; drafting the same name again replaces the old card.",

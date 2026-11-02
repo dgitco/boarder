@@ -47,6 +47,8 @@ Report (from an AI tool's session)
 
 Main bot (the Primary chat on your board)
   boarder chat "<text>" [--thread <id>]       answer the human in the Primary chat (--thread: under their message)
+  boarder split <id> --part "<node>: <text>" --part "<node>: <text>"…
+                                              one Primary message with several asks → a part per node (chips on the message)
   boarder promise add "<what>" --who "<to whom>" --check "<how you'll know>" --due YYYY-MM-DD[ HH:MM]
                                               record a promise (shows under promises; past due → to check)
   boarder promise done <id> "<how it was kept>" [--dropped]   ·   boarder promise list [--all]
@@ -90,7 +92,7 @@ function parse(rest) {
     const k = a.slice(2);
     if (['no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay', 'force', 'dropped', 'all'].includes(k)) { flags[k] = true; continue; }
     const v = rest[++i];
-    if (['choice', 'evidence'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
+    if (['choice', 'evidence', 'part'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
   }
   return { flags, pos };
 }
@@ -229,6 +231,7 @@ export async function main(argv) {
       status: () => ['inbox_status', { text: pos[0] }],
       cards: () => ['inbox_cards', { query: pos[0], limit: num(flags.limit) }],
       feedback: () => ['feedback_send', { text: pos.join(' '), kind: flags.kind }],
+      split: () => ['chat_split', { thread: pos[0], parts: (flags.part || []).map(x => { const i = String(x).indexOf(':'); return i < 0 ? { node: '', text: String(x) } : { node: String(x).slice(0, i).trim(), text: String(x).slice(i + 1).trim() }; }) }],
       chat: () => ['chat_say', { text: pos.join(' '), ...(flags.thread ? { thread: flags.thread } : {}) }],
       promise: () => pos[0] === 'add' ? ['promise_add', { who: flags.who, what: pos.slice(1).join(' '), check: flags.check, due: flags.due }] : pos[0] === 'done' ? ['promise_done', { promise_id: num(pos[1]), done: pos.slice(2).join(' '), state: flags.dropped ? 'dropped' : 'kept' }] : pos[0] === 'list' ? ['promise_list', { all: !!flags.all }] : null,
       role: () => pos[0] === 'draft' ? ['role_draft', { name: flags.name, brief: flags.brief, instructions: flags.instructions, cwd: flags.cwd }] : pos[0] === 'list' ? ['role_list', {}] : null,

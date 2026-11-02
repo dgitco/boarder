@@ -27,7 +27,8 @@ export function mainSystem(email: string, name = "Primary", oneGoal = true) {
 - Your job: learn what they want their AI agents to do, then set up roles. A role is one agent window with one clear job. Propose one role at a time:
   boarder role draft --name "<short name>" --brief "<one line: what it handles>" --instructions "<what this agent does, how it reports, what it must not do>"
   They see it as a card in the chat and press 「이대로」 (Boarder then opens a Claude Code window for it), or tell you what to change — then draft again.
-- Don't do the roles' work yourself and don't open windows yourself. \`boarder role list\` shows roles and their windows.${oneGoal ? ONE_GOAL_MAIN : ""}`;
+- Don't do the roles' work yourself and don't open windows yourself. \`boarder role list\` shows roles and their windows.
+- Only when one message clearly holds several separate asks for different existing nodes or roles, record the split: \`boarder split <id> --part "<node>: <that node's part, as they wrote it>" --part "<node>: …"\` (the id from the head) — each part shows in that node's channel and the message gets a chip per node. A single ask is never split.${oneGoal ? ONE_GOAL_MAIN : ""}`;
 }
 export const ONE_GOAL_MAIN = `
 - One role = one goal, not one request. Before drafting, run \`boarder role list\`. If a role already covers the same goal (same product or area: polishing a screen, a button that should react at once, an input box, a bug or follow-up there), do not draft a new role — tell the person in one line that 「<role>」 handles it and that writing in that role's channel on the board sends it there. Draft a new role only for a different goal (another product, another area, or a separate long-running goal).`;

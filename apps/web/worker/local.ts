@@ -1,5 +1,6 @@
 import { nodeRoot, primaryRoot, primaryThread } from "./member-board";
 import { overdue } from "./member-views";
+import { splitAdd } from "./member-split";
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 // 카드 id 는 지금 카드 꼴(초.여섯 자리)과 같게 — 도구 입력 검사(tsId)를 그대로 씀
 const cardId = () => `${Math.floor(Date.now() / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
@@ -67,6 +68,8 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
         if (!(await primaryRoot(db, owner, a.thread))) throw new Error("없는 스레드 — 이 사람 Primary 채팅의 사람 글 id 만");
         await log("say", a.text, primaryThread(a.thread)); return { ok: true };
       }
+      // 나누기(0049 member_split): 내 Primary 글 하나에 일이 여럿이면 노드마다 몫 글 + 원글 갈래 칩 — 내 노드만(member-split.ts)
+      case "chat_split": return splitAdd(db, owner, a.thread, a.parts);
       case "role_draft": {
         const cfg = await db.prepare("SELECT (SELECT rules FROM engine_owner WHERE owner = ?1) rules, (SELECT json_extract(data, '$.rules.one_goal') FROM node_setting WHERE owner = ?1 AND json_valid(data)) og").bind(owner).first<{ rules: string | null; og: number | null }>().catch(() => null);
         let oneGoal = true; try { oneGoal = JSON.parse(cfg?.rules || "{}").one_goal !== false; } catch {}
