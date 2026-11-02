@@ -141,6 +141,15 @@ async function primaryRows(db: D1Database, me: string, before?: string) {
     .bind(me, ...(m ? [sec, sec + 1000, Number(m[2])] : [])).all<R>()).results;
 }
 
+export async function paneRows(db: D1Database, me: string, pane: string) {
+  const L = await load(db, me), mine = (r: R) => r.kind !== "me" && !OWN.test(r.win);
+  const n = L.nodes.find(x => x.pane === pane), ew = n ? null : L.engineNodes.find(x => paneOfId(x.id) === pane);
+  const rows = pane === PRIMARY ? L.logs.filter(r => r.thread === "primary" && r.win !== ME && r.win !== "보더")
+    : n ? L.logs.filter(r => r.thread !== "primary" && mine(r) && L.nodeOfWin(r.win) === n)
+    : ew ? L.logs.filter(r => r.thread !== "primary" && mine(r) && r.win === ew.name) : [];
+  return rows.slice(0, 60).reverse().map(r => ({ id: r.id, at: Number(r.at) / 1000, kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 400) }));
+}
+
 // 회원 GET — 보드 화면 길만. null = 이 길은 회원 보드 것이 아님(→ 403)
 export async function etag(b: string) { return '"m' + [...new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(b)))].slice(0, 8).map(x => x.toString(16).padStart(2, "0")).join("") + '"'; }
 export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string): Promise<Response | null> {
@@ -159,6 +168,19 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
   if (p === "/api/drafts") return j({});
   if (p === "/api/push/key") return j({ key: "" });   // 빈 키 = 화면이 푸시를 조용히 끔(회원 푸시 길 없음)
   if (p === "/api/voice/modes") return j({});
+  let pm = /^\/api\/pane\/(.{1,40})$/.exec(p);
+  if (pm) {
+    let pk = pm[1]; try { pk = decodeURIComponent(pk); } catch {}
+    return j({ rows: await paneRows(db, me, pk) });
+  }
+  pm = /^\/api\/push\/resolve\/([\w:.-]{1,80})$/.exec(p);
+  if (pm) {   // 알림을 누른 카드 → 글 자리(회원 푸시가 꺼져 있어도 — 켜진 때는 index.ts memberPushRoute 가 먼저 받음)
+    const r = await db.prepare("SELECT state FROM board_card WHERE id = ? AND owner = ?").bind(pm[1], me).first<{ state: string }>().catch(() => null);
+    return j({ ts: pm[1], loc: r ? { c: "primary", t: pm[1], m: pm[1], state: r.state } : null });
+  }
+  if (/^\/api\/artowner\/[A-Za-z0-9]{16,40}$/.test(p)) return j({});
+  if (/^\/api\/file\/[\w.-]{1,80}$/.test(p)) return j({ error: "없는 파일" }, 404);   // 회원 글엔 아직 첨부가 없음 — 403 대신 「없음」
+  if (/^\/api\/permalink\//.test(p)) return j({ error: "회원 글엔 바깥 주소가 없어요" }, 404);
   if (/^\/api\/answer\/[\w-]{1,64}$/.test(p)) return j({ ok: true, state: "ok" });   // 회원 쓰기는 바로 끝나서 기다릴 일 없음
   if (p === "/emoji.json") { const e = await emoji(); return e ? new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag } }) : j({ cats: [], e: {} }); }   // 이름 ↔ 글자 공용 표(사람 데이터 아님)
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?$/.exec(p);
@@ -253,6 +275,7 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     if (text === "(나중에)") return { error: "아직 안 돼요", status: 400 };
     return { path: `/api/me/cards/${c.id}/answer`, body: { choice: text, free: true } };
   }
+  if (path === "/api/clientlog") return { ok: { ok: true } };   // 화면 오류 기록(keepalive) — 회원은 PostHog 로만 남김(400 이 또 오류로 쌓이지 않게)
   if (path === "/api/draft" || path === "/api/cardcheck" || path === "/api/todo" || path === "/api/nodepri") return { ok: { ok: true, state: "ok" } };   // 저장 표 없음 — 화면 쪽(이 기기)에만 남음
   return { error: "아직 안 돼요", status: 400 };
 }
