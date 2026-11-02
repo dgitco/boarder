@@ -665,7 +665,7 @@ export const API_PRESETS: Record<string, { title: string; spec: ApiSpec; tools: 
   imap: { title: "메일(IMAP)", ready: true, spec: { preset: "imap", baseUrl: "imaps://mail", auth: { type: "imap" } }, tools: IMAP_TOOLS, plain: 2,
     hints: ["imap.gmail.com", "me@gmail.com", "구글 앱 비밀번호 16자"],
     note: "Gmail 은 서버 imap.gmail.com + 구글 앱 비밀번호(구글 계정 › 보안 › 2단계 인증 › 앱 비밀번호) · 읽기만" },
-  slack: { title: "Slack", ready: false, spec: { preset: "slack", baseUrl: SLACK, auth: { type: "oauth", provider: "slack", scope: SLACK_USER_SCOPES.join(",") } }, tools: SLACK_TOOLS, note: `Slack 로그인 앱 준비 중 — Slack 앱 ${SLACK_APP.name}`, app: SLACK_APP },
+  slack: { title: "Slack", ready: false, spec: { preset: "slack", baseUrl: SLACK, auth: { type: "oauth", provider: "slack", scope: SLACK_APP.userScopes.join(",") } }, tools: SLACK_TOOLS, note: `Slack 로그인 앱 준비 중 — Slack 앱 ${SLACK_APP.name}`, app: SLACK_APP },
 };
 export const toolsFor = (spec: ApiSpec): ApiTool[] => (spec.preset && API_PRESETS[spec.preset]?.tools) || requestTools(spec.baseUrl);
 const fixedHeaders = (spec: ApiSpec): Record<string, string> => (spec.preset && API_PRESETS[spec.preset]?.spec.headers) || spec.headers || {};
@@ -764,6 +764,7 @@ export function apiReady(env: AppEnv, service: string, email: string): { ready: 
   if (a.type !== "oauth") return { ready: p.ready, note: p.note };
   // Gmail 테스트 사용자가 아니면 「곧」 대신 메일(IMAP)로 — via = 화면이 그 커넥터 키 칸을 엶
   if (a.app === "gmail" && (!googleApp(env, a) || !gmailTester(env, email))) return { ready: false, oauth: true, via: "imap", note: GMAIL_VIA_IMAP };
+  if (a.provider === "slack") return slackApp(env, a) && p.tools.length ? { ready: true, oauth: true, note: "" } : { ready: false, oauth: true, note: p.note };   // 회원마다 본인 Slack 계정으로(사용자 토큰)
   if (a.provider !== "google" || !googleApp(env, a) || !p.tools.length) return { ready: false, oauth: true, note: p.note };
   return { ready: true, oauth: true, note: p.note };
 }
@@ -778,6 +779,19 @@ export function slackApp(env: AppEnv, auth: ApiAuth): { client_id: string; clien
   if (auth.type !== "oauth" || auth.provider !== "slack") return null;
   const id = str(env, "SLACK_CLIENT_ID"), secret = str(env, "SLACK_CLIENT_SECRET");
   return id && secret ? { client_id: id, client_secret: secret } : null;
+}
+/** Slack 로그인 주소(사용자 토큰만 — 봇 스코프 없음). 돌아오는 주소는 PUBLIC_URL 의 커넥터 콜백 하나(Slack 앱 Redirect URLs 에 등록) */
+export function slackAuthUrl(client: { client_id: string }, redirectUri: string, state: string, userScope: string): string {
+  const u = new URL("https://slack.com/oauth/v2/authorize");
+  u.search = new URLSearchParams({ client_id: client.client_id, user_scope: userScope, redirect_uri: redirectUri, state }).toString();
+  return u.href;
+}
+export async function slackExchange(client: { client_id: string; client_secret: string }, code: string, redirectUri: string): Promise<{ access_token: string; refresh_token?: string; expires_at: number; account: string }> {
+  const res = await fetch("https://slack.com/api/oauth.v2.access", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ ...client, code, redirect_uri: redirectUri }), signal: AbortSignal.timeout(15_000) });
+  const j = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; team?: { name?: string }; authed_user?: { access_token?: string; refresh_token?: string; expires_in?: number } };
+  const u = j.authed_user;
+  if (!j.ok || !u?.access_token) throw new GoogleTokenError(`Slack 로그인 실패: ${j.error || res.status}`, res.status >= 400 ? res.status : 400, j.error);
+  return { access_token: u.access_token, refresh_token: u.refresh_token, expires_at: Date.now() + (u.expires_in ?? 43_200) * 1000, account: (j.team?.name || "").slice(0, 120) };
 }
 export async function slackToken(client: { client_id: string; client_secret: string }, refresh_token: string): Promise<{ access_token: string; refresh_token?: string; expires_at: number }> {
   const res = await fetch("https://slack.com/api/oauth.v2.access", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ ...client, grant_type: "refresh_token", refresh_token }), signal: AbortSignal.timeout(15_000) });
