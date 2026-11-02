@@ -98,7 +98,7 @@ function paneOf(rows: { pane: string; win: string }[]) {
   return (w: string) => m.get(w) || w;
 }
 
-export async function onCardAnswered(env: Env, owner: string, cardId: string) {
+export async function onCardAnswered(env: Env, owner: string, cardId: string, head = "") {   // head = 보드 글 머리 줄(board-head.ts — 「[보드 · <채널> · 카드 <id>]」)
   const p = await env.DB.prepare("SELECT payload FROM imp_proposal WHERE card_id = ? AND owner = ? AND state = 'open'").bind(cardId, owner).first<{ payload: string }>();
   const card = await env.DB.prepare("SELECT id, win, question, answer FROM board_card WHERE id = ? AND owner = ?").bind(cardId, owner).first<{ id: string; win: string; question: string; answer: string }>();
   if (!card) return;
@@ -113,7 +113,7 @@ export async function onCardAnswered(env: Env, owner: string, cardId: string) {
   const w = await env.DB.prepare("SELECT key, device_id, state, handle, engine FROM imp_item WHERE owner = ? AND win IN (?, ?) AND kind = 'window' AND gone_at IS NULL ORDER BY seen_at DESC LIMIT 1").bind(owner, tok?.pane || card.win, card.win).first<{ key: string; device_id: string; state: string; handle: string | null; engine: string }>();
   if (!w?.device_id) return;   // 들여오지 않은 창(보고만) — 창이 boarder wait 로 받음
   if (w.engine === "tmux") return;   // 우리 엔진 창(옮긴 것 포함)은 「Boarder tmux 엔진」 감독 규칙이 받음(engine_window · wid) — 두 번 넣지 않게
-  const text = `[보더] 「${card.question.slice(0, 80)}」 답: ${card.answer} (카드 ${card.id}) — boarder close ${card.id} "<처리>" 로 닫아요`;
+  const text = `${head ? head + " " : ""}[보더] 「${card.question.slice(0, 80)}」 답: ${card.answer} (카드 ${card.id}) — boarder close ${card.id} "<처리>" 로 닫아요`;
   await queue(env, owner, w.device_id, w.state === "parked" ? "reopen" : "send", { item: w.key, engine: w.engine, handle: json(w.handle, null), text, card: card.id });
 }
 

@@ -54,7 +54,7 @@ async function hookWorld(fn) {
     req.on('end', () => {
       res.setHeader('content-type', 'application/json');
       if (req.url === '/api/device/window') return res.end(JSON.stringify({ token: 'bxa_' + 'w'.repeat(40) }));
-      if (req.url === '/api/agent/inbox_log') { posts.push({ auth: req.headers.authorization, body: JSON.parse(b) }); return res.end('{"ok":true}'); }
+      if (/^\/api\/agent\/(inbox_log|inbox_say|chat_say)$/.test(req.url)) { posts.push({ tool: req.url.slice(11), auth: req.headers.authorization, body: JSON.parse(b) }); return res.end('{"ok":true}'); }
       res.statusCode = 404; res.end('{}');
     });
   });
@@ -98,6 +98,52 @@ test('hook codex-turn: 보드가 넣은 글로 연 Codex 턴 → 마지막 답�
   });
 });
 
+test('parseHead · replyCall: Primary → chat_say · 카드 → inbox_say 카드 · 노드 스레드 → inbox_say 스레드 · 노드 채널 · 머리 줄 없음 → inbox_log reply', () => {
+  assert.deepEqual(T.parseHead('[보드 · Primary] [Boarder chat] 안녕'), { primary: true });
+  assert.deepEqual(T.parseHead('[보드 · 예시 팀장 · 스레드 1793000000.000123] 다시 봐 줘'), { channel: '예시 팀장', thread: '1793000000.000123' });
+  assert.deepEqual(T.parseHead('[보드 · 예시 팀장 · 카드 1793000000.000001] [Boarder] The person replied'), { channel: '예시 팀장', card: '1793000000.000001' });
+  assert.deepEqual(T.parseHead('[보드 · 예시 팀장] 오늘 할 일?'), { channel: '예시 팀장' });
+  assert.equal(T.parseHead('그냥 친 글 [보드 · Primary]'), null, '맨 앞만');
+  assert.deepEqual(T.replyCall('[보드 · Primary] [Boarder chat] 안녕', '- 반가워요'), ['chat_say', { text: '‐ 반가워요' }]);
+  assert.deepEqual(T.replyCall('[보드 · 예시 팀장 · 스레드 1793000000.000123] 다시', '봤어요'), ['inbox_say', { thread_id: '1793000000.000123', text: '봤어요' }]);
+  assert.deepEqual(T.replyCall('[보드 · 예시 팀장 · 카드 1793000000.000001] x', '했어요'), ['inbox_say', { thread_id: '1793000000.000001', text: '했어요' }]);
+  assert.deepEqual(T.replyCall('[보드 · 예시 팀장] 오늘?', '- 셋'), ['inbox_log', { kind: 'reply', text: '- 셋' }]);
+  assert.deepEqual(T.replyCall('머리 줄 없는 글', '답'), ['inbox_log', { kind: 'reply', text: '답' }]);
+});
+
+test('hook stop: 머리 줄을 보고 같은 자리로 — 노드 스레드 → inbox_say, Primary → chat_say, 창이 그 턴에 스스로 boarder chat 했으면 안 올림', async () => {
+  await hookWorld(async ({ hook, posts }) => {
+    const p1 = '[보드 · 예시 팀장 · 스레드 1793000000.000123] 이거 다시 봐 줘';
+    T.markTurn(['ew_team01', SID], p1);
+    const f1 = path.join(TMP, 'h1.jsonl'); fs.writeFileSync(f1, transcript(p1, '다시 봤어요'));
+    assert.equal((await hook(['stop'], JSON.stringify({ session_id: SID, transcript_path: f1 }))).code, 0);
+    const p2 = '[보드 · Primary] [Boarder chat] 오늘 뭐 했어?';
+    T.markTurn(['ew_team01', SID], p2);
+    const f2 = path.join(TMP, 'h2.jsonl'); fs.writeFileSync(f2, transcript(p2, '세 가지 했어요'));
+    assert.equal((await hook(['stop'], JSON.stringify({ session_id: SID, transcript_path: f2 }))).code, 0);
+    assert.deepEqual(posts.map(p => [p.tool, p.body]), [
+      ['inbox_say', { thread_id: '1793000000.000123', text: '다시 봤어요\n— 끝' }],
+      ['chat_say', { text: '세 가지 했어요\n— 끝' }],
+    ]);
+    // 창이 그 턴에 boarder chat 으로 이미 답함 → 훅은 또 올리지 않음(두 번 안 보이게)
+    const p3 = '[보드 · Primary] [Boarder chat] 또 물어볼게';
+    T.markTurn(['ew_team01', SID], p3);
+    const f3 = path.join(TMP, 'h3.jsonl');
+    fs.writeFileSync(f3, transcript(p3, '답했어요').replace('"name":"Bash","input":{}', '"name":"Bash","input":{"command":"boarder chat \\"네, 말씀하세요\\""}'));
+    assert.equal((await hook(['stop'], JSON.stringify({ session_id: SID, transcript_path: f3 }))).code, 0);
+    assert.equal(posts.length, 2);
+  });
+});
+
+test('hook codex-turn: 카드 머리 줄로 연 턴 → 그 카드 스레드(inbox_say)', async () => {
+  await hookWorld(async ({ hook, posts }) => {
+    const p = '[보드 · 예시 팀장 · 카드 1793000000.000001] [Boarder] The person replied in the thread of your card';
+    T.markTurn([null, 'th-codex-2'], p);
+    assert.equal((await hook(['codex-turn', JSON.stringify({ type: 'agent-turn-complete', 'thread-id': 'th-codex-2', 'input-messages': [p], 'last-assistant-message': '고쳤어요' })])).code, 0);
+    assert.deepEqual(posts.map(x => [x.tool, x.body]), [['inbox_say', { thread_id: '1793000000.000001', text: '고쳤어요' }]]);
+  });
+});
+
 test.after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
 test('hook stop: 서버가 답하지 않는(매달린) 망에서도 훅 한도(setup 의 Stop 초) 안에 끝남', async () => {
@@ -114,4 +160,23 @@ test('hook stop: 서버가 답하지 않는(매달린) 망에서도 훅 한도(s
   srv.closeAllConnections(); srv.close();
   assert.equal(r.code, 0); assert.equal(r.out, '');
   assert.ok(Date.now() - t0 < limit * 1000, `took ${Date.now() - t0}ms, limit ${limit}s`);
+});
+
+test('lastTurnOfFile: 큰 기록도 끝부분만 읽어 마지막 턴을 찾음 — 앞부분이 아무리 커도 같은 답', () => {
+  const f = path.join(TMP, 'big.jsonl');
+  const filler = line({ type: 'assistant', message: { id: 'old', role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(4000) }] } }) + '\n';
+  fs.writeFileSync(f, filler.repeat(3000) + transcript('끝 턴 글', '끝 턴 답'));   // 앞에 약 12MB
+  const t = T.lastTurnOfFile(f, { first: 64 << 10, max: 1 << 20 });
+  assert.equal(t.prompt, '끝 턴 글');
+  assert.equal(t.reply, '끝 턴 답\n— 끝');
+  // 끝부분(max) 안에 턴을 연 입력이 없으면 통째로 읽지 않고 null — 기록이 커도 상한 이상 안 읽음
+  const g = path.join(TMP, 'noprompt.jsonl');
+  fs.writeFileSync(g, transcript('맨 앞 글', '맨 앞 답') + filler.repeat(600));   // 입력은 2.4MB 앞
+  assert.equal(T.lastTurnOfFile(g, { first: 64 << 10, max: 1 << 20 }), null);
+});
+
+test('hasMark: 이 창 표지가 없으면 false(기록을 읽지 않고 끝), 있으면 true', () => {
+  assert.equal(T.hasMark(['ew_nomark', 'sid-nomark']), false);
+  T.markTurn(['ew_withmark'], '글');
+  assert.equal(T.hasMark([null, 'x', 'ew_withmark']), true);
 });

@@ -1,5 +1,6 @@
 
 import { regroup } from "./importer/routes";
+import { boardHead, withHead } from "./board-head";
 
 type R = Record<string, any>;
 const FREQ = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];   // owner-read FREQ_DEFAULT
@@ -182,6 +183,22 @@ export async function pushLoc(db: D1Database, me: string, ts: string) {
   const id = r ? String(r.id) : ts;
   return { ts: id, loc: r ? { c: "primary", t: id, m: id, state: r.state } : null };
 }
+export async function channelOf(db: D1Database, me: string, win: string) {
+  const L = await load(db, me);
+  return L.nodeOfWin(win)?.name || L.engineNodes.find(w => w.name === win)?.name || L.nodes.find(n => n.name === win)?.name || win;
+}
+export async function nodeRoot(db: D1Database, me: string, ts: string) {
+  const m = /^(\d{10})\.(\d{6})$/.exec(ts); if (!m) return null;
+  const r = await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? LIMIT 1").bind(me, Number(m[2]), Number(m[1]) * 1000, Number(m[1]) * 1000 + 1000).first<R>();
+  return r && !r.thread && !OWN.test(String(r.win)) ? r : null;
+}
+// 노드 스레드 답(사람 글 · boarder say): thread = 뿌리 글 ts. 뿌리 글에 답 수 · 마지막 답 ts 를 달고, 답 줄은 스레드로
+const threadReplies = (logs: R[], ts: string) => logs.filter(r => r.thread === ts).sort((a, b) => Number(a.at) - Number(b.at) || Number(a.id) - Number(b.id));
+function withThread(m: R, said: R[]) {
+  if (!said.length) return m;
+  const last = said.at(-1)!;
+  return { ...m, replies: said.length, latest: tsOf(Number(last.at), Number(last.id)), rnames: [...new Set(said.map(r => r.kind === "me" ? "Owner" : String(r.win)))] };
+}
 const cardBy = (db: D1Database, me: string, ts: string) => db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>();
 
 // 들여온 대화 한 줄 → 노드 채팅 글. 세션 = 그 사람이 처음 물은 한 줄(들여오기가 보낸 것만 — 대화 내용은 안 옴), 스레드 · 이슈 = 제목.
@@ -223,7 +240,8 @@ async function nodeThread(db: D1Database, me: string, raw: string, ts: string) {
   const [s, id] = ts.split(".");
   const r = await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? LIMIT 1").bind(me, Number(id), Number(s) * 1000, Number(s) * 1000 + 1000).first<R>();
   if (!r || r.thread === "primary" || CARD_TS.test(String(r.thread || "")) || OWN.test(String(r.win)) || !mineWin(String(r.win), String(r.kind))) return null;
-  return { channel: ch, root: ts, owner: null, home, messages: [{ ...msg(r, me, String(r.win)), ch }] };
+  const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, ts).all<R>()).results;
+  return { channel: ch, root: ts, owner: null, home, messages: [{ ...withThread(msg(r, me, String(r.win)), said), ch }, ...said.map(x => ({ ...msg(x, me, String(x.win)), thread: ts, ch }))] };
 }
 async function primaryRows(db: D1Database, me: string, before?: string) {
   const m = before ? /^(\d{10})\.(\d{6})$/.exec(before) : null, sec = m ? Number(m[1]) * 1000 : 0;
@@ -238,6 +256,33 @@ export async function paneRows(db: D1Database, me: string, pane: string) {
     : n ? L.logs.filter(r => r.thread !== "primary" && mine(r) && L.nodeOfWin(r.win) === n)
     : ew ? L.logs.filter(r => r.thread !== "primary" && mine(r) && r.win === ew.name) : [];
   return rows.slice(0, 60).reverse().map(r => ({ id: r.id, at: Number(r.at) / 1000, kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 400) }));
+}
+
+export async function sessTarget(db: D1Database, me: string, pane: string) {
+  if (!/^%\d{1,12}$/.test(pane)) return null;
+  const L = await load(db, me);
+  if (pane === PRIMARY) return { L, pane, kind: "main" as const, name: L.mainWin ? String(L.mainWin.name) : "", state: L.mainWin ? String(L.mainWin.state) : "" };
+  const n = L.nodes.find(x => x.pane === pane);
+  if (n) return { L, pane, kind: "node" as const, name: n.name, state: String(n.state || ""), node: n };
+  const ew = L.engineNodes.find(x => paneOfId(x.id) === pane);
+  if (ew) return { L, pane, kind: "engine" as const, name: String(ew.name), state: String(ew.state || ""), ew };
+  return null;
+}
+// 세션 로그(GET /api/sesslog?pane=) — 그 판의 글(사람 · 에이전트)을 오래된 것부터, 채팅 글 꼴(msg) 그대로. 최근 200줄
+export async function sessLog(db: D1Database, me: string, pane: string, mainName: string) {
+  const s = await sessTarget(db, me, pane); if (!s) return null;
+  const L = s.L, inCard = (r: R) => CARD_TS.test(String(r.thread || ""));
+  const rows = s.kind === "main" ? (await primaryRows(db, me)).filter(r => r.win !== "보더")
+    : L.logs.filter(r => r.thread !== "primary" && !inCard(r) && !OWN.test(r.win) && (s.kind === "node" ? L.nodeOfWin(r.win) === s.node || (r.kind === "me" && r.win === s.node!.name) : r.win === s.ew!.name));
+  const messages = rows.slice(0, 200).map(r => msg(r, me, s.kind === "main" ? mainName : String(r.win))).reverse();
+  return { pane, name: s.kind === "main" ? (s.name || mainName) : s.name, state: s.state, messages };
+}
+export async function sessFolders(db: D1Database, me: string) {
+  const rs = (await db.prepare("SELECT cwd, MAX(COALESCE(state_at, seen_at, 0)) at FROM imp_item WHERE owner = ? AND cwd != '' AND (gone_at IS NULL OR gone_at > ?) GROUP BY cwd ORDER BY at DESC LIMIT 40").bind(me, Date.now() - 30 * 86_400_000).all<{ cwd: string }>()).results;
+  return rs.map(r => String(r.cwd)).filter(c => c.length <= 200 && !/[\x00-\x1f\x7f]/.test(c) && !c.split("/").includes("..")).map(path => ({ path, title: path.replace(/\/+$/, "").split("/").pop() || path }));
+}
+export async function folderOk(db: D1Database, me: string, folder: string) {
+  return (await sessFolders(db, me)).some(f => f.path === folder);
 }
 
 // 회원 GET — 보드 화면 길만. null = 이 길은 회원 보드 것이 아님(→ 403)
@@ -304,7 +349,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     // 카드 글은 답하거나 닫혀도 채널에 남음 — 할 일 목록(load)과 따로 읽음
     const cards = (await db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results
       .filter(c => CARD_TS.test(String(c.id)) && (n ? L.nodeOfWin(String(c.win)) === n : ew ? c.win === ew.name : false));
-    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...msg(r, me, r.win), ch: "primary", ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })),
+    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...withThread(msg(r, me, r.win), threadReplies(L.logs, tsOf(r.at, r.id))), ch: "primary", ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })),
       ...cards.map(c => ({ at: Number(c.at), m: { ...cardMsg(c, L.logs.filter(r => r.thread === c.id)), ch: "primary" } }))]
       .sort((a, b) => a.at - b.at).slice(-300).map(x => x.m);
     const fold = n ? convoFold(n, mainName) : null;
@@ -312,11 +357,24 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     await withReacts(db, me, out as R[]);
     return j({ channel: "n:" + t, messages: out, stale_min: 0, more: false });
   }
+  if (p === "/api/sesslog") { const s = await sessLog(db, me, url.searchParams.get("pane") || "", mainName); return s ? j(s) : j({ error: "없는 판" }, 404); }
+  if (p === "/api/session/folders") return j({ folders: await sessFolders(db, me) });
   return null;
 }
 
-export type Hop = { path: string; body: unknown; log?: { win: string; text: string } } | { error: string; status: number } | { ok: R };
+export type Hop = { path: string; body: unknown; log?: { win: string; text: string; thread?: string } } | { error: string; status: number } | { ok: R };
 export async function post(db: D1Database, me: string, path: string, b: R): Promise<Hop> {
+  if (path === "/api/sess/send") {
+    const pane = String(b.pane || ""), text = String(b.text || "").trim();
+    if (!text) return { error: "내용을 적어요", status: 400 };
+    if (!(await sessTarget(db, me, pane))) return { error: "없는 판", status: 404 };
+    return post(db, me, "/api/chat", { text, pane });
+  }
+  if (path === "/api/session/new") {
+    const folder = String(b.folder || "");
+    if (!(await folderOk(db, me, folder))) return { error: "없는 폴더", status: 404 };
+    return { path: "/api/me/session/new", body: { folder, text: String(b.text || "").slice(0, 4000) } };
+  }
   if (path === "/api/chat") {
     if (b.seen) return { ok: { ok: true, state: "ok", seen: false } };   // 읽음 표는 아직 없음(보드가 열 때마다 부름 — 오류로 띄우지 않음)
     // 카드 글의 단추 · 그 스레드에 쓴 글 = 카드 답
@@ -344,16 +402,23 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     const pane = String(b.pane || "");
     if (pane && pane !== PRIMARY) {
       const L = await load(db, me), n = L.nodes.find(x => x.pane === pane);
+      const root = CARD_TS.test(String(b.thread || "")) ? await nodeRoot(db, me, String(b.thread)) : null;
+      const ew0 = n ? null : L.engineNodes.find(x => paneOfId(x.id) === pane);
+      const chName = n ? n.name : ew0 ? String(ew0.name) : "";
+      const inChan = (r: R) => n ? L.nodeOfWin(String(r.win)) === n || (r.kind === "me" && r.win === n.name) : ew0 ? r.win === ew0.name : false;
+      const thread = root && inChan(root) ? String(b.thread) : undefined;
+      if (b.thread && !thread && !FOLD_TS.test(String(b.thread))) return { error: "없는 스레드예요", status: 404 };   // 들여온 대화 접은 글 스레드는 예전처럼 채널로
+      const head = boardHead({ channel: chName, thread });
       if (n) {
         // 에이전트마다 채널은 일 창이 여럿 — 주 창이 닫혔으면 아무 일 창에나 넣지 않음
         const w = L.agentUnit ? n.windows.find(x => x.key === L.mains.get(n.id)) : n.windows[0];
         if (!w) return { error: "이 노드엔 글을 넣을 창이 없어요", status: 404 };
-        const log = { win: String(w.win || n.name), text };
-        return { path: "/api/me/nodes/cmd", body: { verb: w.state === "parked" ? "reopen" : "send", item: w.key, text }, log };
+        const log = { win: String(w.win || n.name), text, ...(thread ? { thread } : {}) };
+        return { path: "/api/me/nodes/cmd", body: { verb: w.state === "parked" ? "reopen" : "send", item: w.key, text: withHead(head, text) }, log };
       }
-      const ew = L.engineNodes.find(x => paneOfId(x.id) === pane);
+      const ew = ew0;
       if (!ew) return { error: "없는 노드", status: 404 };
-      return { path: `/api/me/windows/${ew.id}/say`, body: { text }, log: { win: String(ew.name), text } };
+      return { path: `/api/me/windows/${ew.id}/say`, body: { text, head }, log: { win: String(ew.name), text, ...(thread ? { thread } : {}) } };
     }
     if (b.channel && b.channel !== "primary") return { error: "아직 안 돼요", status: 400 };
     return { path: "/api/me/chat", body: { text } };

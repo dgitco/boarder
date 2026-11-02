@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { renameSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync, renameSync, writeFileSync } from 'node:fs';
 import { dir, ensureDir, readJson, sha } from './config.mjs';
 import { redact } from './redact.mjs';
 
@@ -15,6 +15,11 @@ const ids = keys => [...new Set(keys.filter(Boolean).map(k => sha(String(k)).sli
 export function markTurn(keys, text, now = Date.now()) {
   const k = ids(keys); if (!k.length) return;
   save([...load(now), { k, h: sha(norm(text)), at: now }]);
+}
+/** 이 창(열쇠들)에 남은 표지가 있나 — 없으면 기록(jsonl)을 읽을 까닭이 없음(보드에서 온 턴이 아님) */
+export function hasMark(keys, now = Date.now()) {
+  const k = ids(keys); if (!k.length) return false;
+  return load(now).some(m => m.k.some(x => k.includes(x)));
 }
 /** 그 턴을 연 입력(글 · 시각)이 그 창의 표지와 맞으면 표지를 지우고 true */
 export function takeTurn(keys, text, at, now = Date.now()) {
@@ -36,7 +41,36 @@ export function lastTurn(jsonl) {
   const last = after.at(-1), id = last?.message?.id;
   // 한 답이 블록마다 줄로 나뉘어 남음(같은 message.id) — 마지막 답의 글 블록을 이어 붙임
   const reply = last ? after.filter(e => id ? e.message?.id === id : e === last).map(e => textOf(e.message.content)).join('\n').trim() : '';
-  return { prompt: textOf(p.message.content), at: Date.parse(p.timestamp) || 0, reply };
+  // 그 턴에 창이 스스로 그 자리에 답했나(boarder chat · say, chat_say · inbox_say) — 그러면 훅이 또 올리지 않음(두 번 보이지 않게)
+  const said = rows.slice(i + 1).some(e => e?.type === 'assistant' && Array.isArray(e.message?.content) && e.message.content.some(b => b?.type === 'tool_use' && SAID.test(JSON.stringify(b.input ?? ''))));
+  return { prompt: textOf(p.message.content), at: Date.parse(p.timestamp) || 0, reply, said };
+}
+const SAID = /boarder\s+(chat|say)\b|chat_say|inbox_say/;
+
+export const HEAD_RE = /^\[보드 · ([^\]·]{1,60}?)(?: · (스레드|카드) (\d{10}\.\d{6}))?\] ?/;
+export function parseHead(prompt) {
+  const m = HEAD_RE.exec(String(prompt || '').trimStart()); if (!m) return null;
+  if (m[3]) return { channel: m[1], [m[2] === '카드' ? 'card' : 'thread']: m[3] };
+  return m[1] === 'Primary' ? { primary: true } : { channel: m[1] };
+}
+/** 답을 같은 자리로: Primary → chat_say · 카드 → inbox_say 카드 · 노드 스레드 → inbox_say 스레드 · 노드 채널(머리 줄 없음 포함) → inbox_log reply(예전 그대로) */
+export function replyCall(prompt, text) {
+  const h = parseHead(prompt), t = String(text).replace(/^-/, '\u2010');   // say · chat 은 「-」로 시작하는 글을 안 받음 — 보이는 꼴은 같은 하이픈
+  if (h?.card || h?.thread) return ['inbox_say', { thread_id: h.card || h.thread, text: t }];
+  if (h?.primary) return ['chat_say', { text: t }];
+  return ['inbox_log', { kind: 'reply', text }];
+}
+export function lastTurnOfFile(file, { first = 1 << 20, max = 64 << 20 } = {}) {
+  const fd = openSync(file, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    for (let n = Math.min(first, size); ; n = Math.min(n * 2, size, max)) {
+      const buf = Buffer.alloc(n); readSync(fd, buf, 0, n, size - n);
+      let text = buf.toString('utf8'); if (n < size) text = text.slice(text.indexOf('\n') + 1);
+      const t = lastTurn(text);
+      if (t || n >= size || n >= max) return t;
+    }
+  } finally { closeSync(fd); }
 }
 export const clip = t => { const s = redact(String(t || '')).trim(); return s.length > REPLY_MAX ? s.slice(0, REPLY_MAX - 12).trimEnd() + '\n…(줄였어요)' : s; };
 

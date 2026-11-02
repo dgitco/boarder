@@ -1,3 +1,4 @@
+import { boardHead, stripHead } from "./board-head";
 import { DurableObject } from "cloudflare:workers";
 import { bumpMember } from "./live";
 import { envelopeOn, getDek, openField, sealFieldNow, type VaultEnv } from "./vault/index";
@@ -19,7 +20,7 @@ export class EngineError extends Error { constructor(public code: number, msg: s
 // ── 창에 넣는 글(영어 — AI 도구가 가장 잘 따름, 사람에게는 그 사람 말로 쓰라고 함)
 export function mainSystem(email: string, name = "Primary", oneGoal = true) {
   return `You are ${name}, the main bot ("Primary") of ${email}'s Boarder — the board where they follow and steer all their AI agent windows.
-- What the person writes in Boarder's Primary chat arrives here as a message starting with "[Boarder chat]". Messages starting with "[Boarder]" are notes from Boarder itself.
+- What the person writes in Boarder's Primary chat arrives here as a message starting with "[보드 · Primary] [Boarder chat]". Messages starting with "[Boarder]" are notes from Boarder itself.
 - The person does not see this terminal. Answer only with \`boarder chat "<text>"\` — short and warm, in the person's language (Korean if they write Korean).
 - Your job: learn what they want their AI agents to do, then set up roles. A role is one agent window with one clear job. Propose one role at a time:
   boarder role draft --name "<short name>" --brief "<one line: what it handles>" --instructions "<what this agent does, how it reports, what it must not do>"
@@ -291,13 +292,13 @@ export class Engine extends DurableObject<EngEnv> {
     const q = (await this.q<Pend>("pending")) || []; if (!q.length) return;
     const db = this.env.DB, left: Pend[] = [], held = new Set<string>(), wait = (p: Pend) => { left.push(p); held.add(p.id); };
     const key = (p: Pend) => p.k || `${p.id}\n${p.at}\n${p.text}`;
-    const lost = (p: Pend, w: Win) => sysLine(db, w.owner, `「${w.name}」 창에 글이 들어갔는지 확인하지 못했어요: ${p.text.replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null);
+    const lost = (p: Pend, w: Win) => sysLine(db, w.owner, `「${w.name}」 창에 글이 들어갔는지 확인하지 못했어요: ${stripHead(p.text).replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null);
     const reopenAt = async (p: Pend, w: Win) => { try { if ((await this.reopen(p.id, p.text, key(p))).queued) wait(p); } catch (e) { if (lostAnswer(e)) await lost(p, w); else wait(p); } };
     for (const p of q) {
       if (held.has(p.id)) { left.push(p); continue; }
       const w = await this.row(p.id);
       if (!w || w.state === "closed" || w.state === "failed") continue;
-      if (Date.now() - p.at > 6 * 3600_000) { await sysLine(db, w.owner, `「${w.name}」 창에 6시간 동안 못 넣은 글을 버렸어요: ${p.text.replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null); continue; }
+      if (Date.now() - p.at > 6 * 3600_000) { await sysLine(db, w.owner, `「${w.name}」 창에 6시간 동안 못 넣은 글을 버렸어요: ${stripHead(p.text).replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null); continue; }
       if (w.state === "parked" || w.state === "gone") { await reopenAt(p, w); continue; }
       if (w.state !== "idle") { wait(p); continue; }
       try { await this.cmd("send", { id: p.id, text: p.text }); }
@@ -488,7 +489,7 @@ async function mainOf(env: EngEnv, owner: string) {
 }
 /** 회원 Primary 채팅 글 → 메인 봇 판(없으면 엔진 기기에서 새로) */
 export async function chatToMain(env: EngEnv, owner: string, text: string) {
-  const main = await mainOf(env, owner), msg = `[Boarder chat] ${text}`;
+  const main = await mainOf(env, owner), msg = `${boardHead({})} [Boarder chat] ${text}`;   // 머리 줄 「[보드 · Primary]」(board-head.ts)
   const dev = await liveDevice(env.DB, owner, true);
   if (main && (!dev || Date.now() - (main.engine_at || 0) < 120_000)) return engineOf(env, main.device_id).deliver(main.id, msg);
   if (!dev) return { offline: true };

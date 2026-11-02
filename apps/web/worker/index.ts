@@ -16,7 +16,7 @@ export { Bridge } from "./bridge";
 export { Engine } from "./engine";
 export { Search } from "./search";
 export { Pusher } from "./push-do";
-import { engineOf, chatToMain, approveDraft, deliverTo, ownerCfg, sysLine, RULES, engineSend, ownerWindows, harnessDevice, type Engine } from "./engine";
+import { engineOf, chatToMain, approveDraft, deliverTo, ownerCfg, sysLine, RULES, engineSend, ownerWindows, harnessDevice, liveDevice, type Engine } from "./engine";
 import shellJs from "./legacy/shell.js?raw";
 import shellCss from "./legacy/shell.css?raw";
 import installSh from "./install/install.sh?raw";
@@ -54,6 +54,7 @@ import * as files from "./files";
 import * as ownerRead from "./owner-read";
 import * as OS from "./owner-state";
 import * as memberBoard from "./member-board";
+import { boardHead, HEAD_RE } from "./board-head";
 import * as memberInbox from "./member-inbox";
 import * as memberFiles from "./member-files";
 import { importedWindow, queueToImported } from "./member-imported";
@@ -858,12 +859,14 @@ app.post("/api/me/cards/:id/answer", async c => {
   }
   }
   } catch (e) { if (rid) return queue.retrySafe(c); throw e; }
-  await onCardAnswered(c.env as never, me, id).catch(e => console.error("들여오기 카드 답", e));
+  // 보드 글 머리 줄(board-head.ts): 「[보드 · <채널> · 카드 <id>]」 — 창이 답을 그 카드 스레드로(boarder say <카드>)
+  const head = await cardHead(c.env, me, id);
+  await onCardAnswered(c.env as never, me, id, head).catch(e => console.error("들여오기 카드 답", e));
   await secretCardAnswered(c.env as never, me, id).catch(e => console.error("비밀 요청 카드 답", String(e).slice(0, 200)));
   await devCard.onDeviceCardAnswered(c.env, me, id).catch(e => console.error("새 기기 카드 답", String(e).slice(0, 200)));   // 새 기기 허용 카드(device-card.ts)
   await connReq.onConnectCardAnswered(c.env as never, me, id).catch(e => console.error("커넥터 카드 답", String(e).slice(0, 200)));
   const card = await c.env.DB.prepare("SELECT wid, question, answer FROM board_card WHERE id = ? AND owner = ?").bind(id, me).first<{ wid: string | null; question: string; answer: string | null }>().catch(() => null);
-  const ansText = card ? `[Boarder] The person answered your card ${id} ("${card.question.slice(0, 120)}"): ${String(card.answer ?? choice)}. Continue with that.` : "";
+  const ansText = card ? `${head} [Boarder] The person answered your card ${id} ("${card.question.slice(0, 120)}"): ${String(card.answer ?? choice)}. Continue with that.` : "";
   const sent = card?.wid ? deliverTo(c.env, me, card.wid, ansText).catch(async e => {
     if (!/없는 창/.test(String((e as Error)?.message || e))) return;
     const w = await importedWindow(c.env.DB, me, { wid: card.wid, win: "" });
@@ -881,10 +884,15 @@ app.post("/api/me/cards/:id/reply", async c => {
   if (!k) return c.json({ ok: false, error: "없는 카드예요" }, 404);
   try { if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "나", "me", t, k.id, Date.now())], p => c.executionCtx.waitUntil(p))) && await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true }); }
   catch (e) { if (rid) return queue.retrySafe(c); throw e; }
-  const delivered = await cardTell(c.env, me, k, `[Boarder] The person replied in the thread of your card ${k.id} ("${k.question.slice(0, 120)}"): ${t}`).then(ok => ok, e => { console.error("카드 스레드 답 넣기", String(e).slice(0, 200)); return false; });
+  const delivered = await cardTell(c.env, me, k, `${await cardHead(c.env, me, k.id)} [Boarder] The person replied in the thread of your card ${k.id} ("${k.question.slice(0, 120)}"): ${t}`).then(ok => ok, e => { console.error("카드 스레드 답 넣기", String(e).slice(0, 200)); return false; });
   if (rid && delivered) c.executionCtx.waitUntil(queue.markSent(c.env.DB, rid).catch(() => {}));
   return c.json({ ok: true, delivered });
 });
+async function cardHead(env: Env, me: string, id: string) {
+  const k = await env.DB.prepare("SELECT win FROM board_card WHERE id = ? AND owner = ?").bind(id, me).first<{ win: string }>().catch(() => null);
+  const ch = k ? await memberBoard.channelOf(env.DB, me, k.win).catch(() => k.win) : "";
+  return boardHead({ channel: ch || "Primary", card: id });
+}
 // 카드를 낸 창에 한 줄: 엔진 창(wid)이면 엔진으로, 아니면 들여온 창(import --follow)의 기기 명령 줄로(member-imported.ts). 넣었으면 true, 넣을 창이 없으면 false
 async function cardTell(env: Env, me: string, k: { id?: string; wid: string | null; win: string }, text: string) {
   if (k.wid) { try { await deliverTo(env, me, k.wid, text); return true; } catch (e) { if (!/없는 창/.test(String((e as Error)?.message || e))) throw e; } }
@@ -1007,9 +1015,10 @@ async function ownWindow(db: D1Database, me: string, target: string) {
 async function primaryWinSend(env: Env, me: string, text: string) {
   const v = (await env.DB.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me).first<{ v: string }>().catch(() => null))?.v || "";
   if (!v || !(await ownWindow(env.DB, me, v))) return null;
-  if (v.startsWith("ew_")) return deliverTo(env, me, v, `[Boarder chat] ${text}`).catch(e => { if (/없는 창/.test(String((e as Error)?.message || e))) return null; throw e; });   // 확인 뒤 사이에 사라진 창도 메인 봇으로
+  const msg = `${boardHead({})} [Boarder chat] ${text}`;   // 머리 줄 「[보드 · Primary]」 — 기본 창(팀장 창)도 답을 Primary 채팅으로(boarder chat)
+  if (v.startsWith("ew_")) return deliverTo(env, me, v, msg).catch(e => { if (/없는 창/.test(String((e as Error)?.message || e))) return null; throw e; });   // 확인 뒤 사이에 사라진 창도 메인 봇으로
   const w = await env.DB.prepare("SELECT key, device_id, engine, handle, title, state FROM imp_item WHERE owner = ? AND key = ?").bind(me, v).first<{ key: string; device_id: string; engine: string; handle: string | null; title: string; state: string }>();
-  return w ? { cmd: await queueToImported(env.DB, me, w, `[Boarder chat] ${text}`) } : null;
+  return w ? { cmd: await queueToImported(env.DB, me, w, msg) } : null;
 }
 // 회원 온보딩 점검표(member-onboarding.ts, 온보딩 4층): 설정 › 시작하기 — 그 회원 것만, 읽기만
 app.get("/api/me/onboarding", async c => {
@@ -1049,12 +1058,26 @@ app.post("/api/me/engine/perm", async c => {
   await sysLine(c.env.DB, me, mode === "bypass" ? "묻지 않고 일하기를 허용했어요 — 다음에 여는 창부터" : "묻지 않고 일하기를 껐어요 — 다음에 여는 창부터 하나하나 물어요");
   return c.json({ ok: true, mode });
 });
+app.post("/api/me/session/new", async c => {
+  const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ folder?: string; text?: string }>().catch(() => ({} as { folder?: string; text?: string }));
+  const folder = String(b.folder || ""), text = String(b.text || "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").trim().slice(0, 4000);
+  if (!(await memberBoard.folderOk(c.env.DB, me, folder))) return c.json({ ok: false, error: "없는 폴더" }, 404);
+  const dev = await liveDevice(c.env.DB, me); if (!dev) return c.json({ ok: false, error: "엔진이 켜진 기기가 없어요" }, 409);
+  const name = Array.from(folder.replace(/\/+$/, "").split("/").pop() || "새 대화").slice(0, 40).join("");
+  try {
+    const w = await engineOf(c.env, dev).open({ owner: me, kind: "role", role_id: null, name, cwd: folder, prompt: text ? `[Boarder chat] ${text}` : "[Boarder] The person opened a new conversation in this folder from the board. Wait for their first message." });
+    await sysLine(c.env.DB, me, `「${name}」 새 대화를 열었어요`, w.id);
+    return c.json({ ok: true, pane: memberBoard.paneOfId(w.id), name, window: w.id });
+  } catch (e) { return engErr(c, e); }
+});
 app.post("/api/me/windows/:id/say", async c => {
   const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
-  const { text } = await c.req.json<{ text?: string }>().catch(() => ({} as { text?: string }));
+  const { text, head } = await c.req.json<{ text?: string; head?: string }>().catch(() => ({} as { text?: string; head?: string }));
   const t = String(text || "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").trim().slice(0, 4000);
   if (!t) return c.json({ ok: false, error: "내용을 적어요" }, 400);
-  try { return c.json({ ok: true, ...(await deliverTo(c.env, me, c.req.param("id"), `[Boarder chat] ${t}`) as object || {}) }); }
+  const h = typeof head === "string" && HEAD_RE.exec(head)?.[0].trim() === head ? head + " " : "";   // 머리 줄(member-board post 가 붙임) — 꼴이 맞을 때만 맨 앞에
+  try { return c.json({ ok: true, ...(await deliverTo(c.env, me, c.req.param("id"), `${h}[Boarder chat] ${t}`) as object || {}) }); }
   catch (e) { return engErr(c, e); }
 });
 app.post("/api/me/windows/:id/:act", async c => {
@@ -1637,7 +1660,7 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   const r = await app.fetch(new Request(new URL(hop.path, url), { method: "POST", headers: h, body: JSON.stringify({ ...(hop.body as object), ...(rid ? { rid } : {}) }) }), c.env, c.executionCtx);   // rid 도 넘김(안쪽 쓰기가 한 번만)
   const j = await r.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
   if (!r.ok || j.ok === false) return c.json({ ok: false, rid, error: typeof j.error === "string" ? j.error : "일시적인 오류가 발생했어요" }, (r.ok ? 400 : r.status) as 400, r.headers.get("x-retry-safe") === "1" ? { "x-retry-safe": "1" } : {});
-  if (hop.log && !j.already) await queue.ridBatch(c.env.DB, qrid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), null, Date.now(), Array.isArray(j.cmds) && j.cmds[0] ? `cmd:${j.cmds[0]}` : null)]).catch(e => console.error("노드 채팅 줄", e));
+  if (hop.log && !j.already) await queue.ridBatch(c.env.DB, qrid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), hop.log.thread ?? null, Date.now(), Array.isArray(j.cmds) && j.cmds[0] ? `cmd:${j.cmds[0]}` : null)]).catch(e => console.error("노드 채팅 줄", e));
   return c.json({ ...j, ok: true, rid, state: "ok", channel: "primary" });
 }
 async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false, ea = false) {

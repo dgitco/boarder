@@ -269,3 +269,22 @@ test("기본 창의 기기를 끊으면: 일반 채널 글이 400 으로 막히�
   assert.deepEqual(sent.map(x => x.id), ["ew_main1", "ew_main1"]);
   assert.equal((db.prepare("SELECT count(*) AS n FROM engine_cmd WHERE device_id = 'devMember02'").get() as { n: number }).n, 0, "끊긴 기기 명령 줄엔 안 쌓임");
 });
+
+test("보드 글 머리 줄: Primary 채팅 · 카드 답 · 카드 스레드 답 · 역할 창 노드 채팅 글이 창에 「[보드 · …]」로 시작", async () => {
+  const { db, sent, post } = setup();
+  assert.equal((await post("/api/chat", { text: "안녕", channel: "primary", rid: "rtest-head-0001" })).status, 200);
+  assert.equal(sent.at(-1)!.text, "[보드 · Primary] [Boarder chat] 안녕");
+  const n = (db.prepare("SELECT rowid AS n FROM board_card WHERE id = '1793300000.000001'").get() as { n: number }).n;
+  assert.equal((await post("/api/answer", { item: "w" + n, text: "A", rid: "rtest-head-0002" })).status, 200);
+  assert.match(sent.at(-1)!.text, /^\[보드 · 일 창 · 카드 1793300000\.000001\] \[Boarder\] The person answered your card/);
+  assert.equal((await post("/api/chat", { channel: "primary", thread: "1793300000.000001", text: "하나 더", rid: "rtest-head-0003" })).status, 200);
+  assert.match(sent.at(-1)!.text, /^\[보드 · 일 창 · 카드 1793300000\.000001\] \[Boarder\] The person replied in the thread/);
+  const { paneOfId } = await import("./member-board.ts");
+  assert.equal((await post("/api/chat", { pane: paneOfId("ew_role1"), text: "진행 어때?", rid: "rtest-head-0004" })).status, 200);
+  assert.equal(sent.at(-1)!.text, "[보드 · 일 창] [Boarder chat] 진행 어때?");
+  const at = Date.now() - 5000, id = Number(db.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").run(MEMBER, "일 창", "progress", "PR 올림", at).lastInsertRowid);
+  const root = `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;
+  assert.equal((await post("/api/chat", { pane: paneOfId("ew_role1"), thread: root, text: "다시 봐 줘", rid: "rtest-head-0005" })).status, 200);
+  assert.equal(sent.at(-1)!.text, `[보드 · 일 창 · 스레드 ${root}] [Boarder chat] 다시 봐 줘`);
+  assert.deepEqual({ ...db.prepare("SELECT kind, thread FROM board_log WHERE text = '다시 봐 줘'").get() as object }, { kind: "me", thread: root });
+});

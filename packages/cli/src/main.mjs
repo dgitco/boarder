@@ -36,7 +36,9 @@ Report (from an AI tool's session)
   boarder ask "<question>" --choice "<A>" --choice "<B>" [--rec A] [--wait <s>]
   boarder wait <card id> [--timeout <s>]      exit 0 = answered or closed, 2 = timed out
   boarder close <card id> "<how it was handled>"
-  boarder say <card id> "<text>"
+  boarder say <card id|thread id> "<text>"
+  A board message starts with a head like [보드 · <channel | Primary>( · 스레드 <id> | · 카드 <id>)] — answer in the same place:
+    Primary → boarder chat · 카드 <id> → boarder say <id> · 스레드 <id> → boarder say <id> · channel only → boarder log
   boarder status "<what this window is doing, 40 chars>"
   boarder cards ["<words>"] [--limit 15]
   boarder feedback "<text>" [--kind bug|idea|other]   feedback about Boarder to the people who make it
@@ -126,9 +128,10 @@ async function readStdin(ms = 3000) {
   try { for await (const d of process.stdin) out += d; } catch {}
   clearTimeout(t); return out;
 }
-async function postReply(text) {
+async function postReply(text, prompt, T) {
   const w = await windowToken({ timeoutMs: 4000 });   // 훅 한도(setup 의 Stop 20초) 안에 — 매달린 망이어도 4 + 6초
-  const r = await fetch(`${server()}/api/agent/inbox_log`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${w.token}` }, body: JSON.stringify({ kind: 'reply', text }), signal: AbortSignal.timeout(6000) });
+  const [tool, args] = T.replyCall(prompt, text);
+  const r = await fetch(`${server()}/api/agent/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${w.token}` }, body: JSON.stringify(args), signal: AbortSignal.timeout(6000) });
   return r.ok;
 }
 async function turnHook(kind, arg) {
@@ -140,24 +143,25 @@ async function turnHook(kind, arg) {
     const keys = [process.env.BOARDER_WINDOW, j['thread-id']];
     for (const prompt of (Array.isArray(j['input-messages']) ? j['input-messages'] : []).slice().reverse()) {
       const text = T.replyFor({ keys, prompt, at: 0, reply: j['last-assistant-message'] });
-      if (text) return void await postReply(text);
+      if (text) return void await postReply(text, prompt, T);
     }
     return;
   }
   let j; try { j = JSON.parse(await readStdin()); } catch { return; }
   if (!j?.transcript_path || !j?.session_id) return;
   const keys = [process.env.BOARDER_WINDOW, j.session_id];
+  if (!T.hasMark(keys)) return;   // 보드에서 온 턴이 아니면 기록을 읽지 않음(턴마다 수백 MB 를 읽던 것)
   // 마지막 답이 기록에 늦게 써질 수 있어 잠깐 다시 읽음. 훅이 마지막 답을 주면(last_assistant_message) 그것을 씀
   let t = null;
   for (let i = 0; i < 3; i++) {
-    try { t = T.lastTurn(readFileSync(j.transcript_path, 'utf8')); } catch { return; }
+    try { t = T.lastTurnOfFile(j.transcript_path); } catch { return; }
     if (typeof j.last_assistant_message === 'string' && j.last_assistant_message.trim() && t) t.reply = j.last_assistant_message;
     if (t?.reply) break;
     await new Promise(r => setTimeout(r, 500));
   }
   if (!t) return;
   const text = T.replyFor({ keys, ...t });
-  if (text) await postReply(text);
+  if (text && !t.said) await postReply(text, t.prompt, T);   // 창이 그 턴에 스스로 boarder chat · say 로 답했으면 또 올리지 않음
 }
 
 async function status() {
