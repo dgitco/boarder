@@ -52,7 +52,7 @@ export async function inbox(db: D1Database, me: string) {
   const unread: R[] = [];
   for (const c of P.chans) {
     const s = seen.get(c.pane) ?? now - FIRST_DAY;   // 처음 보는 채널은 하루 안 글만
-    for (const r of c.rows) if (!TS.test(String(r.thread || "")) && Number(r.at) > s) unread.push({ ts: tsOf(r.at, r.id), chan: key.get(c.pane), thread: null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author: c.name });   // 스레드 답은 아래 threadUnread(채널 읽음과 따로)
+    for (const r of c.rows) if (!TS.test(String(r.thread || "")) && Number(r.at) > s && !((seen.get(thKey(tsOf(r.at, r.id))) ?? 0) >= Number(r.at))) unread.push({ ts: tsOf(r.at, r.id), chan: key.get(c.pane), thread: null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author: c.name });   // 스레드 답은 아래 threadUnread(채널 읽음과 따로)
   }
   unread.push(...await threadUnread(db, me, seen, now, P, key));
   unread.sort((a, b) => b.at - a.at);
@@ -167,7 +167,7 @@ export async function chatPost(db: D1Database, me: string, b: R): Promise<{ stat
     // 스레드(뿌리 · 답 어느 ts 든) — 그 스레드 답을 지금까지 읽음으로. 뿌리 글이면 그 채널도 예전처럼(반응 · 답 = 읽음)
     const root = r && r.thread && r.thread !== "primary" ? rootOf(r.thread) : r && TS.test(ts) ? ts : null;
     if (root) await seeUpTo(db, me, thKey(root), Date.now());
-    if (r && !r.thread) {   // 노드 채널 글 · 카드(Primary 줄은 채널 읽음 없음 — 위 스레드만)
+    if (r && !r.thread && b.only !== "thread") {
       const { P } = await chans(db, me), pane = P.paneOfLog({ win: String(r.win), kind: r.kind, thread: r.thread }); if (pane) await seeUpTo(db, me, pane, Date.now()); }
     return { status: 200, body: { ok: true, state: "ok", seen: true } };
   }

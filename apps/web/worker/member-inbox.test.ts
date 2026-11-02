@@ -171,6 +171,18 @@ test("읽지 않음: 한 스레드의 새 답 여럿은 항목 하나(가장 새
   assert.equal((await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === root).length, 0);
 });
 
+test("열어서 읽음(seen only thread, 에이전트 단위 회원): 그 스레드 · 그 맨 위 글만 읽음 — 같은 채널 다른 글은 남음", async () => {
+  const s = setup();
+  const a = s.log(A, "영업 창", "글 하나", s.now - 60_000), b2 = s.log(A, "영업 창", "글 둘", s.now - 30_000);
+  const r0 = s.log(A, "예시 팀 영업", "자료 확인해 줘", s.now - 120_000, "me"), root = tsOf(s.now - 120_000, r0);
+  s.log(A, "영업 창", "확인했어요", s.now - 20_000, "say", root);
+  assert.equal((await MI.inbox(s.db, A)).unread.length, 3);
+  await MI.chatPost(s.db, A, { channel: "n:예시 팀 영업", thread: root, seen: true, only: "thread" });
+  let u = (await MI.inbox(s.db, A)).unread; assert.equal(u.length, 2); assert.ok(!u.some((x: any) => x.thread === root));
+  await MI.chatPost(s.db, A, { channel: "n:예시 팀 영업", thread: tsOf(s.now - 60_000, a), seen: true, only: "thread" });   // 답 없는 맨 위 글을 엶
+  u = (await MI.inbox(s.db, A)).unread; assert.deepEqual(u.map((x: any) => x.ts), [tsOf(s.now - 30_000, b2)]);
+});
+
 test("저장: 내 글 · 내 카드만, 남의 것 404, 풀면 빠짐", async () => {
   const s = setup(); const mine = s.log(A, "영업 창", "저장할 글", s.now - 5000), theirs = s.log(B, "남의 창", "남의 글", s.now - 4000);
   s.card("1793400000.000001", A); s.card("1793400000.000002", B, "남의 창");
