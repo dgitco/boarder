@@ -80,16 +80,20 @@
   }
   const IBC = () => { try { return window.HBInbox?.counts?.() || {}; } catch { return {}; } };
   const ATTN = () => { try { return typeof attnCount === 'function' ? attnCount() || 0 : 0; } catch { return 0; } };
+  const hm = d => d.toLocaleTimeString('ko-KR', {hour: 'numeric', minute: '2-digit'});
+  const when = ts => { if (!ts || !isFinite(+ts)) return ''; const d = new Date(+ts * 1000), n = new Date(), y = new Date(n); y.setDate(n.getDate() - 1);
+    return d.toDateString() === n.toDateString() ? hm(d) : d.toDateString() === y.toDateString() ? '어제' : `${d.getMonth() + 1}/${d.getDate()}`; };
+  const lastOf = ch => { try { const m = typeof CS !== 'undefined' ? CS.ch?.[ch]?.messages : null; const x = m && m[m.length - 1]; return x ? {ts: x.ts, text: String(x.text || '').replace(/[*_`>~]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80)} : null; } catch { return null; } };
   const BOTS = [
-    {k: 'c:primary', name: () => pinName('primary'), av: () => pinAv('primary'), pre: () => '무엇이든 맡겨 주세요', n: () => 0, open: () => fn('openChan') && openChan('primary')},
-    {k: 'c:i:unread', name: () => '슬랙 인박스', av: () => 'slack inbox', pre: () => IBC().unread ? `읽지 않은 글 ${IBC().unread}개` : '새 글이 없어요', n: () => IBC().unread || 0, open: () => window.HBInbox?.openFeed?.('unread')},
-    {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => ATTN() ? `내 차례 ${ATTN()}개` : '할 일이 없어요', n: () => ATTN(), open: () => window.HBInbox?.openFeed?.('turn')},
-    {k: 'c:i:drafts', name: () => '상담봇', av: () => 'counsel bot', pre: () => IBC().drafts ? `보낼 초안 ${IBC().drafts}개` : '보낼 초안이 없어요', n: () => IBC().drafts || 0, open: () => window.HBInbox?.openFeed?.('drafts')},
+    {k: 'c:primary', name: () => pinName('primary'), av: () => pinAv('primary'), pre: () => lastOf('primary')?.text || '무엇이든 맡겨 주세요', at: () => lastOf('primary')?.ts, n: () => 0, open: () => fn('openChan') && openChan('primary')},
+    {k: 'c:i:unread', name: () => '슬랙 인박스', av: () => 'slack inbox', pre: () => IBC().unread ? `읽지 않은 글 ${IBC().unread}개` : '새 글이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.unread || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => IBC().unread || 0, open: () => window.HBInbox?.openFeed?.('unread')},
+    {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => ATTN() ? `내 차례 ${ATTN()}개` : '할 일이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.turn || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => ATTN(), open: () => window.HBInbox?.openFeed?.('turn')},
+    {k: 'c:shop', name: () => '상담봇', av: () => 'counsel bot', pre: () => lastOf('shop')?.text || '채널톡 상담 답 초안을 올려요', at: () => lastOf('shop')?.ts, n: () => 0, open: () => fn('openChan') && openChan('shop')},
   ];
   function data(){
     const ws = work(), lk = locks(ws);
     return {ws, lk, open: openKey(),
-      sig: [BOTS.map(b => b.name() + b.pre() + (unread(b.k.slice(2)) ? '*' : '')).join(','), meName(), PINS.map(k => pinName(k) + (unread(k) ? '*' : '')).join(','), [...lk].sort().join(','), ...ws.map(p => [p.pane, nm(p), status(p), preview(p), ago(p.last?.ago), rows(p.pane)].join('\u0001'))].join('\u0002')};
+      sig: [BOTS.map(b => b.name() + b.pre() + when(b.at?.()) + (unread(b.k.slice(2)) ? '*' : '')).join(','), meName(), PINS.map(k => pinName(k) + (unread(k) ? '*' : '')).join(','), [...lk].sort().join(','), ...ws.map(p => [p.pane, nm(p), status(p), preview(p), ago(p.last?.ago), rows(p.pane)].join('\u0001'))].join('\u0002')};
   }
   const opening = [];
   let sig = null;
@@ -99,7 +103,7 @@
     sig = s;
     pinsEl.innerHTML = '';
     const me = list.querySelector('.bx-ea-me'); if (me && me.dataset.n !== meName()){ me.dataset.n = meName(); me.innerHTML = av(meName(), 40); }
-    rowsEl.innerHTML = BOTS.map(b => row(b.k, b.name(), av(b.av(), 44), '', b.pre(), b.n() > 0 || unread(b.k.slice(2)), d.open === b.k, d.lk.has(b.k), '')).join('') + opening.map(p => `<div class="bx-ea-row bx-en-pending" role="listitem"><span class="bx-ea-ava">${av(p.name, 44)}</span><span class="bx-ea-tx"><span class="bx-ea-l1"><b>${E(p.name)}</b>${p.error ? '' : '<span class="bx-ea-status">여는 중</span><span class="bx-es-spin" aria-hidden="true"></span>'}</span>${p.error ? '<span class="bx-ea-pv" role="alert">일시적인 오류가 발생했어요</span>' : ''}</span></div>`).join('') + d.ws.map(p => row('n:' + p.pane, nm(p), av(nm(p), 44), ago(p.last?.ago), preview(p) === status(p) ? '' : preview(p), rows(p.pane) > 0, d.open === 'n:' + p.pane, d.lk.has('n:' + p.pane), status(p))).join('');
+    rowsEl.innerHTML = BOTS.map(b => row(b.k, b.name(), av(b.av(), 44), when(b.at?.()), b.pre(), b.n() > 0 || unread(b.k.slice(2)), d.open === b.k, d.lk.has(b.k), '')).join('') + opening.map(p => `<div class="bx-ea-row bx-en-pending" role="listitem"><span class="bx-ea-ava">${av(p.name, 44)}</span><span class="bx-ea-tx"><span class="bx-ea-l1"><b>${E(p.name)}</b>${p.error ? '' : '<span class="bx-ea-status">여는 중</span><span class="bx-es-spin" aria-hidden="true"></span>'}</span>${p.error ? '<span class="bx-ea-pv" role="alert">일시적인 오류가 발생했어요</span>' : ''}</span></div>`).join('') + d.ws.map(p => row('n:' + p.pane, nm(p), av(nm(p), 44), ago(p.last?.ago), preview(p) === status(p) ? '' : preview(p), rows(p.pane) > 0, d.open === 'n:' + p.pane, d.lk.has('n:' + p.pane), status(p))).join('');
     lay();
   }
   // 대화 머리 · 열림 표시
@@ -325,6 +329,27 @@
     else if (e.key === 'Tab') closeMenu();
   });
 
+  let sepBusy = false;
+  function seps(){
+    const feed = ans.querySelector && ans.querySelector('#cfeed'); if (!feed || sepBusy) return;
+    sepBusy = true;
+    try {
+      const bottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 48, top0 = feed.scrollTop, added = [];
+      const want = [], ms = [...feed.querySelectorAll('.msg[data-mts]')].filter(m => !m.closest('.cth, .croot, .itm'));
+      let prev = 0;
+      for (const m of ms){ const t = +m.dataset.mts; if (!isFinite(t)) continue; if (!prev || t - prev > 900) want.push([m, t]); prev = t; }
+      const have = new Map([...feed.querySelectorAll('.bx-ea-tsep')].map(e => [e.nextElementSibling, e]));
+      for (const e of have.values()) if (!want.some(([m]) => m === e.nextElementSibling)) e.remove();
+      for (const [m, t] of want){ const d = new Date(t * 1000), lab = (d.toDateString() === new Date().toDateString() ? '오늘 ' : `${d.getMonth() + 1}월 ${d.getDate()}일 `) + hm(d);
+        const e = have.get(m); if (e){ if (e.textContent !== lab) e.textContent = lab; continue; }
+        const x = document.createElement('div'); x.className = 'bx-ea-tsep'; x.textContent = lab; m.parentNode.insertBefore(x, m); added.push(x); }
+      if (added.length){
+        if (bottom) feed.scrollTop = feed.scrollHeight;
+        else { let dy = 0; for (const x of added) if (x.offsetTop < top0) dy += x.offsetHeight + 24; if (dy) feed.scrollTop = top0 + dy; }   // 보던 글 그대로(위에 들어간 줄 높이 + 위아래 여백 24)
+      }
+    } finally { sepBusy = false; }
+  }
+  new MutationObserver(() => { if (!sepBusy) requestAnimationFrame?.(seps) ?? seps(); }).observe(ans, {childList: true, subtree: true});
   // ── 맞추기: 보드가 다시 그릴 때(redraw 감쌈) · 대화 칸이 열리고 닫힐 때 · 3초마다(늦게 오는 상태)
   const rd0 = fn('redraw');
   if (rd0) window.redraw = function(){ const r = rd0.apply(this, arguments); try { draw(); } catch {} return r; };

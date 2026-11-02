@@ -243,3 +243,13 @@ html.bx-ea #ans .msg.me .bd a{color:inherit}
 html.bx-ea #ans .msg .btns,html.bx-ea #ans .msg .rep{margin-top:6px}
 html.bx-ea .bx-ea-top .bx-ea-compose{display:grid!important}
 html.bx-ea .bx-ea-row .bx-ea-dot{display:none}   /* Grok 줄엔 점이 없음 — 수는 미리보기 글로 */
+html.bx-ea #ans .bx-ea-tsep{margin:16px 0 8px;text-align:center;font-size:13px;color:var(--muted)}
+html.bx-ea #ans .ccomp .box{position:relative;margin-left:56px;border-radius:22px}
+html.bx-ea #ans .ccomp .crow .plus{position:absolute;left:-56px;bottom:0;width:44px;height:44px;border-radius:50%;background:var(--surface);box-shadow:0 2px 12px var(--shadow);display:grid;place-items:center}
+html.bx-ea #ans .ccomp .cvoice{display:none}   /* 보이스 모드 = 머리 영상 원 → 전화 */
+html.bx-ea #ans .msg .btns{display:flex;flex-direction:column;align-items:stretch;gap:0;width:min(78%,560px);border-radius:14px;background:var(--surface);box-shadow:0 0 0 1px var(--line);overflow:hidden}
+html.bx-ea #ans .msg .btns > button{display:block;width:100%;margin:0;padding:11px 14px;border:0;border-top:1px solid var(--line);border-radius:0;background:none;color:var(--ink);font-size:16px;text-align:left}
+html.bx-ea #ans .msg .btns > button:first-child{border-top:0}
+html.bx-ea #ans .msg .btns > button.on{background:color-mix(in srgb,var(--ink) 6%,transparent)}
+html.bx-ea #ans .msg .rep{font-size:13px;color:var(--muted)}
+html.bx-ea #ans .msg .rep .ravs{display:none}

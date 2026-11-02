@@ -97,7 +97,7 @@ test("목록 = 기능별 비서 넷(Grok Bot 꼴) — 작업 노드 · 고정 �
   assert.equal(t.body.querySelectorAll(".bx-ea-pin").length, 0);
   t.panes[0].g = "wait"; t.tick();
   assert.equal(t.body.querySelectorAll(".bx-ea-row").length, 4);
-  t.ctx.ans.hidden = true; t.tick(); t.body.querySelectorAll(".bx-ea-row")[0].click(); assert.deepEqual(t.calls, ["chan:primary"]);   // 이미 연 대화면 다시 열지 않음 — 닫은 뒤 누름
+  t.ctx.ans.hidden = true; t.tick(); t.body.querySelectorAll(".bx-ea-row")[0].click(); assert.deepEqual(t.calls, ["chan:primary"]); t.ctx.ans.hidden = true; t.tick(); t.body.querySelectorAll(".bx-ea-row")[3].click(); assert.deepEqual(t.calls, ["chan:primary", "chan:shop"]);
 });
 
 test("영상 메뉴 → 전화 HBV.start · 미팅 openArt · 통화 중 바로 layout", () => {

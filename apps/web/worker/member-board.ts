@@ -194,6 +194,19 @@ export function convoMsg(i: R, mainName: string) {
   const at = convoAt(i), mine = i.kind === "session";
   return { ...msg({ id: h, win: mine ? ME : "보더", kind: mine ? "me" : "chat", text: String(i.title), at }, "", mainName), lid: 0, ch: "primary", moved: { chan: ORIGIN[src] || src || "들여오기", at: at / 1000 } };
 }
+const FOLD_TS = /^\d{10}\.99\d{4}$/;
+export function convoFold(n: Node, mainName: string) {
+  if (!n.convos.length) return null;
+  const list = [...n.convos].sort((a, b) => convoAt(a) - convoAt(b));
+  let h = 0; for (const ch of String(n.id)) h = (Math.imul(h, 31) + ch.charCodeAt(0)) >>> 0;
+  const at0 = convoAt(list[0]) || Number(n.updated_at) || 0;   // 시각 없는 대화만이면 노드 시각
+  const ts = `${String(Math.floor(at0 / 1000)).padStart(10, "0")}.${990000 + (h % 10000)}`;
+  const sessions = list.filter(i => i.kind === "session").length, threads = list.length - sessions;
+  const replies = list.map(i => ({ ...convoMsg(i, mainName), thread: ts }));
+  const text = [sessions ? `지난 대화 ${sessions}` : "", threads ? `스레드 ${threads}` : ""].filter(Boolean).join(" · ") + " — 들여온 것이에요. 눌러서 펼쳐 봐요";
+  const root = { ...msg({ id: 0, win: "보더", kind: "chat", text, at: at0 }, "", mainName), ts, lid: 0, ch: "primary", replies: replies.length, latest: replies.at(-1)!.ts, rnames: [], fold: { sessions, threads } };
+  return { root, replies };
+}
 async function primaryRows(db: D1Database, me: string, before?: string) {
   const m = before ? /^(\d{10})\.(\d{6})$/.exec(before) : null, sec = m ? Number(m[1]) * 1000 : 0;
   return (await db.prepare(`SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary'${m ? " AND (at < ? OR (at < ? AND id % 1000000 < ?))" : ""} ORDER BY at DESC, id DESC LIMIT 101`)
@@ -244,6 +257,10 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
   if (m) {
     if (m[1] !== "primary") return j({ channel: m[1], messages: [], more: false, cursor: null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
     if (m[2]) {
+      if (FOLD_TS.test(m[2])) {
+        const L = await load(db, me), f = L.nodes.map(n => convoFold(n, mainName)).find(x => x?.root.ts === m![2]);
+        if (f) return j({ channel: "primary", root: m[2], owner: null, messages: [f.root, ...f.replies] });
+      }
       const card = await cardBy(db, me, m[2]);
       if (card) {
         const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, m[2]).all<R>()).results;
@@ -267,9 +284,11 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     // 카드 글은 답하거나 닫혀도 채널에 남음 — 할 일 목록(load)과 따로 읽음
     const cards = (await db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results
       .filter(c => CARD_TS.test(String(c.id)) && (n ? L.nodeOfWin(String(c.win)) === n : ew ? c.win === ew.name : false));
-    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...msg(r, me, r.win), ch: "primary", ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })), ...(n ? n.convos.map(i => ({ at: convoAt(i), m: convoMsg(i, mainName) })) : []),
+    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...msg(r, me, r.win), ch: "primary", ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })),
       ...cards.map(c => ({ at: Number(c.at), m: { ...cardMsg(c, L.logs.filter(r => r.thread === c.id)), ch: "primary" } }))]
       .sort((a, b) => a.at - b.at).slice(-300).map(x => x.m);
+    const fold = n ? convoFold(n, mainName) : null;
+    if (fold) out.unshift(fold.root);
     await withReacts(db, me, out as R[]);
     return j({ channel: "n:" + t, messages: out, stale_min: 0, more: false });
   }
