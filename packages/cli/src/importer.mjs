@@ -142,9 +142,10 @@ export async function collectWindows() {
     const l = live.find(x => h.pids.includes(x.pid)); if (l) { if (taken.has(l.pid)) continue; taken.add(l.pid); }
     const tool = ['claude', 'codex', 'cursor', 'gemini'].includes(h.tool) ? h.tool : h.tool || 'agent';
     const sid = l?.sid || '';
+    const cfgDir = l?.dir && path.resolve(l.dir) !== path.resolve(path.join(home(), '.claude')) ? l.dir : '';
     items.push({ key: `window:${H}:herdr:${h.pane}`, kind: 'window', engine: 'herdr-own', title: clip(h.name || h.label || l?.name || `${tool} · ${path.basename(h.cwd || '')}`, 120), cwd: l?.cwd || h.cwd, win: `${H}:herdr:${h.pane}`,
       session: sid ? `session:${tool}:${sid}` : '', state: l ? (ST[l.status] || HS[h.status] || 'idle') : (HS[h.status] || 'idle'), state_at: l?.at || Date.now(),
-      handle: { engine: 'herdr-own', pane: h.pane, workspace: h.workspace, tool, session_id: sid, cwd: l?.cwd || h.cwd, name: h.name || h.label, park: false } });
+      handle: { engine: 'herdr-own', pane: h.pane, workspace: h.workspace, tool, session_id: sid, cwd: l?.cwd || h.cwd, name: h.name || h.label, park: false, ...(cfgDir ? { config_dir: cfgDir } : {}) } });
   }
   for (const l of live) {
     if (taken.has(l.pid) || l.tmux || l.kind === 'sdk') continue;
@@ -379,7 +380,30 @@ async function ownPark(h) {
   for (let i = 0; i < 40; i++) { await sleep(500); const pid = +run('tmux', ['display', '-p', '-t', pane, '#{pane_pid}'], 2000).trim(); if (!pid || !agentUnder(pid, procTable())) return { ...h, parked_at: Date.now() }; }
   throw new Error('the window did not exit');
 }
+async function herdrOwnPark(h) {
+  const pane = h.pane; if (!pane) throw new Error('no pane');
+  const agentIn = () => {
+    try { const fp = herdrCall(['pane', 'process-info', '--pane', pane], 4000).process_info?.foreground_processes || []; const pt = procTable(); return fp.some(p => { const v = pt.get(p.pid); return v && AGENT(v.args); }) ? 'yes' : 'no'; }
+    catch { try { return (herdrCall(['agent', 'list'], 4000).agents || []).some(a => a.pane_id === pane && a.agent_status !== 'done') ? 'yes' : 'no'; } catch { return 'unknown'; } }
+  };
+  const before = agentIn();
+  if (before === 'unknown') throw new Error('could not read that Herdr pane (Herdr did not answer) — nothing was changed; try again');
+  if (before === 'no') throw new Error('no AI tool is running in that Herdr pane — nothing was changed');
+  try { herdrCall(['pane', 'send-keys', pane, 'Escape'], 4000); } catch {}
+  await sleep(300);
+  herdrCall(['pane', 'run', pane, '/exit'], 8000);   // 글 + Enter(엔진 Herdr 어댑터 send 와 같은 동사)
+  let st = 'yes';
+  for (let i = 0; i < 40 && st !== 'no'; i++) { await sleep(500); st = agentIn(); }
+  if (st === 'unknown') throw new Error('sent /exit but could not tell whether the AI tool ended (Herdr did not answer) — the Herdr pane was left as is; check it there');
+  if (st !== 'no') throw new Error('the window did not exit');
+  let only = false; try { only = !!h.workspace && (herdrCall(['pane', 'list'], 4000).panes || []).filter(p => (p.workspace_id || p.workspace) === h.workspace).length === 1; } catch {}
+  try { herdrCall(only ? ['workspace', 'close', h.workspace] : ['pane', 'close', pane], 8000); return { ...h, parked_at: Date.now(), closed: true }; }
+  catch (e) { return { ...h, parked_at: Date.now(), closed: false, why: e.message }; }   // AI 도구는 끝남 — 빈 셸 판만 남음(사람이 닫음)
+}
 const resumeArgv = h => h.tool === 'codex' ? ['codex', 'resume', h.session_id] : [...(h.config_dir ? ['env', `CLAUDE_CONFIG_DIR=${h.config_dir}`] : []), 'claude', '--resume', h.session_id];
+// 손으로 이어 열 명령 한 줄(옮기다 tmux 가 안 열렸을 때 알려 줌) — argv 가 있으면 그것(커스텀 · codex)
+const shq = x => /^[\w@%+=:,./-]+$/.test(String(x)) ? String(x) : `'${String(x).replace(/'/g, `'\\''`)}'`;
+export const resumeCommand = h => `${h.cwd ? `cd ${shq(h.cwd)} && ` : ''}${(Array.isArray(h.argv) && h.argv.length ? h.argv : resumeArgv(h)).map(shq).join(' ')}`;
 async function ownReopen(h, text) {
   const argv = [...resumeArgv(h), ...(text ? [text] : [])];
   const has = s => { try { execFileSync('tmux', ['has-session', '-t', s], { stdio: 'ignore', timeout: 2000 }); return true; } catch { return false; } };
@@ -442,18 +466,26 @@ async function doCmd1(cmd) {
   if (cmd.verb === 'move') {
     if (!E?.run) throw new Error('the Boarder tmux engine is not installed here — run `boarder engine setup`');
     if (!h.session_id) throw new Error('could not find this window\'s conversation — save it with `boarder session save` first');
-    if (h.park === false) throw new Error('close this terminal window first, then move it');
+    if (h.park === false && h.engine !== 'herdr-own') throw new Error('close this terminal window first, then move it');
     if (viaEngine) await E.run('park', { id: h.id, engine: h.engine });
     else if (h.engine === 'tmux-own') await ownPark(h);
+    else if (h.engine === 'herdr-own') {
+      const p = await herdrOwnPark(h);
+      if (!p.closed) throw new Error(`the AI tool ended but the Herdr pane could not be closed (${p.why}) — not opened in tmux; close that pane yourself, then resume with: ${resumeCommand(h)}`);
+    }
     // 2) 우리 tmux 엔진에서 같은 대화로 다시 열기
     const id = `ew_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const spec = { id, name: clip(a.title || h.name || id, 40), cwd: h.cwd, session_id: h.session_id, resume: true, ...(h.tool === 'codex' || h.config_dir ? { argv: resumeArgv(h) } : {}) };
-    const r = await E.run('open', { engine: 'tmux', spec });
+    let r;
+    try { r = await E.run('open', { engine: 'tmux', spec }); }
+    catch (e) { if (!viaEngine) throw new Error(`closed in ${h.engine === 'herdr-own' ? 'Herdr' : 'its old window'} but tmux did not open (${e.message}) — resume it by hand: ${resumeCommand(h)}`); throw e; }
     return { state: 'working', id: r.id || id, key: `window:${H2()}:${r.id || id}`, win: `${H2()}:${r.id || id}`, session: `session:${h.tool || 'claude'}:${h.session_id}`, cwd: h.cwd, title: spec.name,
       handle: { engine: 'tmux', ...spec, session_id: r.session_id || h.session_id } };
   }
   throw new Error(`unknown command ${cmd.verb}`);
 }
+// boarder engine move-all 이 씀: 보드 「옮겨 타기」와 같은 길(그쪽 창을 쉬게 → 우리 tmux 엔진에서 같은 대화로)
+export const moveWindow = (handle, title) => doCmd({ verb: 'move', args: { handle, title } });
 export async function drainOnce({ quiet = false } = {}) {
   const { cmds } = await api('GET', '/api/device/cmds');
   for (const c of cmds || []) {

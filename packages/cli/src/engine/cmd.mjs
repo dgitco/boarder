@@ -11,7 +11,8 @@ export const ENGINE_HELP = `Engine (lets Boarder open, wake, park and reopen AI 
   boarder engine add <name> --exec <file> | --url <http://127.0.0.1:…>   attach your own engine (spec: docs/engine-adapter.md)
   boarder engine remove <name>
   boarder engine event <window id> <busy|idle|waiting|background|none>  state hook for custom engines
-  boarder engine default <engine>          engine for new windows on this machine
+  boarder engine default <engine>          engine for new windows on this machine (tmux unless you pick another; Herdr only when you pick it here)
+  boarder engine move-all herdr tmux [--yes] [--force]   list the Herdr windows here, then (--yes) close each in Herdr and reopen it in tmux on the same conversation (windows that are working or asking something are skipped unless --force)
   boarder engine primary on|off            whether Boarder may start your Primary (main bot) window on this machine
   boarder engine open --name <name> [--cwd <folder>] [--prompt <first message>] [--config-dir <Claude config folder>] [--device <device id>]
                                            open a window now, without a role card (Primary chat gets one line)
@@ -59,6 +60,7 @@ export async function engineCommand(sub, pos, flags) {
   }
   if (sub === 'remove') { const cfg = E.loadCfg(); if (!cfg.custom?.[pos[0]]) { console.error('no such custom engine'); process.exit(1); } delete cfg.custom[pos[0]]; delete cfg.caps?.[pos[0]]; if (cfg.default === pos[0]) cfg.default = 'tmux'; E.saveCfg(cfg); return console.log(`removed ${pos[0]}`); }
   if (sub === 'default') { const cfg = E.loadCfg(); if (!E.adapters(cfg)[pos[0]]) { console.error('no such engine here'); process.exit(1); } cfg.default = pos[0]; E.saveCfg(cfg); return console.log(`default engine: ${pos[0]}`); }
+  if (sub === 'move-all') return moveAll(pos, flags);
   if (sub === 'primary') {
     const v = pos[0]; if (!['on', 'off'].includes(v)) { console.error('boarder engine primary on|off'); process.exit(64); }
     const cfg = E.loadCfg(); cfg.no_primary = v === 'off'; E.saveCfg(cfg);
@@ -86,3 +88,45 @@ export async function engineCommand(sub, pos, flags) {
   }
   console.error(ENGINE_HELP); process.exit(64);
 }
+
+async function moveAll(pos, flags) {
+  if (pos[0] !== 'herdr' || pos[1] !== 'tmux') { console.error('boarder engine move-all herdr tmux [--yes] [--force]   (Herdr → tmux only)'); process.exit(64); }
+  const cfg = E.loadCfg();
+  if (!E.adapters(cfg).tmux) { console.error('the tmux engine is not set up here — run `boarder engine setup` first'); process.exit(1); }
+  const I = await import('../importer.mjs');
+  const items = (await I.collectWindows()).filter(w => w.engine === 'herdr' || w.engine === 'herdr-own');
+  const busy = w => ['working', 'question'].includes(w.state);
+  const STATE = { working: 'working', question: 'asking something', idle: 'idle', gone: 'gone' };
+  if (!items.length) { console.log('no Herdr windows on this machine'); return flags.yes ? defaultBack() : undefined; }
+  console.log(`Herdr windows on this machine (${items.length}):`);
+  for (const w of items) console.log(`  ${w.engine === 'herdr' ? 'opened by Boarder' : 'yours            '}  ${w.title}  [${STATE[w.state] || w.state || 'idle'}]${w.cwd ? `  ${w.cwd}` : ''}${w.handle?.session_id ? '' : '  — conversation id unknown, will be skipped'}${busy(w) && !flags.force ? '  — busy, will be skipped (--force moves it anyway)' : ''}`);
+  if (!flags.yes) return console.log('\nEach window is closed in Herdr and reopened in tmux on the same conversation (its AI tool restarts). Run again with --yes to move them.');
+  let ok = 0, bad = 0, skipped = 0;
+  for (const w of items) {
+    if (busy(w) && !flags.force) { skipped++; console.log(`– ${w.title}: skipped — ${STATE[w.state]} (let it finish, or add --force)`); continue; }
+    try {
+      if (!w.handle?.session_id) throw new Error('conversation id unknown — save it with `boarder session save` in that window first');
+      let note = '';
+      if (w.engine === 'herdr') await moveOurs(w, I);
+      else note = (await I.moveWindow(w.handle, w.title))?.note || '';
+      ok++; console.log(`✓ ${w.title}${note ? ` (${note})` : ''}`);
+    } catch (e) { bad++; console.error(`✗ ${w.title}: ${e.message}`); }
+  }
+  console.log(`moved ${ok}${bad ? ` · failed ${bad}` : ''}${skipped ? ` · skipped ${skipped} busy (--force moves them)` : ''} — new windows open in tmux`);
+  defaultBack();
+  if (bad) process.exitCode = 1;
+}
+async function moveOurs(w, I) {
+  const id = w.handle.id, r = await E.run('park', { id, engine: 'herdr' }), { engine: _e, ...got } = r?.handle || {};
+  const spec = { name: w.handle.name || w.title, cwd: w.handle.cwd, ...got };
+  spec.session_id ||= w.handle.session_id;
+  try { await E.run('open', { engine: 'tmux', spec: { ...spec, id, resume: !spec.argv } }); }
+  catch (e) {
+    let back = '';
+    try { await E.run('reopen', { handle: { ...spec, engine: 'herdr' }, engine: 'herdr', id }); back = 'reopened it in Herdr'; }
+    catch (e2) { back = `could not reopen it in Herdr either (${e2.message}) — resume it by hand: ${I.resumeCommand(spec)}`; }
+    throw new Error(`tmux did not open (${e.message}) — ${back}`);
+  }
+}
+// 옮긴 뒤 기본이 Herdr 로 남아 있으면 tmux 로(옮긴 뜻과 맞게)
+function defaultBack() { const c = E.loadCfg(); if (c.default === 'herdr') { c.default = 'tmux'; E.saveCfg(c); console.log('default engine: tmux'); } }

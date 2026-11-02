@@ -65,7 +65,6 @@ let herdrSeen = { at: 0, ok: false };   // Herdr 서버가 도는지(1분 캐시
 const herdrUp = cfg => { if (Date.now() - herdrSeen.at > 60000) herdrSeen = { at: Date.now(), ok: !!(cfg.herdr || which('herdr')) && herdr.running(cfg) }; return herdrSeen.ok; };
 const TMUX = { key: tmux.key, open: tmux.open, send: tmux.send, state: (c, id) => tmux.state(c, id), park: tmux.park, reopen: tmux.reopen, close: tmux.close, list: c => tmux.list(c) };
 
-// 데몬이 고르는 법(16쪽 ②): 역할에 정해진 엔진 → 기기 기본 → tmux → (Herdr 는 자가 시험 통과 뒤) → 등록된 커스텀 → 없으면 보고만
 export function adapters(cfg = loadCfg()) {
   const out = {};
   if (cfg.tmux || which('tmux')) out.tmux = TMUX;
@@ -74,10 +73,10 @@ export function adapters(cfg = loadCfg()) {
   return out;
 }
 export function pick(cfg, want) {
-  const a = adapters(cfg);
-  if (want && a[want]) return want;
-  if (cfg.default && a[cfg.default]) return cfg.default;
-  return a.tmux ? 'tmux' : Object.keys(a)[0] || null;
+  const a = adapters(cfg), ok = n => !!n && !!a[n] && (n !== 'herdr' || cfg.default === 'herdr');
+  if (ok(want)) return want;
+  if (ok(cfg.default)) return cfg.default;
+  return a.tmux ? 'tmux' : Object.keys(a).find(n => n !== 'herdr') || (a.herdr ? 'herdr' : null);
 }
 export async function run(verb, args = {}, cfg = loadCfg()) {
   const name = args.engine || (args.id && cfg.windows?.[args.id]) || (args.handle?.engine) || pick(cfg);

@@ -36,7 +36,7 @@ const tree = d => fs.readdirSync(d, { recursive: true }).sort();
 const COMMANDS = [
   ['setup', '--yes'], ['status'], ['restore'], ['enable', 'report'], ['enable', 'engine'], ['disable', 'report'], ['disable', 'engine'], ['uninstall'],
   ['engine', 'setup'], ['engine', 'stop'], ['engine', 'run'], ['watch'], ['watch', 'install'], ['watch', 'remove'], ['watch', '--once'],
-  ['canvas', 'put', 'x'], ['canvas', 'list'], ['import'], ['import', '--setup'], ['import', '--follow'], ['import', '--stop'],
+  ['canvas', 'put', 'x'], ['canvas', 'list'], ['import'], ['import', '--setup'], ['engine', 'move-all', 'herdr', 'tmux', '--yes'], ['import', '--follow'], ['import', '--stop'],
   ['connect', 'linear'], ['session', 'save'], ['profile', 'add', 'x'], ['profile', 'shims'], ['mcp'], ['headers'], ['hook', 'session-start'],
   ['secret', 'fill', 'x'], ['secret', 'type', 'x'], ['log', 'progress', 'x'], ['ask', 'q'], ['wait', '1'], ['close', '1', 'x'], ['say', '1', 'x'], ['cards'], ['feedback', 'x'], ['chat', 'x'], ['role', 'list'],
 ];
