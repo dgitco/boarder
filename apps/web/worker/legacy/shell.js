@@ -443,6 +443,11 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const th0 = window.openThread;
   if (th0) window.openThread = function(){ const r = th0.apply(this, arguments); Promise.resolve(r).finally(recLater); recLater(); return r; };
   const until = (ok, ms = 10000) => new Promise(res => { const t0 = Date.now(), f = () => ok() || Date.now() - t0 > ms ? res(ok()) : setTimeout(f, 150); f(); });
+  const linkSpin = on => { let el = document.getElementById('bx-lw'); if (!on){ el?.remove(); return; } if (el) return;
+    el = document.createElement('div'); el.id = 'bx-lw'; el.setAttribute('role', 'status'); el.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:60;pointer-events:none';
+    el.innerHTML = '<i class="g g-spin"></i>'; document.body.appendChild(el); };
+  const linkUntil = async (ok, ms = 30000) => { const t = setTimeout(() => linkSpin(true), 300); try { return await until(ok, ms); } finally { clearTimeout(t); linkSpin(false); } };
+  const linkFail = () => toast('링크를 열지 못했어요');
   async function apply(){
     if (!on() || /^#settings(\/|$|\?)/.test(location.hash)) return;
     if (backing){ clearTimeout(backing); backing = 0; }
@@ -453,19 +458,20 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     applying++;
     try {
       if (k !== 'art' && MVv()) mvClose();
-      if (k === 'art'){ if (MVv() !== a && await until(() => ARTS[a]) && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ if (!ans.hidden) closeAns(); openArt(a); } }
+      if (k === 'art'){ if (MVv() !== a){ if (await linkUntil(() => ARTS[a])){ if (gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ if (!ans.hidden) closeAns(); openArt(a); } } else if (gen === G) linkFail(); } }
       else if (k === 'chat' && CH.includes(a)){
         if (b && typeof window.HBOpenCard === 'function' && !(chatMode() && cur.chan === a && CS.th?.ts === b)){
-          if (await until(() => typeof panes !== 'undefined' && panes.length, 5000) && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ ibClose(); S.ret = null; await window.HBOpenCard(b, {c: a, t: b});
+          const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail();
+          if (ready && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ ibClose(); S.ret = null; await window.HBOpenCard(b, {c: a, t: b});
             if (gen === G){ const w = want(); if (w && w !== location.hash) history.replaceState(history.state, '', w); moved = true; } }
         }
         else if (!(chatMode() && cur.chan === a)){ ibClose(); openChan(a, b || undefined); }
         else if ((CS.th?.ts || '') !== (b || '')){ if (b) await th0(a, b); else { CS.th = null; viewChat(true); } }
       }
       else if (k === 'inbox'){ if (cur?.chan !== 'i:turn'){ ibClose(); window.HBInbox?.openFeed('turn'); } }
-      else if (k === 'node'){ if (await until(() => byPane[a], 5000) && gen === G && !/^#settings(\/|$|\?)/.test(location.hash) && !(cur?.page && cur.p === a)){ ibClose(); openAns({p: a, page: true}); } }
+      else if (k === 'node'){ const got = !!byPane[a] || await linkUntil(() => byPane[a]); if (!got && gen === G) linkFail(); else if (got && gen === G && !/^#settings(\/|$|\?)/.test(location.hash) && !(cur?.page && cur.p === a)){ ibClose(); openAns({p: a, page: true}); } }
       else if (k === 'w'){ if (cur?.w !== a){ ibClose(); openAns({w: a}); } }
-      else if (FEED(k)){ S.ret = null; if (ibChat() !== k && await until(() => typeof panes !== 'undefined' && panes.length, 5000) && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ ibClose(); window.HBInbox.openFeed(k); } }
+      else if (FEED(k)){ S.ret = null; if (ibChat() !== k){ const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail(); else if (ready && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ ibClose(); window.HBInbox.openFeed(k); } } }
       else if (IBK.includes(k)){ S.ret = null; if (!ans.hidden) closeAns(); ibOpen(k, true); }
       else if (views[k]){ S.ret = null; if (!ans.hidden) closeAns(); if (S.ib){ ibClose(); } if (current !== k) show(k); }
       sync();
