@@ -146,7 +146,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const FEED = k => (k === 'unread' || k === 'saved' || k === 'drafts' || k === 'turn') && !!window.HBInbox?.openFeed;
   const ibChat = () => chatMode() && /^i:(unread|saved|drafts|turn)$/.test(cur.chan) ? cur.chan.slice(2) : '';
   document.addEventListener('click', e => {
-    if (ibChat() !== 'unread') return;
+    if (ibChat() !== 'unread' || window.HBInbox?.opensUnread) return;
     const it = e.target.closest?.('.ibi[data-ibch][data-ibth]'), m = e.target.closest?.('.msg');
     if (!it || !m || m.parentElement !== it) return;
     if (e.target.closest('a, button, input, textarea, select, label, img, video, audio, [contenteditable], [data-copen], [role="button"]') || String(window.getSelection?.() || '').trim()) return;
