@@ -16,9 +16,9 @@ async function withServer(handler, fn) {
   fs.mkdirSync(B, { mode: 0o700 });
   fs.writeFileSync(path.join(B, 'device.json'), JSON.stringify({ token: 't', device_id: 'd', server: `http://127.0.0.1:${srv.address().port}` }));
   const env = { ...process.env, HOME: H, BOARDER_HOME: B, BOARDER_WINDOW: 'rel-test', XDG_CONFIG_HOME: path.join(H, 'xdg'), CLAUDE_CONFIG_DIR: path.join(H, 'nope') };
-  delete env.BOARDER_TOKEN; delete env.BOARDER_CHANNEL;
-  const cli = (args, killAfter = 30000) => new Promise(res => {
-    const t0 = Date.now(), c = spawn(process.execPath, [BIN, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  delete env.BOARDER_TOKEN; delete env.BOARDER_CHANNEL; delete env.CLAUDE_CODE_ENTRYPOINT;   // 이 시험을 claude -p 안에서 돌려도 대화형 창처럼
+  const cli = (args, killAfter = 30000, extra = {}) => new Promise(res => {
+    const t0 = Date.now(), c = spawn(process.execPath, [BIN, ...args], { env: { ...env, ...extra }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = ''; c.stdout.on('data', d => out += d); c.stderr.on('data', d => err += d);
     const t = setTimeout(() => c.kill('SIGKILL'), killAfter);
     c.on('close', (code, sig) => { clearTimeout(t); res({ code, sig, out, err, ms: Date.now() - t0 }); });
@@ -50,6 +50,19 @@ test('시작 훅: 서버가 답하면 창 토큰을 받아 두고 보고 안내�
     assert.match(JSON.parse(r.out).hookSpecificOutput.additionalContext, /boarder log start/);
     const saved = fs.readdirSync(path.join(B, 'windows')).map(f => JSON.parse(fs.readFileSync(path.join(B, 'windows', f), 'utf8')));
     assert.deepEqual(saved.map(w => w.token), ['wtok']);
+  });
+});
+
+test('일회성 실행(claude -p · SDK, CLAUDE_CODE_ENTRYPOINT=sdk-*)은 시작 · 끝 훅이 서버를 부르지 않고 조용히 끝남 — 실행마다 노드가 생기지 않게', async () => {
+  await withServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ token: 'wtok' })); }, async ({ cli, hits, B }) => {
+    for (const ep of ['sdk-cli', 'sdk-ts', 'sdk-py']) {
+      const s = await cli(['hook', 'session-start'], 30000, { CLAUDE_CODE_ENTRYPOINT: ep }), e = await cli(['hook', 'stop'], 30000, { CLAUDE_CODE_ENTRYPOINT: ep });
+      assert.deepEqual([s.code, s.out, e.code, e.out], [0, '', 0, ''], ep);
+    }
+    assert.equal(hits.length, 0, '서버를 안 부름');
+    assert.ok(!fs.existsSync(path.join(B, 'windows')), '창 토큰을 안 받음');
+    const r = await cli(['hook', 'session-start'], 30000, { CLAUDE_CODE_ENTRYPOINT: 'cli' });   // 대화형 창은 그대로
+    assert.match(JSON.parse(r.out).hookSpecificOutput.additionalContext, /boarder log start/);
   });
 });
 
