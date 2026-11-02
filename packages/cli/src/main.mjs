@@ -15,15 +15,17 @@ import { canvasCommand, CANVAS_HELP } from './canvas.mjs';
 import { engineCommand, ENGINE_HELP } from './engine/cmd.mjs';
 import { enable, disable, uninstall, VIEW_HELP } from './view.mjs';
 import { secretCommand, SECRET_HELP } from './secret.mjs';
+import { deviceCommand, DEVICE_HELP } from './device.mjs';
 
 const VERSION = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version;
 const KIND = { 시작: 'start', 진행: 'progress', 막힘: 'blocked', 끝: 'done', 결정: 'decision', 장애: 'incident', 마감: 'deadline' };
 const HELP = `boarder ${VERSION} — Boarder for your AI tools
 
 Set up
-  boarder setup [--yes] [--server <url>] [--only claude,codex,cursor,gemini|<folder>] [--skip <folder>] [--device-auth] [--no-browser] [--no-watch] [--report] [--engine]
+  boarder setup [--yes] [--server <url>] [--email <you@…>] [--only claude,codex,cursor,gemini|<folder>] [--skip <folder>] [--device-auth] [--no-browser] [--no-watch] [--report] [--engine]
                                     signs in and reads — changes nothing in your AI tools, harness or shell files
                                     (every Claude Code folder counts: ~/.claude, CLAUDE_CONFIG_DIR, ~/.claude-accounts/*/)
+                                    --email: approve this machine from a card on your board (phone) or another signed-in machine — no browser here
   boarder status                    sign-in, this window, each AI tool folder and whether it reports
   boarder restore [<folder>]        remove Boarder from your AI tools, or from one folder (keeps your other settings)
 
@@ -57,12 +59,16 @@ ${ENGINE_HELP}
 
 ${SECRET_HELP}
 
+${DEVICE_HELP}
+
 Connect a service (Linear, Notion, GitHub, any MCP server)
   boarder connect <service|https MCP URL> [--label <second account>] [--open]
+  boarder connect <name> --key-file <file|-> [--base-url https://… --auth bearer|basic|header:<Name>|query:<name>] [--label <name>] [--write] [--no-wait]
+                                    API key or mail (IMAP) from this machine: a card on your board asks you to allow it; read only unless --write
 
 ${SESSION_HELP}`;
 
-const SECTION_HELP = { import: IMPORT_HELP, canvas: CANVAS_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, secret: SECRET_HELP, enable: VIEW_HELP, disable: VIEW_HELP, uninstall: VIEW_HELP };
+const SECTION_HELP = { device: DEVICE_HELP, import: IMPORT_HELP, canvas: CANVAS_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, secret: SECRET_HELP, enable: VIEW_HELP, disable: VIEW_HELP, uninstall: VIEW_HELP };
 function wantsHelp(cmd, rest) {
   if (cmd === 'engine' && rest[0] === 'verify') return false;
   if (cmd === 'profile' && rest[0] === 'run') return rest[1] === '--help' || rest[1] === '-h';
@@ -75,7 +81,7 @@ function parse(rest) {
     const a = rest[i];
     if (!a.startsWith('--')) { pos.push(a); continue; }
     const k = a.slice(2);
-    if (['no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run'].includes(k)) { flags[k] = true; continue; }
+    if (['no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay'].includes(k)) { flags[k] = true; continue; }
     const v = rest[++i];
     if (['choice', 'evidence'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
   }
@@ -114,6 +120,46 @@ async function waitLong(cardId, timeoutS) {
   }
 }
 
+async function readStdin(ms = 3000) {
+  if (process.stdin.isTTY) return '';
+  let out = ''; const t = setTimeout(() => process.stdin.destroy(), ms);
+  try { for await (const d of process.stdin) out += d; } catch {}
+  clearTimeout(t); return out;
+}
+async function postReply(text) {
+  const w = await windowToken({ timeoutMs: 4000 });   // 훅 한도(setup 의 Stop 20초) 안에 — 매달린 망이어도 4 + 6초
+  const r = await fetch(`${server()}/api/agent/inbox_log`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${w.token}` }, body: JSON.stringify({ kind: 'reply', text }), signal: AbortSignal.timeout(6000) });
+  return r.ok;
+}
+async function turnHook(kind, arg) {
+  const T = await import('./turn.mjs');
+  if (!loadDevice()?.token && !process.env.BOARDER_TOKEN) return;
+  if (kind === 'codex-turn') {   // Codex notify: 마지막 인자 하나가 JSON(type agent-turn-complete · thread-id · input-messages · last-assistant-message)
+    let j; try { j = JSON.parse(arg || ''); } catch { return; }
+    if (j?.type !== 'agent-turn-complete') return;
+    const keys = [process.env.BOARDER_WINDOW, j['thread-id']];
+    for (const prompt of (Array.isArray(j['input-messages']) ? j['input-messages'] : []).slice().reverse()) {
+      const text = T.replyFor({ keys, prompt, at: 0, reply: j['last-assistant-message'] });
+      if (text) return void await postReply(text);
+    }
+    return;
+  }
+  let j; try { j = JSON.parse(await readStdin()); } catch { return; }
+  if (!j?.transcript_path || !j?.session_id) return;
+  const keys = [process.env.BOARDER_WINDOW, j.session_id];
+  // 마지막 답이 기록에 늦게 써질 수 있어 잠깐 다시 읽음. 훅이 마지막 답을 주면(last_assistant_message) 그것을 씀
+  let t = null;
+  for (let i = 0; i < 3; i++) {
+    try { t = T.lastTurn(readFileSync(j.transcript_path, 'utf8')); } catch { return; }
+    if (typeof j.last_assistant_message === 'string' && j.last_assistant_message.trim() && t) t.reply = j.last_assistant_message;
+    if (t?.reply) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  if (!t) return;
+  const text = T.replyFor({ keys, ...t });
+  if (text) await postReply(text);
+}
+
 async function status() {
   const d = loadDevice(), srv = server(), ok = s => `✓ ${s}`, todo = (s, fix) => `● ${s}${fix ? `  → ${fix}` : ''}`;
   const lines = [`Boarder ${VERSION} · ${srv}`];
@@ -142,9 +188,9 @@ export async function main(argv) {
     if (wantsHelp(cmd, rest)) return console.log(SECTION_HELP[cmd] || HELP);
     if (cmd === '--version' || cmd === '-v' || cmd === 'version') return console.log(VERSION);
     if (cmd === 'profile') return await profileCommand(rest);
-    if (cmd === 'connect') return connectCommand(pos, flags);
+    if (cmd === 'connect') return await connectCommand(pos, flags);
     if (cmd === 'session') return await sessionCommand(pos[0], pos.slice(1), flags);
-    if (cmd === 'setup') return await setup({ yes: !!flags.yes, server: flags.server, only: csv(flags.only), skip: csv(flags.skip), noBrowser: !!flags['no-browser'], deviceAuth: !!flags['device-auth'], noWatch: !!flags['no-watch'], noEngine: !!flags['no-engine'], report: !!flags.report, engine: !!flags.engine });
+    if (cmd === 'setup') return await setup({ yes: !!flags.yes, server: flags.server, email: flags.email, only: csv(flags.only), skip: csv(flags.skip), noBrowser: !!flags['no-browser'], deviceAuth: !!flags['device-auth'], noWatch: !!flags['no-watch'], noEngine: !!flags['no-engine'], report: !!flags.report, engine: !!flags.engine });
     if (cmd === 'enable' || cmd === 'disable') { if (!['report', 'engine'].includes(pos[0])) { console.error(VIEW_HELP); process.exit(64); } if (cmd === 'enable' && !loadDevice()?.token) { console.error('not signed in — run `boarder setup --yes` first'); process.exit(3); } const r = await (cmd === 'enable' ? enable : disable)(pos[0], { only: csv(flags.only), skip: csv(flags.skip), yes: !!flags.yes }); console.log(`${pos[0]}: ${cmd === 'enable' ? 'on' : 'off'}`); if (!r.ok) process.exitCode = 1; return; }
     if (cmd === 'uninstall') return void await uninstall();
     if (cmd === 'engine') return await engineCommand(pos[0], pos.slice(1), flags);
@@ -153,7 +199,8 @@ export async function main(argv) {
     if (cmd === 'canvas') return void await canvasCommand(pos[0], pos.slice(1), flags);
     if (cmd === 'import') return await importCommand(flags);   // 들여오기 · 경우 (가)(A-2 · A-3 · A-4)
     if (cmd === 'restore') return await restore(pos[0], { only: csv(flags.only) });
-    if (cmd === 'secret') return await secretCommand(pos[0], pos.slice(1), flags);   // 비밀 넣기(값은 안 찍음)
+    if (cmd === 'secret') return await secretCommand(pos[0], pos.slice(1), flags);
+    if (cmd === 'device') return await deviceCommand(pos[0], pos.slice(1), flags);   // 승인된 기기에서 새 기기 허용(온보딩 2층)   // 비밀 넣기(값은 안 찍음)
     if (cmd === 'mcp') return await mcp();
     if (cmd === 'status' && !pos.length) return await status();
     if (cmd === 'headers') { const w = await windowToken(); return console.log(JSON.stringify({ Authorization: `Bearer ${w.token}` })); }
@@ -162,6 +209,7 @@ export async function main(argv) {
       try { await windowToken({ timeoutMs: 6000 }); } catch (e) { note = `Boarder: ${e.name === 'TimeoutError' ? 'the Boarder server did not answer in time — reports may fail until the network is back' : e.message}`; }
       return console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: note } }));
     }
+    if (cmd === 'hook' && (pos[0] === 'stop' || pos[0] === 'codex-turn')) { await turnHook(pos[0], pos[1]).catch(() => {}); return; }
     const num = v => v === undefined ? undefined : Number(v);
     const plan = {
       ask: () => ['inbox_ask', { question: pos[0], choices: flags.choice || [], recommend: flags.rec, urgency: flags.urgency, body: flags.body, due: flags.due, wait_s: num(flags.wait) }],

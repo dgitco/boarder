@@ -5,6 +5,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, appendFileSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { dir, loadDevice, server, readJson } from '../config.mjs';
 import * as E from './index.mjs';
+import { markTurn } from '../turn.mjs';
 
 const BIN = fileURLToPath(new URL('../../bin/boarder.mjs', import.meta.url));
 const VERSION = readJson(fileURLToPath(new URL('../../package.json', import.meta.url)))?.version;
@@ -30,7 +31,14 @@ async function handle(msg) {
   if (verb === 'list') return { windows: await E.listAll() };
   if (verb === 'close') { const w = (await E.listAll()).find(x => x.id === args.id); if (w) await saveSession({ ...w, cwd: w.spec?.cwd ? w.spec.cwd.replace(/^~(?=$|\/)/, os.homedir()) : w.cwd }); }
   if (verb === 'open' && args.spec) args.spec = { ...args.spec, cwd: args.spec.cwd || path.join(E.engineHome(), 'work') };
-  return E.run(verb, args);
+  const r = await E.run(verb, args);
+  // 보드가 넣은 글 표지(turn.mjs) — 그 턴이 끝나면 Stop 훅이 마지막 답을 노드 채팅으로. 표지를 못 남겨도 넣기는 된 것
+  try {
+    if (verb === 'send' && args.text && !args.test) { const w = (await E.listAll()).find(x => x.id === args.id); markTurn([args.id, w?.session_id], args.text); }
+    if (verb === 'reopen' && args.text) markTurn([args.id || args.handle?.id, args.handle?.session_id], args.text);
+    if (verb === 'open' && args.spec?.prompt) markTurn([args.spec.id, r?.session_id], args.spec.prompt);
+  } catch {}
+  return r;
 }
 
 async function answerDialog(w, st) {

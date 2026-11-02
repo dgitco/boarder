@@ -235,3 +235,17 @@ html.bx-acc[data-theme="dark"]{--accent-ink:var(--bx-accent-ink-d);--accent-mark
 .bxs-drop svg{color:var(--muted)}
 .bxs-drop b{color:var(--ink);font-weight:600;font-size:14px}
 .bxs-btn svg{vertical-align:-3px;margin-right:4px}
+/* 시작하기(회원 온보딩 점검표, 온보딩 4층) */
+.bxs-obl{list-style:none;margin:18px 0 0;padding:0;display:flex;flex-direction:column}
+.bxs-ob{display:flex;gap:14px;padding:16px 0}
+.bxs-ob + .bxs-ob{border-top:1px solid var(--line)}
+.bxs-ob-n{flex:none;width:26px;height:26px;border-radius:13px;display:grid;place-items:center;font-size:13px;font-weight:600;color:var(--soft);box-shadow:0 0 0 1px var(--line)}
+.bxs-ob.done .bxs-ob-n{background:var(--ink);color:var(--surface);box-shadow:none}
+.bxs-ob-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.bxs-ob-t{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bxs-ob-b p{margin:0;color:var(--soft);font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.bxs-ob.done .bxs-ob-b p{color:var(--muted)}
+.bxs-ob-cmd{display:flex;align-items:center;gap:8px;min-width:0}
+.bxs-ob-cmd code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--ink) 5%,transparent);font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink)}
+.bxs-ob-pick{gap:8px;align-items:center}
+.bxs-ob-pick select{flex:1;max-width:420px}

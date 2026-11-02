@@ -2,6 +2,9 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { METRICS_MAX_BYTES, putMetrics, listDevices, readCapped, tooSoon } from "./devices";
+import * as devCard from "./device-card";
+import * as connReq from "./connect-request";
+import { onboarding } from "./member-onboarding";
 import { legal } from "./legal";
 import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
 import { installPrompt, BOARDER_SKILL, memberOnboard, type Bot } from "./install";
@@ -41,6 +44,7 @@ import * as vmig from "./vault/migrate";
 import { mountImport, onCardAnswered, regroup, setUnit } from "./importer/routes";
 import * as slackImport from "./slack-import";
 import * as memberCanvas from "./member-canvas";
+import { mountSlackConnector } from "./slack-connector";
 import { mountSecrets, onCardAnswered as secretCardAnswered } from "./secrets";
 import * as ledger from "./ledger";
 import * as ownerWrite from "./owner-write";
@@ -607,7 +611,7 @@ app.get("/api/install/prompt", async c => {   // 회원만(복사 단추는 다 
 });
 app.get("/api/install/skill", c => c.body(BOARDER_SKILL, 200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store" }));
 app.post("/api/device/code", async c => {
-  const b = await c.req.json<{ name?: string; tools?: string[]; callback?: string; state?: string; code_challenge?: string }>().catch(() => ({} as { name?: string; tools?: string[]; callback?: string; state?: string; code_challenge?: string }));
+  const b = await c.req.json<{ name?: string; tools?: string[]; callback?: string; state?: string; code_challenge?: string; email?: string }>().catch(() => ({} as { name?: string; tools?: string[]; callback?: string; state?: string; code_challenge?: string; email?: string }));
   // 로컬 콜백(기본): 127.0.0.1 · localhost 의 /callback 만, state · S256 challenge 꼴 검사 — 없으면 코드 입력 길(SSH)
   const cb = /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}\/callback$/.test(b.callback || "") && /^[A-Za-z0-9_-]{16,100}$/.test(b.state || "") && /^[A-Za-z0-9_-]{43}$/.test(b.code_challenge || "") ? b : null;
   const tools = (Array.isArray(b.tools) ? b.tools : []).map(String).filter(t => /^[a-z][a-z-]{1,19}$/.test(t)).slice(0, 8).join(", ");
@@ -619,10 +623,25 @@ app.post("/api/device/code", async c => {
   ]);
   if ((byIp.results[0] as { n: number }).n >= 20 || (all.results[0] as { n: number }).n >= 2000) return c.json({ error: "too many" }, 429);
   await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE board_card SET state = 'closed', done = '만료' WHERE state = 'open' AND id IN (SELECT card_id FROM device_code WHERE expires_at < ? AND card_id IS NOT NULL)").bind(now - 3600_000),
     c.env.DB.prepare("DELETE FROM device_code WHERE expires_at < ?").bind(now - 3600_000),
     c.env.DB.prepare("INSERT INTO device_code(code_hash, user_code, name, tools, created_at, expires_at, req_ip, req_country, callback, cb_state, challenge) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(await sha(dc), uc, clean(b.name, 80), tools, now, now + 600_000, ip, country, cb?.callback ?? null, cb?.state ?? null, cb?.code_challenge ?? null),
   ]);
-  return c.json({ device_code: dc, user_code: uc, verify_url: `${c.env.PUBLIC_URL}/device?code=${uc}`, expires_in: 600, interval: 3, mode: cb ? "local" : "code" });
+  // 온보딩 2층: 메일을 주면(코드 입력 길만) 그 회원 보드에 허용 카드 — 회원인지 · 카드를 세웠는지는 답에 안 나옴(늘 board: "asked")
+  const em = clean(b.email, 200).toLowerCase();
+  if (em && !cb && !isOwner(c.env, em)) c.executionCtx.waitUntil((async () => {
+    const card = await devCard.askOnBoard(c.env, { userCode: uc, email: em, isMember: await member(c.env, em), name: clean(b.name, 80), country, now });
+    if (card) await memberCardPush(c.env, em, { id: card.id, question: `새 기기 「${card.name}」 허용?` });
+  })().catch(e => console.error("기기 카드", String(e).slice(0, 200))));
+  return c.json({ device_code: dc, user_code: uc, verify_url: `${c.env.PUBLIC_URL}/device?code=${uc}`, expires_in: 600, interval: 3, mode: cb ? "local" : "code", ...(em && !cb ? { board: "asked" } : {}) });
+});
+app.post("/api/device/approve-by-device", async c => {
+  const d = await deviceOf(c); if (!d || isOwner(c.env, d.owner) || !(await member(c.env, d.owner))) return c.json({ error: "기기 토큰" }, 401);
+  const b = await c.req.json<{ user_code?: string; allow?: boolean }>().catch(() => ({} as { user_code?: string; allow?: boolean }));
+  const r = await devCard.approveByDevice(c.env, d, String(b.user_code || ""), b.allow !== false);
+  if ("error" in r) return r.error === "person" ? c.json({ error: "person", verify_url: `${c.env.PUBLIC_URL}/device?code=${clean(b.user_code, 9).toUpperCase()}` }, 403) : c.json({ error: r.error }, r.error === "unknown" ? 404 : r.error === "expired" ? 410 : 409);
+  await c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").bind(d.owner.toLowerCase(), "보더", "progress", `기기 「${d.name}」 에서 새 기기 「${r.name}」 을 ${b.allow !== false ? "허용" : "거절"}했어요`, Date.now()).run().catch(() => {});
+  return c.json({ ok: true, name: r.name });
 });
 app.post("/api/device/token", async c => {
   const { device_code, code, code_verifier } = await c.req.json<{ device_code?: string; code?: string; code_verifier?: string }>().catch(() => ({} as { device_code?: string; code?: string; code_verifier?: string }));
@@ -658,14 +677,23 @@ app.get("/api/device/lookup", async c => {
   if (r.expires_at < Date.now()) return c.json({ error: "expired" }, 410);
   return c.json({ name: r.name, tools: r.tools, at: r.created_at, ip: r.req_ip, country: r.req_country, same: !!r.req_ip && r.req_ip === (c.req.header("cf-connecting-ip") || ""), mode: r.callback ? "local" : "code", scope: isOwner(c.env, s.user.email) ? "watch" : "full" });
 });
+app.get("/api/device/lookup-by-device", async c => {   // boarder device approve 가 허용 전에 보여 줄 것(이름 · 곳 · 같은 망인지)
+  const d = await deviceOf(c); if (!d || isOwner(c.env, d.owner) || !(await member(c.env, d.owner))) return c.json({ error: "기기 토큰" }, 401);
+  const r = await c.env.DB.prepare("SELECT name, tools, expires_at, state, created_at, req_ip, req_country, callback FROM device_code WHERE user_code = ?").bind(clean(c.req.query("code"), 9).toUpperCase()).first<{ name: string; tools: string; expires_at: number; state: string; created_at: number; req_ip: string; req_country: string; callback: string | null }>();
+  if (!r) return c.json({ error: "unknown" }, 404);
+  if (r.state !== "pending") return c.json({ error: "done" }, 409);
+  if (r.expires_at < Date.now()) return c.json({ error: "expired" }, 410);
+  return c.json({ name: r.name, tools: r.tools, at: r.created_at, country: r.req_country, same: !!r.req_ip && r.req_ip === (c.req.header("cf-connecting-ip") || ""), mode: r.callback ? "local" : "code" });
+});
 app.post("/api/device/approve", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const b = await c.req.json<{ user_code?: string; allow?: boolean }>().catch(() => ({} as { user_code?: string; allow?: boolean }));
   const uc = clean(b.user_code, 9).toUpperCase(), now = Date.now();
   const grant = b.allow ? rand(32) : null;
-  const u = await c.env.DB.prepare("UPDATE device_code SET state = ?, owner = ?, grant_hash = ? WHERE user_code = ? AND state = 'pending' AND expires_at > ?").bind(b.allow ? "approved" : "denied", s.user.email.toLowerCase(), grant ? await sha(grant) : null, uc, now).run();
+  const u = await c.env.DB.prepare("UPDATE device_code SET state = ?, owner = ?, grant_hash = ?, approved_by = 'browser' WHERE user_code = ? AND state = 'pending' AND expires_at > ?").bind(b.allow ? "approved" : "denied", s.user.email.toLowerCase(), grant ? await sha(grant) : null, uc, now).run();
   if (u.meta.changes) {
+    await c.env.DB.prepare("UPDATE board_card SET state = 'closed', done = ? WHERE id = (SELECT card_id FROM device_code WHERE user_code = ?) AND owner = ? AND state = 'open'").bind(b.allow ? "브라우저에서 허용함" : "브라우저에서 거절함", uc, s.user.email.toLowerCase()).run().catch(() => {});
     const r = await c.env.DB.prepare("SELECT callback, cb_state FROM device_code WHERE user_code = ?").bind(uc).first<{ callback: string | null; cb_state: string | null }>();
     // 로컬 콜백 길: 브라우저가 그 기기의 127.0.0.1 로 grant 를 넘김(거절도 알려 CLI 가 바로 멈춤)
     if (r?.callback) return c.json({ ok: true, redirect: `${r.callback}?state=${encodeURIComponent(r.cb_state || "")}&${grant ? `code=${grant}` : "error=denied"}` });
@@ -809,7 +837,7 @@ app.post("/api/me/cards/:id/answer", async c => {
   const me = s.user.email.toLowerCase(), id = c.req.param("id"), { choice: ch, free, rid: rid0 } = await c.req.json<{ choice?: string; free?: boolean; rid?: string }>().catch(() => ({} as { choice?: string; free?: boolean; rid?: string }));
   if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) {
     const secret = await c.env.DB.prepare("SELECT 1 FROM secret_request WHERE card_id = ? AND owner = ?").bind(id, me).first();
-    if (secret) return c.json({ error: "로그인" }, 401);
+    if (secret || await devCard.isDeviceCard(c.env, me, id) || await connReq.isConnectCard(c.env, me, id)) return c.json({ error: "로그인" }, 401);   // 새 기기 · 커넥터 허용 카드도 사람만
   }
   const rid = queue.ridOfBody({ rid: rid0 });
   let choice = "";
@@ -832,6 +860,8 @@ app.post("/api/me/cards/:id/answer", async c => {
   } catch (e) { if (rid) return queue.retrySafe(c); throw e; }
   await onCardAnswered(c.env as never, me, id).catch(e => console.error("들여오기 카드 답", e));
   await secretCardAnswered(c.env as never, me, id).catch(e => console.error("비밀 요청 카드 답", String(e).slice(0, 200)));
+  await devCard.onDeviceCardAnswered(c.env, me, id).catch(e => console.error("새 기기 카드 답", String(e).slice(0, 200)));   // 새 기기 허용 카드(device-card.ts)
+  await connReq.onConnectCardAnswered(c.env as never, me, id).catch(e => console.error("커넥터 카드 답", String(e).slice(0, 200)));
   const card = await c.env.DB.prepare("SELECT wid, question, answer FROM board_card WHERE id = ? AND owner = ?").bind(id, me).first<{ wid: string | null; question: string; answer: string | null }>().catch(() => null);
   const ansText = card ? `[Boarder] The person answered your card ${id} ("${card.question.slice(0, 120)}"): ${String(card.answer ?? choice)}. Continue with that.` : "";
   const sent = card?.wid ? deliverTo(c.env, me, card.wid, ansText).catch(async e => {
@@ -871,6 +901,13 @@ mountImport(app as never, {
 // 옛 Slack 글 들여오기(slack-import.ts): 회원 기기만 — 들여오기와 같은 가림
 slackImport.mountSlackImport(app as never, { device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; } });
 memberCanvas.mountMemberCanvas(app as never, { device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; } });
+// Slack 들여오기를 커넥터로(slack-connector.ts, 온보딩 5층): 회원 기기만 — 그 회원의 Slack 봇 열쇠 연결로 서버가 읽어 회원 들여오기 길로 넣음
+mountSlackConnector(app as never, { device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; } });
+// 기기에서 커넥터 넣기(connect-request.ts, 온보딩 3층): 회원 기기(scope full)만 — 넣기는 그 회원 보드 카드의 허용 뒤
+connReq.mountConnectRequests(app as never, {
+  device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
+  card: (env, owner, card) => void memberCardPush(env as never, owner, card),
+});
 mountSecrets(app as never, {
   human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s ? { email: s.user.email, owner: isOwner(c.env as never, s.user.email) } : null; },
   sameSite: c => sameSite(c as never),
@@ -974,6 +1011,11 @@ async function primaryWinSend(env: Env, me: string, text: string) {
   const w = await env.DB.prepare("SELECT key, device_id, engine, handle, title, state FROM imp_item WHERE owner = ? AND key = ?").bind(me, v).first<{ key: string; device_id: string; engine: string; handle: string | null; title: string; state: string }>();
   return w ? { cmd: await queueToImported(env.DB, me, w, `[Boarder chat] ${text}`) } : null;
 }
+// 회원 온보딩 점검표(member-onboarding.ts, 온보딩 4층): 설정 › 시작하기 — 그 회원 것만, 읽기만
+app.get("/api/me/onboarding", async c => {
+  const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  return c.json(await onboarding(c.env.DB, s.user.email.toLowerCase(), { server: c.env.PUBLIC_URL, push: await ledger.f7On(c.env.DB, "member_push").catch(() => false) }), 200, { "cache-control": "no-store" });
+});
 app.get("/api/me/primary-window", async c => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   const v = (await c.env.DB.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(s.user.email.toLowerCase()).first<{ v: string }>())?.v || null;

@@ -65,7 +65,8 @@ const engineMod = () => import('./engine/index.mjs').catch(() => null);
 export async function features() {
   const S = await setupMod(), E = await engineMod();
   const cfg = E?.loadCfg?.() || {};
-  return { report: [...new Set(S.targets().filter(t => S.reportState(t).state !== 'off').map(t => t.tool))], engine: !!cfg.tmux, view: true };
+  const dirs = S.targets().slice(0, 16).map(t => ({ tool: t.tool, where: t.where.slice(0, 120), state: S.reportState(t).state }));
+  return { report: [...new Set(dirs.filter(d => d.state !== 'off').map(d => d.tool))], reportDirs: dirs, engine: !!cfg.tmux, view: true };
 }
 
 export async function enable(what, { log = console.log, only, skip, yes = true } = {}) {

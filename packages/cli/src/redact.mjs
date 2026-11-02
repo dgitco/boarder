@@ -1,10 +1,10 @@
 // Keep in sync with apps/web/worker/session/redact.ts (checked by redact.test.mjs).
 export const SECRET_PATTERNS = [
-  /\b(?:sk|pk|rk)-(?:live|test|proj|ant|or)?[-_]?[A-Za-z0-9_-]{20,}/g, // OpenAI, Anthropic, Stripe, OpenRouter
+  /\b(?:sk|pk|rk)[-_](?:live|test|proj|ant|or)?[-_]?[A-Za-z0-9_-]{20,}/g, // OpenAI, Anthropic, Stripe, OpenRouter
   /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key id
   /\bgh[pousr]_[A-Za-z0-9]{30,}\b/g, // GitHub tokens
   /\bgithub_pat_[A-Za-z0-9_]{40,}\b/g,
-  /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, // Slack
+  /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, /\bxapp-[0-9]-[A-Za-z0-9-]{10,}/g, // Slack app-level token // Slack
   /\bAIza[0-9A-Za-z_-]{35}\b/g, // Google API key
   /\bya29\.[0-9A-Za-z_-]{20,}/g, // Google OAuth access token
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWT
@@ -18,7 +18,7 @@ export const SECRET_PATTERNS = [
   /(?<=\b[A-Za-z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|ACCESS_KEY)[A-Za-z0-9_]*["']?\s*[:=]\s*["']?)[^\s"'`,;]{8,}/gi,
 ];
 
-function redact(text) {
+export function redact(text) {
   for (const re of SECRET_PATTERNS) text = text.replace(re, '[secret]');
   return text;
 }

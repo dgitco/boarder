@@ -37,7 +37,7 @@ export async function get(env: Env, owner: string, id: string): Promise<Row | nu
 }
 
 /** 새 연결 또는 같은 service · label 을 다시 연결(토큰만 바꿈) */
-export async function upsert(env: Env, owner: string, v: { service: string; label: string; kind: Row["kind"]; url: string; auth: Auth; account?: string }): Promise<string> {
+export async function upsert(env: Env, owner: string, v: { service: string; label: string; kind: Row["kind"]; url: string; auth: Auth; account?: string; read_only?: boolean }): Promise<string> {
   const now = Date.now();
   let id = "c_" + crypto.randomUUID().replace(/-/g, "").slice(0, 20);
   // 봉함 켜짐: 같은 service · label 줄이 있으면 ON CONFLICT 가 그 옛 id 를 남김 → AAD 의 pk 가 맞게 그 id 로 봉함
@@ -46,12 +46,14 @@ export async function upsert(env: Env, owner: string, v: { service: string; labe
     if (old) id = old.id;
   }
   const sealed = await sealAuth(env, { owner, id }, v.auth);
+  const ro = v.read_only === undefined ? null : v.read_only ? 1 : 0;
   const r = await env.DB.prepare(
-    `INSERT INTO connection(id, owner, service, label, kind, url, auth, account, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?, 'ok', ?, ?)
+    `INSERT INTO connection(id, owner, service, label, kind, url, auth, account, status, created_at, updated_at, read_only) VALUES (?,?,?,?,?,?,?,?, 'ok', ?, ?, coalesce(?, 0))
      ON CONFLICT(owner, service, label) DO UPDATE SET kind = excluded.kind, url = excluded.url, auth = excluded.auth, source = '', account = CASE WHEN excluded.account != '' THEN excluded.account ELSE connection.account END,
+       read_only = CASE WHEN ? IS NULL THEN connection.read_only ELSE excluded.read_only END,
        status = 'ok', error = NULL, tools = NULL, tools_at = NULL, updated_at = excluded.updated_at
      RETURNING id`,
-  ).bind(id, owner, v.service, v.label, v.kind, v.url, sealed, v.account || "", now, now).first<{ id: string }>();
+  ).bind(id, owner, v.service, v.label, v.kind, v.url, sealed, v.account || "", now, now, ro, ro).first<{ id: string }>();
   // 읽고 넣는 사이에 다른 요청이 같은 줄을 먼저 만들었으면(드묾) 남은 id 로 다시 봉함 — 그새 또 바뀌었으면 그쪽이 이김(auth = ? 맞을 때만)
   if (r!.id !== id && sealed.startsWith("v2.")) await env.DB.prepare("UPDATE connection SET auth = ? WHERE id = ? AND auth = ?").bind(await sealAuth(env, { owner, id: r!.id }, v.auth), r!.id, sealed).run();
   forget(r!.id);

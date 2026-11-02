@@ -91,3 +91,18 @@ test('채널 수 상한(429 + max_channels)은 그 채널만 건너뛰고 다음
   const r = await slackImport(d, {}, { post, log: quiet, mark: path.join(tmp, 'm-cap.json'), wait: async () => {} });
   assert.deepEqual([r.stopped, r.capped, r.channels, r.sent], [undefined, 1, 1, 10]);
 });
+
+// 커넥터로(온보딩 5층): 채널 목록 → 채널마다 쪽을 이어 부름 · 가리기 선택지 · 429 면 멈춤
+import { slackImportConnector } from './slack-import.mjs';
+test('import slack --connector: 봇 채널마다 next_cursor 를 따라 부르고, 가리기 선택지를 넘기고, 429 에 멈춤', async () => {
+  const sent = [];
+  const post = async b => { sent.push(b); if (!b.channel) return { status: 200, j: { channels: [{ id: 'C1AAAAAA', name: 'general' }, { id: 'C2BBBBBB', name: 'sales' }] } };
+    if (b.channel === 'C1AAAAAA') return { status: 200, j: { inserted: 2, skipped: 0, next_cursor: b.cursor ? null : 'p2' } };
+    return { status: 429, j: { error: '하루 상한' } }; };
+  const logs = [];
+  const r = await slackImportConnector('slack-team', { 'no-mask-pay': true }, { post, log: l => logs.push(l) });
+  assert.equal(r.stopped, true); assert.equal(r.sent, 4);
+  assert.deepEqual(sent.map(b => [b.channel || '', b.cursor || '']), [['', ''], ['C1AAAAAA', ''], ['C1AAAAAA', 'p2'], ['C2BBBBBB', '']]);
+  assert.deepEqual(sent[1].mask, { ids: true, pay: false });
+  assert.ok(logs.some(l => /run the same command tomorrow/.test(l)));
+});

@@ -388,7 +388,13 @@ async function ownReopen(h, text) {
   if (!pane) throw new Error('could not open a tmux window');
   return { pane };
 }
+// 보드가 창에 넣은 글(send · 글을 단 reopen)은 넣은 뒤 표지를 남김 — 그 턴이 끝나면 Stop 훅이 마지막 답을 노드 채팅으로(turn.mjs)
 async function doCmd(cmd) {
+  const out = await doCmd1(cmd), a = cmd.args || {}, h = a.handle || {};
+  if ((cmd.verb === 'send' || cmd.verb === 'reopen') && a.text) { try { const { markTurn } = await import('./turn.mjs'); markTurn([h.id, h.session_id], a.text); } catch {} }
+  return out;
+}
+async function doCmd1(cmd) {
   const a = cmd.args || {}, h = a.handle || {}, E = await engine();
   const viaEngine = h.engine && !['tmux-own', 'herdr-own', 'terminal', 'report'].includes(h.engine);
   if (cmd.verb === 'feature') {   // 설정에서 켜고 끔(보고 · 엔진) — 그 사람이 누른 것만
@@ -463,6 +469,8 @@ export const IMPORT_HELP = `Bring your current work in (keeps your own harness)
   boarder import [--setup] [--days 7] [--print] [--no-gh]   windows · sessions · threads · to-dos → nodes on your board (--setup also reads your MCP servers and roles once)
   boarder import --follow           keep it fresh (every minute) and carry out board commands: move to the Boarder engine · park · reopen · answers into the window
   boarder import slack <folder> [--dry-run]   old Slack messages from an export folder → one node per channel (resumes where it stopped)
+  boarder import slack --connector <name> [--channel <id|#name>] [--dry-run] [--no-mask-ids] [--no-mask-pay]
+                                              the same, read by Boarder through your Slack bot connection — channels the bot is in; ID · card · account numbers, secrets and pay amounts are masked
   boarder import --stop             stop importing from this machine and mark what it sent as gone on your board (also turns off the Boarder reader here; \`boarder setup\` turns it back on)`;
 
 const importMark = () => path.join(dir(), 'import.json');

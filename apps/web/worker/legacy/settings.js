@@ -3,10 +3,11 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
   const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
   const OFF = new Set(window.BX_FLAGS_OFF || []);
-  const MENU0 = [['계정', [['profile', '프로필'], ['look', '모양'], ['devices', '기기']]], ['연결', [['connectors', '커넥터'], ['sessions', '세션'], ['profiles', 'CLI 프로필']]], ['에이전트', [['nodes', '노드']]], ['관리', [['emoji', '이모지'], ['invite', '사람 초대']]]];
+  const MENU0 = [['계정', [['start', '시작하기'], ['profile', '프로필'], ['look', '모양'], ['devices', '기기']]], ['연결', [['connectors', '커넥터'], ['sessions', '세션'], ['profiles', 'CLI 프로필']]], ['에이전트', [['nodes', '노드']]], ['관리', [['emoji', '이모지'], ['invite', '사람 초대']]]];
   let OWNER = true;   // 관리 묶음은 관리자(주인)만 — api/me 의 owner 로 확인, 아니면 숨김
+  const isMem = () => !!window.HB_MEMBER || !OWNER;   // 회원 화면(서버가 HB_MEMBER 를 넣음) — 시작하기는 회원만
   let MENU = [];
-  const buildMenu = () => { MENU = MENU0.map(([g, xs]) => [g, xs.filter(([k]) => !(k === 'profiles' && OFF.has('cli_profiles')) && !(k === 'invite' && !OWNER))]).filter(([, xs]) => xs.length); };
+  const buildMenu = () => { MENU = MENU0.map(([g, xs]) => [g, xs.filter(([k]) => !(k === 'start' && !isMem()) && !(k === 'profiles' && OFF.has('cli_profiles')) && !(k === 'invite' && !OWNER))]).filter(([, xs]) => xs.length); };
   buildMenu();
   fetch('api/me', {credentials: 'include'}).then(r => r.json()).then(j => { OWNER = !!j?.user?.owner; buildMenu(); if (on()) render(); }).catch(() => {});
   const NAME = Object.fromEntries(MENU0.flatMap(([, xs]) => xs));
@@ -48,6 +49,7 @@
     devices: lu('monitor'),
     look: svg('<circle cx="10" cy="10" r="6.25"/><path d="M10 3.75v12.5"/><path d="M10 3.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor" stroke="none"/>'),   // 모양(테마)
     nodes: lu('network'),
+    start: lu('list-checks'),   // 시작하기(회원 온보딩 점검표)
     install: lu('download'), sessions: lu('history'), emoji: lu('smile'),
   };
   const api = async (method, p, body) => {
@@ -66,12 +68,13 @@
   let backTo = (() => { try { return sessionStorage.getItem('bx-set-back') || '#tree'; } catch { return '#tree'; } })();
   const steps = () => Number.isInteger(history.state?.bxs) ? history.state.bxs : 0;
   const go = (h, replace) => { if (replace) history.replaceState({bxs: steps()}, '', h); else history.pushState({bxs: steps() + 1}, '', h); render(); };
-  function enter(tab = 'connectors'){
+  const DEF = () => isMem() ? 'start' : 'connectors';   // 회원은 시작하기부터(온보딩 4층)
+  function enter(tab = DEF()){
     if (tab === 'feedback') return feedbackBox();   // 피드백은 설정 칸이 아니라 보내기 창
     if (tab === 'invite-box') return inviteBox();   // 아바타 메뉴 「초대」 = 그 자리 창(설정 › 관리 › 사람 초대 칸은 그대로)
     if (tab === 'emoji-add') return emojiBox();
     if (!on()){ backTo = /^#settings/.test(location.hash) ? '#tree' : (location.hash || '#tree'); try { sessionStorage.setItem('bx-set-back', backTo); } catch {} }
-    go('#settings' + (PC.matches || tab ? '/' + (tab || 'connectors') : ''));
+    go('#settings' + (PC.matches || tab ? '/' + (tab || DEF()) : ''));
   }
   function leave(){
     closePops(); R.classList.remove('bx-set');
@@ -97,7 +100,7 @@
     closePops();
     R.classList.toggle('bx-set', !!r);
     if (!r){ side.innerHTML = ''; main.innerHTML = ''; return; }
-    if (PC.matches && !r.tab) return go('#settings/connectors', true);
+    if (PC.matches && !r.tab) return go('#settings/' + DEF(), true);
     side.innerHTML = PC.matches ? menuHtml(r.tab) : '';
     const my = ++gen;
     if (!r.tab){ main.innerHTML = `<div class="bxs-phone-menu">${menuHtml('', true)}</div>`; return; }
@@ -678,6 +681,22 @@
         if (!await confirmBox(`<b>${esc(d.name || '이 기기')}</b> 를 폐기할까요? 그 기기는 더 값을 못 보내요${d.scope === 'watch' ? '' : ' · AI 도구는 다시 설치해야 해요'}.`, '폐기')) return;
         try { await api('POST', 'api/me/devices/' + encodeURIComponent(d.id) + '/revoke'); toast('폐기했어요'); render(); } catch (err) { toast(err.message); }
       };
+    };
+  };
+  PAGES.start = async (el, id, live) => {
+    const o = await api('GET', 'api/me/onboarding'); if (!live()) return;
+    const row = (x, i) => {
+      const act = x.pick ? (x.pick.length ? `<div class="bxs-row bxs-ob-pick"><select class="bxs-in" data-pw aria-label="기본 창">${['<option value="">메인 봇(고르지 않음)</option>', ...x.pick.map(w => `<option value="${esc(w.target)}"${w.on ? ' selected' : ''}>${esc(w.title)}</option>`)].join('')}</select>${btn('저장', 'data-pws', 'pri sm')}</div>` : '<p class="bxs-mut">들여온 창이 생기면 여기서 골라요</p>')
+        : `${x.cmd ? `<div class="bxs-ob-cmd"><code>${esc(x.cmd)}</code>${btn('복사', `data-cp="${esc(x.cmd)}"`, 'sm')}</div>` : ''}${x.to ? `<a class="bxs-btn ghost sm" href="${esc(x.to)}" data-to="${esc(x.to)}">설정 열기</a>` : ''}`;
+      return `<li class="bxs-ob${x.done ? ' done' : ''}"><span class="bxs-ob-n" aria-hidden="true">${x.done ? lu('check', 14) : i + 1}</span><div class="bxs-ob-b"><div class="bxs-ob-t"><b>${esc(x.title)}</b><span class="bxs-badge">${x.done ? '끝' : '할 일'}</span></div><p>${esc(x.detail)}</p>${x.done && !x.pick ? '' : act}</div></li>`;
+    };
+    el.innerHTML = header('시작하기', `보더를 내 기기 · AI 도구 · 대화에 잇는 차례예요. ${o.done}/${o.total} 끝.`) + `<ol class="bxs-obl">${o.steps.map(row).join('')}</ol>`;
+    el.onclick = async e => {
+      const cp = e.target.closest('[data-cp]'); if (cp) return copy(cp.dataset.cp, '명령');
+      const sv = e.target.closest('[data-pws]'); if (!sv) return;
+      sv.disabled = true;
+      try { const v = el.querySelector('[data-pw]').value; await api('POST', 'api/me/primary-window', {target: v || null}); toast(v ? '기본 창을 정했어요' : '메인 봇으로 되돌렸어요'); render(); }
+      catch (err) { toast(err.message); sv.disabled = false; }
     };
   };
   PAGES.invite = async el => {

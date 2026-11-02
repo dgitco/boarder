@@ -7,7 +7,7 @@ import { open as v1open, seal as v1seal } from "../connectors/seal";
 import { envelopeOn, openField, sealField, type VaultEnv } from "./index";
 
 type Env = { DB: D1Database; CONNECTOR_KEY?: string };
-export type SecretRef = { tbl: "connection" | "connection_pending" | "hook"; pk: string; col: "auth" | "secret" };
+export type SecretRef = { tbl: "connection" | "connection_pending" | "hook" | "connect_request"; pk: string; col: "auth" | "secret" | "payload" };
 const ve = (env: Env) => env as unknown as VaultEnv;
 
 export async function sealSecret(env: Env, owner: string, ref: SecretRef, v: unknown): Promise<string> {

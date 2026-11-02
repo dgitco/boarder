@@ -29,7 +29,7 @@ async function withServer(handler, fn) {
 // setup 이 Claude Code settings.json 에 넣는 시작 훅의 시간 한도(초) — Claude Code 는 이 시간이 지나면 훅을 죽이고 그 출력을 버림
 function hookTimeoutS() {
   const src = fs.readFileSync(fileURLToPath(new URL('./setup.mjs', import.meta.url)), 'utf8');
-  const m = /command: hook, timeout: (\d+)/.exec(src); assert.ok(m, 'hook timeout in setup.mjs'); return Number(m[1]);
+  const m = /\['SessionStart', 'hook session-start', (\d+)\]/.exec(src); assert.ok(m, 'hook timeout in setup.mjs'); return Number(m[1]);
 }
 
 test('시작 훅: 서버가 답하지 않는(매달린) 망에서도 훅 시간 한도 안에 안내 한 줄을 내고 끝남', async () => {

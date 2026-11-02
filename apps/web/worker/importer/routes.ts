@@ -30,7 +30,11 @@ const ImportIn = z.object({
   items: z.array(z.unknown()).max(2000),
   connectors: z.array(z.object({ name: s(60), from: s(40), transport: z.enum(["http", "sse", "stdio"]), url: s(300).optional(), command: s(80).optional(), secrets: z.boolean().optional() })).max(80).optional(),
   roles: z.array(z.object({ name: s(60), from: s(80), description: s(400).optional(), model: s(60).optional(), tools: s(200).optional(), path: s(300).optional() })).max(80).optional(),
-  features: z.object({ report: z.array(z.enum(["claude", "codex", "cursor", "gemini"])).max(4), engine: z.boolean(), view: z.boolean().optional() }).optional(),   // 이 기기에서 그 사람이 켠 것
+  features: z.lazy(() => Features).optional(),   // 이 기기에서 그 사람이 켠 것
+});
+const Features = z.object({
+  report: z.array(z.enum(["claude", "codex", "cursor", "gemini"])).max(4), engine: z.boolean(), view: z.boolean().optional(),
+  reportDirs: z.array(z.object({ tool: z.enum(["claude", "codex", "cursor", "gemini"]), where: s(120), state: z.enum(["on", "off", "stale"]) })).max(16).optional(),
 });
 
 const now = () => Date.now();
@@ -314,7 +318,9 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     const what = { move: "보더 엔진으로 옮김", park: "주차", reopen: "다시 엶", send: "창에 글을 넣음", focus: "창을 엶", feature: "기기 설정 바꿈" }[cmd.verb] || cmd.verb;
     if (cmd.verb === "feature") {   // 켜고 끈 뒤 기기가 올린 지금 상태
       const f = (p.data.item as { features?: unknown } | undefined)?.features;
-      if (f) await DB.prepare("UPDATE device SET features = ? WHERE id = ?").bind(JSON.stringify(f).slice(0, 400), d.id).run();
+      // 꼴을 보고 그대로(예전엔 JSON 을 400자에서 잘라 폴더 목록이 길면 깨진 JSON 이 남았음)
+      const ff = Features.safeParse(f);
+      if (ff.success) await DB.prepare("UPDATE device SET features = ? WHERE id = ?").bind(JSON.stringify(ff.data), d.id).run();
       if (!p.data.ok) await say(`${d.name} — ${(a as { what?: string }).what === "engine" ? "보더 엔진" : "에이전트 보고"} 바꾸기 못 함: ${p.data.error || "오류"}`, "blocked");
       return c.json({ ok: true });
     }

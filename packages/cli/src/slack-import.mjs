@@ -66,8 +66,39 @@ async function devicePost(body) {
  * 들여오기. post(body) → {status, j} 를 바꿔 끼울 수 있음(시험). 돌려줌: {channels, sent, skipped, stopped?}
  * 다시 보내기: 망 오류 · 5xx 는 세 번까지(2 · 4 · 8초), 429(하루 상한)는 표를 남기고 멈춤 — 다음 날 같은 명령으로 이어서
  */
+// 커넥터로(온보딩 5층): 내보내기 폴더 없이, 넣어 둔 Slack 봇 열쇠 연결로 서버가 직접 읽음 — 봇이 든 채널만, 서버가 가리고 회원 들여오기 길로 넣음(겹침 없음)
+async function connectorPost(body) {
+  const d = loadDevice(); if (!d?.token) { const e = new Error('This machine is not set up for Boarder yet — run `boarder setup --yes`.'); e.code = 'NO_DEVICE'; throw e; }
+  const r = await fetch(`${server()}/api/me/import/slack/connector`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${d.token}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(120000) });
+  return { status: r.status, j: await r.json().catch(() => ({ error: `Boarder ${r.status}` })) };
+}
+export async function slackImportConnector(name, flags = {}, { post = connectorPost, log = console.log } = {}) {
+  const maskOpt = { ids: !flags['no-mask-ids'], pay: !flags['no-mask-pay'] };
+  const l = await post({ connector: name });
+  if (l.status !== 200) throw new Error(`could not list channels: ${l.j.error || l.status}`);
+  const chans = flags.channel ? l.j.channels.filter(c => c.id === flags.channel || c.name === String(flags.channel).replace(/^#/, '')) : l.j.channels;
+  if (flags.channel && !chans.length) throw new Error(`the bot is not in ${flags.channel}`);
+  log(`${chans.length} channel(s) the bot is in${flags['dry-run'] ? ' (dry run — nothing sent)' : ''}: ${chans.map(c => '#' + c.name).join(', ')}`);
+  const tot = { channels: 0, sent: 0, skipped: 0 };
+  if (flags['dry-run']) return tot;
+  for (const ch of chans) {
+    let cursor = null, n = 0;
+    for (let page = 0; page < 500; page++) {
+      const r = await post({ connector: name, channel: ch.id, cursor, mask: maskOpt });
+      if (r.status === 429) { log(`stopped: ${r.j.error} — run the same command tomorrow to continue`); return { ...tot, stopped: true }; }
+      if (r.status !== 200) { log(`#${ch.name}: ${r.j.error || r.status} — skipped`); break; }
+      n += r.j.inserted; tot.sent += r.j.inserted; tot.skipped += r.j.skipped;
+      cursor = r.j.next_cursor; if (!cursor) break;
+    }
+    tot.channels++; log(`#${ch.name}: ${n} new`);
+  }
+  log(`done — ${tot.channels} channel(s), ${tot.sent} new message(s), ${tot.skipped} already there`);
+  return tot;
+}
+
 export async function slackImport(folder, flags = {}, { post = devicePost, log = console.log, mark = markPath(folder), wait = sleep } = {}) {
-  if (!folder) throw new Error('usage: boarder import slack <export folder> [--dry-run]');
+  if (flags.connector) return slackImportConnector(String(flags.connector), flags);
+  if (!folder) throw new Error('usage: boarder import slack <export folder> [--dry-run]  |  boarder import slack --connector <name> [--channel <id|#name>]');
   const dry = !!flags['dry-run'];
   const { channels, users } = readExport(folder);
   const st = readJson(mark, null) || { v: 1, chans: {} };

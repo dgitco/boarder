@@ -14,7 +14,7 @@ const SECRET = /(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abeprs]-[A
 const clean = (s: unknown, n: number) => String(s ?? "").replace(CTRL, "").replace(SECRET, "[가림]").slice(0, n);
 const TS = /^\d{10}\.\d{6}$/;
 
-const Chan = z.object({
+export const Chan = z.object({
   id: z.string().regex(/^[A-Z][A-Z0-9]{5,20}$/),
   name: z.string().min(1).max(200),
   workspace: z.string().max(200).optional(),
@@ -48,20 +48,13 @@ async function pickName(db: D1Database, owner: string, node: string, ch: z.infer
   for (let i = 2; ; i++) if (!taken.has(`${tries[tries.length - 1]} ${i}`)) return `${tries[tries.length - 1]} ${i}`;
 }
 
-export function mountSlackImport(app: Hono<{ Bindings: Env }>, h: SlackHooks) {
-  app.post("/api/me/import/slack", async c => {
-    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
-    if (+(c.req.header("content-length") || 0) > LIMITS.body) return c.json({ error: "너무 큼", max_bytes: LIMITS.body }, 413);
-    const raw = await c.req.text();
-    if (new TextEncoder().encode(raw).length > LIMITS.body) return c.json({ error: "너무 큼", max_bytes: LIMITS.body }, 413);   // content-length 없이 온 몸통도
-    let j: unknown; try { j = JSON.parse(raw); } catch { return c.json({ error: "JSON 아님" }, 400); }
-    const p = Body.safeParse(j);
-    if (!p.success) return c.json({ error: p.error.issues.slice(0, 3).map(i => `${i.path.join(".")} ${i.message}`).join("; ") }, 400);
-    const owner = d.owner.toLowerCase(), DB = c.env.DB, t = Date.now(), ch = p.data.channel;
+/** 채널 하나의 글 묶음을 넣음(기기의 폴더 들여오기 · 커넥터 들여오기가 같이 씀) — (사람, 채널, ts) 한 줄만, 하루 · 채널 수 상한 */
+export async function importBatch(env: Env, ownerIn: string, ch: z.infer<typeof Chan>, messages: unknown[]) {
+    const owner = ownerIn.toLowerCase(), DB = env.DB, t = Date.now();
     // 하나씩 검사해 이상한 글만 버림(하나 때문에 묶음 전체가 400 이 나지 않게 — importer 와 같음). 같은 묶음 안 같은 ts 는 하나만
     const seen = new Set<string>(), msgs: z.infer<typeof Msg>[] = [];
-    for (const x of p.data.messages) { const m = Msg.safeParse(x); if (m.success && !seen.has(m.data.ts)) { seen.add(m.data.ts); msgs.push(m.data); } }
-    const bad = p.data.messages.length - msgs.length;
+    for (const x of messages) { const m = Msg.safeParse(x); if (m.success && !seen.has(m.data.ts)) { seen.add(m.data.ts); msgs.push(m.data); } }
+    const bad = messages.length - msgs.length;
     const node = await nodeOf(owner, ch.id);
     const [day, have, nch] = await DB.batch([
       DB.prepare("SELECT count(*) AS n FROM slack_msg WHERE owner = ? AND imported_at > ?").bind(owner, t - 86_400_000),
@@ -69,7 +62,7 @@ export function mountSlackImport(app: Hono<{ Bindings: Env }>, h: SlackHooks) {
       DB.prepare("SELECT count(*) AS n FROM slack_chan WHERE owner = ?").bind(owner),
     ]);
     const used = Number((day.results[0] as R)?.n || 0), old = have.results[0] as R | undefined;
-    if (!old && Number((nch.results[0] as R)?.n || 0) >= LIMITS.chans) return c.json({ error: "채널 수 상한", max_channels: LIMITS.chans }, 429);
+    if (!old && Number((nch.results[0] as R)?.n || 0) >= LIMITS.chans) return { error: { error: "채널 수 상한", max_channels: LIMITS.chans }, status: 429 as const };
     // 하루 상한: 이미 들어 있는 글(겹침)은 새로 안 씀 — 세기 전에 빼서 다시 돌리기가 상한을 먹지 않게
     const dup = new Set<string>();
     for (let i = 0; i < msgs.length; i += 90) {
@@ -77,7 +70,7 @@ export function mountSlackImport(app: Hono<{ Bindings: Env }>, h: SlackHooks) {
       for (const r of (await DB.prepare(`SELECT ts FROM slack_msg WHERE owner = ? AND chan = ? AND ts IN (${ks.map(() => "?").join(",")})`).bind(owner, ch.id, ...ks).all<R>()).results) dup.add(String(r.ts));
     }
     const fresh = msgs.filter(m => !dup.has(m.ts));
-    if (used + fresh.length > LIMITS.day) return c.json({ error: "하루 상한", max_per_day: LIMITS.day, left: Math.max(0, LIMITS.day - used) }, 429);
+    if (used + fresh.length > LIMITS.day) return { error: { error: "하루 상한", max_per_day: LIMITS.day, left: Math.max(0, LIMITS.day - used) }, status: 429 as const };
     // 채널 · 노드: 처음이면 이름을 정하고(그 뒤로 안 바꿈 — 화면이 이름으로 노드를 찾음), 노드가 보관됐으면 다시 꺼냄
     const name = old ? String(old.name) : await pickName(DB, owner, node, ch);
     if (!old) await DB.batch([
@@ -89,8 +82,8 @@ export function mountSlackImport(app: Hono<{ Bindings: Env }>, h: SlackHooks) {
     for (const m of fresh) {
       const thread = m.thread_ts && m.thread_ts !== m.ts ? m.thread_ts : null;
       const files = (m.files || []).map(f => ({ name: clean(f.name, 200) || "파일", permalink: okUrl(f.permalink) })).slice(0, 20);
-      const text = await sealField(c.env, owner, ref(ch.id, m.ts, "text"), clean(m.text, LIMITS.text));
-      const fj = await sealField(c.env, owner, ref(ch.id, m.ts, "files"), JSON.stringify(files));
+      const text = await sealField(env, owner, ref(ch.id, m.ts, "text"), clean(m.text, LIMITS.text));
+      const fj = await sealField(env, owner, ref(ch.id, m.ts, "files"), JSON.stringify(files));
       st.push(DB.prepare("INSERT INTO slack_msg(owner, chan, ts, thread_ts, at, user_id, user_name, text, files, reactions, subtype, imported_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner, chan, ts) DO NOTHING")
         .bind(owner, ch.id, m.ts, thread, atOf(m.ts), clean(m.user, 40), clean(m.user_name, 120), text, fj, JSON.stringify((m.reactions || []).map(r => ({ name: clean(r.name, 60), count: r.count }))), clean(m.subtype, 60), t));
     }
@@ -104,7 +97,20 @@ export function mountSlackImport(app: Hono<{ Bindings: Env }>, h: SlackHooks) {
       DB.prepare("UPDATE mnode SET why = ?, counts = ?, updated_at = ?, archived_at = NULL, state = CASE WHEN state = 'done' THEN 'idle' ELSE state END WHERE owner = ? AND id = ?")
         .bind(`Slack 옛 대화 · 글 ${n}개${day0 ? ` · 마지막 ${day0}` : ""}`, JSON.stringify({ slack: n }), last, owner, node),
     ]);
-    return c.json({ ok: true, node, name, inserted, skipped: msgs.length - inserted, bad, channel_total: n, day_left: Math.max(0, LIMITS.day - used - inserted) });
+  return { ok: true as const, node, name, inserted, skipped: msgs.length - inserted, bad, channel_total: n, day_left: Math.max(0, LIMITS.day - used - inserted) };
+}
+
+export function mountSlackImport(app: Hono<{ Bindings: Env }>, h: SlackHooks) {
+  app.post("/api/me/import/slack", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+    if (+(c.req.header("content-length") || 0) > LIMITS.body) return c.json({ error: "너무 큼", max_bytes: LIMITS.body }, 413);
+    const raw = await c.req.text();
+    if (new TextEncoder().encode(raw).length > LIMITS.body) return c.json({ error: "너무 큼", max_bytes: LIMITS.body }, 413);   // content-length 없이 온 몸통도
+    let j: unknown; try { j = JSON.parse(raw); } catch { return c.json({ error: "JSON 아님" }, 400); }
+    const p = Body.safeParse(j);
+    if (!p.success) return c.json({ error: p.error.issues.slice(0, 3).map(i => `${i.path.join(".")} ${i.message}`).join("; ") }, 400);
+    const r = await importBatch(c.env, d.owner, p.data.channel, p.data.messages);
+    return "error" in r ? c.json(r.error, r.status) : c.json(r);
   });
 }
 

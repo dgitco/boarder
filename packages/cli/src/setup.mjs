@@ -74,8 +74,8 @@ export function dropReport({ only, skip, note = console.log } = {}) {
   }
   const dropJson = (p, fn) => { if (!existsSync(p) || isShared(p)) return; let j; try { j = JSON.parse(readFileSync(p, 'utf8')); } catch { return; } const before = JSON.stringify(j); fn(j); if (JSON.stringify(j) !== before) { atomic(p, JSON.stringify(j, null, 2) + '\n'); done.push(p); } };
   const noMcp = j => { if (j.mcpServers) delete j.mcpServers.boarder; };
-  const noHook = j => { const l = j.hooks?.SessionStart; if (Array.isArray(l)) { const k = l.filter(x => !(JSON.stringify(x).includes('hook session-start') && JSON.stringify(x).includes('boarder'))); if (k.length === l.length) return; if (k.length) j.hooks.SessionStart = k; else delete j.hooks.SessionStart; } };
-  const dropToml = toml => { if (!existsSync(toml) || isShared(toml)) return; const old = readFileSync(toml, 'utf8'), x = old.replace(TOML_SEC_END, '').replace(TOML_SEC, ''); if (x !== old) { atomic(toml, x); done.push(toml); } };
+  const noHook = j => { for (const [ev, sub] of HOOKS) { const l = j.hooks?.[ev]; if (!Array.isArray(l)) continue; const k = l.filter(x => !ours(x, sub)); if (k.length === l.length) continue; if (k.length) j.hooks[ev] = k; else delete j.hooks[ev]; } if (j.hooks && !Object.keys(j.hooks).length) delete j.hooks; };
+  const dropToml = toml => { if (!existsSync(toml) || isShared(toml)) return; const old = readFileSync(toml, 'utf8'), x = old.replace(TOML_SEC_END, '').replace(TOML_SEC, '').replace(TOML_NOTIFY, ''); if (x !== old) { atomic(toml, x); done.push(toml); } };
   const dropSkill = f => { if (!existsSync(f) || isShared(f)) return; rmSync(path.dirname(f), { recursive: true, force: true }); done.push(f); };
   for (const t of list) {
     if (t.tool === 'claude' || t.tool === 'cursor' || t.tool === 'gemini') dropJson(t.files.mcp, noMcp);
@@ -83,7 +83,7 @@ export function dropReport({ only, skip, note = console.log } = {}) {
     if (t.tool === 'codex') dropToml(t.files.toml);
     for (const f of t.files.skills) dropSkill(f);
   }
-  // 지금 못 찾는 폴더의 파일 — 도구를 모르니 파일 꼴로(.json 은 MCP 칸 · 시작 훅, .toml 은 MCP 칸, skills/boarder/SKILL.md 는 그 폴더)
+  // 지금 못 찾는 폴더의 파일 — 도구를 모르니 파일 꼴로(.json 은 MCP 칸 · 훅 둘, .toml 은 MCP 칸 · notify, skills/boarder/SKILL.md 는 그 폴더)
   for (const p of extra) {
     if (p.endsWith('.json')) { dropJson(p, noMcp); dropJson(p, noHook); }
     else if (p.endsWith('.toml')) dropToml(p);
@@ -113,6 +113,10 @@ export async function restore(id, { only } = {}) {
 const TOML_SEC = /^\[mcp_servers\.boarder\][ \t]*\r?\n(?:(?![ \t]*\[).*(?:\r?\n|$))*/m;
 const TOML_SEC_END = /(?<=\n)\r?\n\[mcp_servers\.boarder\][ \t]*\r?\n(?:(?![ \t]*\[).*(?:\r?\n|$))*$/;
 const mcpEntry = { command: NODE, args: [BIN, 'mcp'] };
+const HOOKS = [['SessionStart', 'hook session-start', 10], ['Stop', 'hook stop', 20]];
+const ours = (x, sub) => JSON.stringify(x).includes(sub) && JSON.stringify(x).includes('boarder');
+// Codex: 턴이 끝나면 부르는 notify(맨 위 칸, 하나뿐) — 사람이 이미 notify 를 쓰면 건드리지 않음. 우리가 넣은 줄 = boarder 의 hook codex-turn
+const TOML_NOTIFY = /^notify[ \t]*=[ \t]*\[[^\n]*"hook",[ \t]*"codex-turn"\][ \t]*\r?\n/m;
 function atomic(p, text) {
   const real = existsSync(p) ? realpathSync(p) : p, mode = existsSync(real) ? statSync(real).mode & 0o777 : 0o644;
   mkdirSync(path.dirname(real), { recursive: true });
@@ -132,12 +136,13 @@ function writeTool(bk, t, skill) {
   if (t.tool === 'claude') {
     if (editJson(bk, t.files.mcp, j => { j.mcpServers = { ...(j.mcpServers || {}), boarder: { type: 'stdio', ...mcpEntry, env: {} } }; })) done.push('MCP');
     const sq = v => `'${v.replace(/'/g, `'\\''`)}'`;   // 경로에 " $ ` 가 있어도 셸이 안 풀게
-    const hook = `${sq(NODE)} ${sq(BIN)} hook session-start`;
     if (editJson(bk, t.files.settings, j => {
-      j.hooks ||= {}; const list = (j.hooks.SessionStart ||= []);
-      const mine = list.findIndex(x => JSON.stringify(x).includes('hook session-start') && JSON.stringify(x).includes('boarder'));
-      const entry = { hooks: [{ type: 'command', command: hook, timeout: 10 }] };
-      if (mine >= 0) list[mine] = entry; else list.push(entry);
+      j.hooks ||= {};
+      for (const [ev, sub, timeout] of HOOKS) {
+        const list = (j.hooks[ev] ||= []), mine = list.findIndex(x => ours(x, sub));
+        const entry = { hooks: [{ type: 'command', command: `${sq(NODE)} ${sq(BIN)} ${sub}`, timeout }] };
+        if (mine >= 0) list[mine] = entry; else list.push(entry);
+      }
     })) done.push('hook');
   }
   if (t.tool === 'codex') {
@@ -146,8 +151,15 @@ function writeTool(bk, t, skill) {
     const sec = `[mcp_servers.boarder]${nl}command = ${JSON.stringify(NODE)}${nl}args = [${JSON.stringify(BIN)}, "mcp"]${nl}`;
     const re = TOML_SEC;
     // 뒤에 다른 칸이 있을 때만 빈 줄 — 다시 돌려도 같은 글
-    const text = re.test(old) ? old.replace(re, (m, at) => sec + (at + m.length < old.length ? nl : '')) : (old && !old.endsWith('\n') ? old + nl : old) + (old ? nl : '') + sec;
-    if (writeText(bk, p, text)) done.push('MCP');
+    let text = re.test(old) ? old.replace(re, (m, at) => sec + (at + m.length < old.length ? nl : '')) : (old && !old.endsWith('\n') ? old + nl : old) + (old ? nl : '') + sec;
+    // 턴 끝 알림(notify): 맨 위 칸이라 파일 맨 앞에. 사람이 쓰던 notify 가 있으면 그대로 둠(하나만 됨)
+    const notify = `notify = ${JSON.stringify([NODE, BIN, 'hook', 'codex-turn'])}${nl}`;
+    if (TOML_NOTIFY.test(text)) text = text.replace(TOML_NOTIFY, notify);
+    else if (!/^notify[ \t]*=/m.test(text.split(/^[ \t]*\[/m)[0])) text = notify + text;
+    if (writeText(bk, p, text)) {
+      if ((old.match(re) || [''])[0] !== (text.match(re) || [''])[0]) done.push('MCP');
+      if ((old.match(TOML_NOTIFY) || [''])[0] !== (text.match(TOML_NOTIFY) || [''])[0]) done.push('hook');
+    }
   }
   if ((t.tool === 'cursor' || t.tool === 'gemini') && editJson(bk, t.files.mcp, j => { j.mcpServers = { ...(j.mcpServers || {}), boarder: mcpEntry }; })) done.push('MCP');
   for (const f of t.files.skills) if (writeText(bk, f, skill)) { if (!done.includes('skill')) done.push('skill'); }
@@ -191,12 +203,13 @@ async function listen(want) {
   await new Promise((ok, no) => { srv.once('error', no); srv.listen(0, '127.0.0.1', ok); });
   return { port: srv.address().port, got, close: () => srv.close() };
 }
-async function login(srv, tools, { browser, deviceAuth }) {
+async function login(srv, tools, { browser, deviceAuth, email }) {
   const { randomBytes, createHash } = await import('node:crypto');
   const state = b64u(randomBytes(24));
-  const local = browser && !deviceAuth && !headless() ? await listen(state).catch(() => null) : null;
+  // --email: 보드 카드 · 승인된 기기로 허용(온보딩 2층) — 코드 길(폴링)이라야 다른 곳에서 허용해도 이 기기가 토큰을 받음
+  const local = browser && !deviceAuth && !email && !headless() ? await listen(state).catch(() => null) : null;
   const verifier = b64u(randomBytes(32)), challenge = b64u(createHash('sha256').update(verifier).digest());
-  const body = { name: `${os.hostname().split('.')[0]} (${process.platform})`, tools, ...(local ? { callback: `http://127.0.0.1:${local.port}/callback`, state, code_challenge: challenge } : {}) };
+  const body = { name: `${os.hostname().split('.')[0]} (${process.platform})`, tools, ...(email ? { email } : {}), ...(local ? { callback: `http://127.0.0.1:${local.port}/callback`, state, code_challenge: challenge } : {}) };
   const r = await fetch(`${srv}/api/device/code`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(20000) });
   if (!r.ok) { local?.close(); throw new Error(`Boarder server answered ${r.status} — check the address (${srv})`); }
   const c = await r.json();
@@ -227,9 +240,18 @@ async function login(srv, tools, { browser, deviceAuth }) {
   }
   local?.close();
   console.log(`\nOne-time code: ${c.user_code}`);
-  console.log(`Approve this machine in a browser: ${c.verify_url.replace(/\?code=.*$/, '')}  (type the code there)`);
-  console.log(`(Check the code matches, then press 「허용」. Waiting up to ${Math.round(c.expires_in / 60)} minutes…)\n`);
-  if (browser) openBrowser(c.verify_url.replace(/\?code=.*$/, ''));
+  if (email) {
+    // 브라우저를 열지 않음 — 보드 카드(폰)나 승인된 기기에서 허용. 회원이 아니면 카드는 안 서지만 답은 같은 꼴(누가 회원인지 안 알려 줌)
+    console.log(`Approve this machine — any one of these:`);
+    console.log(`  • on your board (phone): the card 「새 기기 … 허용?」 for ${email} — type ${c.user_code} into 「기타」 (the card does not show the code)`);
+    console.log(`  • on a machine that is already signed in: boarder device approve ${c.user_code} (opens the approve page there)`);
+    console.log(`  • in a browser: ${c.verify_url.replace(/\?code=.*$/, '')}  (type the code there)`);
+    console.log(`(No card? Check the email is the one you sign in to Boarder with. Waiting up to ${Math.round(c.expires_in / 60)} minutes…)\n`);
+  } else {
+    console.log(`Approve this machine in a browser: ${c.verify_url.replace(/\?code=.*$/, '')}  (type the code there)`);
+    console.log(`(Check the code matches, then press 「허용」. Or on a machine that is already signed in: boarder device approve ${c.user_code}. Waiting up to ${Math.round(c.expires_in / 60)} minutes…)\n`);
+    if (browser) openBrowser(c.verify_url.replace(/\?code=.*$/, ''));
+  }
   while (Date.now() < until) {
     await sleep((c.interval || 3) * 1000);
     let j; try { j = await tokenOf({}); } catch { continue; }
@@ -286,7 +308,7 @@ export async function setup(opts) {
   const sel = pick(targets(), opts.only, opts.skip), tools = [...new Set(sel.map(t => t.tool))];
   if (!tools.length) { console.error('No AI tools found. Install Claude Code, Codex, Cursor or Gemini CLI, then run this again.'); process.exit(1); }
   console.log(`Tools: ${tools.map(t => TOOLS[t].label).join(', ')}`);
-  const who = (await signedIn(srv)) || await login(srv, tools, { browser: !opts.noBrowser, deviceAuth: !!opts.deviceAuth }), email = who.email;
+  const who = (await signedIn(srv)) || await login(srv, tools, { browser: !opts.noBrowser, deviceAuth: !!opts.deviceAuth, email: opts.email || process.env.BOARDER_EMAIL || undefined }), email = who.email;
   noteMade(pre);
   console.log(`Signed in as ${email}${who.scope === 'watch' ? ' (watch only)' : ''}`);
   if (who.scope === 'watch') { await watcher(opts); return console.log('\nThis device only reports memory · CPU · disk · agents · Claude limits to Settings › Devices. Your AI tools were not changed.'); }

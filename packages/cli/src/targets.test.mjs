@@ -43,6 +43,7 @@ test('enable report: 폴더 전부에 MCP · 훅 · 스킬, 옛 경로 칸은 �
       const e = rd(path.join(d, '.claude.json')).mcpServers.boarder;
       assert.deepEqual(e.args, [BIN, 'mcp'], `${d} MCP`);
       assert.match(JSON.stringify(rd(path.join(d, 'settings.json')).hooks.SessionStart), /hook session-start/);
+      assert.match(JSON.stringify(rd(path.join(d, 'settings.json')).hooks.Stop), /boarder\.mjs' hook stop/, `${d} Stop 훅(보드 글의 답을 채널로)`);
       assert.ok(fs.existsSync(path.join(d, 'skills', 'boarder', 'SKILL.md')), `${d} skill`);
     }
     const base = rd(path.join(H, '.claude.json'));
@@ -52,6 +53,7 @@ test('enable report: 폴더 전부에 MCP · 훅 · 스킬, 옛 경로 칸은 �
     const toml = fs.readFileSync(path.join(H, '.codex', 'config.toml'), 'utf8');
     assert.ok(toml.includes(JSON.stringify(BIN)) && !toml.includes(OLD), toml);
     assert.equal(toml.match(/\[mcp_servers\.boarder\]/g).length, 1); assert.match(toml, /\[other\]\nx = 1/);
+    assert.ok(toml.startsWith(`notify = ${JSON.stringify([process.execPath, BIN, 'hook', 'codex-turn'])}\n`), `Codex 턴 끝 알림은 맨 위 칸\n${toml}`);
     assert.match(r.out, /fixed old path/);
     const s = await cli(['status']);
     assert.doesNotMatch(s.out, /old CLI path|view only/, s.out);
@@ -96,7 +98,7 @@ test('restore(인자 없음): setup 때 CLAUDE_CONFIG_DIR · BOARDER_CLAUDE_DIRS
     assert.ok(!fs.existsSync(path.join(env3, 'settings.json')), 'CLAUDE_CONFIG_DIR 폴더 훅이 남음');
     assert.ok(!fs.existsSync(path.join(env3, 'skills', 'boarder')), 'CLAUDE_CONFIG_DIR 폴더 스킬이 남음');
     assert.equal(fs.readFileSync(path.join(env4, '.claude.json'), 'utf8'), '{"keep":1}\n', 'BOARDER_CLAUDE_DIRS 폴더 MCP 가 남음');
-    const st = rd(s4); assert.equal(st.theme, 'dark'); assert.doesNotMatch(JSON.stringify(st), /hook session-start/, 'BOARDER_CLAUDE_DIRS 폴더 훅이 남음');
+    const st = rd(s4); assert.equal(st.theme, 'dark'); assert.doesNotMatch(JSON.stringify(st), /hook (session-start|stop)/, 'BOARDER_CLAUDE_DIRS 폴더 훅이 남음');
     assert.ok(!fs.existsSync(path.join(env4, 'skills', 'boarder')));
   });
 });
@@ -112,5 +114,33 @@ test('restore <폴더>: settings.json 이 다른 폴더 것과 링크로 같은 
     assert.match(r.out, /shared/, r.out);
     assert.equal(rd(path.join(H, '.claude-accounts', 'b', '.claude.json')).mcpServers, undefined, '그 폴더 MCP 는 빠짐');
     assert.ok(fs.lstatSync(path.join(H, '.claude-accounts', 'b', 'settings.json')).isSymbolicLink(), '링크는 그대로');
+  });
+});
+
+test('disable report: 그 뒤 사람이 설정을 바꿨어도 Boarder 훅 둘(시작 · Stop) · Codex notify 만 빠지고 나머지는 그대로', async () => {
+  await world(async ({ cli, H }) => {
+    assert.equal((await cli(['enable', 'report', '--yes'])).code, 0);
+    const sp = path.join(H, '.claude-accounts', 'a', 'settings.json'), s = rd(sp);
+    s.hooks.Stop.push({ hooks: [{ type: 'command', command: 'say done' }] }); s.theme = 'dark';
+    fs.writeFileSync(sp, JSON.stringify(s, null, 2));
+    const tp = path.join(H, '.codex', 'config.toml'); fs.appendFileSync(tp, '\n[mine]\ny = 2\n');
+    const r = await cli(['disable', 'report', '--yes']);
+    assert.equal(r.code, 0, r.err);
+    const after = rd(sp);
+    assert.deepEqual(after.hooks, { Stop: [{ hooks: [{ type: 'command', command: 'say done' }] }] });
+    assert.equal(after.theme, 'dark');
+    const toml = fs.readFileSync(tp, 'utf8');
+    assert.doesNotMatch(toml, /codex-turn|mcp_servers\.boarder/); assert.match(toml, /\[mine\]\ny = 2/);
+  });
+});
+
+test('Codex: 사람이 쓰던 notify 가 있으면 건드리지 않음(하나만 됨)', async () => {
+  await world(async ({ cli, H }) => {
+    const tp = path.join(H, '.codex', 'config.toml');
+    fs.writeFileSync(tp, 'notify = ["my-notifier"]\nmodel = "x"\n');
+    assert.equal((await cli(['enable', 'report', '--yes'])).code, 0);
+    const toml = fs.readFileSync(tp, 'utf8');
+    assert.ok(toml.startsWith('notify = ["my-notifier"]\nmodel = "x"\n'), toml);
+    assert.doesNotMatch(toml, /codex-turn/);
   });
 });

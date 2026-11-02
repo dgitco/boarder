@@ -23,6 +23,7 @@ const safe = (max: number, multiline = false) => z.string().trim().min(1).max(ma
   .refine(v => !(multiline ? CTRL : CTRL_NL).test(v), "제어 문자는 못 씀")
   .refine(v => !v.startsWith("-"), "「-」로 시작할 수 없음");
 const line = (max: number) => safe(max);
+export const REPLY_MAX = 3000;
 const tsId = z.string().regex(/^\d{10}\.\d{6}$|^q:[a-z]+:[\w.-]{1,60}$|^w:\d{1,9}$/, "카드 id 꼴이 아님");
 
 export const SCHEMAS = {
@@ -39,12 +40,12 @@ export const SCHEMAS = {
   }),
   inbox_wait: z.object({ card_id: tsId, timeout_s: z.number().int().min(0).max(600).default(60) }),
   inbox_log: z.object({
-    kind: z.enum(["start", "progress", "blocked", "done", "decision", "incident", "deadline"]),
-    text: line(400),
+    kind: z.enum(["start", "progress", "blocked", "done", "decision", "incident", "deadline", "reply"]),
+    text: z.string().trim().min(1).max(REPLY_MAX).refine(v => !CTRL.test(v), "제어 문자는 못 씀"),
     unblocks: z.enum(["me", "other"]).optional(),
     evidence: z.array(z.string().url().max(500).refine(v => !CTRL_NL.test(v), "제어 문자는 못 씀")).max(10).optional(),
     thread: z.string().regex(/^\d{10}\.\d{6}$/).optional(),
-  }),
+  }).superRefine((v, c) => { if (v.kind !== "reply" && !line(400).safeParse(v.text).success) c.addIssue({ code: "custom", path: ["text"], message: "한 줄 · 400자 · 「-」로 시작 못 함(reply 만 여러 줄)" }); }),
   inbox_close: z.object({ card_id: tsId, done: line(300), replaced_by: tsId.optional() }),
   inbox_say: z.object({ thread_id: z.string().regex(/^\d{10}\.\d{6}$/), text: safe(3000, true) }),
   inbox_status: z.object({ text: line(40) }),
@@ -219,7 +220,7 @@ async function raw_(ctx: Ctx, name: string, a: Record<string, any>): Promise<unk
     if (!ctx.conn) throw new Error("이 토큰은 쓸 수 없음");
     return ext.run({ env: ctx.conn.env, owner: ctx.conn.owner, win: ctx.win || "", agent: ctx.agent, test: !!ctx.testCh }, name, a);
   }
-  if (MEMBER_ONLY.has(name) && !ctx.local) throw new Error("회원 보드 전용 도구예요");
+  if ((MEMBER_ONLY.has(name) || (name === "inbox_log" && a.kind === "reply")) && !ctx.local) throw new Error("회원 보드 전용 도구예요");
   if (ctx.local) return ctx.local(name, a);
   if (name === "inbox_wait") return waitAnswer(ctx, a.card_id, a.timeout_s);
   if (name === "inbox_cards") return listCards(ctx, a.query, a.limit);
