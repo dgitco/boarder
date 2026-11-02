@@ -207,6 +207,24 @@ export function convoFold(n: Node, mainName: string) {
   const root = { ...msg({ id: 0, win: "보더", kind: "chat", text, at: at0 }, "", mainName), ts, lid: 0, ch: "primary", replies: replies.length, latest: replies.at(-1)!.ts, rnames: [], fold: { sessions, threads } };
   return { root, replies };
 }
+async function nodeThread(db: D1Database, me: string, raw: string, ts: string) {
+  const t = raw.replace(/^\d+\s+/, "").trim(), L = await load(db, me);
+  const n = L.nodes.find(x => x.name === raw) || L.nodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
+  if (!n && !ew) return null;
+  const home = n ? n.name : String(ew!.name), ch = "n:" + raw;
+  const mineWin = (win: string, kind?: string) => n ? L.nodeOfWin(win) === n || (kind === "me" && win === n.name) : win === ew!.name;
+  const card = await cardBy(db, me, ts);
+  if (card) {
+    if (!mineWin(String(card.win))) return null;
+    const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, ts).all<R>()).results;
+    const replies = [...said.map(r => ({ at: Number(r.at), m: { ...msg(r, me, String(r.win)), thread: ts } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch }));
+    return { channel: ch, root: ts, owner: null, home, messages: [{ ...cardMsg(card, said), ch }, ...replies] };
+  }
+  const [s, id] = ts.split(".");
+  const r = await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? LIMIT 1").bind(me, Number(id), Number(s) * 1000, Number(s) * 1000 + 1000).first<R>();
+  if (!r || r.thread === "primary" || CARD_TS.test(String(r.thread || "")) || OWN.test(String(r.win)) || !mineWin(String(r.win), String(r.kind))) return null;
+  return { channel: ch, root: ts, owner: null, home, messages: [{ ...msg(r, me, String(r.win)), ch }] };
+}
 async function primaryRows(db: D1Database, me: string, before?: string) {
   const m = before ? /^(\d{10})\.(\d{6})$/.exec(before) : null, sec = m ? Number(m[1]) * 1000 : 0;
   return (await db.prepare(`SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary'${m ? " AND (at < ? OR (at < ? AND id % 1000000 < ?))" : ""} ORDER BY at DESC, id DESC LIMIT 101`)
@@ -252,7 +270,9 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
   if (/^\/api\/file\/[\w.-]{1,80}$/.test(p)) return j({ error: "없는 파일" }, 404);   // 회원 글엔 아직 첨부가 없음 — 403 대신 「없음」
   if (/^\/api\/permalink\//.test(p)) return j({ error: "회원 글엔 바깥 주소가 없어요" }, 404);
   if (/^\/api\/answer\/[\w-]{1,64}$/.test(p)) return j({ ok: true, state: "ok" });   // 회원 쓰기는 바로 끝나서 기다릴 일 없음
-  if (p === "/emoji.json") { const e = await emoji(); return e ? new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag } }) : j({ cats: [], e: {} }); }   // 이름 ↔ 글자 공용 표(사람 데이터 아님)
+  if (p === "/emoji.json") { const e = await emoji(); return e ? new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag } }) : j({ cats: [], e: {} }); }
+  const nm = /^\/api\/chat\/n:([^/]{1,120})\/(\d{10}\.\d{6})$/.exec(dp);
+  if (nm) return j(await nodeThread(db, me, nm[1], nm[2]) ?? { channel: "n:" + nm[1], root: nm[2], owner: null, messages: [] });
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?$/.exec(p);
   if (m) {
     if (m[1] !== "primary") return j({ channel: m[1], messages: [], more: false, cursor: null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });

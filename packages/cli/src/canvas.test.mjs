@@ -56,3 +56,45 @@ test('상한 · 꼴은 보내기 전에 멈춤: index.html 없음 · 큰 파일 
   assert.equal(normId(undefined), undefined);
   assert.equal(collect(folder({ 'index.html': 'x' })).files.length, 1);
 });
+
+async function withTodoServer(fn, { askStatus = 200 } = {}) {
+  const hits = [];
+  const srv = http.createServer(async (req, res) => {
+    const chunks = []; for await (const c of req) chunks.push(c);
+    const body = Buffer.concat(chunks).toString();
+    hits.push({ url: req.url, auth: req.headers.authorization, json: req.url === '/api/me/canvas' ? null : JSON.parse(body || '{}') });
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/api/me/canvas') return res.end(JSON.stringify({ ok: true, id: 'AbcdefAbcdef0123456789', title: '가상 검토 페이지', files: 1, replaced: false, url: 'http://x/art/AbcdefAbcdef0123456789/' }));
+    if (req.url === '/api/device/window') return res.end(JSON.stringify({ token: 'bxa_' + 'w'.repeat(40) }));
+    if (req.url === '/api/agent/inbox_ask') { res.statusCode = askStatus; return res.end(JSON.stringify(askStatus === 200 ? { card_id: '1793000000.000777', thread_id: '1793000000.000777' } : { error: '보드가 잠깐 안 돼요' })); }
+    res.statusCode = 404; res.end('{}');
+  });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const home = fs.mkdtempSync(path.join(tmp, 'h-')); process.env.BOARDER_HOME = home; process.env.BOARDER_WINDOW = 'ew_todo01';
+  fs.writeFileSync(path.join(home, 'device.json'), JSON.stringify({ token: 'bxd_made_up_token_for_test_000000000', device_id: 'd', server: `http://127.0.0.1:${srv.address().port}` }));
+  try { await fn(hits); } finally { srv.close(); delete process.env.BOARDER_WINDOW; }
+}
+
+test('put --todo: 올린 뒤 그 캔버스 주소를 단 할 일 카드(kind todo · 「했어요」) 하나 — 창 토큰으로', async () => {
+  await withTodoServer(async hits => {
+    const l = [];
+    const j = await canvasPut(folder({ 'index.html': 'x' }), { todo: 'Q-1 검토 페이지 확인' }, { log: s => l.push(s) });
+    assert.deepEqual(hits.map(h => h.url), ['/api/me/canvas', '/api/device/window', '/api/agent/inbox_ask']);
+    const ask = hits[2];
+    assert.equal(ask.auth, 'Bearer bxa_' + 'w'.repeat(40));
+    assert.deepEqual(ask.json, { question: 'Q-1 검토 페이지 확인', choices: ['했어요'], kind: 'todo', body: '캔버스: 가상 검토 페이지\nhttp://x/art/AbcdefAbcdef0123456789/' });
+    assert.equal(j.todo, '1793000000.000777');
+    assert.match(l.at(-1), /할 일: Q-1 검토 페이지 확인/);
+  });
+});
+
+test('put --todo: 나쁜 할 일 글은 올리기 전에 멈춤 · 카드를 못 세우면 「캔버스는 올렸지만」', async () => {
+  await withTodoServer(async hits => {
+    for (const bad of ['', '둘\n줄', '-옵션', '가'.repeat(201), true]) await assert.rejects(canvasPut(folder({ 'index.html': 'x' }), { todo: bad }, { log: () => {} }), /--todo/);
+    assert.equal(hits.length, 0);
+  });
+  await withTodoServer(async hits => {
+    await assert.rejects(canvasPut(folder({ 'index.html': 'x' }), { todo: '확인해 주세요' }, { log: () => {} }), /캔버스는 올렸지만 할 일 카드를 못 세웠어요: 보드가 잠깐 안 돼요/);
+    assert.equal(hits[0].url, '/api/me/canvas');
+  }, { askStatus: 503 });
+});

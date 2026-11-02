@@ -144,6 +144,21 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const chatMode = () => !!S.chat && !ans.hidden && !!cur && !!cur.chan;
   const FEED = k => (k === 'unread' || k === 'saved' || k === 'drafts' || k === 'turn') && !!window.HBInbox?.openFeed;
   const ibChat = () => chatMode() && /^i:(unread|saved|drafts|turn)$/.test(cur.chan) ? cur.chan.slice(2) : '';
+  document.addEventListener('click', e => {
+    if (ibChat() !== 'unread') return;
+    const it = e.target.closest?.('.ibi[data-ibch][data-ibth]'), m = e.target.closest?.('.msg');
+    if (!it || !m || m.parentElement !== it) return;
+    if (e.target.closest('a, button, input, textarea, select, label, img, video, audio, [contenteditable], [data-copen], [role="button"]') || String(window.getSelection?.() || '').trim()) return;
+    const ch = it.dataset.ibch || '', th = it.dataset.ibth || '';
+    if (!/^\d{10}\.\d{6}$/.test(th)) return;
+    e.preventDefault(); e.stopPropagation();
+    if (ch.startsWith('n:') && typeof openNode === 'function'){
+      const r = openNode(ch.slice(2), th);
+      if (it.querySelector('.ibth .msg') && typeof openThread === 'function') Promise.resolve(r).then(() => openThread(ch, th));
+      return;
+    }
+    if (typeof window.HBOpenCard === 'function') window.HBOpenCard(th, {c: CH.includes(ch) ? ch : 'primary', t: th});
+  }, true);
   const active = () => S.ib || chatMode() ? 'chat' : current === 'arts' ? 'canvas' : 'node';
   function sync(){
     if (!on()) return;

@@ -4,8 +4,9 @@ import { loadDevice, server } from './config.mjs';
 
 export const LIMITS = { files: 200, file: 10 << 20, total: 25 << 20, path: 200, depth: 8 };   // 서버 member-canvas.ts 와 같은 값
 export const CANVAS_HELP = `Canvases (your own HTML pages on your board)
-  boarder canvas put <folder> [--id <id>] [--title <name>] [--acct <account label>]
-                                    upload index.html and the files next to it; the same --id makes a new version
+  boarder canvas put <folder> [--id <id>] [--title <name>] [--acct <account label>] [--todo "<one line for the human>"]
+                                    upload index.html and the files next to it; the same --id makes a new version;
+                                    --todo also puts a to-do card with the canvas link on the board (the human taps 「했어요」)
   boarder canvas list               your canvases`;
 const ID = /^[A-Za-z0-9]{16,40}$/;
 const SKIP = new Set(['node_modules']);
@@ -45,8 +46,26 @@ async function send(method, body) {
   return j;
 }
 
+// 할 일 한 줄: 서버 inbox_ask question 과 같은 검사(한 줄 · 200자 · 「-」로 시작 못 함 · 제어 문자 없음) — 올리기 전에 멈춤
+export function todoLine(v) {
+  if (v === undefined) return undefined;
+  const s = String(v === true ? '' : v).trim();
+  if (!s || s.length > 200 || /[\x00-\x1f\x7f-\x9f]/.test(s) || s.startsWith('-')) throw new Error('--todo 는 사람이 할 일 한 줄(200자 까지, 「-」로 시작 못 함)');
+  return s;
+}
+async function putTodo(todo, j) {
+  const { windowToken } = await import('./window.mjs');
+  const w = await windowToken();
+  const body = JSON.stringify({ question: todo, choices: [TODO_DONE], kind: 'todo', body: `캔버스: ${j.title}\n${j.url}` });
+  const r = await fetch(`${server()}/api/agent/inbox_ask`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${w.token}` }, body, signal: AbortSignal.timeout(30_000) });
+  const out = await r.json().catch(() => ({ error: `Boarder ${r.status}` }));
+  if (!r.ok) throw Object.assign(new Error(out.error || String(r.status)), { status: r.status });
+  return out;
+}
+const TODO_DONE = '했어요';   // 회원 할 일 끝냄 답(apps/web/worker/member-board.ts TODO_DONE)
+
 export async function canvasPut(folder, flags = {}, { log = console.log } = {}) {
-  const id = normId(flags.id), { files, total } = collect(folder);
+  const id = normId(flags.id), todo = todoLine(flags.todo), { files, total } = collect(folder);
   const fd = new FormData();
   fd.set('manifest', JSON.stringify(files.map(f => ({ path: f.path }))));
   files.forEach((f, i) => fd.set(`f${i}`, new Blob([readFileSync(f.abs)]), path.basename(f.path)));
@@ -55,6 +74,10 @@ export async function canvasPut(folder, flags = {}, { log = console.log } = {}) 
   if (flags.acct) fd.set('acct', String(flags.acct));
   const j = await send('POST', fd);
   log(`${j.replaced ? '새 판' : '새 캔버스'}: ${j.title} · 파일 ${j.files} · ${Math.ceil(total / 1024)}KB\n${j.url}\nid ${j.id}`);
+  if (todo) {
+    try { const c = await putTodo(todo, j); log(`할 일: ${todo} (card ${c.card_id})`); j.todo = c.card_id; }
+    catch (e) { throw Object.assign(new Error(`캔버스는 올렸지만 할 일 카드를 못 세웠어요: ${e.message}`), { status: e.status, code: e.code }); }
+  }
   return j;
 }
 export async function canvasList({ log = console.log } = {}) {
