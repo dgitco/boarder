@@ -40,6 +40,7 @@ import { envelopeOn, forgetFlags, openBlob, sealBlob, type VaultEnv } from "./va
 import * as vmig from "./vault/migrate";
 import { mountImport, onCardAnswered, regroup, setUnit } from "./importer/routes";
 import * as slackImport from "./slack-import";
+import * as memberCanvas from "./member-canvas";
 import { mountSecrets, onCardAnswered as secretCardAnswered } from "./secrets";
 import * as ledger from "./ledger";
 import * as ownerWrite from "./owner-write";
@@ -867,6 +868,7 @@ mountImport(app as never, {
 });
 // 옛 Slack 글 들여오기(slack-import.ts): 회원 기기만 — 들여오기와 같은 가림
 slackImport.mountSlackImport(app as never, { device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; } });
+memberCanvas.mountMemberCanvas(app as never, { device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; } });
 mountSecrets(app as never, {
   human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s ? { email: s.user.email, owner: isOwner(c.env as never, s.user.email) } : null; },
   sameSite: c => sameSite(c as never),
@@ -1123,6 +1125,7 @@ app.post("/api/admin/invites", async c => {
     const e = clean(b.email, 200).toLowerCase(), now = Date.now();
     await c.env.DB.batch([
       c.env.DB.prepare("DELETE FROM invite WHERE email = ?").bind(e),
+      c.env.DB.prepare("DELETE FROM sales_member WHERE email = ?").bind(e),
       c.env.DB.prepare("UPDATE agent_token SET revoked_at = ? WHERE owner = ? AND revoked_at IS NULL").bind(now, e),
       c.env.DB.prepare("UPDATE device SET revoked_at = ? WHERE owner = ? AND revoked_at IS NULL").bind(now, e),
     ]);
@@ -1417,6 +1420,16 @@ async function artOk(env: Env, id: string, t: string | null) {
 }
 const artFetchShim = (id: string, t: string) => `<script>(()=>{const T=${JSON.stringify(t)},B=location.protocol+"//"+location.host,A="/art/${id}/",tag=u=>{try{const x=new URL(u,location.href);if(x.protocol+"//"+x.host===B&&x.pathname.startsWith(A)&&x.pathname!==A){x.searchParams.set("bxt",T);return x.href}}catch(e){}return u};const F=window.fetch;window.fetch=(u,o)=>F(typeof u==="string"||u instanceof URL?tag(String(u)):u,o);const d=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,"src");Object.defineProperty(HTMLIFrameElement.prototype,"src",{get(){return d.get.call(this)},set(v){d.set.call(this,tag(String(v)))},configurable:true})})()</script>`;
 
+const ART_CSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads";
+async function memberArt(c: Context<{ Bindings: Env }>, mk: string, id: string, rel: string, tok?: string) {
+  const f = await memberCanvas.file(c.env, mk, id, rel); if (!f) return null;
+  const h = new Headers({ "content-type": f.ct, "x-content-type-options": "nosniff", "content-security-policy": ART_CSP, "cache-control": "private, no-store", "x-boarder-src": "member" });
+  if (tok) h.set("access-control-allow-origin", "*");
+  if (c.req.method === "HEAD") return new Response(null, { status: 200, headers: h });
+  if (f.html) return new Response(artTagHtml(id, tok || await memberCanvas.token(c.env.BETTER_AUTH_SECRET, mk, id), f.o.body), { status: 200, headers: h });
+  return new Response(f.o.body, { status: 200, headers: h });
+}
+
 const MANIFEST = JSON.stringify({ name: "보더", short_name: "보더", start_url: "/", scope: "/", display: "standalone", background_color: "#fafafa", theme_color: "#fafafa", lang: "ko",
   icons: [{ src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }, { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" }, { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }] });
 app.get("/manifest.webmanifest", c => {
@@ -1623,6 +1636,14 @@ app.all("*", async c => {
       return new Response(r.body as unknown as BodyInit, { status: r.status, headers: h, ...(h.get("content-encoding") ? { encodeBody: "manual" as const } : {}) });
     } catch { return c.json({ error: "일시적인 오류가 발생했어요" }, 503); }
   }
+  const bxts = url.searchParams.getAll("bxt");
+  if ((c.req.method === "GET" || c.req.method === "HEAD") && bxts.length && bxts.every(t => t.startsWith("m."))) {
+    const pa = memberCanvas.parseArt(url.pathname), t = url.searchParams.get("bxt")!;
+    const mk = pa && !pa.bare ? await memberCanvas.tokenOk(c.env.BETTER_AUTH_SECRET, pa.id, t) : null;
+    const r = mk ? await memberArt(c, mk, pa!.id, pa!.rel, t).catch(() => undefined) : null;
+    if (r === undefined) return c.json({ error: "일시적인 오류가 발생했어요" }, 503);
+    return r ?? c.text("not found", 404, { "cache-control": "no-store" });
+  }
   const aj = c.req.method === "GET" && url.searchParams.has("bxt") && !/%2f|%5c/i.test(url.pathname) ? ART_FILE.exec(url.pathname) : null;
   if (aj && await artOk(c.env, aj[1], url.searchParams.get("bxt"))) {
     try {
@@ -1678,7 +1699,12 @@ app.all("*", async c => {
           catch { return queue.retrySafe(c); }   // rid 칸을 못 부름 = 모름(화면은 같은 rid 로)
         }
         const fm = /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));   // 내가 올린 파일만
-        const mi = await memberInbox.route(c as never, me, url); if (mi) return mi;   // 모아 보기 · 초안(member-inbox.ts), 노드 채팅을 열면 그 채널 읽음
+        const mi = await memberInbox.route(c as never, me, url); if (mi) return mi;
+        if (url.pathname === "/api/arts") return c.json(await memberCanvas.list(c.env, me), 200, { "cache-control": "no-store" });
+        const pa = url.pathname.startsWith("/art/") ? memberCanvas.parseArt(url.pathname) : null;
+        if (pa?.bare) return c.redirect(`/art/${pa.id}/`, 302);
+        if (pa) { const r = await memberArt(c, await memberCanvas.keyOf(me), pa.id, pa.rel); if (r) return r; }
+        if (url.pathname.startsWith("/art/")) return docNav(c, url) ? c.redirect("/#nf", 302) : c.text("not found", 404, { "cache-control": "no-store" });
         if (url.pathname === "/api/data") await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드
         if (sl) return sl;
@@ -1829,6 +1855,7 @@ async function pushRoute(c: Context<{ Bindings: Env }>, url: URL) {
 const salesSend = (env: Env): SalesSend => ({
   mail: (to, m) => env.EMAIL.send({ to, from: { email: "login@0bridge.dev", name: "Boarder 영업 보드" }, ...m } as never),
   push: async (to, n) => { if (await ledger.f7On(env.DB, "member_push")) return memberPusher(env, to)?.mNotify(to, { ...n, title: "영업 보드" }); },
+  member: e => member(env as never, e),
 });
 // 관리 토큰으로 한 번 돌리기 — only = 그 한 사람만(시험), dry = 안 보내고 묶음 수만. 모두에게 보내기는 아침 자동만
 app.post("/api/admin/sales-digest", async c => {

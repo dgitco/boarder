@@ -34,23 +34,25 @@ export function digestMail(d: Digest, today: string, url: string): Mail {
 }
 
 type Db = D1Database;
-// 대상 줄: 팀원인 담당 + user 줄이 있는 사람만. only = 그 한 사람만(시험)
-export async function digestRows(db: Db, only?: string) {
+// 대상 줄: 팀원인 담당 + user 줄이 있는 사람만, 기한 조건도 SQL 에서(카드가 많아도 자르기 전에 거름). only = 그 한 사람만(시험)
+export async function digestRows(db: Db, today: string, only?: string) {
   const q = `SELECT c.team, t.name team_name, c.firm, c.stage, c.assignee, c.next, c.due, c.hold_until, COALESCE(u.name, '') uname
     FROM sales_card c JOIN sales_team t ON t.id = c.team
     JOIN sales_member m ON m.team = c.team AND m.email = c.assignee
     JOIN "user" u ON lower(u.email) = c.assignee
-    WHERE c.stage != 'lost'${only ? " AND c.assignee = ?" : ""} LIMIT 2000`;
-  const r = await (only ? db.prepare(q).bind(only) : db.prepare(q)).all<DigestRow & { uname: string }>();
+    WHERE ((c.stage NOT IN ('hold', 'lost') AND c.due <= ?) OR (c.stage = 'hold' AND c.hold_until <= ?))${only ? " AND c.assignee = ?" : ""}
+    ORDER BY c.assignee, c.due LIMIT 2000`;
+  const r = await db.prepare(q).bind(...(only ? [today, today, only] : [today, today])).all<DigestRow & { uname: string }>();
   return { rows: r.results, names: new Map(r.results.filter(x => x.uname).map(x => [x.assignee, x.uname])) };
 }
 
-export type Send = { mail: (to: string, m: Mail) => Promise<unknown>; push: (to: string, n: { id: string; question: string; url: string }) => Promise<unknown> };
+export type Send = { mail: (to: string, m: Mail) => Promise<unknown>; push: (to: string, n: { id: string; question: string; url: string }) => Promise<unknown>; member: (email: string) => Promise<boolean> };
 // 한 번 돌기: 받을 사람마다 메일 한 통 + 폰 알림 한 통(구독 기기가 있을 때만 실제로 감). 하나가 실패해도 다음 사람은 계속
 export async function runDigest(db: Db, base: string, send: Send, o: { only?: string; dry?: boolean; now?: number } = {}) {
-  const today = todayKst(o.now), { rows, names } = await digestRows(db, o.only), url = base.replace(/\/$/, "") + "/sales";
+  const today = todayKst(o.now), { rows, names } = await digestRows(db, today, o.only), url = base.replace(/\/$/, "") + "/sales";
   const out: { to: string; items: number; mail?: string; push?: string }[] = [];
   for (const d of digestOf(rows, today, names)) {
+    if (!(await send.member(d.to).catch(() => false))) continue;   // 초대가 빠졌으면 아무것도 안 감(dry 에도 안 셈)
     const r: (typeof out)[number] = { to: d.to, items: d.items.length };
     if (!o.dry) {
       try { await send.mail(d.to, digestMail(d, today, url)); r.mail = "ok"; } catch (e) { r.mail = String(e).slice(0, 120); }

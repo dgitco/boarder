@@ -37,7 +37,7 @@ test("한국 날짜로 오늘 기한 · 지난 것만, 지난 것 먼저 — 보
   s.card("t1", "보류 사무소", "hold", "a@example.com", null, "2026-11-03");
   s.card("t1", "놓친 사무소", "lost", "a@example.com", "2026-11-01");
   const sent: { to: string; subject: string; text: string }[] = [];
-  const r = await runDigest(s.db, "https://b.example/", { mail: async (to, m) => { sent.push({ to, ...m }); }, push: async () => {} }, { now: NOW });
+  const r = await runDigest(s.db, "https://b.example/", { mail: async (to, m) => { sent.push({ to, ...m }); }, push: async () => {}, member: async () => true }, { now: NOW });
   assert.equal(r.today, "2026-11-03");
   assert.deepEqual(r.sent.map(x => [x.to, x.items]), [["a@example.com", 3]]);
   assert.equal(sent[0].subject, "영업 보드 11/3 — 오늘 기한 2 · 지남 1");
@@ -53,7 +53,7 @@ test("받는 사람: 팀원이면서 보드에 들어온 담당만 — 안 들�
   s.card("t2", "남의 팀 카드", "call", "z@example.com", "2026-11-01");     // z: 대소문자 다른 user 줄 → 감(자기 팀 것만)
   s.card("t1", "에이 카드", "call", "a@example.com", "2026-11-03");
   const to: string[] = [], pushed: string[] = [];
-  const r = await runDigest(s.db, "https://b.example", { mail: async (t, m) => { to.push(t + ":" + m.subject); }, push: async (t, n) => { pushed.push(t + ":" + n.url); } }, { now: NOW });
+  const r = await runDigest(s.db, "https://b.example", { mail: async (t, m) => { to.push(t + ":" + m.subject); }, push: async (t, n) => { pushed.push(t + ":" + n.url); }, member: async () => true }, { now: NOW });
   assert.deepEqual(to.sort(), ["a@example.com:영업 보드 11/3 — 오늘 기한 1", "z@example.com:영업 보드 11/3 — 지남 1"]);
   assert.deepEqual(pushed.sort(), ["a@example.com:./sales", "z@example.com:./sales"]);
   assert.equal(r.sent.length, 2);
@@ -64,11 +64,11 @@ test("only = 그 한 사람만, dry = 안 보냄, 한 사람 메일이 실패해
   s.card("t1", "에이 카드", "call", "a@example.com", "2026-11-01");
   s.card("t2", "제트 카드", "call", "z@example.com", "2026-11-01");
   let n = 0;
-  const one = await runDigest(s.db, "https://b.example", { mail: async () => { n++; }, push: async () => {} }, { now: NOW, only: "a@example.com" });
+  const one = await runDigest(s.db, "https://b.example", { mail: async () => { n++; }, push: async () => {}, member: async () => true }, { now: NOW, only: "a@example.com" });
   assert.deepEqual(one.sent.map(x => x.to), ["a@example.com"]); assert.equal(n, 1);
-  const dry = await runDigest(s.db, "https://b.example", { mail: async () => { n++; }, push: async () => {} }, { now: NOW, dry: true });
+  const dry = await runDigest(s.db, "https://b.example", { mail: async () => { n++; }, push: async () => {}, member: async () => true }, { now: NOW, dry: true });
   assert.equal(dry.sent.length, 2); assert.equal(n, 1);
-  const bad = await runDigest(s.db, "https://b.example", { mail: async t => { if (t.startsWith("a")) throw new Error("메일 실패"); n++; }, push: async () => {} }, { now: NOW });
+  const bad = await runDigest(s.db, "https://b.example", { mail: async t => { if (t.startsWith("a")) throw new Error("메일 실패"); n++; }, push: async () => {}, member: async () => true }, { now: NOW });
   assert.deepEqual(bad.sent.map(x => [x.to, x.mail === "ok"]), [["a@example.com", false], ["z@example.com", true]]);
 });
 
@@ -76,4 +76,17 @@ test("메일 html 은 글자를 풀지 않음(사무소 이름의 < > 그대로 
   const [d] = digestOf([{ team: "t", team_name: "팀", firm: "<b>가</b> & 나", stage: "call", assignee: "a@example.com", next: "x", due: "2026-11-03", hold_until: null }], "2026-11-03");
   const m = digestMail(d, "2026-11-03", "https://b.example/sales");
   assert.ok(m.html.includes("&lt;b&gt;가&lt;/b&gt; &amp; 나")); assert.ok(!m.html.includes("<b>가</b>"));
+});
+
+test("초대가 빠진 사람(지금 회원 아님)에게는 팀원 · user 줄이 남아 있어도 아무것도 안 감 — dry 에도 안 셈", async () => {
+  const s = setup();
+  s.card("t1", "에이 카드", "call", "a@example.com", "2026-11-01");
+  s.card("t2", "제트 카드", "call", "z@example.com", "2026-11-01");
+  const to: string[] = [], pushed: string[] = [];
+  const send = { mail: async (t: string) => { to.push(t); }, push: async (t: string) => { pushed.push(t); }, member: async (e: string) => e !== "a@example.com" };
+  const r = await runDigest(s.db, "https://b.example", send, { now: NOW });
+  assert.deepEqual([to, pushed], [["z@example.com"], ["z@example.com"]]);
+  assert.deepEqual(r.sent.map(x => x.to), ["z@example.com"]);
+  const dry = await runDigest(s.db, "https://b.example", send, { now: NOW, dry: true });
+  assert.deepEqual(dry.sent.map(x => x.to), ["z@example.com"]);
 });

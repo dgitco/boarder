@@ -10,6 +10,7 @@ import { watchCommand, WATCH_HELP } from './watch.mjs';
 import { connectCommand } from './connect.mjs';
 import { importCommand, IMPORT_HELP } from './importer.mjs';
 import { slackImport } from './slack-import.mjs';
+import { canvasCommand, CANVAS_HELP } from './canvas.mjs';
 import { engineCommand, ENGINE_HELP } from './engine/cmd.mjs';
 import { enable, disable, uninstall, VIEW_HELP } from './view.mjs';
 import { secretCommand, SECRET_HELP } from './secret.mjs';
@@ -46,6 +47,8 @@ Main bot (the Primary chat on your board)
 
 ${IMPORT_HELP}
 
+${CANVAS_HELP}
+
 ${WATCH_HELP}
 
 ${ENGINE_HELP}
@@ -57,7 +60,7 @@ Connect a service (Linear, Notion, GitHub, any MCP server)
 
 ${SESSION_HELP}`;
 
-const SECTION_HELP = { import: IMPORT_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, secret: SECRET_HELP, enable: VIEW_HELP, disable: VIEW_HELP, uninstall: VIEW_HELP };
+const SECTION_HELP = { import: IMPORT_HELP, canvas: CANVAS_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, secret: SECRET_HELP, enable: VIEW_HELP, disable: VIEW_HELP, uninstall: VIEW_HELP };
 function wantsHelp(cmd, rest) {
   if (cmd === 'engine' && rest[0] === 'verify') return false;
   if (cmd === 'profile' && rest[0] === 'run') return rest[1] === '--help' || rest[1] === '-h';
@@ -140,6 +143,7 @@ export async function main(argv) {
     if (cmd === 'engine') return await engineCommand(pos[0], pos.slice(1), flags);
     if (cmd === 'watch') return await watchCommand(pos[0], flags);
     if (cmd === 'import' && pos[0] === 'slack') { const r = await slackImport(pos[1], flags); if (r.stopped) process.exitCode = 75; return; }   // 옛 Slack 글(채널 = 노드)
+    if (cmd === 'canvas') return void await canvasCommand(pos[0], pos.slice(1), flags);
     if (cmd === 'import') return await importCommand(flags);   // 들여오기 · 경우 (가)(A-2 · A-3 · A-4)
     if (cmd === 'restore') return await restore(pos[0]);
     if (cmd === 'secret') return await secretCommand(pos[0], pos.slice(1), flags);   // 비밀 넣기(값은 안 찍음)
