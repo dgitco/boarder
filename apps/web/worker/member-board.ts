@@ -222,7 +222,11 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const todos: R[] = [];
   for (const c of L.cards) {
     const id = "w" + c.n, ch = json<string[]>(c.choices, []).map(x => cut(x, 90));
-    if (c.kind === "todo") { if (c.state === "open") todos.push({ ts: String(c.id), id: String(c.id), area: "primary", title: cut(c.question, 200), body: cut(c.body || "", 600), due: "", win: c.win, pane: toPane(c.win), ago: ago(c.at) }); continue; }
+    if (c.kind === "todo") {
+      if (c.state === "open") todos.push({ ts: String(c.id), id: String(c.id), area: "primary", title: cut(c.question, 200), body: cut(c.body || "", 600), due: "", win: c.win, pane: toPane(c.win), ago: ago(c.at) });
+      if (CARD_TS.test(String(c.id))) cardlist.push({ ts: c.id, ref: "w:" + c.n, thread: null, channel: "primary", kind: "todo", area: "primary", state: c.state === "open" ? "open" : "answered", title: cut(c.question, 80), at: c.at / 1000 });
+      continue;
+    }
     const snoozed = Number(c.snooze_until || 0) > now;
     if (c.state === "open" && !snoozed) decisions.push({ id, src: "wlog", pane: toPane(c.win), win: c.win, area: "primary", title: cut(c.question, 200), body: cut(c.body || "", 600), choices: c.recommend && ch.includes(c.recommend) ? [c.recommend, ...ch.filter(x => x !== c.recommend)] : ch, ago: ago(c.at), kind: "결정" });
     cardlist.push({ ts: CARD_TS.test(String(c.id)) ? c.id : "w:" + c.n, ref: "w:" + c.n, thread: null, channel: "primary", kind: "decision", area: "primary", state: c.state === "open" ? "open" : "answered", title: cut(c.question, 80), at: c.at / 1000 });

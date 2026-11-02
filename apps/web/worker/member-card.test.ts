@@ -41,6 +41,17 @@ test("할 일(kind todo)은 결정 줄이 아니라 todos 로 — 틀 꼴(ts · 
   assert.deepEqual(db.todos.map((t: any) => t.title), ["B 의 할 일"]);
 });
 
+test("할 일도 cardlist 에 kind todo 로 — 사이드바 「결정 · 할 일」(틀 turnRows = cardlist 의 열린 글 줄)에 모임, 끝낸 것은 answered", async () => {
+  const { db, D1 } = seed();
+  db.prepare("UPDATE board_card SET state = 'answered', answer = ?, answered_at = ? WHERE id = ?").run(TODO_DONE, Date.now(), "1793000000.000002");
+  db.prepare("INSERT INTO board_card(id, owner, win, kind, question, choices, state, at) VALUES (?,?,?,?,?,?,?,?)").run("1793000000.000005", A, "일 창", "todo", "인증서 내기", '["했어요"]', "open", Date.now() - 100);
+  const d = await data(D1, A, { name: "메인 봇" });
+  const turn = d.cardlist.filter((c: any) => c.state === "open" && /^\d{10}\.\d{6}$/.test(c.ts)).map((c: any) => [c.ts, c.kind, c.title]);
+  assert.deepEqual(turn, [["1793000000.000001", "decision", "열린 결정"], ["1793000000.000005", "todo", "인증서 내기"]]);
+  assert.deepEqual(d.cardlist.find((c: any) => c.ts === "1793000000.000002"), { ts: "1793000000.000002", ref: "w:" + rowid(db, "1793000000.000002"), thread: null, channel: "primary", kind: "todo", area: "primary", state: "answered", title: "서류 올리기", at: d.cardlist.find((c: any) => c.ts === "1793000000.000002").at });
+  assert.ok(!d.cardlist.some((c: any) => c.title === "B 의 할 일"), "남의 할 일은 안 섞임");
+});
+
 test("할 일 끝냄(POST /api/todo { id }) = 그 카드에 「했어요」 답, 남의 · 없는 할 일은 404", async () => {
   const { D1 } = seed();
   assert.deepEqual(await post(D1, A, "/api/todo", { area: "primary", id: "1793000000.000002" }), { path: "/api/me/cards/1793000000.000002/answer", body: { choice: TODO_DONE, free: true } });
