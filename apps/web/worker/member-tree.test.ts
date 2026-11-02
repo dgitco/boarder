@@ -127,3 +127,15 @@ test("영역이 하나뿐이면 예전처럼 Primary 한 열", async () => {
   assert.deepEqual(d.areas.map(a => a.key), ["primary"]);
   assert.ok(d.panes.every(p => p.area === "primary"));
 });
+
+test("막힘 뒤에 상태 줄(boarder status)이 와도 막힘 표시 · 내 차례는 그대로", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_1", "가동 점검", "acme"); db.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?)").run(A, "win:가동 창", "n_1", "auto");
+  const log = (kind: string, text: string, at: number) => db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(A, "가동 창", kind, text, null, at);
+  log("blocked", "배포 승인 기다림", Date.now() - 1800_000); log("status", "쉼 · 깨움 21:30 · 배포 승인", Date.now() - 600_000);
+  const p = ((await data(d1, A, null)) as any).panes.find((x: any) => x.win === "가동 점검");
+  assert.ok(p.blocked, "막힘 표시 남음"); assert.equal(p.owner, true); assert.equal(p.last.kind, "막힘", "틀이 읽는 last 도 막힘"); assert.equal(p.watch, "", "막힘 동안 상태 줄은 숨김");
+  log("progress", "승인 받아 배포함", Date.now() - 60_000);
+  const q = ((await data(d1, A, null)) as any).panes.find((x: any) => x.win === "가동 점검");
+  assert.equal(q.blocked, null, "더 새 진행 줄이 오면 막힘 풀림"); assert.notEqual(q.last.kind, "막힘");
+});

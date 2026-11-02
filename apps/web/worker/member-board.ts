@@ -174,11 +174,11 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const line = (r: R) => ({ id: r.id, ago: ago(r.at), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 220), handled: false, short: cut(r.text, 60), short_ok: true, title: cut(r.text, 30) });
   const logsOf = (n: Node | null, wins?: string[]) => L.logs.filter(r => !inPrim(r) && r.kind !== "me" && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n : wins!.includes(r.win)));
   const pane = (o: { pane: string; win: string; kind: string; state: string; cwd?: string; branch?: string; rows: R[]; blockedOwner?: boolean }) => {
-    const last = o.rows[0] ? line(o.rows[0]) : null, blk = last && last.kind === "막힘" ? last : null;
-    return { win: o.win, area: "primary", role: "리드", pane: o.pane, acct: "", state: o.state, dur: "", stuck: "", cwd: o.cwd || "", branch: o.branch || "", kind: o.kind, last, blocked: blk,
+    const last = o.rows[0] ? line(o.rows[0]) : null, real = o.rows.find(r => r.kind !== "status"), rl = real ? line(real) : null, blk = rl && rl.kind === "막힘" ? rl : null;
+    return { win: o.win, area: "primary", role: "리드", pane: o.pane, acct: "", state: o.state, dur: "", stuck: "", cwd: o.cwd || "", branch: o.branch || "", kind: o.kind, last: blk || last, blocked: blk,
       recent: o.rows.slice(0, 5).reverse().map(r => ({ ago: ago(r.at), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 260) })),
       hist: o.rows.filter(r => now - r.at < 86_400_000).reverse().map(r => ({ m: ago(r.at), k: KIND_KO[r.kind] || r.kind })), topics: [], pri: priOf(L.pri, o.win), owner: !!blk,
-      watch: o.rows[0]?.kind === "status" && now - Number(o.rows[0].at) < 86_400_000 ? cut(o.rows[0].text, 60) : "" };
+      watch: !blk && o.rows[0]?.kind === "status" && now - Number(o.rows[0].at) < 86_400_000 ? cut(o.rows[0].text, 60) : "" };   // 막힘 동안은 막힘이 먼저
   };
   const mainName = bot?.name || "Primary";
   // 메인 봇 판: 엔진 메인 창이 있으면 그 상태, 없으면 있던 primary 창(들여온 것)의 상태 · 폴더 — 그 창이 보드에 올린 보고 줄도 봇 줄로
