@@ -72,6 +72,29 @@ test("상위 노드(node_setting.data.parent): 그 노드는 상위 열 밑으�
   assert.equal(d.parked.find((p: any) => p.name === "쉬는 담당").area, col("팀장"), "주차 → 제 영역 열");
 });
 
+test("상위 없는 노드 · 주차 노드는 기본 창(primary_win)이 열 머리면 그 열로 — 메인 봇과 열 머리 사이에 안 뜸, 기본 창이 없으면 예전처럼 Primary", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_lead", "팀장", "acme"); add(db, A, "n_pa", "개인 비서", ".team-hq");
+  add(db, A, "n_w", "작업자 · 정리", "", "working"); add(db, A, "n_cl", "클라우드 세션", "cloud", "working"); add(db, A, "n_pk", "작업자 · 쉼", "", "parked");
+  const before = await data(d1, A, null) as any;
+  assert.equal(before.panes.find((p: any) => p.win === "작업자 · 정리").area, "primary", "기본 창 없으면 예전 그대로");
+  db.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?)").run(A, "win:팀장 창", "n_lead", "auto");
+  db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").run(A, "primary_win", "win:팀장 창", T);
+  for (const unit of [null, "goal"]) {
+    db.prepare("DELETE FROM node_setting WHERE owner = ?").run(A);
+    if (unit) db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ unit }), T);
+    const g = await data(d1, A, null) as any;
+    assert.equal(g.panes.find((p: any) => p.win === "작업자 · 정리").area, "primary", `unit ${unit} 는 그대로`);
+    assert.equal(g.parked.find((p: any) => p.name === "작업자 · 쉼").area, "primary", `unit ${unit} 주차도 그대로`);
+  }
+  db.prepare("DELETE FROM node_setting WHERE owner = ?").run(A);
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ unit: "agent" }), T);
+  const d = await data(d1, A, null) as any, lead = d.areas.find((a: any) => a.lead_name === "팀장").key;
+  assert.deepEqual(["작업자 · 정리", "클라우드 세션"].map(w => d.panes.find((p: any) => p.win === w).area), [lead, lead]);
+  assert.equal(d.parked.find((p: any) => p.name === "작업자 · 쉼").area, lead);
+  assert.equal(d.panes.find((p: any) => p.win === "개인 비서").area, d.areas.find((a: any) => a.lead_name === "개인 비서").key, "다른 열 머리는 그대로");
+});
+
 test("영역이 하나뿐이면 예전처럼 Primary 한 열", async () => {
   const { db, d1 } = fakeD1();
   add(db, A, "n_1", "가", "acme"); add(db, A, "n_2", "나", "acme");

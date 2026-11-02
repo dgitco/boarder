@@ -239,6 +239,11 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
         const k = target ? target.area : keyOfArea.get(areaOf.get(n.pane) ?? "");
         if (k) q.area = k;
       }
+      const home = areas.find(x => x.key !== "primary" && x.lead === L.defaultNode?.pane)?.key;
+      if (home && L.agentUnit) {
+        for (const p of panes) if (p.kind === "lead" && p.pane !== PRIMARY && p.area === "primary") p.area = home;
+        for (const q of parked) if (q.area === "primary") q.area = home;
+      }
     }
   }
   const known = new Set(panes.map(p => p.pane)), dp = L.defaultNode?.pane || (/^ew_/.test(L.primaryWin) ? paneOfId(L.primaryWin) : ""), dflt = dp && known.has(dp) ? dp : PRIMARY,
