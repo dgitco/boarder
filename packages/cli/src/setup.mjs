@@ -292,7 +292,8 @@ export async function writeReport({ srv = (loadDevice()?.server || DEFAULT_SERVE
   log(`\nAI tool folders on this machine:\n${list.map((t, i) => `  ${i + 1}. ${label(t)}  ${t.where}  — ${({ on: 'reports to Boarder', off: 'not yet', stale: `old Boarder path (${reportState(t).was}) — will fix` })[reportState(t).state]}`).join('\n')}`);
   if (!yes) list = await choose(list, log);
   let skill;
-  try { const r = await fetch(`${srv}/api/install/skill`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw 0; skill = await r.text(); }
+  const dev = loadDevice(), auth = dev?.token && (dev.server || '').replace(/\/+$/, '') === srv ? { authorization: `Bearer ${dev.token}` } : {};
+  try { const r = await fetch(`${srv}/api/install/skill`, { headers: auth, signal: AbortSignal.timeout(15000) }); if (!r.ok) throw 0; skill = await r.text(); }
   catch { throw new Error(`Could not get the Boarder skill from ${srv}`); }
   const bk = backup(), lines = [];
   for (const t of list) { const was = reportState(t), d = writeTool(bk, t, skill); lines.push(`  ${label(t)}: ${!d.length ? 'already set up' : was.state === 'stale' ? `fixed old path (${d.join(', ')})` : d.join(', ') + ' added'}`); }

@@ -122,10 +122,13 @@ export function pickUnit(items: Pick<Item, "title" | "kind">[], known: string[] 
 
 export const PRIMARY_NAME = /^(?:\d{1,3}[\s:.-]+)?(?:primary|main|메인(?:\s*봇)?|프라이머리)$/i;
 const handleOf = (i: Pick<Item, "handle">): Record<string, unknown> => { const h = i.handle; if (!h) return {}; if (typeof h === "object") return h; try { const v = JSON.parse(h); return v && typeof v === "object" ? v : {}; } catch { return {}; } };
+export function canBePrimary(i: Pick<Item, "kind" | "gone_at" | "state" | "engine" | "handle">): boolean {
+  if (i.kind !== "window" || i.gone_at || i.state === "gone" || i.engine === "report" || i.engine === "tmux") return false;
+  return ["tmux-own", "herdr-own"].includes(String(i.engine || handleOf(i).engine || ""));
+}
 export function primaryScore(i: Item): number {
-  if (i.kind !== "window" || i.gone_at || i.state === "gone" || i.engine === "report" || i.engine === "tmux") return 0;
+  if (!canBePrimary(i)) return 0;
   const h = handleOf(i);
-  if (!["tmux-own", "herdr-own"].includes(String(i.engine || h.engine || ""))) return 0;
   if (h.primary === true || h.primary === 1 || h.primary === "1") return 3;
   if ([i.title, h.name].some(v => typeof v === "string" && PRIMARY_NAME.test(v.trim()))) return 2;
   if (base(i.cwd) === "primary" || base(typeof h.cwd === "string" ? h.cwd : "") === "primary") return 1;
@@ -138,16 +141,28 @@ export function primaryOf<T extends Item>(items: T[]): T | null {
   return c[0]?.i || null;
 }
 
+export type PrimaryPick = "auto" | "none" | string;
+export const pickOf = (v: unknown): PrimaryPick => typeof v === "string" && v.trim() && v.length <= 300 ? v.trim() : "auto";
+export function primaryPick<T extends Item>(items: T[], pick: PrimaryPick | null | undefined, engineMain: boolean): { primary: T | null; explicit: boolean } {
+  const p = pickOf(pick);
+  if (p === "none") return { primary: null, explicit: false };
+  if (p !== "auto") { const w = items.find(i => i.key === p && canBePrimary(i)) || null; return { primary: w, explicit: !!w }; }
+  return { primary: engineMain ? null : primaryOf(items), explicit: false };
+}
+
 const nodeId = async (seed: string) => "n_" + [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed)))].slice(0, 6).map(b => b.toString(16).padStart(2, "0")).join("");
 
 export async function group(input: {
   items: Item[]; logs: Log[]; cards: Card[]; prev: Prev[]; prevNodes: PrevNode[];
   winNames?: Record<string, string>; now: number; archiveH?: number; unit?: Unit; agents?: string[]; engineMain?: boolean;
+  primaryItem?: PrimaryPick | null;   // 설정 › 노드 「메인 봇 창」(primaryPick)
+  parkH?: number | null;
 }): Promise<{ nodes: Node[]; map: Prev[]; audit: Audit; primary: string | null }> {
   const { now, unit } = input, agentUnit = unit === "agent", archiveMs = (input.archiveH ?? 6) * 3600_000;
   const usedWins = new Set([...input.logs.map(l => l.win), ...input.cards.map(c => c.win)]);
   const kept0 = input.items.filter(i => !i.gone_at || now - i.gone_at < archiveMs || (i.win && usedWins.has(i.win)));
-  const prim = input.engineMain ? null : primaryOf(kept0);   // 보더 메인 봇 창이 이미 떠 있으면 그게 메인 봇(들여온 primary 는 노드로 — 메인 봇이 둘이 되지 않게)
+  const prim = primaryPick(kept0.filter(i => !(i as { rv?: unknown }).rv), input.primaryItem, !!input.engineMain).primary;   // 끊은 기기 창(rv)은 메인 봇이 될 수 없음   // 'auto' 면 보더 메인 봇 창이 이미 떠 있을 때 그게 메인 봇(들여온 primary 는 노드로 — 메인 봇이 둘이 되지 않게)
+  const parkMs = parkMsOf(input.parkH);
   const primSess = prim?.session || "", primWins = new Set(prim?.win ? [prim.win] : []);
   const items = kept0.filter(i => !prim || !(i.key === prim.key || (primSess && (i.key === primSess || i.session === primSess)) || (i.win && primWins.has(i.win))));
   const byKey = new Map(items.map(i => [i.key, i]));
@@ -252,7 +267,7 @@ export async function group(input: {
     const pinned = !!pn?.pinned_name || keys.some(k => pins.get(k) === id);
     const keep = !unit ? !(!live.length && counts.card === 0 && now - updated > archiveMs) : chanName.has(id) || keepsNode(its, logs, cards, pinned, now, archiveMs);
     if (!keep && !pn && unit) { history.push(...keys); continue; }   // 노드가 된 적 없는 지난 세션 · 스레드는 기록으로만
-    const st = keep || !unit ? stateOf(live, logs, cards, now) : { state: "done" as State, why: logs[0] ? short(logs[0].text, 80) : "열린 창 없음" };
+    const st = keep || !unit ? stateOf(live, logs, cards, now, parkMs) : { state: "done" as State, why: logs[0] ? short(logs[0].text, 80) : "열린 창 없음" };
     // 다시 연 노드(pinned_name)는 마지막 줄이 「끝」이어도 트리에 있음
     const s = unit && keep && st.state === "done" && pn?.pinned_name ? { ...st, state: "idle" as State } : st;
     const name = pn?.pinned_name || chanName.get(id) || (unit ? nameOf(its) : oldNameOf(its));
@@ -285,7 +300,7 @@ function nameOf(its: Item[]): string {
   return short((pick("task") || its.find(i => i.kind === "window" && i.engine !== "report" && goalName(i))?.title || (br && humanBranch(br)) || goal || pick("thread") || its.find(i => i.kind === "window" && goalName(i))?.title || pick("session") || pick("window") || its[0]?.title || "이름 없는 일").replace(/^(\d+\s)/, "#$1"), 60);
 }
 
-export function stateOf(live: Item[], logs: Log[], cards: Card[], now: number): { state: State; why: string } {
+export function stateOf(live: Item[], logs: Log[], cards: Card[], now: number, parkMs: number = PARK_QUIET_MS): { state: State; why: string } {
   const open = cards.filter(c => c.state === "open").sort((a, b) => b.at - a.at);
   if (open.length) return { state: "turn", why: short(open[0].question, 80) };
   const q = live.find(i => i.state === "question");
@@ -298,10 +313,16 @@ export function stateOf(live: Item[], logs: Log[], cards: Card[], now: number): 
   const wins = live.filter(i => i.kind === "window");
   if (wins.length && wins.every(i => i.state === "parked")) return { state: "parked", why: "주차 — 답이나 조건이 오면 다시 열어요" };
   const moved = Math.max(last?.at || 0, ...live.filter(i => i.kind === "window" || i.kind === "session").map(i => i.state_at || i.seen_at || 0));
-  if (now - moved >= PARK_QUIET_MS) return { state: "parked", why: `${Math.floor(PARK_QUIET_MS / 3600_000)}시간 넘게 조용해 주차 — 다시 일하면 살아나요` };
+  if (parkMs > 0 && now - moved >= parkMs) return { state: "parked", why: `${Math.max(1, Math.floor(parkMs / 3600_000))}시간 넘게 조용해 주차 — 다시 일하면 살아나요` };
   if (!wins.length && !live.some(i => i.kind === "session" && i.state !== "done" && i.state !== "gone") && (live.some(i => i.kind === "session") || !live.length))
     return { state: "parked", why: last ? short(last.text, 80) : "창 · 세션이 끝나 주차 — 다시 일하면 살아나요" };
   if (wins.some(i => i.state && i.state !== "parked" && i.state !== "gone")) return { state: "idle", why: last ? short(last.text, 80) : "쉬는 중" };
   return { state: "idle", why: last ? short(last.text, 80) : "열린 창 없음" };
 }
 export const PARK_QUIET_MS = 6 * 3600_000;
+export const PARK_H_LIM: [number, number] = [1, 168];
+export function parkMsOf(parkH: number | null | undefined): number {
+  if (parkH === undefined || parkH === null || !Number.isFinite(parkH)) return PARK_QUIET_MS;
+  if (parkH <= 0) return 0;
+  return Math.min(PARK_H_LIM[1], Math.max(PARK_H_LIM[0], Math.trunc(parkH))) * 3600_000;
+}

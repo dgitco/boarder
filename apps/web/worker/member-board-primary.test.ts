@@ -67,3 +67,21 @@ test("회원 화면 글 이름 = 회원 이름(주인 이름 아님)", async () 
   assert.ok(!JSON.stringify(j).includes("Owner"));
   assert.equal(myName(ME), "kim", "이름이 없으면 메일 앞");
 });
+
+test("메인 봇 창을 사람이 고름(설정 › 노드 primary_item): 고른 창이 %1 — 보더 메인 봇 창이 떠 있어도, none 이면 이름 primary 창도 노드", async () => {
+  const { db, D1 } = setup();
+  db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, state_at, created_at) VALUES (?,?,?,?,?,?,?,?)").run("ew_main", ME, "d1", "main", "모찌", "idle", T, T);
+  // auto(기본): 보더 메인 봇이 떠 있으면 그것 — 들여온 primary 창은 노드 자리
+  let d = await data(D1, ME, { name: "모찌" }) as any;
+  assert.equal(d.panes[0].state, "쉼", "auto: 보더 메인 봇 창 상태");
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(ME, JSON.stringify({ unit: "goal", primary_item: "window:lap:herdr:p2" }), T);
+  d = await data(D1, ME, { name: "모찌" }) as any;
+  assert.equal(d.panes[0].pane, "%1"); assert.equal(d.panes[0].state, "일하는 중", "고른 창(#12 버그) 상태 — 보더 메인 봇 창보다 이김");
+  assert.equal(d.panes[0].cwd, "/home/kim/app");
+  assert.ok(!d.panes.some((p: any) => p.win === "#12 버그"), "고른 창의 노드는 봇 옆에 따로 안 매닮");
+  db.prepare("UPDATE node_setting SET data = ? WHERE owner = ?").run(JSON.stringify({ primary_item: "none" }), ME);
+  db.prepare("DELETE FROM engine_window WHERE id = 'ew_main'").run();
+  d = await data(D1, ME, { name: "모찌" }) as any;
+  assert.ok(d.panes.some((p: any) => p.win === "primary"), "none: 이름이 primary 여도 보통 노드");
+  assert.equal(d.panes[0].cwd, "", "메인 봇 판은 들여온 창이 아님");
+});

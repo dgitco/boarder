@@ -12,7 +12,7 @@ register("data:text/javascript," + encodeURIComponent(`export async function res
   return n(s, c);
 }`));
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
-const { Engine, chatToMain, importedPrimary } = await import("./engine.ts");
+const { Engine, chatToMain, importedPrimary, ownerCfg } = await import("./engine.ts");
 
 const MIG = new URL("../migrations/", import.meta.url);
 function d1() {
@@ -94,4 +94,36 @@ test("폐기한 기기의 primary 창 · 닫힌 창은 메인 봇이 아님", as
   const s2 = setup({ title: "primary" });
   s2.db.prepare("UPDATE imp_item SET gone_at = ?, state = 'gone' WHERE key = ?").run(T, "window:lap:herdr:p1");
   assert.equal(await importedPrimary(s2.env.DB, MEMBER), null);
+});
+
+test("메인 봇 창을 사람이 고름(primary_item): none = 들여온 창 안 씀 · 고른 창은 보더 메인 봇 창이 떠 있어도 채팅을 받음 · 닫힌 고른 창은 다른 창으로 안 바꿈", async () => {
+  const s = setup({ title: "primary" });
+  const set = (v: object) => s.db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?) ON CONFLICT(owner) DO UPDATE SET data = excluded.data").run(MEMBER, JSON.stringify(v), T);
+  set({ unit: "goal", primary_item: "none" });
+  assert.equal(await importedPrimary(s.env.DB, MEMBER), null, "none: 이름이 primary 여도");
+  await s.eng.ensureMain(MEMBER, DEV);
+  assert.equal(s.mains().length, 1, "보더 메인 봇을 띄우려 함");
+  s.db.prepare("UPDATE engine_window SET state = 'idle' WHERE owner = ? AND kind = 'main'").run(MEMBER);   // 보더 메인 봇이 떠 있음
+  set({ primary_item: "auto" });
+  assert.equal(await importedPrimary(s.env.DB, MEMBER), null, "auto: 보더 메인 봇이 이김(예전 그대로)");
+  set({ primary_item: "window:lap:herdr:p2" });
+  assert.equal((await importedPrimary(s.env.DB, MEMBER))?.key, "window:lap:herdr:p2", "고른 창이 이김");
+  const r = await chatToMain(s.env as never, MEMBER, "안녕") as { primary?: string };
+  assert.equal(r.primary, "window:lap:herdr:p2"); assert.equal(s.cmds()[0].args.item, "window:lap:herdr:p2");
+  s.db.prepare("UPDATE imp_item SET gone_at = ?, state = 'gone' WHERE key = ?").run(T, "window:lap:herdr:p2");
+  assert.equal(await importedPrimary(s.env.DB, MEMBER), null, "고른 창이 닫히면 보더 메인 봇(이름 primary 창으로 몰래 안 바꿈)");
+});
+
+test("하네스 규칙 one_goal: 그 사람이 설정에서 고른 값이 엔진 규칙(관리 값)보다 이김, 안 골랐으면 그대로", async () => {
+  const s = setup(null);
+  assert.equal((await ownerCfg(s.env.DB, MEMBER)).rules.one_goal, true, "기본 켬");
+  s.db.prepare("INSERT INTO engine_owner(owner, rules, updated_at) VALUES (?,?,?)").run(MEMBER, JSON.stringify({ one_goal: false, wake_min: 20 }), T);
+  let c = await ownerCfg(s.env.DB, MEMBER);
+  assert.equal(c.rules.one_goal, false); assert.equal(c.rules.wake_min, 20);
+  s.db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(MEMBER, JSON.stringify({ rules: { one_goal: true } }), T);
+  c = await ownerCfg(s.env.DB, MEMBER);
+  assert.equal(c.rules.one_goal, true, "사람이 고른 값"); assert.equal(c.rules.wake_min, 20, "다른 규칙은 그대로");
+  s.db.prepare("UPDATE node_setting SET data = ? WHERE owner = ?").run(JSON.stringify({ rules: { one_goal: false } }), MEMBER);
+  assert.equal((await ownerCfg(s.env.DB, MEMBER)).rules.one_goal, false);
+  assert.equal((await ownerCfg(s.env.DB, "nobody@example.test")).perm, "ask", "줄 없는 사람도 기본값");
 });

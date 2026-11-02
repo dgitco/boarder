@@ -62,3 +62,24 @@ test("자주 쓴 반응: 내가 많이 단 것 먼저, 기본 순서로 채움, 
   assert.equal(mine.length, base.length);
   assert.deepEqual(mine.slice(2), base.filter((x: string) => !["fire", "tada"].includes(x)).slice(0, base.length - 2));
 });
+
+test("회원 노드 설정(node-prefs): 기본 = 주인 방식, 저장은 그 칸만 — unit · pri · faces · archive_h 그대로, 규칙은 합침, 남의 것과 안 섞임", async () => {
+  const P = await import("./node-prefs.ts");
+  const { db, D1 } = setup();
+  assert.deepEqual(await P.readPrefs(D1, A), P.PREF_DEF);
+  assert.deepEqual(P.PREF_DEF, { park_on: true, park_h: 6, primary_item: "auto", rules: { one_goal: true, report: true, park: true, ask: true, outside: true } });
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ unit: "agent", unit_by: "me", pri: { "매출 보고": { pri: "급함" } }, faces: { "n-1": { seed: "s" } }, archive_h: 12 }), 1);
+  await P.savePrefs(D1, A, P.prefsPatch({ park_h: 3, park_on: false, primary_item: "window:lap:tmux:%3", rules: { outside: false } })!);
+  await P.savePrefs(D1, A, P.prefsPatch({ rules: { report: false, junk: false }, park_h: "x" })!);
+  const raw = JSON.parse((db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(A) as any).data);
+  assert.equal(raw.unit, "agent"); assert.equal(raw.unit_by, "me"); assert.equal(raw.pri["매출 보고"].pri, "급함"); assert.equal(raw.faces["n-1"].seed, "s"); assert.equal(raw.archive_h, 12);
+  assert.equal(raw.park_on, false, "불은 JSON 참 · 거짓으로"); assert.deepEqual(raw.rules, { outside: false, report: false }, "규칙은 합침 · 모르는 칸 버림");
+  const p = await P.readPrefs(D1, A);
+  assert.deepEqual(p, { park_on: false, park_h: 3, primary_item: "window:lap:tmux:%3", rules: { one_goal: true, report: false, park: true, ask: true, outside: false } });
+  assert.equal(P.parkHOf(p), 0, "끄면 0");
+  assert.equal(P.prefsPatch({}), null); assert.equal(P.prefsPatch({ park_h: 1e9 })?.park_h, 168); assert.equal(P.prefsPatch({ primary_item: "  " }), null);
+  // 줄이 없던 사람도 처음 저장에 그 칸만
+  await P.savePrefs(D1, B, { primary_item: "none" });
+  assert.deepEqual(JSON.parse((db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(B) as any).data), { primary_item: "none" });
+  assert.equal((await P.readPrefs(D1, A)).primary_item, "window:lap:tmux:%3", "남의 저장이 안 섞임");
+});

@@ -565,6 +565,29 @@
       });
     };
     const num = ([k, n, d, u]) => `<div class="bxs-li"><div><b>${n}</b><span>${d}</span></div><label class="bxs-num"><input class="bxs-in sm" type="number" inputmode="numeric" min="${j.limits[k][0]}" max="${j.limits[k][1]}" value="${j.values[k]}" data-nk="${k}" aria-label="${esc(n)}"><span>${u}</span></label></div>`;
+    const RULE_KO = {one_goal: ['창 하나 = 목표 하나', '같은 목표의 다른 요청은 새 창이 아니라 그 창 안에서'], report: ['보드에 보고', '시작 · 일하는 동안(30분에 한 번 이상) · 막힘 · 끝'],
+      park: ['끝나면 저장하고 주차', '끝났거나 남의 답만 기다리면 대화를 저장하고 창을 닫아요 — 조건이 차면 다시 열어요'], ask: ['묻는 글 꼴', '첫 줄에 정할 것, 그다음 고를 것(추천 먼저), 쉬운 말로'], outside: ['바깥에 보내기 전 허락', '메일 · 메시지처럼 바깥에 가는 글은 초안을 보이고 허락 뒤에만']};
+    const PARK_HS = [1, 2, 3, 6, 12, 24, 48, 72, 168];
+    const primLabel = k => k === 'auto' ? '자동 — 이름이 primary · main · 메인인 창(보더 메인 봇이 떠 있으면 그것)' : k === 'none' ? '보더 메인 봇' : (() => { const w = (j.windows || []).find(x => x.key === k); return w ? `${w.title} · ${w.device || '기기'} · ${w.engine === 'herdr-own' ? 'Herdr' : 'tmux'}` : '고른 창(지금 닫힘 — 보더 메인 봇이 받아요)'; })();
+    const prefSec = () => { if (OWNER || !j.prefs) return ''; const P = j.prefs, wins = j.windows || [], now = j.primary_now ? (wins.find(w => w.key === j.primary_now)?.title || '들여온 창') : '보더 메인 봇';
+      const opts = ['auto', 'none', ...wins.map(w => w.key)]; if (!opts.includes(P.primary_item)) opts.push(P.primary_item);
+      return `<div class="bxs-sech">메인 봇</div><div class="bxs-list"><div class="bxs-li"><div><b>메인 봇 창</b><span>Primary 채팅 · 보더 알림이 가는 창이에요. 내 tmux · Herdr 창 중에서 고르거나 보더 메인 봇을 써요 · 지금: ${esc(now)}</span></div>`
+        + `<select class="bxs-in sm bxs-sel" data-npr aria-label="메인 봇 창">${opts.map(k => `<option value="${esc(k)}"${k === P.primary_item ? ' selected' : ''}>${esc(primLabel(k))}</option>`).join('')}</select></div></div>`
+        + `<div class="bxs-sech">주차</div><div class="bxs-list"><div class="bxs-li"><div><b>조용한 노드 주차</b><span>창 · 세션 · 보고 줄이 이만큼 조용하면 노드를 주차로 보여요(창은 안 닫음 — 다시 일하면 바로 살아나요)</span></div>`
+        + `<div class="bxs-row" style="flex-wrap:nowrap">${P.park_on ? `<select class="bxs-in sm bxs-sel" data-nph aria-label="주차까지 조용한 시간">${[...new Set([...PARK_HS, P.park_h])].sort((x, y) => x - y).map(h => `<option value="${h}"${h === P.park_h ? ' selected' : ''}>${hrs(h)} 조용하면</option>`).join('')}</select>` : '<span class="bxs-mut">끔</span>'}${sw(P.park_on, 'data-npo', '조용한 노드 주차')}</div></div></div>`
+        + `<div class="bxs-sech">하네스 규칙</div><div class="bxs-list">${(j.rule_keys || Object.keys(RULE_KO)).map(k => `<div class="bxs-li"><div><b>${esc(RULE_KO[k]?.[0] || k)}</b><span>${esc(RULE_KO[k]?.[1] || '')}</span></div>${sw(P.rules[k] !== false, `data-nrl="${esc(k)}"`, RULE_KO[k]?.[0] || k)}</div>`).join('')}`
+        + `<div class="bxs-li"><div><b>비밀 찍지 않기</b><span>비밀번호 · 토큰은 출력 · 기록 · 게시하지 않아요 — 끌 수 없어요</span></div><span class="bxs-mut">늘 켬</span></div>`
+        + `<div class="bxs-li"><div><b>기기에 반영</b><span>설치 프롬프트 · 새 창은 바로 따라요. 이미 설치한 AI 도구의 규칙(스킬)은 기기에서 다시 넣어요</span></div><div class="bxs-row"><code class="bxs-url">boarder enable report</code>${btn('복사', 'data-cp="boarder enable report"', 'sm ghost')}</div></div></div>`
+        + engSec(); };
+    const engSec = () => { const ds = j.engines || [];
+      const row = d => `<div class="bxs-li"><div><b>${esc(d.name || '이름 없는 기기')}</b><span>${d.known ? `새 창 기본: ${esc(d.default || 'tmux')}${d.engines.length ? ' · 이 기기 엔진: ' + esc(d.engines.join(' · ')) : ''}` : '엔진을 아직 안 켰어요'}${d.online ? '' : ' · 꺼져 있음(마지막으로 알려 준 값)'}</span></div></div>`;
+      return `<div class="bxs-sech">엔진</div><div class="bxs-list">${ds.map(row).join('') || '<div class="bxs-li"><div><b>기기가 없어요</b><span>설치 프롬프트로 기기를 붙이면 여기 보여요</span></div></div>'}`
+        + `<div class="bxs-li"><div><b>새 창 엔진 바꾸기</b><span>기본은 tmux 예요. 기기마다 그 기기에서 바꿔요(보더가 기기 설정을 바꾸지 않아요) — Herdr 는 고를 때만 써요</span></div><div class="bxs-row" style="flex-direction:column;align-items:flex-end">${['tmux', 'herdr'].map(e => `<div class="bxs-row"><code class="bxs-url">boarder engine default ${e}</code>${btn('복사', `data-cp="boarder engine default ${e}"`, 'sm ghost')}</div>`).join('')}</div></div></div>`; };
+    const savePref = async (patch, undo) => {   // 바로 반영, 못 바꾸면 되돌리고 한 줄 오류
+      try { const r = await api('POST', 'api/me/nodeset', {prefs: patch}); j.prefs = r.prefs; if ('primary_item' in patch) { try { j = await api('GET', 'api/me/nodeset'); } catch {} } toast('저장했어요'); }
+      catch { undo(); toast('일시적인 오류가 발생했어요'); }
+      if (live()) draw();
+    };
     const archRow = x => `<div class="bxs-li"><div><b>${esc(x.name)}</b><span>끝 ${esc(kst(x.at * 1000))} · 닫힌 지 ${esc(ago(x.at * 1000).replace(' 전', ''))}${x.msg ? ' · ' + esc(x.msg) : ''}</span></div>${x.reopen ? btn('다시 열기', `data-nro="${esc(x.id || x.name)}"`, 'sm ghost') : '<span class="bxs-mut" title="닫힌 창 목록(7일)에서 빠져 다시 열 수 없어요">다시 열 수 없음</span>'}</div>`;
     const draw = () => {
       const a = j.archive || [], shown = more ? a : a.slice(0, 30);
@@ -572,6 +595,7 @@
         + (OWNER ? '' : `<div class="bxs-sech">채널 묶기</div><div class="bxs-list"><div class="bxs-li"><div><b>무엇을 채널로 볼까요</b><span>화면은 같고 묶는 단위만 달라요. 들여올 때 쓰던 방식을 보고 골라 뒀어요</span></div>`
           + `<select class="bxs-in sm bxs-sel" data-nu aria-label="채널 묶기">${j.unit ? '' : '<option value="" selected>고르지 않음</option>'}<option value="agent"${j.unit === 'agent' ? ' selected' : ''}>에이전트마다 채널 · 일은 스레드</option><option value="goal"${j.unit === 'goal' ? ' selected' : ''}>일마다 채널</option></select></div></div>`)
         + `<div class="bxs-sech bxs-row between"><span>정리 기준</span><span class="bxs-row"><a class="bxs-btn sm ghost" style="text-decoration:none" href="/node-rules.md" download="node-rules.md" title="쓰던 하네스의 총괄에 붙여 넣는 노드 = 목표 규칙">노드 규칙 묶음 내려받기</a>${btn('기본값으로', 'data-ndef', 'sm ghost')}</span></div><div class="bxs-list">${NRULES.map(num).join('')}</div>`
+        + prefSec()
         + faceSec()
         + `<div class="bxs-sech">보관</div><div class="bxs-list"><div class="bxs-li"><div><b>끝난 노드 보관</b><span>끝나고 닫힌 노드를 트리 · 타임라인에서 보관함으로 옮겨요(대화 · 장부 · 결과는 그대로)</span></div>`
         + `<select class="bxs-in sm bxs-sel" data-nk="archive_h" aria-label="끝난 노드 보관">${[...new Set([...ARCH_H, j.values.archive_h])].sort((x, y) => x - y).map(h => `<option value="${h}"${h === j.values.archive_h ? ' selected' : ''}>닫히고 ${hrs(h)} 뒤</option>`).join('')}</select></div>`
@@ -595,6 +619,10 @@
         catch { j.unit = was; toast('일시적인 오류가 발생했어요'); }
         if (live()) draw(); return;
       }
+      const pr = e.target.closest('[data-npr]');
+      if (pr) { const was = j.prefs.primary_item; j.prefs.primary_item = pr.value; return savePref({primary_item: pr.value}, () => { j.prefs.primary_item = was; }); }
+      const ph = e.target.closest('[data-nph]');
+      if (ph) { const was = j.prefs.park_h, v = Number(ph.value); j.prefs.park_h = v; return savePref({park_h: v}, () => { j.prefs.park_h = was; }); }
       const i = e.target.closest('[data-nk]'); if (!i) return;
       const v = Number(i.value); if (!i.value || !Number.isFinite(v)) { i.value = j.values[i.dataset.nk]; return; }
       if (v !== j.values[i.dataset.nk]) save({[i.dataset.nk]: v});
@@ -602,6 +630,10 @@
     el.onkeydown = e => { if (e.key === 'Enter' && e.target.matches('input[data-nk]')) e.target.blur(); };
     el.onclick = async e => {
       if (e.target.closest('[data-nmore]')) { more = true; return draw(); }
+      const cp = e.target.closest('[data-cp]'); if (cp) return copy(cp.dataset.cp, '명령을');
+      if (e.target.closest('[data-npo]')) { const was = j.prefs.park_on; j.prefs.park_on = !was; draw(); return savePref({park_on: !was}, () => { j.prefs.park_on = was; }); }
+      const rl = e.target.closest('[data-nrl]');
+      if (rl) { const k = rl.dataset.nrl, was = j.prefs.rules[k] !== false; j.prefs.rules[k] = !was; draw(); return savePref({rules: {[k]: !was}}, () => { j.prefs.rules[k] = was; }); }
       const fo = e.target.closest('[data-nfo]'); if (fo) { openFace = openFace === fo.dataset.nfo ? null : fo.dataset.nfo; return draw(); }
       const fr = e.target.closest('[data-nfr]'), fx = fr && faces?.find(f => f.pane === fr.dataset.nfr);
       if (fx) {   // 기본 얼굴로: 서버가 지우고, 목록을 다시 받아 기본 얼굴(열 이름 얼굴)을 그림

@@ -2,7 +2,8 @@ import { boardHead, stripHead } from "./board-head";
 import { DurableObject } from "cloudflare:workers";
 import { bumpMember } from "./live";
 import { envelopeOn, getDek, openField, sealFieldNow, type VaultEnv } from "./vault/index";
-import { primaryOf, type Item } from "./importer/group";
+import { primaryPick, type Item } from "./importer/group";
+import { readPrefs } from "./node-prefs";
 
 export type EngEnv = { DB: D1Database; ENGINE: DurableObjectNamespace<Engine>; PUBLIC_URL: string };
 type Win = { id: string; owner: string; device_id: string; kind: string; role_id: string | null; name: string; state: string; state_at: number | null; handle: string | null; woke_at: number | null; created_at: number; dialog: string | null };
@@ -39,10 +40,10 @@ Report on the person's Boarder board as you work: run \`boarder log start "<one 
 }
 const WAKE = `[Boarder] This window has been quiet for a while. Write where things stand with boarder log progress, then keep going. If you are stuck, boarder log blocked "<why>"; if you are finished, boarder log done "<result>".`;
 
-// 사람마다 설정(묻지 않고 일하기 · 감독 규칙 분)
 export async function ownerCfg(db: D1Database, owner: string) {
-  const r = await db.prepare("SELECT perm_mode, perm_at, rules FROM engine_owner WHERE owner = ?").bind(owner).first<{ perm_mode: string; perm_at: number | null; rules: string | null }>();
+  const r = await db.prepare("SELECT e.perm_mode, e.perm_at, e.rules, (SELECT json_extract(data, '$.rules.one_goal') FROM node_setting WHERE owner = ?1 AND json_valid(data)) og FROM (SELECT ?1 AS o) x LEFT JOIN engine_owner e ON e.owner = x.o").bind(owner).first<{ perm_mode: string | null; perm_at: number | null; rules: string | null; og: number | null }>();
   let rules = { ...RULES }; try { rules = { ...RULES, ...(r?.rules ? JSON.parse(r.rules) : {}) }; } catch {}
+  if (r?.og === 0 || r?.og === 1) rules.one_goal = r.og === 1;
   return { perm: r?.perm_mode === "bypass" ? "bypass" as const : "ask" as const, perm_at: r?.perm_at ?? null, rules };
 }
 // 엔진이 붙어 있는 그 사람 기기(가장 최근 연락, 2분 안)
@@ -487,10 +488,14 @@ export async function deliverTo(env: EngEnv, owner: string, wid: string, text: s
   return engineOf(env, w.device_id).deliver(wid, text);
 }
 type Imp = Item & { device_id: string; handle: string | null };
+//   어느 창이 메인 봇인지는 사람이 고름(설정 › 노드 primary_item, group.ts primaryPick 의 규칙 — 'auto' · 'none' · 고른 창).
 export async function importedPrimary(db: D1Database, owner: string): Promise<Imp | null> {
-  if (await db.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(owner).first().catch(() => null)) return null;
+  const pick = (await readPrefs(db, owner).catch(() => null))?.primary_item ?? "auto";
+  if (pick === "none") return null;
+  const engineMain = pick === "auto" && !!(await db.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(owner).first().catch(() => null));
+  if (engineMain) return null;
   const rows = (await db.prepare("SELECT i.key, i.kind, i.engine, i.title, i.cwd, i.state, i.state_at, i.seen_at, i.win, i.session, i.handle, i.device_id, i.gone_at FROM imp_item i JOIN device d ON d.id = i.device_id WHERE i.owner = ? AND i.kind = 'window' AND i.gone_at IS NULL AND d.revoked_at IS NULL").bind(owner).all<Imp>().catch(() => ({ results: [] as Imp[] }))).results;
-  return primaryOf(rows);
+  return primaryPick(rows, pick, false).primary;
 }
 export const PRIMARY_HINT = `(This is the person's Boarder Primary chat; this window is their main bot. They don't see this terminal — answer with \`boarder chat "<text>"\` — if the head above says 「스레드 <id>」, answer under that message with \`boarder chat --thread <id> "<text>"\` — short, in their language.)`;
 async function toImported(env: EngEnv, owner: string, w: Imp, text: string) {

@@ -68,8 +68,9 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
         await log("say", a.text, primaryThread(a.thread)); return { ok: true };
       }
       case "role_draft": {
-        const cfg = await db.prepare("SELECT rules FROM engine_owner WHERE owner = ?").bind(owner).first<{ rules: string | null }>().catch(() => null);
+        const cfg = await db.prepare("SELECT (SELECT rules FROM engine_owner WHERE owner = ?1) rules, (SELECT json_extract(data, '$.rules.one_goal') FROM node_setting WHERE owner = ?1 AND json_valid(data)) og").bind(owner).first<{ rules: string | null; og: number | null }>().catch(() => null);
         let oneGoal = true; try { oneGoal = JSON.parse(cfg?.rules || "{}").one_goal !== false; } catch {}
+        if (cfg?.og === 0 || cfg?.og === 1) oneGoal = cfg.og === 1;
         const norm = (t: string) => String(t || "").replace(/\s+/g, " ").trim().toLowerCase();
         if (oneGoal) {
           const live = (await db.prepare("SELECT r.name, w.id FROM role r JOIN engine_window w ON w.role_id = r.id AND w.owner = r.owner WHERE r.owner = ? AND w.state NOT IN ('closed','failed') AND w.device_id IN (SELECT id FROM device WHERE revoked_at IS NULL)").bind(owner).all<{ name: string; id: string }>()).results;

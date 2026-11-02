@@ -1,5 +1,20 @@
 
-export function installPrompt(server: string): string {
+export const RULE_KEYS = ["one_goal", "report", "park", "ask", "outside"] as const;
+export type RuleKey = typeof RULE_KEYS[number];
+export type Rules = Partial<Record<RuleKey, boolean>>;
+const RULE_TEXT: [RuleKey | "secrets", string, string][] = [   // [묶음, 설치 글 줄, 스킬 줄]
+  ["one_goal", "One window = one goal.", "One window = one goal. A new goal gets its own window."],
+  ["report", "Report to Boarder at start, while working (at least every 30 minutes), when blocked and when done.", "Report to Boarder at the start, while working (at least once every 30 minutes), when blocked and when done (see below)."],
+  ["park", "When a window is done, or only waits for a person's answer or someone else's work: save the conversation to Boarder (`boarder session save`), then park it (close the window). Hand the waiting condition to a watcher outside the window, and reopen the window when it is met.",
+    "Done, or only waiting for a person's answer or someone else's work? Save this conversation to Boarder (`boarder session save`), then park: close the window. Hand what you wait for to a watcher outside the window (a Boarder card, `boarder wait`, the engine or a scheduled check) and reopen the window when it is met."],
+  ["secrets", "Never print, log or post passwords or tokens.", "Never print, log or post passwords, tokens or other secrets."],
+  ["ask", "A question to me says on the first line what I must decide, then the options (recommended first), in plain words without internal ids or numbers.", "A question to the human: the first line says what they must decide, then the options (recommended first), in plain words without internal ids or numbers."],
+  ["outside", "Anything sent to people outside: show me the draft and send only after I say yes.", "Anything sent to people outside (mail, chat, issues, customers): show the human the draft and send only after they say yes."],
+];
+export const ruleOn = (r: Rules | null | undefined, k: RuleKey | "secrets") => k === "secrets" || r?.[k] !== false;
+const rulesFor = (r: Rules | null | undefined, col: 1 | 2) => RULE_TEXT.filter(x => ruleOn(r, x[0])).map(x => x[col]);
+
+export function installPrompt(server: string, rules?: Rules | null): string {
   const host = server.replace(/\/+$/, ""), flag = host === "https://boarder.dgit.co" ? "" : ` --server ${host}`;
   return `Set up Boarder on this machine for me. Boarder (${host}) is where my AI agents report progress and ask me questions.
 
@@ -11,12 +26,7 @@ export function installPrompt(server: string): string {
 6. Tell me in one line how to turn things off: \`boarder disable report\` or \`boarder disable engine\` takes one back out, \`boarder uninstall\` removes everything.
 
 The rules my agents follow from now on (the Boarder skill):
-- One window = one goal.
-- Report to Boarder at start, while working (at least every 30 minutes), when blocked and when done.
-- When a window is done, or only waits for a person's answer or someone else's work: save the conversation to Boarder (\`boarder session save\`), then park it (close the window). Hand the waiting condition to a watcher outside the window, and reopen the window when it is met.
-- Never print, log or post passwords or tokens.
-- A question to me says on the first line what I must decide, then the options (recommended first), in plain words without internal ids or numbers.
-- Anything sent to people outside: show me the draft and send only after I say yes.
+${rulesFor(rules, 1).map(l => `- ${l}`).join("\n")}
 
 Only use the boarder CLI for this; don't edit tool config files by hand.`;
 }
@@ -27,7 +37,8 @@ export const HOW_IT_WORKS = [
   { title: "브라우저에서 허용해요", text: "열린 브라우저에서 「허용」 한 번이면 끝(코드 대조 없음)." },
 ];
 
-export const BOARDER_SKILL = `---
+export function boarderSkill(rules?: Rules | null): string {
+  return `---
 name: boarder
 description: Use whenever you start, make progress on, get blocked on or finish a task, need the human to decide something, or want to tell them something they should see — Boarder is where the human follows every AI window. Also when the user asks about Boarder, its setup, or "what's on my board".
 ---
@@ -38,12 +49,7 @@ The human follows your work on their Boarder board instead of reading every term
 
 ## Working rules
 
-1. One window = one goal. A new goal gets its own window.
-2. Report to Boarder at the start, while working (at least once every 30 minutes), when blocked and when done (see below).
-3. Done, or only waiting for a person's answer or someone else's work? Save this conversation to Boarder (\`boarder session save\`), then park: close the window. Hand what you wait for to a watcher outside the window (a Boarder card, \`boarder wait\`, the engine or a scheduled check) and reopen the window when it is met.
-4. Never print, log or post passwords, tokens or other secrets.
-5. A question to the human: the first line says what they must decide, then the options (recommended first), in plain words without internal ids or numbers.
-6. Anything sent to people outside (mail, chat, issues, customers): show the human the draft and send only after they say yes.
+${rulesFor(rules, 2).map((l, i) => `${i + 1}. ${l}`).join("\n")}
 
 ## Report progress
 
@@ -56,7 +62,7 @@ The human follows your work on their Boarder board instead of reading every term
 ## Ask the human
 
 - A decision only they can make: \`boarder ask "<question>" --choice "<A (recommended)>" --choice "<B>"\`. It prints a card id.
-- Keep working on something else and check later (\`boarder wait <card id>\`). If the answer is all you have left, save and park the window (rule 3) instead of sitting open.
+- Keep working on something else and check later (\`boarder wait <card id>\`).${ruleOn(rules, "park") ? ` If the answer is all you have left, save and park the window (rule ${RULE_TEXT.filter(x => ruleOn(rules, x[0])).findIndex(x => x[0] === "park") + 1}) instead of sitting open.` : ""}
 - Don't ask what you can decide yourself; recommend first.
 
 ## Bring existing work in
@@ -72,6 +78,8 @@ The human follows your work on their Boarder board instead of reading every term
 
 Only use the boarder CLI or MCP for this; don't edit tool config files by hand.
 `;
+}
+export const BOARDER_SKILL = boarderSkill();
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as Record<string, string>)[c]);
 

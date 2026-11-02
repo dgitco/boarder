@@ -1,7 +1,8 @@
 
 import { regroup } from "./importer/routes";
 import { boardHead, withHead } from "./board-head";
-import { primaryOf, notChat, type Item } from "./importer/group";
+import { primaryPick, notChat, type Item } from "./importer/group";
+import { prefsOf } from "./node-prefs";
 import { history, topics, promiseRows } from "./member-views";
 
 type R = Record<string, any>;
@@ -93,7 +94,7 @@ export async function load(db: D1Database, me: string) {
   const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb] = await db.batch([
     db.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
-    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
+    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle, (SELECT d.revoked_at IS NOT NULL FROM device d WHERE d.id = imp_item.device_id) rv FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
     db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT 600`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
     db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
@@ -107,7 +108,9 @@ export async function load(db: D1Database, me: string) {
   const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(r.win, r.pane);
   const itemOfWin = new Map<string, string>(); for (const i of items.values()) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(i.win, i.key);
   const nodeOfItem = new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)]));
-  const primary = (ew.results as R[]).some(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) ? null : primaryOf([...items.values()] as unknown as Item[]) as unknown as R | null;   // 보더 메인 봇 창이 떠 있으면 그게 메인 봇(engine.ts importedPrimary 와 같은 판정)
+  const engMain = (ew.results as R[]).some(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state));
+  const pp = primaryPick([...items.values()].filter(i => !i.rv) as unknown as Item[], prefsOf((ns.results[0] as R | undefined)?.data).primary_item, engMain);
+  const primary = pp.primary as unknown as R | null;
   const primKeys = new Set<string>(primary ? [String(primary.key), ...(primary.session ? [String(primary.session)] : [])] : []);
   const isPrimWin = (win: string) => !!primary?.win && (keyOfWin.get(win) || win) === primary.win;
   const nodes: Node[] = (nd.results as R[]).map(n => ({ id: n.id, pane: paneOfId(n.id), name: String(n.pinned_name || n.name || "노드"), area: String(n.area || "").trim(), state: n.state, why: n.why || "", updated_at: n.updated_at, archived_at: n.archived_at, wins: new Set<string>(), windows: [], convos: [] }));
@@ -122,8 +125,7 @@ export async function load(db: D1Database, me: string) {
   const mains = new Map((nd.results as R[]).map(n => [String(n.id), json<{ main?: string }>(n.counts, {}).main || ""]));
   for (const n of nodes) { const m = mains.get(n.id); if (m) n.windows.sort((a, b) => Number(b.key === m) - Number(a.key === m)); }
   const nodeOfWin = (win: string) => { if (isPrimWin(win)) return null; const k = keyOfWin.get(win) || win, item = itemOfWin.get(k) || `win:${k}`; return byId.get(nodeOfItem.get(item) || "") || null; };
-  // 엔진 창(역할 · 메인): 노드에 안 묶인 역할 창은 제 이름으로 한 노드
-  const mainWin = (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
+  const mainWin = pp.explicit ? null : (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
   const engineNodes = (ew.results as R[]).filter(w => w.kind === "role" && !nodes.some(n => n.name === w.name || n.wins.has(w.name)));
   const onlyPrim = (id: string) => { let p = 0, o = 0; for (const [k, v] of nodeOfItem) if (v === id) primKeys.has(k) ? p++ : o++; return p > 0 && o === 0; };
   const shown = primary ? nodes.filter(n => !onlyPrim(n.id)) : nodes;

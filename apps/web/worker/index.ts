@@ -7,7 +7,9 @@ import * as connReq from "./connect-request";
 import { onboarding } from "./member-onboarding";
 import { legal } from "./legal";
 import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
-import { installPrompt, BOARDER_SKILL, memberOnboard, type Bot } from "./install";
+import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, type Bot } from "./install";
+import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
+import { canBePrimary, primaryPick, PARK_H_LIM, type Item } from "./importer/group";
 import { landingPage } from "./landing";
 import { localTools } from "./local";
 import { addFeedback } from "./feedback";
@@ -608,9 +610,15 @@ app.get("/cli/:file{boarder-cli-[0-9][0-9a-z.-]*\\.tgz}", async c => {
 app.get("/api/install/cli/:file", c => c.text(`This install link was replaced. Install with: curl -fsSL ${new URL(c.req.url).origin}/install.sh | sh\n`, 410, { "cache-control": "no-store" }));
 app.get("/api/install/prompt", async c => {   // 회원만(복사 단추는 다 로그인한 화면)
   const s = await signedIn(c); if (!s) return c.text("sign in first", 401, { "cache-control": "no-store" });
-  return c.text(installPrompt(c.env.PUBLIC_URL), 200, { "cache-control": "no-store" });
+  const rules = isOwner(c.env, s.user.email) ? null : (await readPrefs(c.env.DB, s.user.email.toLowerCase()).catch(() => null))?.rules;
+  return c.text(installPrompt(c.env.PUBLIC_URL, rules), 200, { "cache-control": "no-store" });
 });
-app.get("/api/install/skill", c => c.body(BOARDER_SKILL, 200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store" }));
+// 스킬: 토큰 없이도 받음(옛 CLI · 다 켠 기본). 기기 토큰이 오면(boarder enable report) 그 회원이 켠 규칙 묶음만
+app.get("/api/install/skill", async c => {
+  const d = c.req.header("authorization") ? await deviceOf(c).catch(() => null) : null;
+  const rules = d && !isOwner(c.env, d.owner) ? (await readPrefs(c.env.DB, d.owner).catch(() => null))?.rules : null;
+  return c.body(rules ? boarderSkill(rules) : BOARDER_SKILL, 200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store" });
+});
 app.post("/api/device/code", async c => {
   const b = await c.req.json<{ name?: string; tools?: string[]; callback?: string; state?: string; code_challenge?: string; email?: string }>().catch(() => ({} as { name?: string; tools?: string[]; callback?: string; state?: string; code_challenge?: string; email?: string }));
   // 로컬 콜백(기본): 127.0.0.1 · localhost 의 /callback 만, state · S256 challenge 꼴 검사 — 없으면 코드 입력 길(SSH)
@@ -790,22 +798,41 @@ app.get("/api/me/nodeset", async c => {
     return c.json({ ...j, values: v }, 200, { "cache-control": "no-store" });
   }
   const me = s.user.email.toLowerCase();
-  const [rawSet, arch] = await c.env.DB.batch([
+  const [rawSet, arch, iw, em, dv] = await c.env.DB.batch([
     c.env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
     c.env.DB.prepare("SELECT n.id, n.name, n.why, n.archived_at, EXISTS(SELECT 1 FROM mnode_item m JOIN imp_item i ON i.owner = m.owner AND i.key = m.item WHERE m.owner = n.owner AND m.node = n.id AND i.gone_at IS NULL) open FROM mnode n WHERE n.owner = ? AND n.archived_at IS NOT NULL ORDER BY n.archived_at DESC LIMIT 300").bind(me),
+    c.env.DB.prepare("SELECT i.key, i.kind, i.engine, i.title, i.cwd, i.state, i.state_at, i.seen_at, i.win, i.session, i.handle, i.gone_at, d.name device FROM imp_item i JOIN device d ON d.id = i.device_id WHERE i.owner = ? AND i.kind = 'window' AND i.gone_at IS NULL AND d.revoked_at IS NULL ORDER BY i.seen_at DESC LIMIT 200").bind(me),
+    c.env.DB.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(me),
+    c.env.DB.prepare("SELECT id, name, engine, engine_at FROM device WHERE owner = ? AND revoked_at IS NULL AND scope = 'full' ORDER BY engine_at DESC LIMIT 20").bind(me),
   ]);
-  const unit = (() => { try { return (JSON.parse((rawSet.results[0] as { data?: string } | undefined)?.data || "{}") as { unit?: string }).unit || null; } catch { return null; } })();
+  const data = (rawSet.results[0] as { data?: string } | undefined)?.data;
+  const unit = (() => { try { return (JSON.parse(data || "{}") as { unit?: string }).unit || null; } catch { return null; } })();
   const archive = (arch.results as { id: string; name: string; why: string | null; archived_at: number; open: number }[]).map(n => ({ id: n.id, name: n.name, at: n.archived_at / 1000, msg: n.why || "", reopen: !!n.open && !!unit }));
-  return c.json({ values: await memberNodeVals(c.env, me), defaults: NODE_DEF, limits: NODE_LIM, archive, unit }, 200, { "cache-control": "no-store" });
+  const prefs = prefsOf(data), wins = (iw.results as (Item & { device: string })[]).filter(canBePrimary);
+  const cur = primaryPick(wins, prefs.primary_item, em.results.length > 0).primary;   // 지금 메인 봇인 창(없으면 보더 메인 봇)
+  const engines = (dv.results as { id: string; name: string; engine: string | null; engine_at: number | null }[]).map(d => {
+    const e = (() => { try { return d.engine ? JSON.parse(d.engine) as { default?: string | null; engines?: Record<string, unknown> } : null; } catch { return null; } })();
+    return { id: d.id, name: d.name, online: Date.now() - (d.engine_at || 0) < 120_000, default: e?.default ?? null, engines: e?.engines ? Object.keys(e.engines) : [], known: !!e };
+  });
+  return c.json({ values: await memberNodeVals(c.env, me), defaults: NODE_DEF, limits: NODE_LIM, archive, unit,
+    prefs, pref_defaults: PREF_DEF, park_limits: PARK_H_LIM, rule_keys: RULE_KEYS,
+    windows: wins.map(w => ({ key: w.key, title: w.title || w.win || w.key, engine: w.engine, device: w.device, state: w.state || "" })), primary_now: cur?.key ?? null, engines }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/nodeset", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  const b = await c.req.json<{ values?: unknown; unit?: string }>().catch(() => ({} as { values?: unknown; unit?: string }));
+  const b = await c.req.json<{ values?: unknown; unit?: string; prefs?: unknown }>().catch(() => ({} as { values?: unknown; unit?: string; prefs?: unknown }));
   if (!isOwner(c.env, s.user.email) && (b.unit === "goal" || b.unit === "agent")) {   // 채널 묶는 단위 — 회원만(주인은 노드 = 채널 그대로)
     const me = s.user.email.toLowerCase();
     await setUnit(c.env as never, me, b.unit, "me"); await regroup(c.env as never, me);
     return c.json({ ok: true, unit: b.unit });
+  }
+  if (!isOwner(c.env, s.user.email) && b.prefs !== undefined) {
+    const me = s.user.email.toLowerCase(), patch = prefsPatch(b.prefs);
+    if (!patch) return c.json({ ok: false, error: "값" }, 400);
+    await savePrefs(c.env.DB, me, patch);
+    if (patch.primary_item !== undefined || patch.park_on !== undefined || patch.park_h !== undefined) await regroup(c.env as never, me);   // 노드 · 메인 봇 판이 바로 바뀌게
+    return c.json({ ok: true, prefs: await readPrefs(c.env.DB, me) });
   }
   if (!b.values || typeof b.values !== "object") return c.json({ ok: false, error: "값" }, 400);
   if (isOwner(c.env, s.user.email)) {
