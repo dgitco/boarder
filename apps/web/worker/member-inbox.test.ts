@@ -37,6 +37,18 @@ function setup() {
   return { db: d1(db) as unknown as D1Database, log, card, q, now };
 }
 
+test("반응: 카드 글(ts = 카드 id)에도 달림 — log_id = -카드 rowid, 남의 카드는 404, 그 카드 스레드 판에 반응이 보임", async () => {
+  const s = setup();
+  s.card("1793000000.000123", A); s.card("1793000000.000456", B, "남의 창");
+  const rowid = (s.q("SELECT rowid AS n FROM board_card WHERE id = ?", "1793000000.000123")[0] as any).n;
+  assert.equal((await MI.chatPost(s.db, A, { react: "white_check_mark", ts: "1793000000.000123" }))!.status, 200);
+  assert.deepEqual(s.q("SELECT log_id, emoji FROM member_react WHERE owner = ?", A), [{ log_id: -rowid, emoji: "white_check_mark" }]);
+  assert.equal((await MI.chatPost(s.db, A, { react: "eyes", ts: "1793000000.000456" }))!.status, 404, "남의 카드");
+  const res = await MB.get(s.db, A, { name: "메인 봇" }, new URL("https://x/api/chat/primary/1793000000.000123"), async () => null);
+  const root = ((await res!.json()) as any).messages[0];
+  assert.deepEqual(root?.reactions, [{ name: "white_check_mark", count: 1, mine: true }]);
+});
+
 test("반응: 내 글만, Slack 이름만, 다시 누르면(unreact) 뺌", async () => {
   const s = setup(); const mine = s.log(A, "영업 창", "에이전트 글", s.now - 3000), theirs = s.log(B, "남의 창", "남의 글", s.now - 2000);
   assert.equal((await MI.chatPost(s.db, A, { react: "white_check_mark", ts: tsOf(s.now - 2000, theirs) }))!.status, 404);

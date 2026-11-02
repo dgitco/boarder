@@ -146,7 +146,8 @@ export async function chatPost(db: D1Database, me: string, b: R): Promise<{ stat
   if (b.react) {
     const name = String(b.react);
     if (!RX.test(name)) return { status: 400, body: { ok: false, error: "모르는 반응이에요" } };
-    const r = await logByTs(db, me, b.ts); if (!r) return { status: 404, body: { ok: false, error: "반응을 달 수 없는 글이에요" } };
+    const r = await logByTs(db, me, b.ts) || await (TS.test(String(b.ts || "")) ? db.prepare("SELECT -rowid AS id FROM board_card WHERE id = ? AND owner = ?").bind(String(b.ts), me).first<R>() : null);
+    if (!r) return { status: 404, body: { ok: false, error: "반응을 달 수 없는 글이에요" } };
     if (b.unreact) await db.prepare("DELETE FROM member_react WHERE owner = ? AND log_id = ? AND emoji = ?").bind(me, r.id, name).run();
     else await db.prepare("INSERT INTO member_react(owner, log_id, emoji, at) VALUES (?,?,?,?) ON CONFLICT(owner, log_id, emoji) DO NOTHING").bind(me, r.id, name, Date.now()).run();
     return { status: 200, body: { ok: true, state: "ok" } };

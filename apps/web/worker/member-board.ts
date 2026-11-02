@@ -156,7 +156,6 @@ export async function paneLogs(db: D1Database, me: string) {
     : L.nodeOfWin(r.win)?.pane || engineOf.get(r.win) || (r.kind === "me" ? L.nodes.find(n => n.name === r.win)?.pane : null) || null;   // 내 글(kind me)은 win 이 노드 이름
   return { chans, paneOfLog };
 }
-// 글 반응(member_react): 그 글들에 단 이모지 — 회원 혼자 보는 보드라 「누가」는 늘 나. 틀 꼴 { name(Slack 이름), count, mine }
 async function withReacts(db: D1Database, me: string, out: R[]) {
   const lids = out.map(m => m.lid).filter((x): x is number => !!x);
   if (!lids.length) return out;
@@ -291,7 +290,7 @@ function cardMsg(c: R, said: R[] = [], my = ME) {   // said = 에이전트가 �
   const buttons = [...json<string[]>(c.choices, []).map(label => ({ label })), ...(OWN.test(String(c.win)) ? [] : [{ label: "기타", other: true }])];   // 들여오기 질문은 고르기만
   const last = said.reduce((a, r) => Math.max(a, Number(r.at)), 0), ans = c.answer ? Number(c.answered_at || c.at) : 0;
   const latest = !said.length && !ans ? null : ans >= last ? replyTs(c) : tsOf(last, Number(said.find(r => Number(r.at) === last)!.id));
-  return { ts: String(c.id), thread: null, who: "agent", name: String(c.win), board: false, text: [c.question, c.body].filter(Boolean).join("\n\n"), buttons, files: [], replies: said.length + (c.answer ? 1 : 0), latest, rnames: c.answer ? [my] : [], reactions: [], owner: null, ...(c.state !== "open" ? { picked: String(c.answer || "·") } : {}) };
+  return { ts: String(c.id), ...(Number(c.n) > 0 ? { lid: -Number(c.n) } : {}), thread: null, who: "agent", name: String(c.win), board: false, text: [c.question, c.body].filter(Boolean).join("\n\n"), buttons, files: [], replies: said.length + (c.answer ? 1 : 0), latest, rnames: c.answer ? [my] : [], reactions: [], owner: null, ...(c.state !== "open" ? { picked: String(c.answer || "·") } : {}) };
 }
 const cardReply = (c: R, my = ME) => ({ ts: replyTs(c), thread: String(c.id), who: "owner", name: my, board: false, text: String(c.answer || ""), src: String(c.answer || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null });
 export async function pushLoc(db: D1Database, me: string, ts: string) {
@@ -373,7 +372,7 @@ async function nodeThread(db: D1Database, me: string, raw: string, ts: string, m
     if (!mineWin(String(card.win))) return null;
     const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, ts).all<R>()).results;
     const replies = [...said.map(r => ({ at: Number(r.at), m: { ...msg(r, my, String(r.win)), thread: ts } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card, my) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch }));
-    return { channel: ch, root: ts, owner: null, home, messages: [{ ...cardMsg(card, said, my), ch }, ...replies] };
+    return { channel: ch, root: ts, owner: null, home, messages: await withReacts(db, me, [{ ...cardMsg(card, said, my), ch }, ...replies]) };
   }
   const [s, id] = ts.split(".");
   const r = await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? LIMIT 1").bind(me, Number(id), Number(s) * 1000, Number(s) * 1000 + 1000).first<R>();
@@ -517,7 +516,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
       if (card) {
         const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, m[2]).all<R>()).results;
         const replies = [...said.map(r => ({ at: Number(r.at), m: { ...msg(r, my, String(r.win)), thread: m![2] } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card, my) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch: "primary" }));
-        return j({ channel: "primary", root: m[2], owner: null, messages: [{ ...cardMsg(card, said, my), ch: "primary" }, ...replies] });
+        return j({ channel: "primary", root: m[2], owner: null, messages: await withReacts(db, me, [{ ...cardMsg(card, said, my), ch: "primary" }, ...replies]) });
       }
       const pr = await primaryRoot(db, me, m[2]);
       if (pr) {
