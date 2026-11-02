@@ -127,3 +127,16 @@ test("상위 정하기: 내 노드끼리만 · 자기 자신 · 서로 상위면
   await call("POST", "/api/me/nodes/parent", { node: "n_tmp", parent: null });
   assert.deepEqual(JSON.parse(String(db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(A)!.data)).parent, {});
 });
+
+test("닫힌 창 다시 열기: 기기가 reopen 성공을 올리면 그 창은 산 창(gone_at 지움), 여는 중에 온 fresh send 는 가져갈 때 새 손잡이로 채움", async () => {
+  const { db, D1 } = seed(), call = app(D1), t = Date.now();
+  db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, win, session, handle, seen_at, gone_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(A, "window:k1", "dev1", "window", "tmux-own", "AI 담당자", "gone", "mini:ew_old1", "session:claude:s1", '{"engine":"tmux-own","pane":"%3"}', t, t - 60_000);
+  db.prepare("INSERT INTO engine_cmd(id, owner, device_id, verb, args, at, state, taken_at) VALUES (?,?,?,?,?,?,?,?)").run("c1", A, "dev1", "reopen", JSON.stringify({ item: "window:k1", text: "답" }), t - 5000, "taken", t - 4000);
+  db.prepare("INSERT INTO engine_cmd(id, owner, device_id, verb, args, at) VALUES (?,?,?,?,?,?)").run("c2", A, "dev1", "send", JSON.stringify({ item: "window:k1", handle: null, fresh: true, text: "여는 중에 온 답" }), t - 3000);
+  const r = await call("POST", "/api/device/cmds/c1", { ok: true, item: { state: "working", handle: { engine: "tmux-own", pane: "%9" } } });
+  assert.equal(r.status, 200);
+  const row = db.prepare("SELECT gone_at, state, handle FROM imp_item WHERE owner = ? AND key = ?").get(A, "window:k1") as any;
+  assert.equal(row.gone_at, null); assert.equal(row.state, "working"); assert.match(row.handle, /%9/);
+  const g = await (await call("GET", "/api/device/cmds")).json() as any;
+  const c2 = g.cmds.find((x: any) => x.id === "c2"); assert.ok(c2); assert.equal(c2.args.handle.pane, "%9");
+});

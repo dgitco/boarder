@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { group, pickUnit, notChat, type Item, type Unit } from "./group";
 import { prefsOf, parkHOf } from "../node-prefs";
+import { importedWindow, queueToImported } from "../member-imported";
 import { engineOf, widPane } from "../engine";
 import { proposalFrom, applyProposal, imported, PROPOSAL_CHOICES, IMPORT_WIN } from "./proposal";
 
@@ -113,12 +114,11 @@ export async function onCardAnswered(env: Env, owner: string, cardId: string, he
     return;
   }
   if (p) { await applyProposal(env, owner, cardId, json(p.payload, { connectors: [], roles: [] }), card.answer); return; }
-  const tok = await env.DB.prepare("SELECT pane FROM agent_token WHERE owner = ? AND win = ? ORDER BY created_at DESC LIMIT 1").bind(owner, card.win).first<{ pane: string }>();
-  const w = await env.DB.prepare("SELECT key, device_id, state, handle, engine FROM imp_item WHERE owner = ? AND win IN (?, ?) AND kind = 'window' AND gone_at IS NULL ORDER BY seen_at DESC LIMIT 1").bind(owner, tok?.pane || card.win, card.win).first<{ key: string; device_id: string; state: string; handle: string | null; engine: string }>();
+  const w = await importedWindow(env.DB, owner, { wid: null, win: card.win });
   if (!w?.device_id) return;   // 들여오지 않은 창(보고만) — 창이 boarder wait 로 받음
   if (w.engine === "tmux") return;   // 우리 엔진 창(옮긴 것 포함)은 「Boarder tmux 엔진」 감독 규칙이 받음(engine_window · wid) — 두 번 넣지 않게
   const text = `${head ? head + " " : ""}[보더] 「${card.question.slice(0, 80)}」 답: ${card.answer} (카드 ${card.id}) — boarder close ${card.id} "<처리>" 로 닫아요`;
-  await queue(env, owner, w.device_id, w.state === "parked" ? "reopen" : "send", { item: w.key, engine: w.engine, handle: json(w.handle, null), text, card: card.id });
+  await queueToImported(env.DB, owner, w, text, card.id);
 }
 
 async function queue(env: Env, owner: string, device: string, verb: string, args: unknown) {
@@ -345,7 +345,10 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     await DB.prepare("UPDATE engine_cmd SET state = 'queued' WHERE device_id = ? AND state = 'taken' AND taken_at < ?").bind(d.id, t - 180_000).run();
     await DB.prepare("UPDATE engine_cmd SET state = 'failed', result = '오래돼 안 넣음', done_at = ? WHERE device_id = ? AND state = 'queued' AND verb IN ('send', 'reopen') AND at < ? AND args LIKE '%\"post\":true%'").bind(t, d.id, t - 6 * 3600_000).run();
     const rs = ((await DB.prepare("UPDATE engine_cmd SET state = 'taken', taken_at = ? WHERE id IN (SELECT id FROM engine_cmd WHERE device_id = ? AND state = 'queued' ORDER BY at LIMIT 10) AND state = 'queued' RETURNING id, verb, args, at").bind(t, d.id).all()).results as { id: string; verb: string; args: string; at: number }[]).sort((a, b) => a.at - b.at);
-    return c.json({ cmds: rs.map(r => ({ ...r, args: json(r.args, {}) })) }, 200, { "cache-control": "no-store" });
+    const cmds = await Promise.all(rs.map(async r => { const a = json<Record<string, unknown>>(r.args, {});
+      if (r.verb === "send" && a.fresh && !a.handle && typeof a.item === "string") a.handle = json((await DB.prepare("SELECT handle FROM imp_item WHERE owner = ? AND key = ?").bind(d.owner, a.item).first<{ handle: string | null }>())?.handle, null);
+      return { ...r, args: a }; }));
+    return c.json({ cmds }, 200, { "cache-control": "no-store" });
   });
 
   const CmdOut = z.object({ ok: z.boolean(), error: s(300).optional(), note: s(300).optional(), item: z.record(z.string(), z.unknown()).optional() });
@@ -374,7 +377,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     if (!p.data.ok) { await say(`${what} 못 함 — ${p.data.error || "오류"}`, "blocked"); return c.json({ ok: true }); }
     const ni = p.data.item as Partial<Record<string, string>> | undefined;
     if (a.item && cmd.verb === "move") await DB.prepare("UPDATE imp_item SET state = 'gone', gone_at = ?, state_at = ? WHERE owner = ? AND key = ?").bind(t, t, d.owner, a.item).run();
-    else if (a.item && ni) await DB.prepare("UPDATE imp_item SET state = COALESCE(?, state), state_at = ?, handle = COALESCE(?, handle) WHERE owner = ? AND key = ?")
+    else if (a.item && ni) await DB.prepare(`UPDATE imp_item SET state = COALESCE(?, state), state_at = ?, handle = COALESCE(?, handle)${cmd.verb === "reopen" ? ", gone_at = NULL" : ""} WHERE owner = ? AND key = ?`)
       .bind(ni.state ?? null, t, ni.handle ? JSON.stringify(ni.handle) : null, d.owner, a.item).run();
     if (cmd.verb === "move" && ni?.key) await DB.prepare(
       "INSERT INTO imp_item(owner, key, device_id, kind, engine, title, cwd, session, win, state, state_at, seen_at) VALUES (?,?,?, 'window', 'tmux', ?, ?, ?, ?, 'working', ?, ?) ON CONFLICT(owner, key) DO NOTHING")
