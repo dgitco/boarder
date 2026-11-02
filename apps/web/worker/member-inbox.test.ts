@@ -148,6 +148,17 @@ test("읽지 않음: 에이전트 채널(노드) 내 글의 스레드 답 — �
   assert.equal((await MI.inbox(s.db, A)).unread.length, 0);
 });
 
+test("읽지 않음: 한 스레드의 새 답 여럿은 항목 하나(가장 새 답 · n = 새 답 수) — 사이드바 수 = 안에 보이는 카드 수", async () => {
+  const s = setup();
+  const r1 = s.log(A, MB.ME, "자료 모아 줘", s.now - 120_000, "me", "primary"), root = tsOf(s.now - 120_000, r1);
+  s.log(A, "모찌", "하나", s.now - 90_000, "chat", "p:" + root); s.log(A, "모찌", "둘", s.now - 80_000, "chat", "p:" + root);
+  const a3 = s.log(A, "모찌", "셋", s.now - 70_000, "chat", "p:" + root);
+  const it = (await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === root);
+  assert.equal(it.length, 1); assert.equal(it[0].n, 3); assert.equal(it[0].kind, "thread"); assert.equal(it[0].ts, tsOf(s.now - 70_000, a3)); assert.equal(it[0].text, "셋");
+  await MI.inboxPost(s.db, A, { op: "read", items: [{ chan: "primary", thread: root, ts: it[0].ts }] });   // 그 항목 읽음 = 스레드 전체
+  assert.equal((await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === root).length, 0);
+});
+
 test("저장: 내 글 · 내 카드만, 남의 것 404, 풀면 빠짐", async () => {
   const s = setup(); const mine = s.log(A, "영업 창", "저장할 글", s.now - 5000), theirs = s.log(B, "남의 창", "남의 글", s.now - 4000);
   s.card("1793400000.000001", A); s.card("1793400000.000002", B, "남의 창");

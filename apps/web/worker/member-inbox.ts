@@ -113,14 +113,16 @@ async function threadUnread(db: D1Database, me: string, seen: Map<string, number
   const bot = String((await db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(me.toLowerCase()).first<{ name: string | null }>().catch(() => null))?.name || "Primary");
   const floor = new Map<string, number>();
   for (const r of rows) { const root = rootOf(r.thread); if (root && (mine(r) || reacted.has(Number(r.id)))) floor.set(root, Math.max(floor.get(root) ?? 0, Number(r.at))); }
-  const out: R[] = [];
+  const out: R[] = [], byRoot = new Map<string, R>();   // rows 는 새것부터 — 처음 만난 답이 그 스레드 항목
   for (const r of rows) {
     const root = rootOf(r.thread); if (!root || mine(r) || OWN.test(String(r.win)) || r.win === "보더") continue;
     if (Number(r.at) <= Math.max(all, seen.get(thKey(root)) ?? 0, floor.get(root) ?? 0)) continue;
     const prim = PTH.test(String(r.thread)), pane = prim ? null : P.paneOfLog({ win: String(r.win), kind: r.kind, thread: null }), chan = prim ? "primary" : pane && pane !== PRIMARY ? key.get(pane) : null;
     if (!chan) continue;
     const author = prim ? bot : P.chans.find(c => c.pane === pane)?.name || String(r.win || "");
-    out.push({ ts: tsOf(r.at, r.id), chan, thread: root, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author });
+    const had = byRoot.get(root); if (had) { had.n++; continue; }
+    const it: R = { ts: tsOf(r.at, r.id), chan, thread: root, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author, n: 1, kind: "thread" };
+    byRoot.set(root, it); out.push(it);
   }
   return out;
 }

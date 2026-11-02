@@ -49,7 +49,7 @@ export async function open(cfg, s) {
   const argv = agentArgv(cfg, { ...s, session_id: spec.session_id });
   if (!s.argv?.length) { try { execFileSync('sh', ['-c', 'command -v "$1"', 'sh', argv[0]], { stdio: 'ignore' }); } catch { throw new EngineError(1, `Claude Code not found (${argv[0]}) — install it and sign in, then run \`boarder engine setup\``); } }   // 없으면 창이 바로 죽어 「server exited」만 보였음
   const name = String(s.name || s.id).replace(/[\x00-\x1f]/g, ' ').slice(0, 40);
-  const env = ['-e', `BOARDER_WINDOW=${s.id}`, '-e', `BOARDER_WINDOW_NAME=${name}`];
+  const env = ['-e', `BOARDER_WINDOW=${s.id}`, '-e', `BOARDER_WINDOW_NAME=${name}`, '-e', 'CLAUDE_CODE_ENTRYPOINT='];
   const cdir = configDir(s);
   if (cdir) { if (!existsSync(cdir)) throw new EngineError(1, `config folder not found (${cdir})`); env.push('-e', `CLAUDE_CONFIG_DIR=${cdir}`); }
   const head = has(cfg) ? ['new-window', '-d', '-t', `${SESSION}:`] : ['new-session', '-d', '-s', SESSION, '-x', '200', '-y', '50'];
