@@ -38,7 +38,7 @@ const marker = (mk: string, id: string) => `mart/${mk}/_c/${id}`;
 const fileKey = (mk: string, id: string, ver: string, p: string) => `mart/${mk}/${id}/${ver}/${p}`;
 const titleOf = (html: string) => { const m = /<title[^>]*>([^<]{1,400})<\/title>/i.exec(html); return m ? m[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : ""; };
 
-type Meta = { title: string; acct: string; at: string; ver: string; n: string; bytes: string; kind?: string; cv?: string };
+type Meta = { title: string; acct: string; at: string; ver: string; n: string; bytes: string; kind?: string; cv?: string; win?: string; wid?: string };
 export function kindOf(paths: string[]): { kind: "canvas" | "page"; cv: string } {
   if (paths.includes("project/canvas.json")) return { kind: "canvas", cv: "project" };
   if (paths.includes("canvas.json")) return { kind: "canvas", cv: "" };
@@ -107,6 +107,26 @@ export async function file(env: Env, mk: string, id: string, rel: string): Promi
   if (!okPath(p)) return null;
   const o = await env.RESULTS.get(fileKey(mk, id, m.ver, p)); if (!o) return null;
   return { body: o.body, ct: o.httpMetadata?.contentType || typeOf(p), html: isHtml(p) };
+}
+
+export async function ownerWin(env: Env, email: string, art: string) {
+  const m = await mine(env, email.toLowerCase(), art);
+  return m ? { win: m.win || "", wid: m.wid || "" } : null;
+}
+const BOARD = /^[\w .()·-]{1,120}\.dc\.html$/;
+export async function boardText(env: Env, email: string, art: string, board: string): Promise<[string, string] | null> {
+  const mk = await keyOf(email.toLowerCase());
+  if (!ID.test(art) || !BOARD.test(board)) return null;
+  const m = await metaOf(env, mk, art); if (!m || m.kind !== "canvas") return null;
+  let o: R2ObjectBody | null = null;
+  for (const p of [...new Set([m.cv ? `${m.cv}/${board}` : board, board, `project/${board}`])]) { if (okPath(p) && (o = await env.RESULTS.get(fileKey(mk, art, m.ver, p)))) break; }
+  if (!o) return null;
+  let title = board;
+  try { const cj = await env.RESULTS.get(fileKey(mk, art, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); const t = cj ? (JSON.parse(await cj.text()) as { boards?: Record<string, { title?: string }> })?.boards?.[board]?.title : ""; if (t) title = String(t); } catch {}
+  const h = (await o.text()).slice(0, 400_000).replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  const one = (t: string, n: number) => t.replace(CTRL, " ").split(/\s+/).filter(Boolean).join(" ").slice(0, n);
+  return [one(title, 120), one(h, 1800)];
 }
 
 const ARTNOTE_MAX = 4000;
@@ -210,7 +230,9 @@ export function mountMemberCanvas(app: Hono<{ Bindings: Env }>, h: CanvasHooks) 
     const title = clean(fd.get("title"), LIMITS.title) || clean(kd.kind === "canvas" ? await cvTitle() : "", LIMITS.title)
       || (idx >= 0 ? clean(titleOf(await blobs[idx].slice(0, 65536).text()), LIMITS.title) : "") || id;
     const acct = clean(fd.get("acct"), LIMITS.acct);
-    const meta: Meta = { title, acct, at: String(Math.floor(Date.now() / 1000)), ver, n: String(paths.length), bytes: String(total), kind: kd.kind, cv: kd.cv };
+    const win = clean(fd.get("win"), 120), wid = clean(fd.get("wid"), 44);
+    const meta: Meta = { title, acct, at: String(Math.floor(Date.now() / 1000)), ver, n: String(paths.length), bytes: String(total), kind: kd.kind, cv: kd.cv,
+      ...(/^[\w@.:/+-]{2,120}$/.test(win) ? { win } : {}), ...(/^ew_[a-z0-9]{3,40}$/i.test(wid) ? { wid } : {}) };
     try { await c.env.RESULTS.put(marker(mk, id), JSON.stringify({ ...meta, files: paths }), { httpMetadata: { contentType: "application/json" }, customMetadata: meta }); }
     catch (e) { c.executionCtx.waitUntil(dropVer(c.env, mk, id, ver).catch(() => {})); throw e; }
     if (old && old.ver !== ver) c.executionCtx.waitUntil(dropVer(c.env, mk, id, old.ver).catch(() => {}));

@@ -55,11 +55,11 @@ async function setup() {
     BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
   const ctx = { waitUntil(p: Promise<unknown>) { waits.push(p); }, passThroughOnException() {} };
   const go = (path: string, init: RequestInit = {}) => app.fetch(new Request("https://example.test" + path, init), env, ctx);
-  const put = (tok: string, files: Record<string, string | Uint8Array>, o: { id?: string; title?: string; manifest?: unknown } = {}) => {
+  const put = (tok: string, files: Record<string, string | Uint8Array>, o: { id?: string; title?: string; manifest?: unknown; win?: string; wid?: string } = {}) => {
     const fd = new FormData(), paths = Object.keys(files);
     fd.set("manifest", JSON.stringify(o.manifest ?? paths.map(path => ({ path }))));
     paths.forEach((p, i) => fd.set(`f${i}`, new Blob([files[p] as BlobPart]), p.split("/").pop()));
-    if (o.id) fd.set("id", o.id); if (o.title) fd.set("title", o.title);
+    if (o.id) fd.set("id", o.id); if (o.title) fd.set("title", o.title); if (o.win) fd.set("win", o.win); if (o.wid) fd.set("wid", o.wid);
     return go("/api/me/canvas", { method: "POST", headers: { authorization: `Bearer ${tok}` }, body: fd });
   };
   const view = async (email: string | null, path: string) => go(path, { headers: { accept: "text/html", "sec-fetch-dest": "iframe", ...(email ? { cookie: await cookie(email) } : {}) } });
@@ -165,4 +165,13 @@ test("상한 · 꼴: index.html 없음 · 경로 넘기 · 같은 경로 둘 · 
   for (let i = 0; i < MC.LIMITS.canvases; i++) s.m.set(`mart/${mk}/_c/Filler${String(i).padStart(14, "0")}`, { b: new Uint8Array(), customMetadata: { title: "", acct: "", at: "1", ver: "v", n: "1", bytes: "1" } });
   assert.equal(await st(s.put(TOK.A, { "index.html": PAGE })), 429);
   assert.equal(await st(s.put(TOK.A, { "index.html": PAGE }, { id: "Filler00000000000000" })), 200);
+});
+
+test("올린 창(통화 · 캔버스 미팅): 꼴이 맞는 win · wid 만 표지에 — ownerWin 은 그 회원 것만", async () => {
+  const s = await setup();
+  const r = await (await s.put(TOK.A, { "index.html": PAGE }, { win: "mbp:ew_arole000001", wid: "ew_arole000001" })).json() as { id: string };
+  assert.deepEqual(await MC.ownerWin(s.env as never, A, r.id), { win: "mbp:ew_arole000001", wid: "ew_arole000001" });
+  assert.equal(await MC.ownerWin(s.env as never, B, r.id), null);
+  const r2 = await (await s.put(TOK.A, { "index.html": PAGE }, { win: "bad\nwin %1", wid: "%15" })).json() as { id: string };
+  assert.deepEqual(await MC.ownerWin(s.env as never, A, r2.id), { win: "", wid: "" });
 });

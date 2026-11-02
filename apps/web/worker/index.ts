@@ -56,6 +56,7 @@ import * as files from "./files";
 import * as ownerRead from "./owner-read";
 import * as OS from "./owner-state";
 import * as memberBoard from "./member-board";
+import * as memberVoice from "./member-voice";
 import { boardHead, HEAD_RE } from "./board-head";
 import * as memberInbox from "./member-inbox";
 import * as memberFiles from "./member-files";
@@ -746,6 +747,19 @@ app.post("/api/device/window", async c => {
   ]);
   tokCache.clear();
   return c.json({ token: tok });
+});
+app.post("/api/device/voice", async c => {
+  const d = await deviceOf(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+  if (isOwner(c.env, d.owner) || !(await member(c.env, d.owner))) return c.json({ error: "기기 토큰" }, 401);
+  const len = +(c.req.header("content-length") || 0); if (len > memberVoice.VOICE_BODY_MAX) return c.json({ error: "too big" }, 413);
+  const buf = await readCapped(c.req.raw.body, memberVoice.VOICE_BODY_MAX); if (!buf) return c.json({ error: "too big" }, 413);
+  let b: Record<string, unknown> | null = null; try { b = JSON.parse(new TextDecoder().decode(buf)); } catch { return c.json({ error: "json" }, 400); }
+  if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ error: "json" }, 400);
+  if (!(await memberVoice.voiceBudgetOk(c.env.DB, d.id, String(b.op || "")))) return c.json({ ok: false, text: memberVoice.VOICE_TOO_MANY }, 429, { "retry-after": "60" });
+  const me = d.owner.toLowerCase(), mainName = (await memberBot(c.env, me).catch(() => null))?.name || "Primary";
+  const primary = async (who: string, text: string) => await primaryWinSend(c.env, who, text) ?? await chatToMain(c.env, who, text);
+  try { const [st, o] = await memberVoice.deviceOp(c.env as never, me, b, { primary }, mainName); return c.json(o, st as 200); }
+  catch (e) { console.error("통화 기기 op", e); return c.json({ ok: false, text: "일시적인 오류가 발생했어요" }, 503); }
 });
 // 주인이 아닌 사람의 보드(첫 화면이 4초마다 읽음)
 app.get("/api/me/board", async c => {
@@ -1884,7 +1898,12 @@ app.all("*", async c => {
           try { const a = await queue.answerOf(c.env, me, ans[1]); return a ? c.json({ ok: true, ...a }, 200, { "cache-control": "no-store" }) : c.json({ state: "unknown" }, 404, { "cache-control": "no-store" }); }
           catch { return queue.retrySafe(c); }   // rid 칸을 못 부름 = 모름(화면은 같은 rid 로)
         }
-        const fm = /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));   // 내가 올린 파일만
+        const fm = /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));
+        if (url.pathname === "/api/voice/modes") return c.json(await memberVoice.modes(c.env.DB, me), 200, { "cache-control": "no-store" });
+        const ao = /^\/api\/artowner\/([A-Za-z0-9]{16,40})$/.exec(url.pathname);
+        if (ao) return c.json(await memberVoice.artOwner(c.env as never, me, ao[1]).catch(() => ({})), 200, { "cache-control": "no-store" });
+        const vp = /^\/api\/voice\/rtc\/poll\/([\w.-]{1,110})$/.exec(url.pathname);
+        if (vp) { const [st, o] = await memberVoice.poll(c.env as never, me, vp[1]); return c.json(o, st as 200, { "cache-control": "no-store" }); }
         const mi = await memberInbox.route(c as never, me, url); if (mi) return mi;
         if (url.pathname === "/api/arts") return c.json(await memberCanvas.list(c.env, me), 200, { "cache-control": "no-store" });
         const pa = url.pathname.startsWith("/art/") ? memberCanvas.parseArt(url.pathname) : null;
@@ -1904,6 +1923,15 @@ app.all("*", async c => {
       if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {   // 몸통이 파일 · 녹음(JSON 아님) — 회원 쓰기와 같은 문
         if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
         return url.pathname === "/api/upload" ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
+      }
+      if (c.req.method === "POST" && /^\/api\/voice\/(rtc\/(start|stop|note)|end)$/.test(url.pathname)) {   // 통화 — 내 엔진 기기에서만(member-voice.ts)
+        if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
+        const b = await c.req.json<Record<string, unknown>>().catch(() => null);
+        if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
+        const mainName = (await memberBot(c.env, me).catch(() => null))?.name || "Primary";
+        const [st, o] = url.pathname === "/api/voice/rtc/start" ? await memberVoice.start(c.env as never, me, b, mainName) : url.pathname === "/api/voice/rtc/stop" ? await memberVoice.stop(c.env as never, me, b)
+          : url.pathname === "/api/voice/rtc/note" ? await memberVoice.note(c.env as never, me, b) : await memberVoice.end(c.env.DB, me, b);
+        return c.json(o, st as 200);
       }
       if (c.req.method === "POST") return memberPost(c, me, url);
     }

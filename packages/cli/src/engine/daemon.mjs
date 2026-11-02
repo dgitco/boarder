@@ -6,6 +6,7 @@ import { existsSync, appendFileSync, readFileSync, writeFileSync, renameSync } f
 import { dir, loadDevice, server, readJson } from '../config.mjs';
 import * as E from './index.mjs';
 import { markTurn } from '../turn.mjs';
+import * as V from './voice.mjs';
 
 const BIN = fileURLToPath(new URL('../../bin/boarder.mjs', import.meta.url));
 const VERSION = readJson(fileURLToPath(new URL('../../package.json', import.meta.url)))?.version;
@@ -26,8 +27,17 @@ function saveSession(w) {
   });
 }
 
+// 통화: 이 기기 사람의 codex 로그인으로 — 받아쓴 말 · 넘기기 · 넘긴 일 상태는 이 기기 토큰으로 서버에(서버가 기기 주인 것만 씀)
+async function voiceServer(op, body) {
+  const dev = loadDevice();
+  const r = await fetch(`${server()}/api/device/voice`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${dev?.token || ''}` }, body: JSON.stringify({ op, ...body }), signal: AbortSignal.timeout(20000) });
+  return r.json().catch(() => ({ ok: false, text: `서버 ${r.status}` }));
+}
+const voiceDeps = { server: voiceServer, listWindows: () => E.listAll() };
+
 async function handle(msg) {
   const { verb, args = {} } = msg;
+  if (/^rtc_/.test(verb)) return V.handle(verb, args, voiceDeps);
   if (verb === 'list') return { windows: await E.listAll() };
   if (verb === 'close') { const w = (await E.listAll()).find(x => x.id === args.id); if (w) await saveSession({ ...w, cwd: w.spec?.cwd ? w.spec.cwd.replace(/^~(?=$|\/)/, os.homedir()) : w.cwd }); }
   if (verb === 'open' && args.spec) args.spec = { ...args.spec, cwd: args.spec.cwd || path.join(E.engineHome(), 'work') };
@@ -64,6 +74,9 @@ export async function runDaemon() {
     if (old && old !== process.pid) { process.kill(old, 0); if (/engine\s+run/.test(cmdOf(old))) { console.error(`another engine daemon is running (pid ${old})`); process.exit(0); } }
   } catch {}
   writeFileSync(pidf, String(process.pid), { mode: 0o600 });
+  setInterval(() => V.reap(), 15000).unref();   // 끊긴 통화 닫기
+  // 데몬이 멈추면 통화 codex app-server 도 같이 닫고, 같은 신호로 다시 끝냄(서비스 관리자가 보는 끝남 꼴은 그대로)
+  for (const s of ['SIGTERM', 'SIGINT']) process.once(s, () => { V.stopAll().finally(() => process.kill(process.pid, s)); });
   const url = `${server().replace(/^http/, 'ws')}/api/device/engine`;
   let backoff = 1000, revoked = false, fails = 0, takenOver = false;
   const last = new Map();
@@ -87,7 +100,7 @@ export async function runDaemon() {
     const send = o => { try { ws.send(JSON.stringify(o)); } catch {} };
     const cfg = E.loadCfg();
     const hw = await E.listAll(cfg);
-    send({ type: 'hello', v: 1, primary: !cfg.no_primary, cli: VERSION, host: os.hostname().split('.')[0], os: process.platform, default: E.pick(cfg), engines: Object.fromEntries(Object.keys(E.adapters(cfg)).map(n => [n, { caps: cfg.caps?.[n] || null }])), windows: hw, ...(hw.failed.length ? { partial: true } : {}) });
+    send({ type: 'hello', v: 1, primary: !cfg.no_primary, cli: VERSION, host: os.hostname().split('.')[0], os: process.platform, default: E.pick(cfg), engines: Object.fromEntries(Object.keys(E.adapters(cfg)).map(n => [n, { caps: cfg.caps?.[n] || null }])), windows: hw, voice: V.available(), ...(hw.failed.length ? { partial: true } : {}) });
     log(`connected to ${url}`);
     ws.onmessage = async ev => {
       let m; try { m = JSON.parse(String(ev.data)); } catch { return; }

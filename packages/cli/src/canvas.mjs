@@ -72,6 +72,8 @@ export async function canvasPut(folder, flags = {}, { log = console.log } = {}) 
   if (id) fd.set('id', id);
   if (flags.title) fd.set('title', String(flags.title));
   if (flags.acct) fd.set('acct', String(flags.acct));
+  try { const { windowKey } = await import('./window.mjs'); const k = windowKey(); if (/^[\w@.:/+-]{2,120}$/.test(k.key)) fd.set('win', k.key); } catch {}
+  if (/^ew_[a-z0-9]{3,40}$/i.test(process.env.BOARDER_WINDOW || '')) fd.set('wid', process.env.BOARDER_WINDOW);
   const j = await send('POST', fd);
   log(`${j.replaced ? '새 판' : '새 캔버스'}: ${j.title} · 파일 ${j.files} · ${Math.ceil(total / 1024)}KB\n${j.url}\nid ${j.id}`);
   if (todo) {

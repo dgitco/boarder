@@ -153,6 +153,13 @@ export class Engine extends DurableObject<EngEnv> {
     });
   }
 
+  async rtc(verb: string, args: Record<string, unknown>, timeoutMs = 30_000): Promise<{ ok: true; result: any } | { ok: false; code: number; error: string }> {
+    if (!/^rtc_(start|poll|note|say|stop)$/.test(verb)) return { ok: false, code: 5, error: "없는 동사" };
+    if ((await this.who()).harness) return { ok: false, code: 1, error: "주인 하네스 기기엔 회원 통화가 없어요" };
+    try { return { ok: true, result: await this.cmd(verb, args, timeoutMs) }; }
+    catch (e) { return { ok: false, code: Number((e as EngineError)?.code) || 1, error: String((e as Error)?.message || e).slice(0, 300) }; }
+  }
+
   async webSocketMessage(_ws: WebSocket, msg: string | ArrayBuffer) {
     if (typeof msg !== "string" || msg.length > 256_000) return;
     let m: any; try { m = JSON.parse(msg); } catch { return; }
@@ -166,7 +173,9 @@ export class Engine extends DurableObject<EngEnv> {
     if (harness) return this.hmsg(m, device, owner, now);
     if (m.type === "hello") {
       const eng = { cli: String(m.cli || "").slice(0, 20), host: String(m.host || "").slice(0, 60), os: String(m.os || "").slice(0, 20), default: m.default ? String(m.default).slice(0, 30) : null, primary: m.primary !== false,
-        engines: Object.fromEntries(Object.entries(m.engines || {}).slice(0, 8).map(([k, v]: [string, any]) => [k.slice(0, 30), { caps: Array.isArray(v?.caps) ? v.caps.filter((x: unknown) => typeof x === "string").slice(0, 8) : null }])) };
+        engines: Object.fromEntries(Object.entries(m.engines || {}).slice(0, 8).map(([k, v]: [string, any]) => [k.slice(0, 30), { caps: Array.isArray(v?.caps) ? v.caps.filter((x: unknown) => typeof x === "string").slice(0, 8) : null }])),
+        // 통화: 이 기기 codex 로그인으로 GPT voice 를 열 수 있나(/api/voice/modes). 옛 CLI 는 칸이 없음(null)
+        voice: m.voice && typeof m.voice === "object" ? { ok: m.voice.ok === true, why: String(m.voice.why || "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 160) } : null };
       await db.prepare("UPDATE device SET engine = ?, engine_at = ? WHERE id = ?").bind(JSON.stringify(eng), now, device).run();
       // 기기에 없는 창(재부팅 · tmux 꺼짐)은 gone — 손잡이가 있으니 채팅 · 카드 답이 오면 다시 열림
       const have = new Set((Array.isArray(m.windows) ? m.windows : []).map((w: any) => String(w.id)));

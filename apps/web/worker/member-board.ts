@@ -360,12 +360,14 @@ async function primaryRows(db: D1Database, me: string, before?: string) {
 }
 
 export async function paneRows(db: D1Database, me: string, pane: string) {
-  const L = await load(db, me), mine = (r: R) => r.kind !== "me" && !OWN.test(r.win);
+  return rowsOfPane(await load(db, me), pane).slice(0, 60).reverse().map(r => ({ id: r.id, at: Number(r.at) / 1000, kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 400) }));
+}
+export function rowsOfPane(L: Awaited<ReturnType<typeof load>>, pane: string): R[] {
+  const mine = (r: R) => r.kind !== "me" && !OWN.test(r.win);
   const n = L.nodes.find(x => x.pane === pane), ew = n ? null : L.engineNodes.find(x => paneOfId(x.id) === pane);
-  const rows = pane === PRIMARY ? L.logs.filter(r => inPrim(r) ? r.win !== ME && r.win !== "보더" : r.kind !== "me" && L.isPrimWin(String(r.win)))
+  return pane === PRIMARY ? L.logs.filter(r => inPrim(r) ? r.win !== ME && r.win !== "보더" : r.kind !== "me" && L.isPrimWin(String(r.win)))
     : n ? L.logs.filter(r => !inPrim(r) && mine(r) && L.nodeOfWin(r.win) === n)
     : ew ? L.logs.filter(r => !inPrim(r) && mine(r) && r.win === ew.name) : [];
-  return rows.slice(0, 60).reverse().map(r => ({ id: r.id, at: Number(r.at) / 1000, kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 400) }));
 }
 
 export async function sessTarget(db: D1Database, me: string, pane: string) {
