@@ -66,7 +66,7 @@ export const sysLine = (db: D1Database, owner: string, text: string, wid?: strin
   db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(owner, "보더", "sys", text, "primary", Date.now(), wid ?? null).run();
 
 // deliver 와 reopen 이 서로 부르니 답 꼴을 적어 둠(추론이 돌아 TS7023)
-type Delivered = { sent?: boolean; reopened?: boolean; queued?: boolean };
+type Delivered = { sent?: boolean; reopened?: boolean; queued?: boolean; device?: boolean };   // device: 기기 자기 줄에 섬(서버 줄 아님 — 서버는 다시 안 보냄)
 const lostAnswer = (e: unknown) => (e as Error)?.message === "엔진 답 없음";   // cmd 가 보낸 뒤 답을 못 받음 — 기기는 했을 수 있음
 export class Engine extends DurableObject<EngEnv> {
   wait = new Map<string, Wait>();
@@ -193,6 +193,7 @@ export class Engine extends DurableObject<EngEnv> {
       this.ctx.waitUntil(bumpMember(this.env as never, owner));
       return;
     }
+    if (m.type === "queue") return this.queueMsg(m, device, owner);
     if (m.type === "state" || m.type === "event") {
       const list = m.type === "event" ? [m] : Array.isArray(m.windows) ? m.windows.slice(0, 50) : [];
       for (const w of list) {
@@ -206,6 +207,19 @@ export class Engine extends DurableObject<EngEnv> {
       if (list.length) this.ctx.waitUntil(this.drainCmds().catch(() => null));   // 바빠서 못 넣은 사람 글 다시
       if (list.length) this.ctx.waitUntil(bumpMember(this.env as never, owner));
     }
+  }
+  async queueMsg(m: any, device: string, owner: string) {
+    const db = this.env.DB, id = String(m.id || "").slice(0, 64);
+    const w = id ? await db.prepare("SELECT name FROM engine_window WHERE id = ? AND device_id = ? AND owner = ?").bind(id, device, owner).first<{ name: string }>() : null;
+    const text = typeof m.note === "string" ? m.note.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 240) : "";
+    if (text && w) await sysLine(db, owner, `「${w.name}」 ${text}`, id);
+    else if (text && /^ew_[\w-]{3,60}$/.test(id)) {
+      const it = await db.prepare("SELECT win FROM imp_item WHERE owner = ? AND device_id = ? AND kind = 'window' AND substr(win, -?) = ? LIMIT 1").bind(owner, device, id.length + 1, ":" + id).first<{ win: string }>();
+      if (it) await db.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").bind(owner, it.win, "blocked", text, Date.now()).run();
+    }
+    const done = (Array.isArray(m.done) ? m.done : []).filter((x: unknown) => typeof x === "string" && /^[\w-]{1,64}$/.test(x)).slice(0, 100) as string[];
+    for (const c of done) await db.prepare("UPDATE engine_cmd SET state = 'done', done_at = ? WHERE id = ? AND device_id = ? AND state IN ('sending','waiting','taken')").bind(Date.now(), c, device).run();
+    if (done.length) this.ctx.waitUntil(bumpMember(this.env as never, owner));
   }
   async webSocketClose(ws: WebSocket) { try { ws.close(1011, "닫힘"); } catch {} }
   async webSocketError(ws: WebSocket) { await this.webSocketClose(ws); }
@@ -245,7 +259,7 @@ export class Engine extends DurableObject<EngEnv> {
     if (ordered && ((await this.q<Pend>("pending")) || []).some(p => p.id === id)) { const r = await this.pend({ id, text, at: Date.now() }); await this.flush().catch(() => null); return r; }
     if (w.state === "parked" || w.state === "gone") return this.reopen(id, text, k);
     if (w.state === "opening" || w.state === "starting" || !this.online()) return this.pend({ id, text, at: Date.now(), k });
-    try { await this.cmd("send", { id, text }); return { sent: true }; }
+    try { const r = await this.cmd("send", { id, text }); return r?.queued ? { queued: true, device: true } : { sent: true }; }
     catch (e) {
       const code = (e as EngineError).code;
       if (code === 2 || (!this.online() && !lostAnswer(e))) return this.pend({ id, text, at: Date.now(), k });
@@ -281,8 +295,10 @@ export class Engine extends DurableObject<EngEnv> {
           if (w && (w.state === "opening" || w.state === "starting")) { held.add(id); continue; }
           if (!await db.prepare("UPDATE engine_cmd SET state = 'sending', taken_at = ? WHERE id = ? AND state = 'queued' RETURNING id").bind(Date.now(), r.id).first()) continue;
           try {
-            await this.cmd("send", { id, engine: a.engine, text: a.text });
-            await db.prepare("UPDATE engine_cmd SET state = 'done', done_at = ? WHERE id = ?").bind(Date.now(), r.id).run();
+            // cmd: 기기가 줄에 세웠다가 넣으면 이 id 로 끝을 알림(type 'queue' done). 줄에 세웠으면 'waiting' — 화면엔 아직 안 넣은 글
+            const res = await this.cmd("send", { id, engine: a.engine, text: a.text, cmd: r.id });
+            if (res?.queued) await db.prepare("UPDATE engine_cmd SET state = 'waiting', result = ? WHERE id = ? AND state = 'sending'").bind(JSON.stringify({ queued: true }), r.id).run();
+            else await db.prepare("UPDATE engine_cmd SET state = 'done', done_at = ? WHERE id = ?").bind(Date.now(), r.id).run();
           } catch (e) {
             const err = e as EngineError, off = err.message === "엔진이 꺼져 있어요", busy = err.code === 2;
             await db.prepare("UPDATE engine_cmd SET state = ?, result = ?, done_at = ? WHERE id = ?").bind(busy || off ? "queued" : "failed", String(err.message || err).slice(0, 300), busy || off ? null : Date.now(), r.id).run();
@@ -306,7 +322,8 @@ export class Engine extends DurableObject<EngEnv> {
     const db = this.env.DB, left: Pend[] = [], held = new Set<string>(), wait = (p: Pend) => { left.push(p); held.add(p.id); };
     const key = (p: Pend) => p.k || `${p.id}\n${p.at}\n${p.text}`;
     const lost = (p: Pend, w: Win) => sysLine(db, w.owner, `「${w.name}」 창에 글이 들어갔는지 확인하지 못했어요: ${stripHead(p.text).replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, p.id).catch(() => null);
-    const reopenAt = async (p: Pend, w: Win) => { try { if ((await this.reopen(p.id, p.text, key(p))).queued) wait(p); } catch (e) { if (lostAnswer(e)) await lost(p, w); else wait(p); } };
+    // 기기 줄에 선 글(device)은 기기가 넣음 — 서버 줄에 남기면 다음 flush 가 또 보내 같은 글이 두 번 들어감
+    const reopenAt = async (p: Pend, w: Win) => { try { const r = await this.reopen(p.id, p.text, key(p)); if (r.queued && !r.device) wait(p); } catch (e) { if (lostAnswer(e)) await lost(p, w); else wait(p); } };
     for (const p of q) {
       if (held.has(p.id)) { left.push(p); continue; }
       const w = await this.row(p.id);

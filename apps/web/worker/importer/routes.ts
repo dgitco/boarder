@@ -308,17 +308,20 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     return c.json({ cmds: rs.map(r => ({ ...r, args: json(r.args, {}) })) }, 200, { "cache-control": "no-store" });
   });
 
-  const CmdOut = z.object({ ok: z.boolean(), error: s(300).optional(), item: z.record(z.string(), z.unknown()).optional() });
+  const CmdOut = z.object({ ok: z.boolean(), error: s(300).optional(), note: s(300).optional(), item: z.record(z.string(), z.unknown()).optional() });
   app.post("/api/device/cmds/:id", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
     const p = CmdOut.safeParse(await c.req.json().catch(() => null)); if (!p.success) return c.json({ error: "몸" }, 400);
     const DB = env(c).DB, id = c.req.param("id"), t = now();
-    const cmd = await DB.prepare("SELECT verb, args FROM engine_cmd WHERE id = ? AND device_id = ? AND state = 'taken'").bind(id, d.id).first<{ verb: string; args: string }>();
+    const cmd = await DB.prepare("SELECT verb, args FROM engine_cmd WHERE id = ? AND device_id = ? AND state IN ('taken', 'waiting')").bind(id, d.id).first<{ verb: string; args: string }>();
     if (!cmd) return c.json({ error: "없는 명령" }, 404);
-    await DB.prepare("UPDATE engine_cmd SET state = ?, result = ?, done_at = ? WHERE id = ?").bind(p.data.ok ? "done" : "failed", JSON.stringify(p.data).slice(0, 2000), t, id).run();
+    const queued = p.data.ok && cmd.verb === "send" && p.data.item?.queued === true;
+    await DB.prepare("UPDATE engine_cmd SET state = ?, result = ?, done_at = ? WHERE id = ?").bind(queued ? "waiting" : p.data.ok ? "done" : "failed", JSON.stringify(p.data).slice(0, 2000), queued ? null : t, id).run();
     const a = json<{ item?: string; title?: string; card?: string }>(cmd.args, {});
     const w = a.item ? await DB.prepare("SELECT win FROM imp_item WHERE owner = ? AND key = ?").bind(d.owner, a.item).first<{ win: string }>() : null;
     const say = (text: string, kind = "progress") => DB.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").bind(d.owner, w?.win || `${d.name}:boarder`, kind, text, t).run();
+    if (p.data.ok && p.data.note) await say(p.data.note, "blocked");
+    if (queued) return c.json({ ok: true });   // 창이 쉴 때 기기가 넣고 다시 알림 — 그때까지 화면엔 「넣음」 아님
     const what = { move: "보더 엔진으로 옮김", park: "주차", reopen: "다시 엶", send: "창에 글을 넣음", focus: "창을 엶", feature: "기기 설정 바꿈" }[cmd.verb] || cmd.verb;
     if (cmd.verb === "feature") {   // 켜고 끈 뒤 기기가 올린 지금 상태
       const f = (p.data.item as { features?: unknown } | undefined)?.features;

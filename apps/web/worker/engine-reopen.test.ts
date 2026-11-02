@@ -132,3 +132,16 @@ test("flush 다시 열기가 「이미 떠 있음」 · 바쁨이면 — 그 창
   assert.deepEqual(dev.got.filter(g => g.verb === "send" && g.id === WID).map(g => g.text), ["글 1", "글 2"]);
   assert.deepEqual((await eng.ctx.storage.get("pending")) as unknown[], []);
 });
+
+test("flush 다시 열기가 「이미 떠 있음」이고 기기가 그 글을 자기 줄에 세우면 — 서버 줄에서 빠지고 다시 안 보냄", async () => {
+  const { dev, eng } = setup();
+  dev.open.add(WID);
+  const realCmd = (eng as any).cmd.bind(eng);
+  (eng as any).cmd = (verb: string, args: any, ms?: number) => verb === "state" ? Promise.resolve({ id: args.id, state: "busy" })
+    : verb === "send" ? (dev.got.push({ verb, id: args.id, text: args.text }), Promise.resolve({ ok: true, queued: true })) : realCmd(verb, args, ms);
+  await eng.ctx.storage.put("pending", [{ id: WID, text: "글 1", at: Date.now() - 1000, k: "k1" }]);
+  await eng.flush();
+  assert.deepEqual((await eng.ctx.storage.get("pending")) as unknown[], [], "기기 줄에 선 글은 서버 줄에 남지 않음");
+  await eng.flush();
+  assert.equal(dev.got.filter(g => g.verb === "send" && g.text === "글 1").length, 1, "같은 글을 기기에 한 번만 보냄");
+});

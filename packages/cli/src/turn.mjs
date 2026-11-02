@@ -17,14 +17,19 @@ export function markTurn(keys, text, now = Date.now()) {
   save([...load(now), { k, h: sha(norm(text)), at: now }]);
 }
 /** 이 창(열쇠들)에 남은 표지가 있나 — 없으면 기록(jsonl)을 읽을 까닭이 없음(보드에서 온 턴이 아님) */
-export function hasMark(keys, now = Date.now()) {
+export function hasMark(keys, now = Date.now(), { within } = {}) {
   const k = ids(keys); if (!k.length) return false;
-  return load(now).some(m => m.k.some(x => k.includes(x)));
+  return load(now).some(m => m.k.some(x => k.includes(x)) && (!within || now - m.at < within));   // within: 막 넣은 표지만(엔진 대기열 — 넣은 글을 Claude 가 아직 안 집은 틈)
 }
-/** 그 턴을 연 입력(글 · 시각)이 그 창의 표지와 맞으면 표지를 지우고 true */
+export const FRESH = NEAR[1];   // 넣은 뒤 이 안의 표지 = 아직 턴이 안 끝났을 수 있음(엔진 대기열이 다음 글을 미룸)
 export function takeTurn(keys, text, at, now = Date.now()) {
   const k = ids(keys), h = sha(norm(text)), list = load(now);
-  const i = list.findIndex(m => m.k.some(x => k.includes(x)) && (m.h === h || (at && at - m.at >= NEAR[0] && at - m.at <= NEAR[1])));
+  const mine = m => m.k.some(x => k.includes(x));
+  let i = list.findIndex(m => mine(m) && m.h === h);
+  if (i < 0 && at) {
+    let best = Infinity;
+    list.forEach((m, j) => { const d = at - m.at; if (mine(m) && d >= NEAR[0] && d <= NEAR[1] && Math.abs(d) < best) { best = Math.abs(d); i = j; } });
+  }
   if (i < 0) return false;
   list.splice(i, 1); save(list);
   return true;

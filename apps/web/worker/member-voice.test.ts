@@ -143,6 +143,42 @@ test("걸기 실패: 엔진 꺼짐 409 · 옛 CLI(동사 모름) · 바쁨 429 �
   assert.equal(s.lines().length, 0, "못 연 통화는 줄 없음");
 });
 
+test("기기 고르기: 통화가 되는(hello voice.ok) 기기만 — codex 없는 기기는 빼고 · 다 안 되면 409 + 이유 · 판 창 기기가 되면 그 기기 먼저", async () => {
+  const NOCODEX = { ok: false, why: "이 기기에 codex 가 없어요 — Codex CLI 를 깔고 codex login 을 해요" };
+  const addDev = (s: Awaited<ReturnType<typeof setup>>, id: string, voice: unknown, at: number) =>
+    s.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at, engine) VALUES (?,?,?,?,?,?,?,?,?,?)").run(id, A, id, "", "h-" + id, at, at, "full", at, JSON.stringify({ cli: "0.1.30", voice }));
+  const start = (s: Awaited<ReturnType<typeof setup>>, h: Record<string, string>, rid: string) => s.call("POST", "/api/voice/rtc/start", { rid, pane: PANE, sdp: OFFER }, h);
+  let s = await setup({ voiceA: NOCODEX }), h = await s.human();
+  addDev(s, "devMinimini1", { ok: true, why: "" }, Date.now() - 30_000);
+  assert.deepEqual((await s.call("GET", "/api/voice/modes", undefined, h)).j, { agent: { ok: true }, gpt: { ok: true } });
+  assert.deepEqual((await s.call("GET", "/api/voice/modes?pane=" + encodeURIComponent(PANE), undefined, h)).j.gpt, { ok: true });
+  let r = await start(s, h, "rid0123456789");
+  assert.equal(r.status, 200, r.text); assert.equal(r.j.cid, "devMinimini1.rid0123456789");
+  assert.deepEqual(s.cmds.map(c => [c.dev, c.verb]), [["devMinimini1", "rtc_start"]]);
+  assert.equal((await s.call("GET", "/api/voice/rtc/poll/" + r.j.cid, undefined, h)).status, 200);
+  assert.equal(s.cmds.at(-1)!.dev, "devMinimini1");
+  // ② 둘 다 안 됨 → modes why · 걸기 409 같은 이유 · 기기엔 안 감
+  s = await setup({ voiceA: NOCODEX }); h = await s.human();
+  addDev(s, "devMinimini1", { ok: false, why: "이 기기에 Codex(ChatGPT) 로그인이 없어요 — 기기에서 codex login 을 해요" }, Date.now() - 30_000);
+  assert.deepEqual((await s.call("GET", "/api/voice/modes", undefined, h)).j.gpt, { ok: false, why: "통화가 되는 기기가 없어요 — codex 로그인된 기기에서 boarder engine setup 을 돌려요" });
+  r = await start(s, h, "rid0123456789");
+  assert.equal(r.status, 409); assert.equal(r.j.error, "통화가 되는 기기가 없어요 — codex 로그인된 기기에서 boarder engine setup 을 돌려요");
+  assert.equal(s.cmds.length, 0); assert.equal(s.lines().length, 0);
+  // 오래 연락 없는(2분+) 기기는 voice.ok 여도 안 고름
+  s = await setup({ voiceA: NOCODEX }); h = await s.human();
+  addDev(s, "devMinimini1", { ok: true }, Date.now() - 300_000);
+  assert.equal((await start(s, h, "rid0123456789")).status, 409); assert.equal(s.cmds.length, 0);
+  s = await setup(); h = await s.human();
+  addDev(s, "devMinimini1", { ok: true }, Date.now() + 5_000);
+  r = await start(s, h, "rid0123456789");
+  assert.equal(r.status, 200, r.text); assert.equal(r.j.cid, "devAaaaaaaaa.rid0123456789");
+  r = await s.call("POST", "/api/voice/rtc/start", { rid: "rid0123456780", pane: "%1", sdp: OFFER }, h);
+  assert.equal(r.j.cid, "devAaaaaaaaa.rid0123456780");
+  s.db.prepare("DELETE FROM engine_window WHERE id = ?").run("ew_amain000001");
+  r = await s.call("POST", "/api/voice/rtc/start", { rid: "rid0123456781", pane: "%1", sdp: OFFER }, h);
+  assert.equal(r.j.cid, "devMinimini1.rid0123456781");
+});
+
 test("poll · note · stop: 내 기기 cid 만 — 남의 기기 · 주인 하네스 기기 · 틀린 꼴은 기기에 안 감", async () => {
   const s = await setup(), h = await s.human();
   const p = await s.call("GET", "/api/voice/rtc/poll/devAaaaaaaaa.rid0123456789", undefined, h);

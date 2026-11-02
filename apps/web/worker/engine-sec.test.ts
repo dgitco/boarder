@@ -63,3 +63,19 @@ test("보통 CLI 창 id(ew_<시각36><무작위>)는 그대로 engine_window 에
   const row = db.prepare("SELECT owner, device_id, kind FROM engine_window WHERE id = 'ew_mgx1abcdq3k9zz'").get();
   assert.deepEqual({ ...(row as object) }, { owner: MEMBER, device_id: "devMember01", kind: "role" });
 });
+
+test("기기 명령 결과 queued → waiting(note 는 보드 한 줄) → 다시 ok → done, 옛 꼴(ok 만)은 그대로 done", async () => {
+  const { db, D1 } = d1(); seed(db);
+  db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, win, state, state_at, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run(MEMBER, "window:laptop:tmux:7", "devMember01", "window", "tmux-own", "내 창", "laptop:tmux:7", "working", T, T);
+  db.prepare("INSERT INTO engine_cmd(id, owner, device_id, verb, args, at, state, taken_at) VALUES (?,?,?,?,?,?,?,?)").run("cmd_send_q1", MEMBER, "devMember01", "send", JSON.stringify({ item: "window:laptop:tmux:7", engine: "tmux-own", text: "글" }), T, "taken", T);
+  const st = () => (db.prepare("SELECT state FROM engine_cmd WHERE id = 'cmd_send_q1'").get() as { state: string }).state;
+  assert.equal((await app(D1)("/api/device/cmds/cmd_send_q1", { ok: true, item: { queued: true } })).status, 200);
+  assert.equal(st(), "waiting");
+  assert.equal((await app(D1)("/api/device/cmds/cmd_send_q1", { ok: true, item: { queued: true }, note: "this board message has waited over 10 minutes" })).status, 200);
+  assert.equal(st(), "waiting");
+  const line = db.prepare("SELECT win, kind, text FROM board_log WHERE owner = ? AND text LIKE '%10 minutes%'").get(MEMBER) as { win: string; kind: string } | undefined;
+  assert.deepEqual({ ...(line as object) }, { win: "laptop:tmux:7", kind: "blocked", text: "this board message has waited over 10 minutes" });
+  assert.equal((await app(D1)("/api/device/cmds/cmd_send_q1", { ok: true })).status, 200);
+  assert.equal(st(), "done");
+  assert.equal((await app(D1)("/api/device/cmds/cmd_send_q1", { ok: true })).status, 404, "끝난 명령은 다시 안 받음");
+});

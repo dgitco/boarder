@@ -5,7 +5,8 @@ import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, appendFileSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { dir, loadDevice, server, readJson } from '../config.mjs';
 import * as E from './index.mjs';
-import { markTurn } from '../turn.mjs';
+import { markTurn, hasMark, FRESH } from '../turn.mjs';
+import * as Q from './queue.mjs';
 import * as V from './voice.mjs';
 
 const BIN = fileURLToPath(new URL('../../bin/boarder.mjs', import.meta.url));
@@ -35,16 +36,86 @@ async function voiceServer(op, body) {
 }
 const voiceDeps = { server: voiceServer, listWindows: () => E.listAll() };
 
-async function handle(msg) {
+const TURNING = new Set(['busy', 'starting', 'waiting']);   // waiting = 질문 · 권한 창(턴 안)
+const IDLE = new Set(['idle', 'background']);
+const findWin = async id => (await E.listAll()).find(x => x.id === id);
+// 보드에 보이는 한 줄 · 줄에서 넣은 명령 끝내기(서버 type 'queue'). 데몬이 서버에 붙어 있을 때만 — 옛 서버는 모르는 꼴이라 넘어감
+let toServer = null;
+export const setReporter = fn => { toServer = fn; };
+function report(id, o) { try { toServer?.({ type: 'queue', id, ...o }); } catch {} }
+function note(id, text) { log(`queue ${id}: ${text}`); report(id, { note: text }); }
+const cmdsOf = items => items.map(x => x.cmd).filter(Boolean);
+export async function boardSend(args) {
+  return Q.withLock(args.id, async () => {
+    const w = await findWin(args.id).catch(() => null), keys = [args.id, w?.session_id];
+    let turning = Q.pending(args.id) > 0;   // 앞에 기다리는 글이 있으면 순서대로
+    if (!turning) {
+      let st = null; try { st = await E.run('state', { id: args.id, ...(args.engine ? { engine: args.engine } : {}) }); } catch {}
+      const known = typeof st?.state === 'string' && st.state !== 'none';
+      turning = known && (TURNING.has(st.state) || !!st.dialog || hasMark(keys, Date.now(), { within: FRESH }));   // 막 넣은 글을 Claude 가 아직 안 집은 틈도 턴 중
+    }
+    if (turning) {
+      const r = Q.push(args.id, args.text, args.cmd ? { cmd: String(args.cmd) } : {});
+      if (r.full) {   // 버리지 않음: 바쁨(2)으로 돌려 서버가 자기 줄에 두고 다시 보냄 + 보드에 한 줄
+        note(args.id, `이 창에 기다리는 보드 글이 ${Q.PER_WINDOW_MAX}개라 새 글은 아직 넣지 못했어요 — 앞 글이 들어가면 다시 넣어요`);
+        throw new E.EngineError(2, `${Q.PER_WINDOW_MAX} board messages are already waiting for this window`);
+      }
+      log(`queued send for ${args.id} (${r.size} waiting)`);
+      return { ok: true, queued: true };
+    }
+    const r = await E.run('send', args);
+    try { markTurn(keys, args.text); } catch {}   // 표지를 못 남겨도 넣기는 된 것
+    return r;
+  });
+}
+/** 폴링마다: 그 창이 쉬면(idle · background) 줄 맨 앞 글과 같은 스레드 글을 묶어 한 번에 넣음. 넣었으면 true.
+ *  st.state 가 없으면(상태를 모르는 엔진) 쉬는 것으로 보고 넣어 봄 — 바쁘면 엔진이 바쁨(2)으로 거절 */
+export async function drainWindow(w, st) {
+  const known = typeof st?.state === 'string';
+  if (!Q.pending(w.id) || (known && !IDLE.has(st.state)) || st?.dialog) return false;
+  return Q.withLock(w.id, async () => {
+    const keys = [w.id, st?.session_id || w.session_id];
+    if (hasMark(keys, Date.now(), { within: FRESH })) return false;   // 바로 앞에 넣은 글이 아직 턴을 안 열었을 수 있음
+    const { maybe, batch: b } = Q.claim(w.id);
+    if (maybe.length) {   // 넣는 도중 데몬이 멈췄던 글 — 다시 넣으면 두 번 들어갈 수 있어 넣지 않고 보드에 남김
+      note(w.id, `엔진이 넣는 도중 멈춰 보드 글 ${maybe.length}개가 창에 들어갔는지 확인하지 못했어요 — 다시 넣지 않았어요`);
+      report(w.id, { done: cmdsOf(maybe) });
+    }
+    if (!b) return false;
+    try { await E.run('send', { id: w.id, text: b.text, ...(w.engine ? { engine: w.engine } : {}) }); }
+    catch (e) { Q.release(w.id, b, false); log(`queued send for ${w.id} not delivered yet: ${e.message}`); return false; }
+    Q.release(w.id, b, true);
+    try { markTurn(keys, b.text); } catch {}
+    if (cmdsOf(b.items).length) report(w.id, { done: cmdsOf(b.items) });
+    log(`sent ${b.items.length} queued message(s) to ${w.id} (${Q.pending(w.id)} still waiting)`);
+    return true;
+  });
+}
+const closedNoted = new Set();
+export async function tickQueues(listed, { stateOf = id => E.run('state', { id }), now = Date.now() } = {}) {
+  for (const id of Q.ids()) {
+    const w = listed.find(x => x.id === id);
+    if (!w) {
+      let st = null; try { st = await stateOf(id); } catch {}
+      if (st?.state === 'none') {
+        if (!closedNoted.has(id)) { closedNoted.add(id); note(id, `창이 닫혀 있어 기다리는 보드 글 ${Q.pending(id)}개를 넣지 못하고 있어요 — 창이 다시 열리면 넣어요`); }
+      } else { closedNoted.delete(id); try { await drainWindow({ id, engine: E.loadCfg().windows?.[id] }, st || {}); } catch (e) { log(`queue ${id}: ${e.message}`); } }
+    } else closedNoted.delete(id);
+    const old = Q.flag(id, 'stale', x => now - x.at > Q.STALE_MS, now);
+    if (old.length) note(id, `보드 글 ${old.length}개가 10분 넘게 이 창이 쉬기를 기다려요 — 창이 쉬면 차례로 넣어요`);
+  }
+}
+
+export async function handle(msg) {
   const { verb, args = {} } = msg;
   if (/^rtc_/.test(verb)) return V.handle(verb, args, voiceDeps);
+  if (verb === 'send' && args.text && !args.test && args.id) return boardSend(args);
   if (verb === 'list') return { windows: await E.listAll() };
   if (verb === 'close') { const w = (await E.listAll()).find(x => x.id === args.id); if (w) await saveSession({ ...w, cwd: w.spec?.cwd ? w.spec.cwd.replace(/^~(?=$|\/)/, os.homedir()) : w.cwd }); }
   if (verb === 'open' && args.spec) args.spec = { ...args.spec, cwd: args.spec.cwd || path.join(E.engineHome(), 'work') };
   const r = await E.run(verb, args);
   // 보드가 넣은 글 표지(turn.mjs) — 그 턴이 끝나면 Stop 훅이 마지막 답을 노드 채팅으로. 표지를 못 남겨도 넣기는 된 것
   try {
-    if (verb === 'send' && args.text && !args.test) { const w = (await E.listAll()).find(x => x.id === args.id); markTurn([args.id, w?.session_id], args.text); }
     if (verb === 'reopen' && args.text) markTurn([args.id || args.handle?.id, args.handle?.session_id], args.text);
     if (verb === 'open' && args.spec?.prompt) markTurn([args.spec.id, r?.session_id], args.spec.prompt);
   } catch {}
@@ -98,6 +169,7 @@ export async function runDaemon() {
     fails = 0;
     backoff = 1000; last.clear();
     const send = o => { try { ws.send(JSON.stringify(o)); } catch {} };
+    setReporter(send);
     const cfg = E.loadCfg();
     const hw = await E.listAll(cfg);
     send({ type: 'hello', v: 1, primary: !cfg.no_primary, cli: VERSION, host: os.hostname().split('.')[0], os: process.platform, default: E.pick(cfg), engines: Object.fromEntries(Object.keys(E.adapters(cfg)).map(n => [n, { caps: cfg.caps?.[n] || null }])), windows: hw, voice: V.available(), ...(hw.failed.length ? { partial: true } : {}) });
@@ -125,13 +197,16 @@ export async function runDaemon() {
         if (st.dialog) { const a = await answerDialog(w, st).catch(() => null); if (a) { log(`answered ${a} dialog in ${w.id}`); continue; } }
         const meta = w.meta && typeof w.meta === 'object' ? w.meta : undefined;
         const key = `${st.state}|${st.dialog || ''}|${st.limit || ''}|${w.name || ''}|${meta ? JSON.stringify(meta) : ''}`;
+        try { await drainWindow(w, st); } catch (e) { log(`queue ${w.id}: ${e.message}`); }
         if (full || last.get(w.id) !== key) { changed.push({ id: w.id, engine: w.engine, name: w.name, ...(meta ? { meta } : {}), state: st.state, since: st.since, dialog: st.dialog, limit: st.limit, session_id: st.session_id || w.session_id }); last.set(w.id, key); }
       }
+      try { await tickQueues(listed); } catch (e) { log(`queue: ${e.message}`); }
       if (full) { send({ type: 'state', full: true, windows: changed }); lastFull = now; }
       else if (changed.length) send({ type: 'state', windows: changed });
       if (++ping % 2 === 0) send({ type: 'ping' });
       for (let i = 0; i < 15 && alive; i++) await sleep(1000);
     }
+    setReporter(null);
     if (revoked) { console.error('this device was revoked — run `boarder setup --yes` again'); process.exit(REVOKED_EXIT); }
     // 같은 기기 토큰의 다른 데몬이 자리를 가져감(1012) — 서로 밀어내지 않게 길게 쉼
     if (takenOver) { log('another engine daemon took over this device — waiting 60s'); takenOver = false; await sleep(60000); continue; }

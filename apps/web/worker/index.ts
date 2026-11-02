@@ -1899,7 +1899,7 @@ app.all("*", async c => {
           catch { return queue.retrySafe(c); }   // rid 칸을 못 부름 = 모름(화면은 같은 rid 로)
         }
         const fm = /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));
-        if (url.pathname === "/api/voice/modes") return c.json(await memberVoice.modes(c.env.DB, me), 200, { "cache-control": "no-store" });
+        if (url.pathname === "/api/voice/modes") return c.json(await memberVoice.modes(c.env.DB, me, url.searchParams.get("pane") || ""), 200, { "cache-control": "no-store" });
         const ao = /^\/api\/artowner\/([A-Za-z0-9]{16,40})$/.exec(url.pathname);
         if (ao) return c.json(await memberVoice.artOwner(c.env as never, me, ao[1]).catch(() => ({})), 200, { "cache-control": "no-store" });
         const vp = /^\/api\/voice\/rtc\/poll\/([\w.-]{1,110})$/.exec(url.pathname);

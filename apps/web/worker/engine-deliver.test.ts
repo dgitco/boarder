@@ -39,7 +39,7 @@ function setup() {
   win.run(ROLE, MEMBER, DEV, "role", "r_1", "일 창", "idle", T, h(ROLE, 2), T);
   win.run(STARTING, MEMBER, DEV, "role", "r_2", "뜨는 창", "starting", T, h(STARTING, 3), T);
   // 가짜 데몬: send 는 열린 창에만(없으면 code 4), busyOnce 에 든 창은 한 번 「바쁨」(code 2), hold 면 답을 release() 때까지 붙잡음
-  const dev = { open: new Set<string>([MAIN, ROLE, STARTING]), got: [] as { verb: string; id?: string; text?: string }[], up: true, hold: false, held: [] as (() => Promise<void>)[], busyOnce: new Set<string>() };
+  const dev = { open: new Set<string>([MAIN, ROLE, STARTING]), got: [] as { verb: string; id?: string; text?: string }[], up: true, hold: false, held: [] as (() => Promise<void>)[], busyOnce: new Set<string>(), queueIds: new Set<string>(), cmds: [] as unknown[] };
   const store = new Map<string, unknown>(), waits: Promise<unknown>[] = [];
   let eng: any;
   const ws = {
@@ -56,6 +56,7 @@ function setup() {
       } else if (m.verb === "send") {
         if (!dev.open.has(id)) ans = { ok: false, code: 4, error: "no such window" };
         else if (dev.busyOnce.delete(id)) ans = { ok: false, code: 2, error: "busy" };
+        else if (dev.queueIds.has(id)) { dev.cmds.push(a.cmd); ans = { ok: true, result: { ok: true, queued: true } }; }   // 턴 중 — 기기 줄에 섬(CLI 0.1.22+)
         else { dev.got.push({ verb: "send", id, text: a.text }); ans = { ok: true, result: { ok: true } }; }
       } else if (m.verb === "state") ans = { ok: true, result: { id, state: dev.open.has(id) ? "idle" : "none" } };
       else if (m.verb === "close") { dev.open.delete(id); ans = { ok: true, result: { ok: true } }; }
@@ -141,4 +142,25 @@ test("6시간 넘게 못 넣은 밀린 글은 버리되 보드에 남김(조용�
   assert.deepEqual(pending(), []);
   const line = db.prepare("SELECT text FROM board_log WHERE owner = ? AND kind = 'sys' AND wid = ?").get(MEMBER, ROLE) as { text: string } | undefined;
   assert.ok(line && /못 넣/.test(line.text) && line.text.includes("오래된 글"), `보드 줄이 있어야 함: ${JSON.stringify(line)}`);
+});
+
+test("기기가 줄에 세운 글(queued)은 deliver 가 sent 가 아니라 queued 로 돌려줌", async () => {
+  const { dev, eng, pending } = setup();
+  dev.queueIds.add(ROLE);
+  assert.deepEqual(await eng.deliver(ROLE, "턴 중에 온 글"), { queued: true, device: true });   // device: 기기 줄(서버 줄 아님)
+  assert.deepEqual(pending(), [], "서버 줄엔 안 섬(기기 줄이 넣음 — 두 번 안 들어가게)");
+});
+
+test("사람 글 줄(engine_cmd): 기기가 줄에 세우면 waiting(화면 「기다림」) → 기기가 넣고 done 을 알리면 done · note 는 보드 한 줄", async () => {
+  const { db, dev, eng, say } = setup();
+  dev.queueIds.add(ROLE);
+  db.prepare("INSERT INTO engine_cmd(id, owner, device_id, verb, args, at) VALUES (?,?,?,?,?,?)").run("cmdq0000001", MEMBER, DEV, "send", JSON.stringify({ item: "window:laptop:" + ROLE, engine: "tmux", handle: { id: ROLE }, text: "[보드 · 일 창] 기다릴 글", post: true }), Date.now());
+  await eng.drainRun();
+  assert.deepEqual(dev.cmds, ["cmdq0000001"], "기기에 명령 id 를 넘김");
+  assert.equal((db.prepare("SELECT state FROM engine_cmd WHERE id = 'cmdq0000001'").get() as { state: string }).state, "waiting");
+  await say({ type: "queue", id: ROLE, note: "보드 글 1개가 10분 넘게 이 창이 쉬기를 기다려요" });
+  const line = db.prepare("SELECT text FROM board_log WHERE owner = ? AND kind = 'sys' AND wid = ?").get(MEMBER, ROLE) as { text: string } | undefined;
+  assert.ok(line && line.text.includes("일 창") && /10분/.test(line.text), JSON.stringify(line));
+  await say({ type: "queue", id: ROLE, done: ["cmdq0000001", "남의 것; DROP"] });
+  assert.equal((db.prepare("SELECT state FROM engine_cmd WHERE id = 'cmdq0000001'").get() as { state: string }).state, "done");
 });

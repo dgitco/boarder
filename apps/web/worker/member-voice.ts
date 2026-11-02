@@ -1,4 +1,4 @@
-import { engineOf, liveDevice, deliverTo, EngineError, type EngEnv } from "./engine";
+import { engineOf, deliverTo, EngineError, type EngEnv } from "./engine";
 import * as MB from "./member-board";
 import * as MC from "./member-canvas";
 import { boardHead, withHead } from "./board-head";
@@ -29,14 +29,27 @@ export async function target(db: D1Database, me: string, pane: string, mainName 
 const line = (db: D1Database, me: string, t: Target, text: string) =>
   db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, t.win.slice(0, 120), "sys", text.slice(0, 4000), t.thread, Date.now(), t.wid).run();
 
-// ── 고르개 ──
-export async function modes(db: D1Database, me: string) {
-  const dev = await liveDevice(db, me);
-  const no = (why: string) => ({ agent: { ok: true }, gpt: { ok: false, why } });
-  if (!dev) return no(NO_DEVICE);
-  const v = json<{ voice?: { ok?: boolean; why?: string } | null }>((await db.prepare("SELECT engine FROM device WHERE id = ? AND owner = ?").bind(dev, me).first<R>())?.engine, {}).voice;
-  if (!v) return no(OLD_CLI);
-  return v.ok ? { agent: { ok: true }, gpt: { ok: true } } : no(one(v.why, 160) || "이 기기에서 통화를 못 열어요");
+export const NO_VOICE = "통화가 되는 기기가 없어요 — codex 로그인된 기기에서 boarder engine setup 을 돌려요";
+type VoiceCap = { ok?: boolean; why?: string } | null | undefined;
+export async function voiceDevice(db: D1Database, me: string, prefer: string | null = null): Promise<{ dev: string } | { why: string }> {
+  const rows = (await db.prepare("SELECT id, engine FROM device WHERE owner = ? AND revoked_at IS NULL AND scope = 'full' AND engine_at > ? ORDER BY engine_at DESC").bind(me, Date.now() - 120_000).all<R>()).results || [];
+  if (!rows.length) return { why: NO_DEVICE };
+  const devs = rows.map(r => ({ id: String(r.id), v: json<{ voice?: VoiceCap }>(r.engine, {}).voice }));
+  const ok = devs.filter(d => d.v?.ok === true);
+  if (ok.length) return { dev: (prefer && ok.find(d => d.id === prefer)?.id) || ok[0].id };
+  if (devs.length === 1) return { why: devs[0].v ? one(devs[0].v.why, 160) || "이 기기에서 통화를 못 열어요" : OLD_CLI };   // 기기 하나면 그 기기 이유 그대로
+  return { why: devs.every(d => !d.v) ? OLD_CLI : NO_VOICE };
+}
+async function paneDevice(db: D1Database, me: string, t: Target | null): Promise<string | null> {
+  if (!t) return null;
+  if (t.window) return (await db.prepare("SELECT device_id FROM engine_window WHERE id = ? AND owner = ?").bind(t.window, me).first<R>())?.device_id ?? null;
+  return t.item?.device_id ? String(t.item.device_id) : null;
+}
+
+export async function modes(db: D1Database, me: string, pane = "") {
+  const t = pane ? await target(db, me, pane).catch(() => null) : null;
+  const v = await voiceDevice(db, me, await paneDevice(db, me, t));
+  return "dev" in v ? { agent: { ok: true }, gpt: { ok: true } } : { agent: { ok: true }, gpt: { ok: false, why: v.why } };
 }
 
 export async function artOwner(env: VEnv, me: string, art: string): Promise<{ pane?: string; name?: string }> {
@@ -102,8 +115,9 @@ export async function start(env: VEnv, me: string, b: R, mainName = "Primary"): 
   if (!RID.test(rid) || !sdp.startsWith("v=0") || sdp.length > 20000) return [400, { ok: false, error: "요청 모양이 틀림" }];
   const t = await target(env.DB, me, pane, mainName);
   if (!t) return [400, { ok: false, error: `보드에 없는 판 ${one(pane, 20)}` }];
-  const dev = await liveDevice(env.DB, me);
-  if (!dev) return [409, { ok: false, error: NO_DEVICE }];
+  const pick = await voiceDevice(env.DB, me, await paneDevice(env.DB, me, t));
+  if (!("dev" in pick)) return [409, { ok: false, error: pick.why }];
+  const dev = pick.dev;
   let r: R;
   try {
     r = await eng(env, dev).cmd("rtc_start", { cid: rid, sdp, pane: t.pane, name: t.name, window: t.window, meet: !!b.meet, instructions: instructions(t, await context(env.DB, me, t.pane, mainName)) }, 45_000);

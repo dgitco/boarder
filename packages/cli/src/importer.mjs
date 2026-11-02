@@ -413,10 +413,87 @@ async function ownReopen(h, text) {
   return { pane };
 }
 // 보드가 창에 넣은 글(send · 글을 단 reopen)은 넣은 뒤 표지를 남김 — 그 턴이 끝나면 Stop 훅이 마지막 답을 노드 채팅으로(turn.mjs)
+// 줄에 세운 글(queued)은 넣을 때 표지를 남기고, 엔진 데몬 길(boardSend)은 거기서 남김 — 여기서 또 남기면 표지가 둘이라 다음 글이 기다림
 async function doCmd(cmd) {
   const out = await doCmd1(cmd), a = cmd.args || {}, h = a.handle || {};
-  if ((cmd.verb === 'send' || cmd.verb === 'reopen') && a.text) { try { const { markTurn } = await import('./turn.mjs'); markTurn([h.id, h.session_id], a.text); } catch {} }
+  const marked = out?.[MARKED]; if (out) delete out[MARKED];
+  if ((cmd.verb === 'send' || cmd.verb === 'reopen') && a.text && !out?.queued && !marked) { try { const { markTurn } = await import('./turn.mjs'); markTurn([h.id, h.session_id], a.text); } catch {} }
   return out;
+}
+const MARKED = Symbol('marked');
+
+let IQ = null;
+const iq = async () => IQ ||= (await import('./engine/queue.mjs')).makeQueue('import-queue.json');
+const ownQid = h => `${h.engine}:${h.pane}`;
+const OWN_EXPIRE = 6 * 3600_000;   // 서버 줄과 같은 한도 — 그보다 오래 못 넣은 글은 못 넣음으로 알리고 뺌
+export function ownState(h) {
+  if (h.engine === 'herdr-own') {
+    let agents; try { agents = herdrCall(['agent', 'list'], 4000).agents || []; } catch { return 'unknown'; }
+    const a = agents.find(x => x.pane_id === h.pane); if (!a) return 'gone';
+    return { working: 'busy', blocked: 'question', idle: 'idle', done: 'idle' }[a.agent_status] || 'unknown';
+  }
+  if (h.engine !== 'tmux-own' || !h.pane) return 'unknown';
+  const pid = +run('tmux', ['display', '-p', '-t', h.pane, '#{pane_pid}'], 2000).trim();
+  if (!pid) return 'gone';
+  const ag = agentUnder(pid, procTable()); if (!ag) return 'gone';
+  const l = liveClaude().find(x => x.pid === ag.pid || (h.session_id && x.sid === h.session_id));
+  if (l?.status) return { busy: 'busy', waiting: 'question', idle: 'idle', shell: 'idle' }[l.status] || 'busy';
+  const p = paneState(capture(h.pane));
+  return p === 'working' ? 'busy' : p;
+}
+/** 그 판에 지금 넣기(줄 없이) — 예전 send 길 그대로 */
+async function ownInject(h, text) {
+  if (h.engine === 'herdr-own') {
+    // 사람이 그 창에 치고 있으면 안 넣음(엔진 Herdr 어댑터와 같은 확인), 묻는 창은 Herdr 가 거절
+    let raw = ''; try { raw = execFileSync('herdr', ['pane', 'read', h.pane, '--source', 'visible', '--format', 'ansi'], { encoding: 'utf8', timeout: 8000 }); } catch { throw new Error('could not read that window — try again'); }
+    const T = await import('./engine/tmux.mjs').catch(() => null);
+    if (T?.inputBox?.(raw)) throw new Error('someone is typing in that window — try again in a moment');
+    const t = String(text).replace(/\r?\n/g, ' ');
+    try { herdrCall(['agent', 'prompt', h.pane, t.startsWith('-') ? ' ' + t : t], 20000); }
+    catch (e) { throw new Error(e.code === 'agent_blocked' ? 'that window is asking something right now — answer it there first' : e.code === 'agent_not_found' ? 'the AI tool in that window has stopped' : e.message); }
+    return;
+  }
+  const pid = +run('tmux', ['display', '-p', '-t', h.pane, '#{pane_pid}'], 2000).trim();
+  if (!pid || !agentUnder(pid, procTable())) throw new Error('the AI tool in that window has stopped — answer it there');
+  if (paneState(capture(h.pane)) === 'question') throw new Error('that window is asking something right now — try again after it is answered');
+  run('tmux', ['send-keys', '-t', h.pane, '-l', text]); await sleep(300); run('tmux', ['send-keys', '-t', h.pane, 'Enter']);
+}
+async function ownSend(cmd) {
+  const a = cmd.args || {}, h = a.handle || {}, Q = await iq(), T = await import('./turn.mjs'), id = ownQid(h);
+  let wait = Q.pending(id) > 0;   // 앞에 기다리는 글이 있으면 순서대로
+  if (!wait) { const st = ownState(h); wait = st === 'busy' || st === 'question' || (st === 'idle' && T.hasMark([h.id, h.session_id], Date.now(), { within: T.FRESH })); }
+  if (wait) {
+    const r = Q.push(id, a.text, { cmd: cmd.id || '', handle: h });
+    if (r.full) throw new Error(`${Q.PER_WINDOW_MAX} board messages are already waiting for that window — this one was not put in; send it again once it catches up`);
+    return { queued: true };
+  }
+  await ownInject(h, a.text);
+  return {};
+}
+const cmdDone = (id, body) => id ? api('POST', `/api/device/cmds/${encodeURIComponent(id)}`, body).catch(() => null) : null;
+export async function flushOwn({ now = Date.now() } = {}) {
+  const Q = await iq(), T = await import('./turn.mjs');
+  for (const id of Q.ids()) {
+    const list = Q.load()[id] || [], h = list[0]?.handle; if (!h) { Q.remove(id, () => true); continue; }
+    for (const x of Q.remove(id, x => now - x.at > OWN_EXPIRE)) await cmdDone(x.cmd, { ok: false, error: 'waited 6 hours for that window to finish its turn — not put in' });
+    const st = ownState(h);
+    if (st === 'gone') {
+      for (const x of Q.flag(id, 'closed', () => true, now)) await cmdDone(x.cmd, { ok: true, item: { queued: true }, note: 'the AI tool in that window has stopped — this board message is waiting until it runs again' });
+      continue;
+    }
+    for (const x of Q.flag(id, 'stale', x => now - x.at > Q.STALE_MS, now)) await cmdDone(x.cmd, { ok: true, item: { queued: true }, note: 'this board message has waited over 10 minutes for that window to finish its turn' });
+    if (st === 'busy' || st === 'question') continue;
+    if (T.hasMark([h.id, h.session_id], now, { within: T.FRESH })) continue;   // 막 넣은 글이 아직 턴을 안 열었을 수 있음
+    const { maybe, batch } = Q.claim(id, now);
+    for (const x of maybe) await cmdDone(x.cmd, { ok: true, note: 'boarder stopped while putting this board message in — it may or may not have reached the window, so it was not put in again' });
+    if (!batch) continue;
+    const hh = batch.items[batch.items.length - 1].handle || h;
+    try { await ownInject(hh, batch.text); }
+    catch (e) { Q.release(id, batch, false); continue; }
+    Q.release(id, batch, true);
+    try { T.markTurn([hh.id, hh.session_id], batch.text); } catch {}
+    for (const x of batch.items) await cmdDone(x.cmd, { ok: true });
+  }
 }
 async function doCmd1(cmd) {
   const a = cmd.args || {}, h = a.handle || {}, E = await engine();
@@ -433,23 +510,13 @@ async function doCmd1(cmd) {
     throw new Error('Boarder cannot bring this window to the front');
   }
   if (cmd.verb === 'send') {
-    if (h.engine === 'herdr-own') {
-      // 사람이 그 창에 치고 있으면 안 넣음(엔진 Herdr 어댑터와 같은 확인), 묻는 창은 Herdr 가 거절
-      let raw = ''; try { raw = execFileSync('herdr', ['pane', 'read', h.pane, '--source', 'visible', '--format', 'ansi'], { encoding: 'utf8', timeout: 8000 }); } catch { throw new Error('could not read that window — try again'); }
-      const T = await import('./engine/tmux.mjs').catch(() => null);
-      if (T?.inputBox?.(raw)) throw new Error('someone is typing in that window — try again in a moment');
-      const t = String(a.text).replace(/\r?\n/g, ' ');
-      try { herdrCall(['agent', 'prompt', h.pane, t.startsWith('-') ? ' ' + t : t], 20000); }
-      catch (e) { throw new Error(e.code === 'agent_blocked' ? 'that window is asking something right now — answer it there first' : e.code === 'agent_not_found' ? 'the AI tool in that window has stopped' : e.message); }
-      return {};
+    if (h.engine === 'herdr-own' || (h.engine === 'tmux-own' && h.pane)) return ownSend(cmd);
+    if (viaEngine && E) {   // 엔진 창은 데몬과 같은 줄(send-queue.json) — 데몬이 쉴 때 넣고 그 명령 id 로 서버에 끝을 알림
+      const D = await import('./engine/daemon.mjs');
+      const r = await D.boardSend({ id: h.id, engine: h.engine, text: a.text, ...(cmd.id ? { cmd: cmd.id } : {}) });
+      return r?.queued ? { queued: true } : { [MARKED]: true };
     }
-    if (viaEngine && E) { await E.run('send', { id: h.id, engine: h.engine, text: a.text }); return {}; }
-    if (h.pane) {
-      const pid = +run('tmux', ['display', '-p', '-t', h.pane, '#{pane_pid}'], 2000).trim();
-      if (!pid || !agentUnder(pid, procTable())) throw new Error('the AI tool in that window has stopped — answer it there');
-      if (paneState(capture(h.pane)) === 'question') throw new Error('that window is asking something right now — try again after it is answered');
-      run('tmux', ['send-keys', '-t', h.pane, '-l', a.text]); await sleep(300); run('tmux', ['send-keys', '-t', h.pane, 'Enter']); return {};
-    }
+    if (h.pane) return ownSend({ ...cmd, args: { ...a, handle: { ...h, engine: 'tmux-own' } } });
     throw new Error('this window has no way in (open it in tmux or answer with boarder wait)');
   }
   if (['park', 'reopen', 'move'].includes(cmd.verb) && !viaEngine) { const V = await import('./view.mjs'); if (!(await V.features()).engine) throw new Error('turn on the Boarder engine for this machine first (Boarder › 기기에서 보더가 하는 일)'); }
@@ -487,10 +554,11 @@ async function doCmd1(cmd) {
 // boarder engine move-all 이 씀: 보드 「옮겨 타기」와 같은 길(그쪽 창을 쉬게 → 우리 tmux 엔진에서 같은 대화로)
 export const moveWindow = (handle, title) => doCmd({ verb: 'move', args: { handle, title } });
 export async function drainOnce({ quiet = false } = {}) {
+  try { await flushOwn(); } catch (e) { if (!quiet) console.error(`queue: ${e.message}`); }
   const { cmds } = await api('GET', '/api/device/cmds');
   for (const c of cmds || []) {
     let out;
-    try { const item = await doCmd(c); out = { ok: true, item }; if (!quiet) console.log(`✓ ${c.verb} ${c.args?.title || c.args?.item || ''}`); }
+    try { const item = await doCmd(c); out = { ok: true, item }; if (!quiet) console.log(`${item?.queued ? '… queued' : '✓'} ${c.verb} ${c.args?.title || c.args?.item || ''}`); }
     catch (e) { out = { ok: false, error: String(e?.message || e).slice(0, 300) }; if (!quiet) console.error(`✗ ${c.verb}: ${out.error}`); }
     await api('POST', `/api/device/cmds/${encodeURIComponent(c.id)}`, out).catch(e => console.error(e.message));
   }
