@@ -36,7 +36,7 @@ export async function query(db: D1Database, me: string, q0: string) {
   const nodeHit = new Map<string, { n: R; s: number; hit?: R }>();
   const via = (n: R | null, hit: R, s: number) => { if (!n) return; const x = nodeHit.get(n.id) || { n, s: 0 }; x.s += x.hit ? s / 5 : s; x.hit ??= hit; nodeHit.set(n.id, x); };
   const chats = rank((lg.results as R[]).filter(r => !OWN.test(r.win)).map(r => {
-    const prim = r.thread === "primary", mine = r.win === ME || r.kind === "me", n = prim ? null : nodeOfWin(r.win);
+    const prim = r.thread === "primary" || /^p:/.test(String(r.thread || "")), mine = r.win === ME || r.kind === "me", n = prim ? null : nodeOfWin(r.win);
     const at = Number(r.at) / 1000, text = snip(r.text, terms), title = prim ? (mine ? ME : r.win === "보더" ? "보더" : "Primary") : n ? nameOf(n) : String(r.win);
     via(n, { kind: "log", text, at }, 0.5);
     return { id: "m:" + r.id, kind: prim ? "chat" : "log", title, text, ch: "primary", node: n ? nameOf(n) : null, thread: null, at, w: whole(r.text) };

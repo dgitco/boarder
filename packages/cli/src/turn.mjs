@@ -50,14 +50,15 @@ const SAID = /boarder\s+(chat|say)\b|chat_say|inbox_say/;
 export const HEAD_RE = /^\[보드 · ([^\]·]{1,60}?)(?: · (스레드|카드) (\d{10}\.\d{6}))?\] ?/;
 export function parseHead(prompt) {
   const m = HEAD_RE.exec(String(prompt || '').trimStart()); if (!m) return null;
+  if (m[3] && m[2] === '스레드' && m[1] === 'Primary') return { primary: true, thread: m[3] };
   if (m[3]) return { channel: m[1], [m[2] === '카드' ? 'card' : 'thread']: m[3] };
   return m[1] === 'Primary' ? { primary: true } : { channel: m[1] };
 }
-/** 답을 같은 자리로: Primary → chat_say · 카드 → inbox_say 카드 · 노드 스레드 → inbox_say 스레드 · 노드 채널(머리 줄 없음 포함) → inbox_log reply(예전 그대로) */
+/** 답을 같은 자리로: Primary → chat_say(스레드가 있으면 그 글 스레드로) · 카드 → inbox_say 카드 · 노드 스레드 → inbox_say 스레드 · 노드 채널(머리 줄 없음 포함) → inbox_log reply(예전 그대로) */
 export function replyCall(prompt, text) {
   const h = parseHead(prompt), t = String(text).replace(/^-/, '\u2010');   // say · chat 은 「-」로 시작하는 글을 안 받음 — 보이는 꼴은 같은 하이픈
+  if (h?.primary) return ['chat_say', h.thread ? { text: t, thread: h.thread } : { text: t }];
   if (h?.card || h?.thread) return ['inbox_say', { thread_id: h.card || h.thread, text: t }];
-  if (h?.primary) return ['chat_say', { text: t }];
   return ['inbox_log', { kind: 'reply', text }];
 }
 export function lastTurnOfFile(file, { first = 1 << 20, max = 64 << 20 } = {}) {

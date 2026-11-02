@@ -1,4 +1,4 @@
-import { nodeRoot } from "./member-board";
+import { nodeRoot, primaryRoot, primaryThread } from "./member-board";
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 // 카드 id 는 지금 카드 꼴(초.여섯 자리)과 같게 — 도구 입력 검사(tsId)를 그대로 씀
 const cardId = () => `${Math.floor(Date.now() / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
@@ -27,7 +27,10 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
       case "inbox_log": await log(a.kind, a.text + (a.evidence?.length ? `\n${a.evidence.join("\n")}` : ""), a.thread); return { ok: true };
       case "inbox_status": await log("status", a.text); return { ok: true, shown: true };
       case "inbox_say": {
-        if (!(await card(a.thread_id)) && !(await nodeRoot(db, owner, a.thread_id))) throw new Error("없는 스레드 — 이 사람 보드의 카드 id 나 노드 글 스레드 id 만");
+        if (!(await card(a.thread_id)) && !(await nodeRoot(db, owner, a.thread_id))) {
+          if (!(await primaryRoot(db, owner, a.thread_id))) throw new Error("없는 스레드 — 이 사람 보드의 카드 id 나 노드 글 · Primary 내 글 스레드 id 만");
+          await log("say", a.text, primaryThread(a.thread_id)); return { msg_id: `${a.thread_id}:${Date.now()}` };
+        }
         await log("say", a.text, a.thread_id); return { msg_id: `${a.thread_id}:${Date.now()}` };
       }
       case "inbox_ask": {
@@ -51,7 +54,11 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
         const hit = rs.filter(c => words.every(w => c.question.toLowerCase().includes(w)));
         return { total: hit.length, cards: hit.slice(0, a.limit).map(c => ({ card_id: c.id, state: c.state, kind: c.kind || "decision", title: c.question, thread: c.id })) };
       }
-      case "chat_say": await log("say", a.text, "primary"); return { ok: true };
+      case "chat_say": {
+        if (a.thread === undefined) { await log("say", a.text, "primary"); return { ok: true }; }
+        if (!(await primaryRoot(db, owner, a.thread))) throw new Error("없는 스레드 — 이 사람 Primary 채팅의 사람 글 id 만");
+        await log("say", a.text, primaryThread(a.thread)); return { ok: true };
+      }
       case "role_draft": {
         const cfg = await db.prepare("SELECT rules FROM engine_owner WHERE owner = ?").bind(owner).first<{ rules: string | null }>().catch(() => null);
         let oneGoal = true; try { oneGoal = JSON.parse(cfg?.rules || "{}").one_goal !== false; } catch {}

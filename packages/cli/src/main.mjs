@@ -38,13 +38,13 @@ Report (from an AI tool's session)
   boarder close <card id> "<how it was handled>"
   boarder say <card id|thread id> "<text>"
   A board message starts with a head like [보드 · <channel | Primary>( · 스레드 <id> | · 카드 <id>)] — answer in the same place:
-    Primary → boarder chat · 카드 <id> → boarder say <id> · 스레드 <id> → boarder say <id> · channel only → boarder log
+    Primary → boarder chat · Primary · 스레드 <id> → boarder chat --thread <id> · 카드 <id> → boarder say <id> · 스레드 <id> → boarder say <id> · channel only → boarder log
   boarder status "<what this window is doing, 40 chars>"
   boarder cards ["<words>"] [--limit 15]
   boarder feedback "<text>" [--kind bug|idea|other]   feedback about Boarder to the people who make it
 
 Main bot (the Primary chat on your board)
-  boarder chat "<text>"                       answer the human in the Primary chat
+  boarder chat "<text>" [--thread <id>]       answer the human in the Primary chat (--thread: under their message)
   boarder role draft --name "<name>" --brief "<one line>" --instructions "<what it does, what it must not do>" [--cwd <folder>]
                                               put a role draft card in the chat (the human approves it, Boarder opens its window)
   boarder role list                           roles and their windows
@@ -224,7 +224,7 @@ export async function main(argv) {
       status: () => ['inbox_status', { text: pos[0] }],
       cards: () => ['inbox_cards', { query: pos[0], limit: num(flags.limit) }],
       feedback: () => ['feedback_send', { text: pos.join(' '), kind: flags.kind }],
-      chat: () => ['chat_say', { text: pos.join(' ') }],
+      chat: () => ['chat_say', { text: pos.join(' '), ...(flags.thread ? { thread: flags.thread } : {}) }],
       role: () => pos[0] === 'draft' ? ['role_draft', { name: flags.name, brief: flags.brief, instructions: flags.instructions, cwd: flags.cwd }] : pos[0] === 'list' ? ['role_list', {}] : null,
     }[cmd];
     const p = plan?.();

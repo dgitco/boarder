@@ -111,6 +111,12 @@ test('parseHead · replyCall: Primary → chat_say · 카드 → inbox_say 카�
   assert.deepEqual(T.replyCall('머리 줄 없는 글', '답'), ['inbox_log', { kind: 'reply', text: '답' }]);
 });
 
+test('parseHead · replyCall: Primary · 스레드 <id> → chat_say { text, thread } · Primary 카드는 예전처럼 inbox_say 카드', () => {
+  assert.deepEqual(T.parseHead('[보드 · Primary · 스레드 1793000000.000042] [Boarder chat] 이거 봐 줘'), { primary: true, thread: '1793000000.000042' });
+  assert.deepEqual(T.replyCall('[보드 · Primary · 스레드 1793000000.000042] [Boarder chat] 이거 봐 줘', '- 봤어요'), ['chat_say', { text: '‐ 봤어요', thread: '1793000000.000042' }]);
+  assert.deepEqual(T.replyCall('[보드 · Primary · 카드 1793000000.000001] [Boarder] x', '했어요'), ['inbox_say', { thread_id: '1793000000.000001', text: '했어요' }]);
+});
+
 test('hook stop: 머리 줄을 보고 같은 자리로 — 노드 스레드 → inbox_say, Primary → chat_say, 창이 그 턴에 스스로 boarder chat 했으면 안 올림', async () => {
   await hookWorld(async ({ hook, posts }) => {
     const p1 = '[보드 · 예시 팀장 · 스레드 1793000000.000123] 이거 다시 봐 줘';

@@ -273,7 +273,13 @@ test("기본 창의 기기를 끊으면: 일반 채널 글이 400 으로 막히�
 test("보드 글 머리 줄: Primary 채팅 · 카드 답 · 카드 스레드 답 · 역할 창 노드 채팅 글이 창에 「[보드 · …]」로 시작", async () => {
   const { db, sent, post } = setup();
   assert.equal((await post("/api/chat", { text: "안녕", channel: "primary", rid: "rtest-head-0001" })).status, 200);
-  assert.equal(sent.at(-1)!.text, "[보드 · Primary] [Boarder chat] 안녕");
+  const row = db.prepare("SELECT id, at FROM board_log WHERE win = '나' AND text = '안녕' AND thread = 'primary'").get() as { id: number; at: number };
+  const ts = `${Math.floor(row.at / 1000)}.${String(row.id % 1_000_000).padStart(6, "0")}`;
+  assert.equal(sent.at(-1)!.text, `[보드 · Primary · 스레드 ${ts}] [Boarder chat] 안녕`);
+  // 그 글 스레드에 더 쓴 글 = 같은 창으로 같은 스레드 머리 줄 · 그 스레드 줄(p:<ts>)로 남음
+  assert.equal((await post("/api/chat", { text: "하나 더 물어볼게", channel: "primary", thread: ts, rid: "rtest-head-0014" })).status, 200);
+  assert.equal(sent.at(-1)!.text, `[보드 · Primary · 스레드 ${ts}] [Boarder chat] 하나 더 물어볼게`);
+  assert.equal((db.prepare("SELECT thread FROM board_log WHERE text = '하나 더 물어볼게'").get() as { thread: string }).thread, "p:" + ts);
   const n = (db.prepare("SELECT rowid AS n FROM board_card WHERE id = '1793300000.000001'").get() as { n: number }).n;
   assert.equal((await post("/api/answer", { item: "w" + n, text: "A", rid: "rtest-head-0002" })).status, 200);
   assert.match(sent.at(-1)!.text, /^\[보드 · 일 창 · 카드 1793300000\.000001\] \[Boarder\] The person answered your card/);

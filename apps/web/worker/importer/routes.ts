@@ -53,7 +53,7 @@ export async function regroup(env: Env, owner: string) {
   const t = now();
   const [it, lg, cd, mp, nd, wn, ns, rl] = await env.DB.batch([
     env.DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at FROM imp_item WHERE owner = ?").bind(owner),
-    env.DB.prepare("SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR thread != 'primary') AND kind != 'me' ORDER BY at DESC LIMIT 400").bind(owner),
+    env.DB.prepare("SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) AND kind != 'me' ORDER BY at DESC LIMIT 400").bind(owner),
     env.DB.prepare("SELECT id, win, state, question, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 200").bind(owner),
     env.DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT id, name, pinned_name, area, state, why, counts, created_at, updated_at, archived_at FROM mnode WHERE owner = ? AND id NOT LIKE 'sl\\_%' ESCAPE '\\'").bind(owner),   // Slack 채널 노드(slack-import.ts)는 묶기 밖 — 보관 · 이름 바꾸기 안 함

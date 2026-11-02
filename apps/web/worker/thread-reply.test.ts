@@ -65,7 +65,7 @@ test("노드 스레드: 남의 · Primary · 없는 뿌리는 「없는 스레�
   for (const t of [other, prim, "1793000000.000999"]) assert.deepEqual(await MB.post(D1, A, "/api/chat", { pane: p, thread: t, text: "답" }), { error: "없는 스레드예요", status: 404 }, t);
 });
 
-test("inbox_say(boarder say): 카드 말고 내 노드 글 스레드 뿌리도 받음 → 노드 채팅 그 글 아래 답 · 남의 · Primary · 답 줄 뿌리는 거절", async () => {
+test("inbox_say(boarder say): 카드 말고 내 노드 글 · 내 Primary 글 스레드 뿌리도 받음 → 그 글 아래 답 · 남의 것 · 답 줄 뿌리는 거절", async () => {
   const { db, D1, line } = setup();
   const root = line(A, WIN, "progress", "PR 올렸어요");
   const human = line(A, WIN, "me", "사람이 스레드에 쓴 글", root);
@@ -73,13 +73,15 @@ test("inbox_say(boarder say): 카드 말고 내 노드 글 스레드 뿌리도 �
   const r = await say("inbox_say", { thread_id: root, text: "다시 봤어요 — 고칠 것 없음" }) as { msg_id: string };
   assert.match(r.msg_id, new RegExp(`^${root.replace(".", "\\.")}:`));
   assert.deepEqual(db.prepare("SELECT kind, text, thread FROM board_log WHERE owner = ? AND kind = 'say'").all(A).map(x => ({ ...x })), [{ kind: "say", text: "다시 봤어요 — 고칠 것 없음", thread: root }]);
-  // 남의 글 · Primary 줄 · 답 줄(스레드 안 글) · 없는 id 는 거절
-  const other = line(B, WIN, "progress", "B 의 글"), prim = line(A, "나", "chat", "Primary 글", "primary");
-  for (const t of [other, prim, human, "1793000000.000999"]) await assert.rejects(say("inbox_say", { thread_id: t, text: "x" }), /없는 스레드/, t);
+  // 남의 글 · 답 줄(스레드 안 글) · 없는 id · 남의 Primary 글은 거절
+  const other = line(B, WIN, "progress", "B 의 글"), prim = line(A, "나", "chat", "Primary 글", "primary"), primB = line(B, "나", "chat", "B 의 Primary 글", "primary");
+  for (const t of [other, human, primB, "1793000000.000999"]) await assert.rejects(say("inbox_say", { thread_id: t, text: "x" }), /없는 스레드/, t);
+  await say("inbox_say", { thread_id: prim, text: "Primary 글에 답" });
+  assert.equal((db.prepare("SELECT thread FROM board_log WHERE owner = ? AND text = ?").get(A, "Primary 글에 답") as any).thread, "p:" + prim);
   const nc = await get(D1, A, "/api/nodechat?w=" + encodeURIComponent(NODE));
   const rootMsg = nc.messages.find((m: any) => m.ts === root);
   assert.equal(rootMsg.replies, 2);
-  assert.ok(!nc.messages.some((m: any) => /다시 봤어요|사람이 스레드에/.test(m.text)), "답은 채널 바깥에 없음");
+  assert.ok(!nc.messages.some((m: any) => /다시 봤어요|사람이 스레드에|Primary 글에 답/.test(m.text)), "답은 채널 바깥에 없음");
   const th = await get(D1, A, `/api/chat/${encodeURIComponent("n:" + NODE)}/${root}`);
   assert.deepEqual(th.messages.map((m: any) => [m.who, m.text]), [["agent", "PR 올렸어요"], ["owner", "사람이 스레드에 쓴 글"], ["agent", "다시 봤어요 — 고칠 것 없음"]]);
   // B 는 A 의 스레드를 못 봄

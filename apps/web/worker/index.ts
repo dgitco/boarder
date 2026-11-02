@@ -746,7 +746,7 @@ app.get("/api/me/board", async c => {
   const [dv, wn, lg, cd] = await c.env.DB.batch([
     c.env.DB.prepare("SELECT d.id, d.name, d.tools, d.created_at, d.last_at, m.at metrics_at, m.data metrics FROM device d LEFT JOIN device_metric m ON m.device_id = d.id WHERE d.owner = ? AND d.revoked_at IS NULL ORDER BY d.created_at DESC").bind(me),
     c.env.DB.prepare("SELECT t.device_id, t.win FROM agent_token t JOIN device d ON d.id = t.device_id WHERE d.owner = ? AND d.revoked_at IS NULL AND t.revoked_at IS NULL ORDER BY t.created_at DESC").bind(me),
-    c.env.DB.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND (thread IS NULL OR thread != 'primary') ORDER BY at DESC LIMIT 100").bind(me),
+    c.env.DB.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) ORDER BY at DESC LIMIT 100").bind(me),   // p:<ts> = Primary 글 스레드 답
     c.env.DB.prepare("SELECT id, win, question, choices, recommend, body, state, answer, done, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 50").bind(me),
   ]);
   const wins = (wn.results as { device_id: string; win: string }[]);
@@ -998,12 +998,16 @@ const memberOnly = async (c: Context<{ Bindings: Env }>) => {
 const engErr = (c: Context<{ Bindings: Env }>, e: unknown) => c.json({ ok: false, error: e instanceof Error && /^[가-힣]/.test(e.message) ? e.message : "일시적인 오류가 발생했어요" }, 400);
 app.post("/api/me/chat", async c => {
   const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
-  const { text, rid: rid0 } = await c.req.json<{ text?: string; rid?: string }>().catch(() => ({} as { text?: string; rid?: string }));
+  const { text, rid: rid0, thread } = await c.req.json<{ text?: string; rid?: string; thread?: string }>().catch(() => ({} as { text?: string; rid?: string; thread?: string }));
   const t = String(text || "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").trim().slice(0, 4000), rid = queue.ridOfBody({ rid: rid0 });
   if (!t) return c.json({ ok: false, error: "내용을 적어요" }, 400);
-  try { if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "나", "chat", t, "primary", Date.now())], p => c.executionCtx.waitUntil(p))) && await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true }); }
+  const root = thread === undefined || thread === null || thread === "" ? undefined : String(thread);
+  if (root !== undefined && !(await memberBoard.primaryRoot(c.env.DB, me, root))) return c.json({ ok: false, error: "없는 스레드예요" }, 404);
+  try { if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "나", "chat", t, root ? memberBoard.primaryThread(root) : "primary", Date.now())], p => c.executionCtx.waitUntil(p))) && await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true }); }
   catch (e) { if (rid) return queue.retrySafe(c); throw e; }
-  try { const r = await primaryWinSend(c.env, me, t) ?? await chatToMain(c.env, me, t); if (rid) c.executionCtx.waitUntil(queue.markSent(c.env.DB, rid).catch(() => {})); if ((r as { offline?: boolean })?.offline) await sysLine(c.env.DB, me, "엔진이 켜진 기기가 없어 메인 봇에게 아직 못 전했어요 — 기기에서 boarder engine setup 을 돌려요"); return c.json({ ok: true, ...(r as object || {}) }); }
+  // 머리 줄: 스레드 글 = 그 뿌리, 새 글 = 방금 쓴 그 글(창이 boarder chat --thread <ts> 로 그 글 아래에 답) — 못 찾으면 예전 「[보드 · Primary]」
+  const head = boardHead({ thread: root ?? await memberBoard.myPrimaryTs(c.env.DB, me, t).catch(() => null) });
+  try { const r = await primaryWinSend(c.env, me, t, head) ?? await chatToMain(c.env, me, t, head); if (rid) c.executionCtx.waitUntil(queue.markSent(c.env.DB, rid).catch(() => {})); if ((r as { offline?: boolean })?.offline) await sysLine(c.env.DB, me, "엔진이 켜진 기기가 없어 메인 봇에게 아직 못 전했어요 — 기기에서 boarder engine setup 을 돌려요"); return c.json({ ok: true, ...(r as object || {}) }); }
   catch (e) { return engErr(c, e); }
 });
 const LIVE_DEV = "AND device_id IN (SELECT id FROM device WHERE owner = ? AND revoked_at IS NULL)";
@@ -1012,10 +1016,10 @@ async function ownWindow(db: D1Database, me: string, target: string) {
   if (/^ew_[a-z0-9]{3,40}$/i.test(target)) return !!(await db.prepare(`SELECT 1 FROM engine_window WHERE owner = ? AND id = ? AND state NOT IN ('closed','failed','gone') ${LIVE_DEV}`).bind(me, target, me).first());
   return false;
 }
-async function primaryWinSend(env: Env, me: string, text: string) {
+async function primaryWinSend(env: Env, me: string, text: string, head = boardHead({})) {
   const v = (await env.DB.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me).first<{ v: string }>().catch(() => null))?.v || "";
   if (!v || !(await ownWindow(env.DB, me, v))) return null;
-  const msg = `${boardHead({})} [Boarder chat] ${text}`;   // 머리 줄 「[보드 · Primary]」 — 기본 창(팀장 창)도 답을 Primary 채팅으로(boarder chat)
+  const msg = `${head} [Boarder chat] ${text}`;   // 머리 줄 「[보드 · Primary( · 스레드 <ts>)]」 — 기본 창(팀장 창)도 답을 Primary 채팅으로(boarder chat · 스레드면 --thread)
   if (v.startsWith("ew_")) return deliverTo(env, me, v, msg).catch(e => { if (/없는 창/.test(String((e as Error)?.message || e))) return null; throw e; });   // 확인 뒤 사이에 사라진 창도 메인 봇으로
   const w = await env.DB.prepare("SELECT key, device_id, engine, handle, title, state FROM imp_item WHERE owner = ? AND key = ?").bind(me, v).first<{ key: string; device_id: string; engine: string; handle: string | null; title: string; state: string }>();
   return w ? { cmd: await queueToImported(env.DB, me, w, msg) } : null;

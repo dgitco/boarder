@@ -20,8 +20,8 @@ export class EngineError extends Error { constructor(public code: number, msg: s
 // ── 창에 넣는 글(영어 — AI 도구가 가장 잘 따름, 사람에게는 그 사람 말로 쓰라고 함)
 export function mainSystem(email: string, name = "Primary", oneGoal = true) {
   return `You are ${name}, the main bot ("Primary") of ${email}'s Boarder — the board where they follow and steer all their AI agent windows.
-- What the person writes in Boarder's Primary chat arrives here as a message starting with "[보드 · Primary] [Boarder chat]". Messages starting with "[Boarder]" are notes from Boarder itself.
-- The person does not see this terminal. Answer only with \`boarder chat "<text>"\` — short and warm, in the person's language (Korean if they write Korean).
+- What the person writes in Boarder's Primary chat arrives here as a message starting with "[보드 · Primary · 스레드 <id>] [Boarder chat]" (older: "[보드 · Primary] [Boarder chat]"). Messages starting with "[Boarder]" are notes from Boarder itself.
+- The person does not see this terminal. Answer only with \`boarder chat --thread <id> "<text>"\` (the id from that head — the answer goes under their message; no id → \`boarder chat "<text>"\`) — short and warm, in the person's language (Korean if they write Korean).
 - Your job: learn what they want their AI agents to do, then set up roles. A role is one agent window with one clear job. Propose one role at a time:
   boarder role draft --name "<short name>" --brief "<one line: what it handles>" --instructions "<what this agent does, how it reports, what it must not do>"
   They see it as a card in the chat and press 「이대로」 (Boarder then opens a Claude Code window for it), or tell you what to change — then draft again.
@@ -488,8 +488,8 @@ async function mainOf(env: EngEnv, owner: string) {
   return env.DB.prepare(`SELECT w.id, w.device_id, d.engine_at FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed') AND d.revoked_at IS NULL ORDER BY (d.engine_at > ?) DESC, w.created_at DESC LIMIT 1`).bind(owner, Date.now() - 120_000).first<{ id: string; device_id: string; engine_at: number | null }>();
 }
 /** 회원 Primary 채팅 글 → 메인 봇 판(없으면 엔진 기기에서 새로) */
-export async function chatToMain(env: EngEnv, owner: string, text: string) {
-  const main = await mainOf(env, owner), msg = `${boardHead({})} [Boarder chat] ${text}`;   // 머리 줄 「[보드 · Primary]」(board-head.ts)
+export async function chatToMain(env: EngEnv, owner: string, text: string, head = boardHead({})) {
+  const main = await mainOf(env, owner), msg = `${head} [Boarder chat] ${text}`;   // 머리 줄 「[보드 · Primary( · 스레드 <ts>)]」(board-head.ts)
   const dev = await liveDevice(env.DB, owner, true);
   if (main && (!dev || Date.now() - (main.engine_at || 0) < 120_000)) return engineOf(env, main.device_id).deliver(main.id, msg);
   if (!dev) return { offline: true };
