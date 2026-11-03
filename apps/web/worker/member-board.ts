@@ -99,7 +99,7 @@ export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: str
 }
 
 export async function load(db: D1Database, me: string) {
-  const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb] = await db.batch([
+  const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb, cx] = await db.batch([
     db.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle, (SELECT d.revoked_at IS NOT NULL FROM device d WHERE d.id = imp_item.device_id) rv FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
@@ -110,7 +110,8 @@ export async function load(db: D1Database, me: string) {
     db.prepare("SELECT id, kind, name, state, state_at, note, created_at, closed_at FROM engine_window WHERE owner = ? AND (state NOT IN ('closed','failed','gone') OR state_at > ?) ORDER BY created_at DESC LIMIT 60").bind(me, Date.now() - 12 * 3600_000),
     db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
     db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me),
-    db.prepare("SELECT owner, seed, hue, photo FROM member_bot WHERE owner IN (?, ?)").bind(me, meKey(me)),   // 메인 봇 얼굴 · 내 아바타(@me:<메일>)
+    db.prepare("SELECT owner, seed, hue, photo FROM member_bot WHERE owner IN (?, ?)").bind(me, meKey(me)),
+    db.prepare("SELECT id, win, kind, question, at, answered_at FROM board_card WHERE owner = ? AND state = 'closed' ORDER BY at DESC LIMIT 50").bind(me),
   ]);
   const items = new Map((it.results as R[]).map(r => [String(r.key), r]));
   const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(r.win, r.pane);
@@ -139,7 +140,7 @@ export async function load(db: D1Database, me: string) {
   const closedIds = new Set(json<{ closed?: string[] }>((ns.results[0] as R | undefined)?.data, {}).closed || []);
   const shown = (primary ? nodes.filter(n => !onlyPrim(n.id)) : nodes).filter(n => !closedIds.has(n.id));
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
-  return { defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
+  return { defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
     parents: parentsOf((ns.results[0] as R | undefined)?.data), faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
@@ -285,6 +286,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     cardlist.push({ ts: "w:" + n, ref: "w:" + n, thread: null, channel: "primary", kind: "decision", area: "primary", state: "open", title: `「${cut(d.name, 40)}」 역할 창`, at: d.at / 1000 });
   }
   cardlist.sort((a, b) => a.at - b.at);
+  const cardsdone = L.closedCards.filter(c => CARD_TS.test(String(c.id))).map(c => ({ ts: String(c.id), thread: String(c.id), channel: cardCh(String(c.win)), kind: c.kind === "todo" ? "todo" : "decision", area: "primary", state: "done", title: cut(String(c.question || ""), 80), at: Number(c.answered_at || c.at) / 1000 }));
   const feed = L.logs.filter(r => !OWN.test(r.win) && !inPrim(r) && r.kind !== "me").slice(0, 40).map(r => ({ id: r.id, ago: ago(r.at), pane: L.nodeOfWin(r.win)?.pane || PRIMARY, win: cut(r.win, 30), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 160) }));
   // 보관한 노드 이름(주인 D.archived 와 같은 꼴) — 찾기 · 타임라인 · 「보관」 띠가 씀
   const archived = ((await db.prepare("SELECT COALESCE(pinned_name, name) AS n FROM mnode WHERE owner = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 300").bind(me).all<R>()).results).map(r => String(r.n || "노드"));
@@ -293,7 +295,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const { promises, to_check } = await promiseRows(db, me, promPane, nowMin);
   return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 60_000) * 60, open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
-    cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
+    cards: [], cardlist, cardsdone, attn: null, relinks: {}, todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
 }
 
 export const QUIET = new Set(["status", "start", "progress", "done"]);
@@ -437,7 +439,8 @@ export async function sessLog(db: D1Database, me: string, pane: string, mainName
   const rows = s.kind === "main" ? (await primaryRows(db, me)).filter(r => r.win !== "보더")
     : L.logs.filter(r => !inPrim(r) && !inCard(r) && !OWN.test(r.win) && (s.kind === "node" ? L.nodeOfWin(r.win) === s.node || (r.kind === "me" && r.win === s.node!.name) : r.win === s.ew!.name));
   const messages = rows.slice(0, 200).map(r => msg(r, my, s.kind === "main" ? mainName : String(r.win))).reverse();
-  return { pane, name: s.kind === "main" ? (s.name || mainName) : s.name, state: s.state, messages };
+  const live = !["closed", "failed", "gone", "parked", "done"].includes(String(s.state || ""));
+  return { pane, name: s.kind === "main" ? (s.name || mainName) : s.name, state: s.state, messages, channel: "s:" + pane, live, stale_min: 0, more: false };   // kind(엔진 claude · codex)는 회원 쪽에서 확실히 모르니 안 넣음
 }
 export async function sessFolders(db: D1Database, me: string) {
   const rs = (await db.prepare("SELECT cwd, MAX(COALESCE(state_at, seen_at, 0)) at FROM imp_item WHERE owner = ? AND cwd != '' AND (gone_at IS NULL OR gone_at > ?) GROUP BY cwd ORDER BY at DESC LIMIT 40").bind(me, Date.now() - 30 * 86_400_000).all<{ cwd: string }>()).results;
@@ -524,7 +527,7 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
   let pm = /^\/api\/pane\/(.{1,40})$/.exec(p);
   if (pm) {
     let pk = pm[1]; try { pk = decodeURIComponent(pk); } catch {}
-    return j({ rows: await paneRows(db, me, pk) });
+    return j({ pane: pk, rows: await paneRows(db, me, pk) });   // 주인 server.py pane_rows 와 같은 꼴(회원 · 주인 같은 길 ④)
   }
   let dp = p; try { dp = decodeURIComponent(p); } catch {}
   pm = /^\/api\/push\/resolve\/([\w:.-]{1,80})$/.exec(dp);

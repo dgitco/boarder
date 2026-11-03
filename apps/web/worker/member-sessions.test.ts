@@ -52,6 +52,7 @@ test("세션 로그: 메인 봇 판(%1)은 내 Primary 글만(사람 · 봇), �
   const r = await get(db, A, "/api/sesslog?pane=" + encodeURIComponent(PRIMARY));
   assert.equal(r!.status, 200);
   assert.equal(r!.body.pane, PRIMARY);
+  assert.deepEqual([r!.body.channel, r!.body.live, r!.body.stale_min, r!.body.more], ["s:" + PRIMARY, true, 0, false], "주인 sess_log 와 같은 칸");
   assert.deepEqual(r!.body.messages.map((m: any) => [m.who, m.text]), [["owner", "A 가 메인 봇에게"], ["agent", "메인 봇 답"]]);
 });
 
@@ -91,4 +92,15 @@ test("새 대화: 내 폴더만 열기 길로, 남의 폴더 · 아무 경로 ·
   for (const f of ["/home/b/secret", "/etc", "/home/a/work/sales/../../b/secret", ""]) assert.deepEqual(await MB.post(db, A, "/api/session/new", { folder: f, text: "x" }), { error: "없는 폴더", status: 404 }, f);
   assert.equal(await MB.folderOk(db, A, "/home/b/secret"), false);
   assert.equal(await MB.folderOk(db, B, "/home/b/secret"), true);
+});
+
+test("세션 로그 live(주인 sess_log 꼴): 살아 있는 노드 · 엔진 창은 참, 주차 노드 · 닫힌 엔진 창은 거짓", async () => {
+  const { db } = setup();
+  const live = async (p: string) => (await get(db, A, "/api/sesslog?pane=" + encodeURIComponent(p)))!.body.live;
+  assert.equal(await live(paneA), true);
+  assert.equal(await live(engA), true);
+  await db.prepare("UPDATE mnode SET state = 'parked' WHERE id = 'n-a'").run();
+  await db.prepare("UPDATE engine_window SET state = 'closed', closed_at = ? WHERE id = 'ew_arole000001'").bind(Date.now()).run();
+  assert.equal(await live(paneA), false, "주차 노드");
+  assert.equal(await live(engA), false, "닫힌 엔진 창");
 });

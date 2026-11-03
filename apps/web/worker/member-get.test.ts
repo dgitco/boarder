@@ -46,7 +46,8 @@ test("판 자세히(/api/pane/:p): 메인 봇 판은 내 메인 봇 줄만 { row
   const b = await call(D1, B, "/api/pane/%251");
   assert.deepEqual(b.body.rows.map((r: any) => r.msg), ["B 의 글"]);
   const none = await call(D1, A, "/api/pane/%25999");
-  assert.deepEqual(none.body, { rows: [] });
+  assert.deepEqual(none.body, { pane: "%999", rows: [] });
+  assert.equal(a.body.pane, "%1");
 });
 
 test("알림 카드 자리(/api/push/resolve/:ts): 내 카드면 자리, 남의 카드는 null", async () => {

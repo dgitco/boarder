@@ -111,3 +111,17 @@ test("결정 · 할 일 목록의 채널: 창이 사는 노드를 찾으면 그 
   assert.equal(ch("1793000000.000001"), "n:매출 팀장"); assert.equal(ch("1793000000.000002"), "n:매출 팀장");
   assert.equal(ch("1793000000.000009"), "primary");
 });
+
+test("끝난 것(cardsdone, 주인 꼴): 창이 닫은 카드만 · 새 것부터 · 남의 것 · 열린 것 · 글 시각 꼴 아닌 것은 안 섞임(회원 · 주인 같은 길 ③)", async () => {
+  const { db, D1 } = seed(), now = Date.now();
+  const card = db.prepare("INSERT INTO board_card(id, owner, win, kind, question, choices, state, answer, answered_at, at) VALUES (?,?,?,?,?,?,?,?,?,?)");
+  card.run("1793000000.000010", A, "일 창", "todo", "닫힌 할 일", '["했어요"]', "closed", null, null, now - 900);
+  card.run("1793000000.000011", A, "일 창", "decision", "닫힌 결정", '["A","B"]', "closed", "A", now - 100, now - 800);
+  card.run("card-not-ts", A, "일 창", "decision", "옛 꼴 카드", '["A"]', "closed", null, null, now - 700);
+  card.run("1793000000.000012", B, "일 창", "decision", "B 가 닫은 결정", '["A"]', "closed", null, null, now - 600);
+  const d = await data(D1, A, { name: "메인 봇" });
+  assert.deepEqual(d.cardsdone.map((c: any) => [c.ts, c.kind, c.state, c.title]), [["1793000000.000011", "decision", "done", "닫힌 결정"], ["1793000000.000010", "todo", "done", "닫힌 할 일"]]);
+  assert.equal(d.cardsdone[0].thread, "1793000000.000011");
+  assert.ok(Math.abs(d.cardsdone[0].at - (now - 100) / 1000) < 1, "답한 시각이 있으면 그 시각");
+  assert.ok(!d.cardlist.some((c: any) => /닫힌/.test(c.title)), "닫힌 카드는 차례 목록엔 없음");
+});
