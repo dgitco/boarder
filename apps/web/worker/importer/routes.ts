@@ -1,3 +1,4 @@
+import { deviceFeatures } from "./device-engine";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { group, pickUnit, notChat, type Item, type Unit } from "./group";
@@ -203,7 +204,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
       DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(me),
       DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, handle IS NOT NULL has_handle, device_id, seen_at, gone_at FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, now() - 24 * 3600_000),
       DB.prepare("SELECT at, data FROM imp_audit WHERE owner = ? ORDER BY at DESC LIMIT 1").bind(me),
-      DB.prepare("SELECT id, name, features FROM device WHERE owner = ? AND revoked_at IS NULL").bind(me),
+      DB.prepare("SELECT id, name, features, engine, engine_at FROM device WHERE owner = ? AND revoked_at IS NULL").bind(me),
     ]);
     const items = new Map((it.results as { key: string }[]).map(r => [r.key, r]));
     const cmds = (await DB.prepare("SELECT id, device_id, verb, args, state, result, at FROM engine_cmd WHERE owner = ? AND at > ? ORDER BY at DESC LIMIT 40").bind(me, now() - 6 * 3600_000).all()).results as { args: string; state: string }[];
@@ -215,7 +216,8 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     }
     const nodes = (nd.results as { id: string; counts: string; archived_at: number | null }[]).map(n => ({ ...n, counts: json(n.counts, {}), items: byNode.get(n.id) || [] }));
     const audit = au.results[0] ? { at: (au.results[0] as { at: number }).at, ...json((au.results[0] as { data: string }).data, {}) } : null;
-    const devices = (dv.results as { id: string; name: string; features: string | null }[]).map(x => ({ id: x.id, name: x.name, features: json(x.features, null) }));
+    // 엔진: 보고(features)로 켠 기기 + 엔진 데몬이 최근 붙어 알려 준 기기(SDK 엔진은 features 를 안 올림) — 화면의 엔진 칸이 이 값으로 뜸(device-engine.ts)
+    const devices = (dv.results as { id: string; name: string; features: string | null; engine: string | null; engine_at: number | null }[]).map(x => ({ id: x.id, name: x.name, features: deviceFeatures(x.features, x.engine, x.engine_at) }));
     return c.json({ nodes, audit, devices, cmds: cmds.map(x => ({ ...x, args: json(x.args, {}) })), imports: await imported(env(c), me) }, 200, { "cache-control": "no-store" });
   });
 
