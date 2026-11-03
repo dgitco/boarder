@@ -588,7 +588,19 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   wrap('openThread', 'thread_open');
   wrap('chatSend', 'send_settled');   // 올리기 · 전달 확인까지 끝난 때(재시도 · 답 확인 포함) — 말풍선은 바로 뜸, 서버 왕복은 send_roundtrip
   wrap('chatReact', 'reaction');
-  wrap('chatLoad', 'chat_load', undefined, 10);   // 30초마다 · 바뀜 알림마다 — 10번에 1번
+  wrap('chatLoad', 'chat_load', undefined, 10);
+  (() => {
+    let lag = [];
+    document.addEventListener('input', e => { if (!e.target.matches?.('textarea') || document.hidden) return; const s0 = performance.now();
+      paint().then(() => { if (document.hidden) return; lag.push(performance.now() - s0); if (lag.length < 20) return; const v = lag.sort((a, b) => a - b); lag = [];
+        send('type_lag', v[v.length >> 1], {max: Math.round(v[v.length - 1]), n: v.length}); }); }, true);
+    if (!window.PerformanceObserver?.supportedEntryTypes?.includes('long-animation-frame')) return;
+    let worst = null, cnt = 0;
+    try { new PerformanceObserver(l => { for (const f of l.getEntries()) { if (f.duration < 150) continue; cnt++; if (!worst || f.duration > worst.duration) worst = f; } }).observe({type: 'long-animation-frame'}); } catch { return; }
+    setInterval(() => { const w = worst, n = cnt; worst = null; cnt = 0; if (!w || document.hidden) return;
+      const sc = [...(w.scripts || [])].sort((a, b) => b.duration - a.duration)[0];
+      send('long_frame', w.duration, {n, block: Math.round(w.blockingDuration || 0), fn: String(sc?.sourceFunctionName || sc?.invoker || '').slice(0, 60), src: String(sc?.sourceURL || '').split('/').pop().split('?')[0].slice(0, 40)}); }, 60000);
+  })();
   // 노드 트리 그리기: 바뀔 때마다 도니 10번에 1번만(고르게)
   { const f = window.redraw; if (typeof f === 'function') window.redraw = function (...a){ if (Math.random() >= 0.1) return f.apply(this, a); const t = performance.now(), out = f.apply(this, a); send('tree_draw', performance.now() - t, {sample: 10}); return out; }; }
   // 찾기 · 글 보내기 왕복: 서버 답까지(화면에 보인 때는 send_visible)

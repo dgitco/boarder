@@ -491,7 +491,15 @@ export async function chatLog(db: D1Database, me: string, sid: string, now = Dat
 
 // 회원 GET — 보드 화면 길만. null = 이 길은 회원 보드 것이 아님(→ 403)
 export async function etag(b: string) { return '"m' + [...new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(b)))].slice(0, 8).map(x => x.toString(16).padStart(2, "0")).join("") + '"'; }
+const ETAG_PATHS = /^\/api\/(chat\/|nodechat$|topics$|inbox$)/;
 export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>)): Promise<Response | null> {
+  const r = await getInner(db, me, bot, url, emoji, inm, who);
+  if (!r || r.status !== 200 || r.headers.has("etag") || !ETAG_PATHS.test(url.pathname) || !(r.headers.get("content-type") || "").startsWith("application/json")) return r;
+  const txt = await r.text(), t = await etag(txt.replace(/"read_at":\d+,?/g, ""));
+  const h = new Headers(r.headers); h.set("etag", t);
+  return inm === t ? new Response(null, { status: 304, headers: h }) : new Response(txt, { status: 200, headers: h });
+}
+async function getInner(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>)): Promise<Response | null> {
   // 내 이름(who): 글 이름이 나가는 채팅 길에서만 읽음 — 함수면 그때 한 번(index.ts 는 user 표를 읽는 함수로 넘김, /api/data 폴링엔 안 읽음)
   const p = url.pathname, mainName = bot?.name || "Primary", my = myName(me, typeof who === "function" ? (/^\/api\/(chat\/|nodechat$|sesslog$)/.test(p) ? await who().catch(() => null) : null) : who);
   const j = (o: unknown, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" } });

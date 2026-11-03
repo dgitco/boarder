@@ -511,3 +511,33 @@ test("같은 주 창 기록을 가진 보관된 옛 노드가 있어도 보관 �
     assert.equal(r.nodes.find(n => n.items.includes("window:m:1"))!.id, "n_lead");
   }
 });
+
+test("에이전트 묶기: 일 번호 창(#1234 …, 열린 창)은 역할이 없어도 제 채널 — 팀장 폴더 채널에 안 섞임, 창이 닫히면 보관", async () => {
+  const repo = "github.com/o/ledger";
+  const items = [
+    it({ key: "window:m:1", kind: "window", engine: "tmux", title: "팀장", win: "m:1", repo, session: "session:claude:t", state: "idle" }),
+    it({ key: "session:claude:t", kind: "session", title: "팀장 세션", repo, state: "idle" }),
+    it({ key: "window:m:2", kind: "window", engine: "tmux", title: "#3720 기기 · 토큰 24시간 가동", win: "m:2", repo, session: "session:claude:a", state: "working" }),
+    it({ key: "session:claude:a", kind: "session", title: "가동률", repo, state: "working", state_at: now - 30_000 }),
+    it({ key: "window:m:3", kind: "window", engine: "tmux", title: "#1961(·#1966) 태스크 지시서", win: "m:3", repo, session: "session:claude:b", state: "idle" }),
+    it({ key: "session:claude:b", kind: "session", title: "지시서", repo, state: "idle" }),
+    it({ key: "window:m:4", kind: "window", engine: "tmux", title: "CS 담당", win: "m:4", repo, state: "idle" }),
+    it({ key: "window:m:5", kind: "window", engine: "tmux", title: "번호 없는 창", win: "m:5", repo, session: "session:claude:c", state: "working" }),
+    it({ key: "session:claude:c", kind: "session", title: "다른 일", repo, state: "working", state_at: now - 30_000 }),
+    it({ key: "window:m:6", kind: "window", engine: "tmux", title: "[시험] #9999 연결", win: "m:6", repo, state: "working" }),
+  ];
+  const r = await group({ items, logs: [], cards: [], prev: [], prevNodes: [], now, unit: "agent" });
+  const live = r.nodes.filter(n => !n.archived).map(n => n.name).sort();
+  assert.deepEqual(live, ["#1961(·#1966) 태스크 지시서", "#3720 기기 · 토큰 24시간 가동", "CS 담당", "팀장"].sort());
+  const lead = r.nodes.find(n => n.name === "팀장")!;
+  const work = r.nodes.filter(n => n.name.startsWith("#"));
+  assert.ok(!lead.items.includes("window:m:2") && !work.some(n => n.items.includes("window:m:5")), "번호 창은 폴더 채널에서 빠지고, 번호 없는 창은 예전처럼 폴더 채널");
+  assert.ok(r.nodes.find(n => n.name.startsWith("#3720"))!.items.includes("session:claude:a"), "그 창의 세션도 같이");
+  const closed1h = items.map(i => i.key === "window:m:3" ? { ...i, gone_at: now - 3600_000, state: "gone" } : i);
+  const r1 = await group({ items: closed1h, logs: [], cards: [], prev: r.map, prevNodes: r.nodes.map(n => ({ id: n.id, created_at: now })), now, unit: "agent" });
+  const n1 = r1.nodes.find(n => n.name.startsWith("#1961"))!;
+  assert.ok(n1 && !n1.archived && n1.items.includes("session:claude:b"), "닫힌 지 1시간 — 아직 제 채널 · 세션도 그대로(팀장 채널로 안 되돌아감)");
+  const gone = items.map(i => i.key === "window:m:3" ? { ...i, gone_at: now - 8 * 3600_000, state: "gone" } : i.key === "session:claude:b" ? { ...i, state_at: now - 8 * 3600_000 } : i);
+  const r2 = await group({ items: gone, logs: [], cards: [], prev: r.map, prevNodes: r.nodes.map(n => ({ id: n.id, created_at: now })), now, unit: "agent" });
+  assert.ok(!r2.nodes.some(n => !n.archived && n.name.startsWith("#1961")), "닫힌 지 6시간 넘은 번호 창 채널은 남기지 않음");
+});

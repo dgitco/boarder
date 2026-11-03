@@ -81,7 +81,7 @@ const notWork = (i: Item) => TEST_NAME.test(i.title || "") || TEST_NAME.test(i.w
 /** 묶음(이어진 것들)마다 채널 이름. 역할 · 폴더가 없거나 시험 · 계정 판뿐이면 채널 없음 */
 const FOLDER_MIN = 3;   // 역할 없는 폴더는 세션 셋 이상(열린 창은 셋으로 셈) 되풀이해 쓴 곳만 채널 — 한 번 들른 폴더 40개가 채널 40개가 되지 않게
 const windowRole = (i: Item, known: string[]) => roleOf(i.title || "", known, i.kind === "session");
-function agentChannels(items: Item[], root: (k: string) => string, known: string[], workLinks: string[][]) {
+function agentChannels(items: Item[], root: (k: string) => string, known: string[], workLinks: string[][], recent: (i: Item) => boolean = openWindow) {
   const comps = new Map<string, Item[]>();
   for (const i of items) if (i.kind !== "thread") { const r = root(i.key); (comps.get(r) || comps.set(r, []).get(r)!).push(i); }
   const roles = new Map<string, string>(), votes = new Map<string, Map<string, number>>();
@@ -90,6 +90,12 @@ function agentChannels(items: Item[], root: (k: string) => string, known: string
     if (role) roles.set(r, role);
   }
   for (const ks of workLinks) { const c = ks.map(root), own = c.map(r => roles.get(r)).find(Boolean); if (own) for (const r of c) if (!roles.has(r)) roles.set(r, own); }
+  const work = new Map<string, string>();
+  for (const [r, its] of comps) {
+    if (roles.has(r)) continue;
+    const w = its.find(i => recent(i) && goalNo(i) && goalName(i) && !TEST_NAME.test(i.title || "") && !/^\s*\[(?:시험|test)\]/i.test(i.title || ""));
+    if (w) work.set(r, (w.title || "").replace(/\s+/g, " ").trim().slice(0, 60));
+  }
   for (const [r, its] of comps) { const role = roles.get(r); if (role) for (const f of new Set(its.map(folderOf).filter(Boolean))) { const m = votes.get(f) || votes.set(f, new Map()).get(f)!; m.set(role, (m.get(role) || 0) + 1); } }
   const top = (m?: Map<string, number>) => [...(m || new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0];
   const lead = (f: string) => top(votes.get(f));
@@ -100,13 +106,13 @@ function agentChannels(items: Item[], root: (k: string) => string, known: string
   for (const [r, its] of comps) {
     if (!roles.has(r) && its.every(notWork)) continue;
     const f = its.map(folderOf).find(x => x && !homes.has(x)) || "";
-    const ch = roles.get(r) || (f && (lead(f) || f)) || (its.some(i => i.engine === "report") && main) || "";
+    const ch = roles.get(r) || work.get(r) || (f && (lead(f) || f)) || (its.some(i => i.engine === "report") && main) || "";
     if (ch) for (const i of its) out.set(i.key, ch);
   }
-  const named = new Set(roles.values()), weight = new Map<string, number>();
+  const named = new Set([...roles.values(), ...work.values()]), weight = new Map<string, number>();
   for (const i of items) { const c = out.get(i.key); if (c && !named.has(c)) weight.set(c, (weight.get(c) || 0) + (openWindow(i) ? FOLDER_MIN : i.kind === "session" ? 1 : 0)); }
   for (const [k, c] of out) if (!named.has(c) && (weight.get(c) || 0) < FOLDER_MIN) out.delete(k);
-  return { chan: out, roles: named };
+  return { chan: out, roles: new Set(roles.values()), work: new Set(work.values()) };
 }
 function mainWindow(its: Item[], name: string, isRole: boolean, known: string[]) {
   const open = its.filter(openWindow).sort((a, b) => (a.key < b.key ? -1 : 1));
@@ -215,7 +221,7 @@ export async function group(input: {
   }
   // 사람이 옮긴 것(pin)은 그 노드 자리에 붙음 — 다른 이음보다 이김: pin 된 것은 자기 묶음에서 떼어 노드 자리로
   const pins = new Map(input.prev.filter(p => p.how === "pin" && byKey.has(p.item)).map(p => [p.item, p.node]));
-  const { chan, roles: roleChans } = agentUnit ? agentChannels(items, k => d.find(k), input.agents || [], [...workLinks.values()]) : { chan: new Map<string, string>(), roles: new Set<string>() };
+  const { chan, roles: roleChans, work: workChans } = agentUnit ? agentChannels(items, k => d.find(k), input.agents || [], [...workLinks.values()], i => openWindow(i) || (i.kind === "window" && i.engine !== "report" && !!i.gone_at && now - i.gone_at < archiveMs)) : { chan: new Map<string, string>(), roles: new Set<string>(), work: new Set<string>() };
   if (agentUnit) for (const ks of refLinks) { const c = ks.map(k => chan.get(k)).find(Boolean); if (c) for (const k of ks) if (k.startsWith("thread:") && !chan.has(k)) chan.set(k, c); }
   const groups = new Map<string, string[]>();
   for (const i of items) {
@@ -285,7 +291,7 @@ export async function group(input: {
     const pn = prevNodes.get(id);
     const updated = Math.max(0, ...its.map(i => i.state_at || i.seen_at || 0), ...logs.map(l => l.at), ...cards.map(c => c.at));
     const pinned = !!pn?.pinned_name || keys.some(k => pins.get(k) === id);
-    const keep = !unit ? !(!live.length && counts.card === 0 && now - updated > archiveMs) : chanName.has(id) || keepsNode(its, logs, cards, pinned, now, archiveMs);
+    const keep = !unit ? !(!live.length && counts.card === 0 && now - updated > archiveMs) : (chanName.has(id) && !workChans.has(chanName.get(id)!)) || keepsNode(its, logs, cards, pinned, now, archiveMs);
     if (!keep && !pn && unit) { history.push(...keys); continue; }   // 노드가 된 적 없는 지난 세션 · 스레드는 기록으로만
     const st = keep || !unit ? stateOf(live, logs, cards, now, parkMs) : { state: "done" as State, why: logs[0] ? short(logs[0].text, 80) : "열린 창 없음" };
     // 다시 연 노드(pinned_name)는 마지막 줄이 「끝」이어도 트리에 있음

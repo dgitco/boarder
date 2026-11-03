@@ -33,7 +33,7 @@ import eaCss from "./legacy/ea.css?raw";
 import eaSecretJs from "./legacy/ea-secret.js?raw";
 import { snippet, capture, phId, type PH } from "./posthog";
 import { mcp } from "./mcp/server";
-import { run as runTool, hasTool, addTools } from "./mcp/tools";
+import { run as runTool, hasTool, addTools, onlyReads } from "./mcp/tools";
 import { registry, view, dropCache, diff } from "./mcp/registry";
 import { mountConnectors } from "./connectors/routes";
 import { mountSales } from "./sales/routes";
@@ -131,10 +131,12 @@ async function signedIn(c: Context<{ Bindings: Env }>): Promise<Sess | null> {
 }
 
 type Renew = { th: string; email: string; done?: string | null };   // 미리 갈기(signedIn → 타이밍 미들웨어)
-const REC = new WeakMap<Request, { seg: Record<string, number>; who?: string; dev?: string; cookies: string[]; renew?: Renew; hit?: Record<string, number> }>();
+const REC = new WeakMap<Request, { seg: Record<string, number>; who?: string; dev?: string; cookies: string[]; renew?: Renew; hit?: Record<string, number>; quiet?: boolean }>();
 const hit = (req: Request, name: string, yes: boolean) => { const r = REC.get(req); if (r) (r.hit ||= {})[`cache_${name}`] = yes ? 1 : 0; };   // 캐시 맞음 1 · 빗나감 0 — PostHog boarder_request
 function seg(req: Request, name: string, ms: number) { const r = REC.get(req); if (r) r.seg[name] = (r.seg[name] || 0) + Math.max(0, ms); }
 function who(req: Request, id: string) { const r = REC.get(req); if (r) r.who = id; }
+function quiet(req: Request) { const r = REC.get(req); if (r) r.quiet = true; }
+const QUIET_MCP = new Set(["boarder_search", "boarder_describe", "boarder_execute"]);
 function bridgeSeg(req: Request, total: number, h: Record<string, string>) {
   const doMs = +h["x-do-ms"] || 0, board = +h["x-relay-board-ms"] || 0;
   if (!doMs) return seg(req, "bridge", total);
@@ -143,7 +145,7 @@ function bridgeSeg(req: Request, total: number, h: Record<string, string>) {
 const normPath = (p: string) => p.replace(/\/\d{10}\.\d{6}/g, "/:ts").replace(/\/[0-9a-f]{32}(\.[a-z0-9]+)?/g, "/:hash").replace(/\/(?:%25|%)\d+/g, "/:pane")
   .replace(/\/[A-Za-z0-9_-]{16,}/g, "/:id").replace(/\/[^/]+\.dc\.html$/, "/:board.dc.html").replace(/\/[^/]+\.[A-Za-z0-9]{1,5}$/, "/:file").slice(0, 80);
 app.use("*", async (c, next) => {
-  const t0 = Date.now(), rec = { seg: {} as Record<string, number>, who: undefined as string | undefined, dev: undefined as string | undefined, cookies: [] as string[] }, meter = newMeter();
+  const t0 = Date.now(), rec = { seg: {} as Record<string, number>, who: undefined as string | undefined, dev: undefined as string | undefined, cookies: [] as string[], quiet: undefined as boolean | undefined }, meter = newMeter();
   REC.set(c.req.raw, rec);
   c.env = meterEnv(c.env, meter);   // D1 · DO · R2 시간 · 횟수(perf.ts) — 재기만 함
   await next();
@@ -151,7 +153,7 @@ app.use("*", async (c, next) => {
   const rn = (rec as { renew?: Renew }).renew;
   if (rn?.done && rn.done === rn.email) rec.cookies.push(await bxCookie(c, rn.email, rn.th));
   const lw = rec.who && /^[^@\s:%]+@[^@\s:%]+$/.test(rec.who) ? rec.who : rec.dev;
-  if (lw && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && !isOwner(c.env, lw) && !/^\/api\/(relay\/|device\/metrics)/.test(c.req.path))
+  if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && !isOwner(c.env, lw) && !/^\/api\/(relay\/|device\/metrics|draft$|cardcheck$)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok)
     c.executionCtx.waitUntil(live.bumpMember(c.env, lw));
   const total = Date.now() - t0, st = [...Object.entries(rec.seg).map(([k, v]) => `${k};dur=${v}`), ...(meter.d1rn ? [`d1r;dur=${meter.d1r};desc=${meter.d1rn}`] : []), ...(meter.d1wn ? [`d1w;dur=${meter.d1w};desc=${meter.d1wn}`] : []), ...(meter.dobn ? [`dob;dur=${meter.dob};desc=${meter.dobn}`] : []), ...(meter.r2n ? [`r2m;dur=${meter.r2};desc=${meter.r2n}`] : []), `total;dur=${total}`].join(", ");
   if (c.res.status === 101 || (c.res as any).webSocket) { }
@@ -575,11 +577,15 @@ app.get("/api/agent/result/:id", async c => {
 });
 app.get("/f/:id{[0-9a-f]{32}}", c => memberFiles.signedGet(c as never, c.req.param("id")));
 app.route("/", legal);   // 개인정보 처리방침 · 약관(legal.ts) — 구글 동의 화면 링크
-app.post("/mcp", async c => { const ctx = await agentCtx(c); if (ctx === "mismatch") return c.json({ error: "신원 불일치" }, 403); if (!ctx) return c.json({ error: "토큰" }, 401); return mcp(c.req.raw, ctx); });
+app.post("/mcp", async c => { const ctx = await agentCtx(c); if (ctx === "mismatch") return c.json({ error: "신원 불일치" }, 403); if (!ctx) return c.json({ error: "토큰" }, 401);
+  const m = await c.req.raw.clone().json().catch(() => null) as { method?: string; params?: { name?: unknown } } | null, tn = String(m?.params?.name || "");
+  if (m && !Array.isArray(m) && (m.method !== "tools/call" || onlyReads(tn) || QUIET_MCP.has(tn))) quiet(c.req.raw);
+  return mcp(c.req.raw, ctx); });
 app.get("/mcp", c => new Response(null, { status: 405, headers: { allow: "POST" } }));
 app.post("/api/agent/:tool", async c => {
   const ctx = await agentCtx(c); if (ctx === "mismatch") return c.json({ error: "신원 불일치" }, 403); if (!ctx) return c.json({ error: "토큰" }, 401);
   const name = c.req.param("tool"); if (!hasTool(name)) return c.json({ error: "없는 도구" }, 404);
+  if (onlyReads(name)) quiet(c.req.raw);
   try { return c.json(await runTool(ctx, name, await c.req.json().catch(() => ({})))); }
   catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e) }, 400); }
 });

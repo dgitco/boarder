@@ -71,7 +71,9 @@ export function meterEnv<E extends { DB: D1Database; RESULTS?: R2Bucket }>(env: 
 export const meterProps = (m: Meter) => ({ d1_read_ms: m.d1r, d1_read_n: m.d1rn, d1_write_ms: m.d1w, d1_write_n: m.d1wn, do_ms: m.dob, do_n: m.dobn, r2_ms: m.r2, r2_n: m.r2n });
 
 export function sampleOf(path: string, method: string, status: number) {
-  if (status >= 500 || !["GET", "HEAD"].includes(method)) return 1;
+  if (status >= 500) return 1;
+  if (/^\/(mcp$|api\/(agent\/|device\/))/.test(path)) return 10;
+  if (!["GET", "HEAD"].includes(method)) return 1;
   if (/^\/icons\//.test(path)) return 20;
   if (/^\/api\/(topics|inbox|chat\/|data$|live$|drafts$|nodechat|agent\/)/.test(path)) return 5;
   return 2;
