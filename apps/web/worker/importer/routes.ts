@@ -273,6 +273,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     // 고리 막기: 바꾼 노드마다 위로 따라가 제가 다시 나오면 안 됨(이미 있는 사슬과 이번 묶음을 합친 것으로 — 저를 상위로 둔 것도 여기서 걸림)
     for (const id of Object.keys(patch)) for (let x: string | undefined = cur[id], i = 0; x && x !== TOP && i < 60; i++, x = cur[x]) if (x === id) return c.json({ error: "서로 상위가 될 수 없어요" }, 400);
     const st: D1PreparedStatement[] = [];
+    let freed = false;
     const out = tasks.map((t, i) => {
       const id = ids[i], o = have.get(id), was = json<Task>(o?.task, { state: "working", line: "", body: "", issue: "" });
       const issue = t.issue === undefined ? was.issue : t.issue === null ? "" : typeof t.issue === "number" || /^\d+$/.test(t.issue) ? "#" + t.issue : t.issue;
@@ -280,6 +281,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
       const name = t.name || o?.name || "업무", pinned = t.name ? null : o?.pinned_name ?? null, area = t.area ?? o?.area ?? "", state = TASK_NODE_STATE[task.state], why = task.line.slice(0, 80), tj = JSON.stringify(task);
       const done = task.state === "done" || task.state === "cancelled", arch = done ? o?.archived_at ?? t0 : null;
       if (o && o.name === name && (o.pinned_name ?? null) === pinned && o.area === area && o.state === state && o.why === why && o.task === tj && (o.archived_at ?? null) === arch) return { key: t.key, id, created: false, changed: false };
+      if (done && o && !o.archived_at) { freed = true; st.push(DB.prepare("DELETE FROM mnode_item WHERE owner = ? AND node = ? AND how = 'pin'").bind(me, id), DB.prepare("UPDATE mnode SET counts = json_remove(CASE WHEN json_valid(counts) THEN counts ELSE '{}' END, '$.main') WHERE owner = ? AND id = ?").bind(me, id)); }
       st.push(DB.prepare(
         "INSERT INTO mnode(owner, id, name, pinned_name, area, state, why, counts, task, created_at, updated_at, archived_at) VALUES (?,?,?,?,?,?,?,'{}',?,?,?,?) " +
         "ON CONFLICT(owner, id) DO UPDATE SET name = excluded.name, pinned_name = excluded.pinned_name, area = excluded.area, state = excluded.state, why = excluded.why, task = excluded.task, updated_at = excluded.updated_at, archived_at = excluded.archived_at")
@@ -288,7 +290,72 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     });
     if (Object.keys(patch).length) st.push(parentStmt(DB, me, patch));
     if (st.length) await DB.batch(st);   // 노드 · 상위를 한 번에(D1 batch = 한 트랜잭션) — 노드만 서고 상위가 빠진 채 남지 않게
+    if (freed) await regroup(env(c), me);   // 놓아준 창을 제자리로
     return c.json({ ok: true, nodes: out, changed: out.filter(x => x.changed).length, parents: Object.keys(patch).length });
+  });
+  const taskNode = async (DB: D1Database, me: string, node: unknown) => typeof node === "string" && /^tk_/.test(node) ? await DB.prepare("SELECT id, counts, archived_at FROM mnode WHERE owner = ? AND id = ?").bind(me, node).first<{ id: string; counts: string; archived_at: number | null }>() : null;
+  app.post("/api/device/tasks/attach", async c => {
+    const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);
+    const b = await c.req.json<{ node?: unknown; item?: unknown }>().catch(() => ({} as { node?: unknown; item?: unknown }));
+    if (typeof b.node === "string" && b.node && !b.node.startsWith("tk_")) return c.json({ error: "업무 노드(tk_)만 — 보통 노드는 보드에서 옮겨요" }, 400);
+    const DB = env(c).DB, n = await taskNode(DB, me, b.node);
+    if (!n) return c.json({ error: "없는 업무 노드" }, 404);
+    if (n.archived_at) return c.json({ error: "끝난 업무예요" }, 400);
+    const item = typeof b.item === "string" ? b.item : "";
+    // 글을 넣을 수 있는 창만: 보고만 하는 창(engine report) · 끊긴 기기 창은 안 됨
+    const w = await DB.prepare("SELECT i.key, i.session FROM imp_item i JOIN device d ON d.id = i.device_id AND d.revoked_at IS NULL WHERE i.owner = ? AND i.key = ? AND i.kind = 'window' AND i.gone_at IS NULL AND i.engine != 'report'").bind(me, item).first<{ key: string; session: string }>();
+    if (!w) return c.json({ error: "없는 창" }, 404);
+    const keys = [w.key, ...(w.session ? ((await DB.prepare("SELECT key FROM imp_item WHERE owner = ? AND (key = ? OR session = ?)").bind(me, w.session, w.session).all()).results as { key: string }[]).map(r => r.key) : [])];
+    await DB.batch([
+      ...[...new Set(keys)].map(k => DB.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?, 'pin') ON CONFLICT(owner, item) DO UPDATE SET node = excluded.node, how = 'pin'").bind(me, k, n.id)),
+      DB.prepare("UPDATE mnode SET counts = json_set(CASE WHEN json_valid(counts) THEN counts ELSE '{}' END, '$.main', ?), updated_at = ? WHERE owner = ? AND id = ?").bind(w.key, now(), me, n.id),
+      DB.prepare("UPDATE mnode SET counts = json_remove(counts, '$.main') WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\' AND id != ? AND json_valid(counts) AND json_extract(counts, '$.main') = ?").bind(me, n.id, w.key),   // 옮겨 온 창이 주 창이던 다른 업무 노드
+    ]);
+    await regroup(env(c), me);   // 창이 떠난 옛 노드를 다시 묶음(보드 옮기기와 같음)
+    return c.json({ ok: true, node: n.id, items: [...new Set(keys)] });
+  });
+  app.post("/api/device/tasks/detach", async c => {
+    const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);
+    const b = await c.req.json<{ node?: unknown; item?: unknown }>().catch(() => ({} as { node?: unknown; item?: unknown }));
+    const DB = env(c).DB, n = await taskNode(DB, me, b.node);
+    if (!n) return c.json({ error: "없는 업무 노드" }, 404);
+    // item 이 있으면 그 창과 같은 대화 항목만, 없으면 이 노드에 pin 된 것 전부
+    let keys: string[];
+    if (typeof b.item === "string" && b.item) {
+      const w = await DB.prepare("SELECT key, session FROM imp_item WHERE owner = ? AND key = ?").bind(me, b.item).first<{ key: string; session: string }>();
+      keys = w ? [w.key, ...(w.session ? ((await DB.prepare("SELECT key FROM imp_item WHERE owner = ? AND (key = ? OR session = ?)").bind(me, w.session, w.session).all()).results as { key: string }[]).map(r => r.key) : [])] : [b.item];
+    } else keys = ((await DB.prepare("SELECT item FROM mnode_item WHERE owner = ? AND node = ?").bind(me, n.id).all()).results as { item: string }[]).map(r => r.item);
+    const main = json<{ main?: string }>(n.counts, {}).main;
+    await DB.batch([
+      DB.prepare("DELETE FROM mnode_item WHERE owner = ? AND node = ? AND item IN (SELECT value FROM json_each(?))").bind(me, n.id, JSON.stringify([...new Set(keys)])),
+      ...(main && (!b.item || keys.includes(main)) ? [DB.prepare("UPDATE mnode SET counts = json_remove(CASE WHEN json_valid(counts) THEN counts ELSE '{}' END, '$.main'), updated_at = ? WHERE owner = ? AND id = ?").bind(now(), me, n.id)] : []),
+    ]);
+    await regroup(env(c), me);   // 뗀 창은 다음 묶기가 정한 제자리로
+    return c.json({ ok: true, node: n.id, items: [...new Set(keys)] });
+  });
+  app.post("/api/device/assigner", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+    const b = await c.req.json<{ on?: unknown }>().catch(() => ({} as { on?: unknown }));
+    if (typeof b.on !== "boolean") return c.json({ error: "on" }, 400);
+    const DB = env(c).DB;
+    // 배정기를 바꾸거나 끄면 옛 기기 줄에 남은 assign 은 실패로(새 기기로 옮기지 않음 — 화면에 「못 넣음」, 사람이 다시 보냄)
+    await DB.prepare(`UPDATE engine_cmd SET state = 'failed', result = '배정기가 바뀜', done_at = ?1 WHERE owner = ?2 AND verb = 'assign' AND state = 'queued' AND device_id ${b.on ? "!=" : "="} ?3`).bind(now(), d.owner, d.id).run();
+    if (b.on) await DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('assigner', ?2), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.assigner', ?2), updated_at = ?3").bind(d.owner, d.id, now()).run();
+    else await DB.prepare("UPDATE node_setting SET data = json_remove(data, '$.assigner'), updated_at = ?3 WHERE owner = ?1 AND json_valid(data) AND json_extract(data, '$.assigner') = ?2").bind(d.owner, d.id, now()).run();   // 남이 정한 배정기는 안 지움
+    return c.json({ ok: true, assigner: b.on ? d.id : null });
+  });
+  app.post("/api/me/tasks/assign", async c => {
+    if (!h.sameSite(c)) return c.json({ error: "no" }, 403);
+    const me = await h.member(c); if (!me) return c.json({ error: "로그인" }, 401);
+    const b = await c.req.json<{ node?: unknown; text?: unknown; thread?: unknown }>().catch(() => ({} as Record<string, unknown>));
+    const text = String(b.text || "").replace(CTRL, " ").trim().slice(0, 2000), thread = typeof b.thread === "string" && /^\d{10}\.\d{6}$/.test(b.thread) ? b.thread : null;
+    if (!text) return c.json({ error: "보낼 글" }, 400);
+    const DB = env(c).DB;
+    const n = typeof b.node === "string" && b.node.startsWith("tk_") ? await DB.prepare("SELECT id, COALESCE(pinned_name, name) name FROM mnode WHERE owner = ? AND id = ?").bind(me, b.node).first<{ id: string; name: string }>() : null;
+    if (!n) return c.json({ error: "없는 업무 노드" }, 404);
+    const dev = await DB.prepare("SELECT d.id FROM node_setting s JOIN device d ON d.id = json_extract(s.data, '$.assigner') AND d.owner = s.owner AND d.revoked_at IS NULL WHERE s.owner = ? AND json_valid(s.data)").bind(me).first<{ id: string }>();
+    if (!dev) return c.json({ error: "이 업무 노드엔 글을 받을 기기가 없어요" }, 400);
+    return c.json({ ok: true, cmds: [await queue(env(c), me, dev.id, "assign", { node: n.id, name: n.name, text, thread, post: true })] });
   });
   app.post("/api/me/nodes/close", async c => {
     const me = await closer(c, true); if (!me) return c.json({ error: "로그인" }, 401);
@@ -408,8 +475,9 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     const DB = env(c).DB, t = now();
     // 가져가고 3분 넘게 결과가 없으면 다시 줌(기기가 중간에 죽은 것)
     await DB.prepare("UPDATE engine_cmd SET state = 'queued' WHERE device_id = ? AND state = 'taken' AND taken_at < ?").bind(d.id, t - 180_000).run();
-    await DB.prepare("UPDATE engine_cmd SET state = 'failed', result = '오래돼 안 넣음', done_at = ? WHERE device_id = ? AND state = 'queued' AND verb IN ('send', 'reopen') AND at < ? AND args LIKE '%\"post\":true%'").bind(t, d.id, t - 6 * 3600_000).run();
-    const rs = ((await DB.prepare("UPDATE engine_cmd SET state = 'taken', taken_at = ? WHERE id IN (SELECT id FROM engine_cmd WHERE device_id = ? AND state = 'queued' ORDER BY at LIMIT 10) AND state = 'queued' RETURNING id, verb, args, at").bind(t, d.id).all()).results as { id: string; verb: string; args: string; at: number }[]).sort((a, b) => a.at - b.at);
+    await DB.prepare("UPDATE engine_cmd SET state = 'failed', result = '오래돼 안 넣음', done_at = ? WHERE device_id = ? AND state = 'queued' AND verb IN ('send', 'reopen', 'assign') AND at < ? AND args LIKE '%\"post\":true%'").bind(t, d.id, t - 6 * 3600_000).run();
+    const only = c.req.query("only") === "assign";
+    const rs = ((await DB.prepare(`UPDATE engine_cmd SET state = 'taken', taken_at = ? WHERE id IN (SELECT id FROM engine_cmd WHERE device_id = ? AND state = 'queued' AND verb ${only ? "=" : "!="} 'assign' ORDER BY at LIMIT 10) AND state = 'queued' RETURNING id, verb, args, at`).bind(t, d.id).all()).results as { id: string; verb: string; args: string; at: number }[]).sort((a, b) => a.at - b.at);
     const cmds = await Promise.all(rs.map(async r => { const a = json<Record<string, unknown>>(r.args, {});
       if (r.verb === "send" && a.fresh && !a.handle && typeof a.item === "string") a.handle = json((await DB.prepare("SELECT handle FROM imp_item WHERE owner = ? AND key = ?").bind(d.owner, a.item).first<{ handle: string | null }>())?.handle, null);
       return { ...r, args: a }; }));
@@ -430,7 +498,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     const say = (text: string, kind = "progress") => DB.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").bind(d.owner, w?.win || `${d.name}:boarder`, kind, text, t).run();
     if (p.data.ok && p.data.note) await say(p.data.note, "blocked");
     if (queued) return c.json({ ok: true });   // 창이 쉴 때 기기가 넣고 다시 알림 — 그때까지 화면엔 「넣음」 아님
-    const what = { move: "보더 엔진으로 옮김", park: "주차", reopen: "다시 엶", send: "창에 글을 넣음", focus: "창을 엶", feature: "기기 설정 바꿈" }[cmd.verb] || cmd.verb;
+    const what = { move: "보더 엔진으로 옮김", park: "주차", reopen: "다시 엶", send: "창에 글을 넣음", focus: "창을 엶", feature: "기기 설정 바꿈", assign: "업무 노드 글을 배정기에 넘김" }[cmd.verb] || cmd.verb;
     if (cmd.verb === "feature") {   // 켜고 끈 뒤 기기가 올린 지금 상태
       const f = (p.data.item as { features?: unknown } | undefined)?.features;
       // 꼴을 보고 그대로(예전엔 JSON 을 400자에서 잘라 폴더 목록이 길면 깨진 JSON 이 남았음)
@@ -440,6 +508,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
       return c.json({ ok: true });
     }
     if (!p.data.ok) { await say(`${what} 못 함 — ${p.data.error || "오류"}`, "blocked"); return c.json({ ok: true }); }
+    if (cmd.verb === "assign") return c.json({ ok: true });
     const ni = p.data.item as Partial<Record<string, string>> | undefined;
     if (a.item && cmd.verb === "move") await DB.prepare("UPDATE imp_item SET state = 'gone', gone_at = ?, state_at = ? WHERE owner = ? AND key = ?").bind(t, t, d.owner, a.item).run();
     else if (a.item && ni) await DB.prepare(`UPDATE imp_item SET state = COALESCE(?, state), state_at = ?, handle = COALESCE(?, handle)${cmd.verb === "reopen" ? ", gone_at = NULL" : ""} WHERE owner = ? AND key = ?`)
@@ -447,6 +516,13 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     if (cmd.verb === "move" && ni?.key) await DB.prepare(
       "INSERT INTO imp_item(owner, key, device_id, kind, engine, title, cwd, session, win, state, state_at, seen_at) VALUES (?,?,?, 'window', 'tmux', ?, ?, ?, ?, 'working', ?, ?) ON CONFLICT(owner, key) DO NOTHING")
       .bind(d.owner, String(ni.key).slice(0, 200), d.id, String(ni.title || a.title || "").slice(0, 140), String(ni.cwd || "").slice(0, 300), String(ni.session || "").slice(0, 200), String(ni.win || "").slice(0, 120), t, t).run();
+    if (cmd.verb === "move" && ni?.key && a.item) {
+      const pin = await DB.prepare("SELECT node FROM mnode_item WHERE owner = ? AND item = ? AND how = 'pin' AND node LIKE 'tk\\_%' ESCAPE '\\'").bind(d.owner, a.item).first<{ node: string }>();
+      if (pin) await DB.batch([
+        DB.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?, 'pin') ON CONFLICT(owner, item) DO UPDATE SET node = excluded.node, how = 'pin'").bind(d.owner, String(ni.key).slice(0, 200), pin.node),
+        DB.prepare("UPDATE mnode SET counts = json_set(counts, '$.main', ?) WHERE owner = ? AND id = ? AND json_valid(counts) AND json_extract(counts, '$.main') = ?").bind(String(ni.key).slice(0, 200), d.owner, pin.node, a.item),
+      ]);
+    }
     if (cmd.verb === "move" && ni?.key && /^ew_[a-z0-9]{6,30}$/.test(String(ni.id || "")) && !widPane(String(ni.id))) {
       try {
         await DB.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, state_at, handle, created_at) VALUES (?,?,?, 'role', ?, 'busy', ?, ?, ?) ON CONFLICT(id) DO NOTHING")

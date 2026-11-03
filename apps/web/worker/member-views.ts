@@ -50,7 +50,7 @@ function segments(ev: Ev[], now: number, isOpen: boolean, busyNow: boolean) {
 export async function history(db: D1Database, me: string, q?: string | null) {
   const now = Date.now() / 1000, want = q && /^\d{9,11}$/.test(q) ? Number(q) : now - 72 * 3600;
   const from = Math.min(want, now - 72 * 3600) - 24 * 3600;   // 기간 앞 하루도 읽어 그때 상태가 이어지게
-  const [L, D] = await Promise.all([load(db, me), data(db, me, null)]);
+  const L = await load(db, me), D = await data(db, me, null, L);   // load 한 번
   const [nd, mi, it, tk, lg, cd, ew, first] = await db.batch([
     db.prepare("SELECT id, name, pinned_name, area, state, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?)").bind(me, from * 1000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
@@ -128,7 +128,7 @@ export async function history(db: D1Database, me: string, q?: string | null) {
 const slug = (t: string) => t.trim().toLowerCase().replace(/[^\p{L}\p{N}_]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 40) || `t${Math.floor(Date.now() / 1000)}`;
 const winTitle = (w: unknown) => String(w || "").replace(/^\d+\s+/, "").trim();
 export async function topics(db: D1Database, me: string, bot: { name?: string } | null) {
-  const [D, L] = await Promise.all([data(db, me, bot), load(db, me)]);
+  const L = await load(db, me), D = await data(db, me, bot, L);   // load 한 번(예전엔 data 안 · 밖 두 번)
   const out = new Map<string, R>();
   for (const p of D.panes as R[]) {
     if (p.kind !== "lead") continue;

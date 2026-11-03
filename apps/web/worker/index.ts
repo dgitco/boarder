@@ -1829,7 +1829,8 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
       if (old) pre = { id: old.id, at: old.at, again: true };
       else { const row = await c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?) RETURNING id").bind(me, lg.win.slice(0, 120), "me", lg.text.slice(0, 4000), null, at, tag).first<{ id: number }>(); pre = row ? { id: row.id, at } : null; }
     } catch { return queue.retrySafe(c); }   // 아직 아무것도 안 넘김 — 다시 보내도 됨
-    if (pre) { const head = boardHead({ channel: lg.ch, thread: memberBoard.tsOf(pre.at, pre.id) }); body = "head" in body ? { ...body, head } : { ...body, text: withHead(head, lg.text) }; }
+    if (pre) { const head = boardHead({ channel: lg.ch, thread: memberBoard.tsOf(pre.at, pre.id) }); body = "head" in body ? { ...body, head } : { ...body, text: withHead(head, lg.text) };
+      if (hop.path === "/api/me/tasks/assign") body.thread = memberBoard.tsOf(pre.at, pre.id); }   // 업무 노드 배정(④): 맨 위 글도 스레드 = 그 글 — 배정기 세션이 그 스레드에 답
   }
   const unpre = () => pre ? c.env.DB.prepare("DELETE FROM board_log WHERE id = ? AND owner = ?").bind(pre.id, me).run().catch(e => console.error("노드 채팅 줄 지우기", e)) : Promise.resolve();
   const h = new Headers({ "content-type": "application/json", "x-hb": "1", cookie: c.req.header("cookie") || "" });
