@@ -60,16 +60,20 @@ function keepsNode(its: Item[], logs: Log[], cards: Card[], pinned: boolean, now
   return !!logs[0] && now - logs[0].at < archiveMs;
 }
 
-// ── 에이전트마다 채널: 이름의 역할(팀장 · 개인 비서 · 머지 담당) → 없으면 그 폴더의 주 에이전트 → 없으면 폴더
-const ROLE = "(?:팀장|비서|담당|총괄|리드|supervisor|manager|assistant|lead)";
-const ROLE_AT_START = new RegExp(`^((?:[^\\s:,.?!]+\\s){0,2}[^\\s:,.?!]*${ROLE})(?=$|[\\s:,.?!]|세션|입니다)`, "i");
-const roleName = (t: string) => { const r = ROLE_AT_START.exec(t.trim())?.[1].replace(/^[a-z]\s+/i, "") || ""; return /^(새|다음)\s/.test(r) ? "" : r; };
+const CLEVEL = "(?:CTO|CFO|CLO|COO|CISO|CMO|CPO|CIO|CSO|CDO)";
+const ROLE = `(?:팀장|비서|담당|총괄|리드|supervisor|manager|assistant|lead|(?<![\\p{L}\\d])${CLEVEL}(?![\\p{L}\\d]))`;
+const CLEVEL_TAIL = new RegExp(`(?<![\\p{L}\\d])${CLEVEL}$`, "iu");
+const ROLE_AT_START = new RegExp(`^((?:[^\\s:,.?!]+\\s){0,2}[^\\s:,.?!]*${ROLE})(?=$|[\\s:,.?!]|세션|입니다)`, "iu");
+const roleName = (t: string) => { const r = ROLE_AT_START.exec(t.trim())?.[1].replace(/^[a-z]\s+/i, "") || ""; return /^(새|다음)\s/.test(r) || (CLEVEL_TAIL.test(r) && !/[A-Z]{3,4}$/.test(r)) ? "" : r; };
 /** strict: 세션 제목은 첫 질문이라 「CS 담당 찾아줘」도 역할처럼 보임 — 지시 머리([팀장 → …]) · 「… 세션입니다」 꼴 · 제목 전체일 때만 */
+const cleanTitle = (title: string) => title.replace(/<[^>]*>/g, " ").replace(/\([^)]*\)/g, " ").replace(/#\d+/g, " ").replace(/^[#\s]+/, "").replace(/\s+/g, " ").trim();
+const DISPATCH = /^\[([^\]→]+?)(?:\s+\d{1,2}:\d{2})?\s*(?:→\s*([^\]]*))?\]/;
+const bySender = (title: string) => { const to = DISPATCH.exec(cleanTitle(title)); return !!to && !roleName(to[2] || "") && !!roleName(to[1]); };
 export function roleOf(title: string, known: string[] = [], strict = false) {
-  const t = title.replace(/<[^>]*>/g, " ").replace(/\([^)]*\)/g, " ").replace(/#\d+/g, " ").replace(/^[#\s]+/, "").replace(/\s+/g, " ").trim();
+  const t = cleanTitle(title);
   const fits = (r: string) => !strict || /^\s*(?:세션|입니다|[—:-]|$)/.test(t.slice(t.indexOf(r) + r.length));
   for (const k of known) if (k && t.includes(k) && fits(k)) return k;
-  const to = /^\[([^\]→]+?)(?:\s+\d{1,2}:\d{2})?\s*(?:→\s*([^\]]*))?\]/.exec(t);   // [팀장 → 회의 녹음 담당] 지시 — 받는 쪽, 일반 말(새 담당)이면 시킨 쪽 일
+  const to = DISPATCH.exec(t);   // [팀장 → 회의 녹음 담당] 지시 — 받는 쪽, 일반 말(새 담당)이면 시킨 쪽 일
   if (to) return roleName(to[2] || "") || roleName(to[1]);
   const r = roleName(t);
   return r && fits(r) ? r : "";
@@ -84,16 +88,21 @@ const windowRole = (i: Item, known: string[]) => roleOf(i.title || "", known, i.
 function agentChannels(items: Item[], root: (k: string) => string, known: string[], workLinks: string[][], recent: (i: Item) => boolean = openWindow) {
   const comps = new Map<string, Item[]>();
   for (const i of items) if (i.kind !== "thread") { const r = root(i.key); (comps.get(r) || comps.set(r, []).get(r)!).push(i); }
-  const roles = new Map<string, string>(), votes = new Map<string, Map<string, number>>();
+  const roles = new Map<string, string>(), votes = new Map<string, Map<string, number>>(), weak = new Set<string>();
+  const workWin = (i: Item) => recent(i) && !!goalNo(i) && !!goalName(i) && !TEST_NAME.test(i.title || "") && !/^\s*\[(?:시험|test)\]/i.test(i.title || "");
+  const hasWork = (r: string) => (comps.get(r) || []).some(workWin);
   for (const [r, its] of comps) {
-    const role = its.filter(i => i.kind === "window").concat(its).map(i => windowRole(i, known)).find(Boolean) || "";
-    if (role) roles.set(r, role);
+    const i = its.filter(i => i.kind === "window").concat(its).find(i => windowRole(i, known));
+    if (!i) continue;
+    if (bySender(i.title || "")) { if (hasWork(r)) continue; weak.add(r); }
+    roles.set(r, windowRole(i, known));
   }
-  for (const ks of workLinks) { const c = ks.map(root), own = c.map(r => roles.get(r)).find(Boolean); if (own) for (const r of c) if (!roles.has(r)) roles.set(r, own); }
+  for (const ks of workLinks) { const c = ks.map(root), own = c.find(r => roles.has(r) && !weak.has(r)) ?? c.find(r => roles.has(r)); if (own === undefined) continue;
+    for (const r of c) if (!roles.has(r) && !(weak.has(own) && hasWork(r))) roles.set(r, roles.get(own)!); }
   const work = new Map<string, string>();
   for (const [r, its] of comps) {
     if (roles.has(r)) continue;
-    const w = its.find(i => recent(i) && goalNo(i) && goalName(i) && !TEST_NAME.test(i.title || "") && !/^\s*\[(?:시험|test)\]/i.test(i.title || ""));
+    const w = its.find(workWin);
     if (w) work.set(r, (w.title || "").replace(/\s+/g, " ").trim().slice(0, 60));
   }
   for (const [r, its] of comps) { const role = roles.get(r); if (role) for (const f of new Set(its.map(folderOf).filter(Boolean))) { const m = votes.get(f) || votes.set(f, new Map()).get(f)!; m.set(role, (m.get(role) || 0) + 1); } }

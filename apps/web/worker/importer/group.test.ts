@@ -200,9 +200,9 @@ test("에이전트마다 채널: 역할이 채널, 일 창 · 세션은 그 안�
     { ...it({ key: "session:claude:f", kind: "session", title: "ledger", repo, state: "idle" }), refs: ["gh:o/ledger#2736"] },
   ];
   const r = await group({ items, logs: [], cards: [], prev: [], prevNodes: [], now, unit: "agent" });
-  assert.deepEqual(r.nodes.map(n => n.name).sort(), ["개인 비서", "팀장", "회의 녹음 담당"].sort());
+  assert.deepEqual(r.nodes.map(n => n.name).sort(), ["#2736 온보딩 끝까지", "개인 비서", "팀장", "회의 녹음 담당"].sort());
   const lead = r.nodes.find(n => n.name === "팀장")!;
-  assert.equal(lead.items.includes("session:claude:b"), true);
+  assert.equal(r.nodes.find(n => n.name === "#2736 온보딩 끝까지")!.items.includes("session:claude:b"), true, "팀장이 맡긴 담당 창(일 번호)은 제 채널, 그 세션도 같이(예전엔 팀장 채널)");
   assert.equal(lead.items.includes("thread:gh:o/ledger#2736"), true);
   assert.equal(r.nodes.find(n => n.name === "회의 녹음 담당")!.items.includes("session:claude:d"), true);
   assert.equal(r.audit.history, 2);
@@ -540,4 +540,36 @@ test("에이전트 묶기: 일 번호 창(#1234 …, 열린 창)은 역할이 �
   const gone = items.map(i => i.key === "window:m:3" ? { ...i, gone_at: now - 8 * 3600_000, state: "gone" } : i.key === "session:claude:b" ? { ...i, state_at: now - 8 * 3600_000 } : i);
   const r2 = await group({ items: gone, logs: [], cards: [], prev: r.map, prevNodes: r.nodes.map(n => ({ id: n.id, created_at: now })), now, unit: "agent" });
   assert.ok(!r2.nodes.some(n => !n.archived && n.name.startsWith("#1961")), "닫힌 지 6시간 넘은 번호 창 채널은 남기지 않음");
+});
+
+test("C 레벨 약칭도 역할: CISO · CFO · CLO · 세일즈(#1969) 창은 제 채널, 소문자 · 비슷한 낱말 · CEO 는 아님", () => {
+  assert.equal(roleOf("CISO"), "CISO");
+  assert.equal(roleOf("CFO"), "CFO");
+  assert.equal(roleOf("CLO · 세일즈 (#1969)"), "CLO");
+  assert.equal(roleOf("CTO 리뷰"), "CTO");
+  for (const t of ["cto 리뷰", "Coo", "Cleo", "Coco 앱", "Ciao", "Chao 리뷰", "Echo bot", "cargo 빌드", "Cisco", "CEO 미팅 준비", "ICO"]) assert.equal(roleOf(t), "", t);
+  assert.equal(roleOf("CS 담당"), "CS 담당", "예전 역할은 그대로");
+});
+
+test("팀장이 맡긴 담당 창(세션 첫 글 「[팀장 → 새 담당 · #2736 …]」 · 「[팀장 17:44] …」)도 일 번호 창이면 제 채널 — 시킨 사람 표지가 역할로 잡혀 팀장 채널로 되돌아가던 것", async () => {
+  const repo = "github.com/o/ledger";
+  const win = (k: string, title: string, session = "") => it({ key: `window:m:${k}`, kind: "window", engine: "tmux", title, win: `m:${k}`, repo, session, state: "working" });
+  const ses = (k: string, title: string) => it({ key: `session:claude:${k}`, kind: "session", title, repo, state: "idle" });
+  const items = [
+    win("1", "팀장", "session:claude:t"), ses("t", "너는 팀장 세션이다"),
+    win("2", "#2736 온보딩 끝까지", "session:claude:a"), ses("a", "[팀장 → 새 담당 · #2736 온보딩 끝까지] 당신은 대표 태스크 #2736"),
+    win("3", "#3720 기기 · 토큰 24시간 가동", "session:claude:b"), ses("b", "[팀장 17:44] 새 대표 태스크를 맡깁니다. 지시서 전문"),
+    win("4", "#2586 에이전트 경험 고도화"), ses("c", "[팀장 → 새 #2586 담당 (w17:p1V, 계정 a)] 당신은 #2586"),   // 창과 세션이 같은 일 번호로만 이어짐
+    ses("d", "[팀장 → 새 담당] 대표 태스크 #2661 「UX/UI 평가서」 담당을 맡아"),
+    win("5", "회의록 창", "session:claude:e"), ses("e", "[팀장 → 회의 녹음 담당] 녹음 정리"),            // 받는 쪽이 역할이면 그 역할(그대로)
+  ];
+  const r = await group({ items, logs: [], cards: [], prev: [], prevNodes: [], now, unit: "agent" });
+  const at = (k: string) => r.nodes.find(n => n.items.includes(k))?.name;
+  assert.equal(at("window:m:2"), "#2736 온보딩 끝까지");
+  assert.equal(at("session:claude:a"), "#2736 온보딩 끝까지", "그 창의 세션도 같이");
+  assert.equal(at("window:m:3"), "#3720 기기 · 토큰 24시간 가동");
+  assert.equal(at("window:m:4"), "#2586 에이전트 경험 고도화", "시킨 사람 표지 역할은 일 번호 이음으로 번호 창에 안 넘어감");
+  assert.equal(at("session:claude:d"), "팀장", "창 없는 지시 세션은 팀장 채널(예전 그대로)");
+  assert.equal(at("window:m:5"), "회의 녹음 담당");
+  assert.ok(!r.nodes.find(n => n.name === "팀장")!.items.some(k => /^window:m:[234]$/.test(k)));
 });
