@@ -10,7 +10,7 @@ type Win = { id: string; owner: string; device_id: string; kind: string; role_id
 type Wait = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> };
 
 export const MODEL = "claude-opus-5-5";
-export const RULES = { wake_min: 30, park_min: 30, close_min: 15, one_goal: true };
+export const RULES = { wake_min: 30, park_min: 30, close_min: 15, one_goal: true, default_roles: false };
 const LIVE = ["opening", "starting", "busy", "idle", "waiting", "background"];
 /** 봉투 스위치 이름의 사람(주인 메일들 → '' = envelope:owner) — 엔진 DO 는 기기 주인 메일을 들고 있음 */
 export const flagOwner = (env: { ALLOW_EMAILS?: string }, owner: string) => String(env.ALLOW_EMAILS || "").split(",").map(s => s.trim().toLowerCase()).includes(owner.trim().toLowerCase()) ? "" : owner;
@@ -34,6 +34,11 @@ export const ONE_GOAL_MAIN = `
 - One role = one goal, not one request. Before drafting, run \`boarder role list\`. If a role already covers the same goal (same product or area: polishing a screen, a button that should react at once, an input box, a bug or follow-up there), do not draft a new role — tell the person in one line that 「<role>」 handles it and that writing in that role's channel on the board sends it there. Draft a new role only for a different goal (another product, another area, or a separate long-running goal).`;
 export const ONE_GOAL_ROLE = `
 This window is one goal. Take related and follow-up requests for that goal here — do not ask for a new window for them. Work through them one at a time; when there is enough to split, split inside this window (subagents, or helper panes for separate front-end and back-end work that does not touch the same files). Ask for a new role only when the work is a different goal.`;
+export const DEFAULT_ROLES = [
+  { id: "default-plan", name: "일 정리", brief: "오늘 할 일 · 메모 · 일정을 모아 차례로 정리해요", instructions: "Help the person sort what they need to do: collect tasks, notes and dates they give you, put them in a sensible order, and keep a short running list. Ask one short question when something is unclear. Do not take actions outside their files without asking." },
+  { id: "default-research", name: "조사", brief: "궁금한 것을 찾아 쉬운 말로 정리해 줘요", instructions: "Look things up for the person and report back in plain, short language: what you found, how sure you are, and where it came from. Say so when you could not confirm something. Do not change their files unless asked." },
+  { id: "default-writing", name: "글쓰기", brief: "메일 · 문서 · 글의 초안을 같이 써요", instructions: "Draft and polish the person's emails, documents and messages in their tone and language. Offer a first draft quickly, then revise from their feedback. Never send anything to anyone yourself — they send it." },
+] as const;
 export const MAIN_HELLO = `[Boarder] Boarder just started you as the person's main bot. Greet them in one or two sentences with boarder chat and ask what they would like their AI agents to do.`;
 export function rolePrompt(name: string, instructions: string, oneGoal = true) {
   return `[Boarder] You are the "${name}" agent. Your job: ${instructions}${oneGoal ? ONE_GOAL_ROLE : ""}
@@ -62,6 +67,8 @@ const HSTATE = /^(busy|idle|waiting|background|starting|none|parked)$/;
 type HPend = { k?: string; id: string; text: string; at: number; test?: boolean; sending?: number };
 const HCMD_MS = 160_000;
 type Pend = { id: string; text: string; at: number; k?: string };
+/** 회원 화면에 남길 실패 이유: 제어문자 · 토큰 꼴(sk- · bxd_ · Bearer …) 가리고 80자 */
+const shortWhy = (e: unknown) => String((e as Error)?.message || e).replace(/[\x00-\x1f\x7f]/g, " ").replace(/\b(?:sk-|bxd_|ghp_|xox[a-z]-)[\w-]+|Bearer\s+\S+/gi, "…").slice(0, 80);
 export const sysLine = (db: D1Database, owner: string, text: string, wid?: string) =>
   db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(owner, "보더", "sys", text, "primary", Date.now(), wid ?? null).run();
 
@@ -195,7 +202,8 @@ export class Engine extends DurableObject<EngEnv> {
       if (m.primary === false) {   // 이 기기는 Primary 자리가 아님: 여기 떠 있던 Primary 는 닫고(다음 채팅 때 다른 엔진 기기에서 뜸), 새로 띄우지 않음
         const mine = (await db.prepare("SELECT id FROM engine_window WHERE owner = ? AND device_id = ? AND kind = 'main' AND state NOT IN ('closed','failed')").bind(owner, device).all<{ id: string }>()).results;
         for (const w of mine) await this.close(w.id).catch(() => null);
-      } else await this.ensureMain(owner, device);
+      } else { await this.ensureMain(owner, device); this.ctx.waitUntil(this.seedRoles(owner).catch(() => null)); }   // 응답 길(flush · drain)을 안 막음
+
       await this.flush();   // 꺼져 있던 동안 쌓인 채팅 · 카드 답
       this.ctx.waitUntil(this.drainCmds().catch(() => null));
       this.ctx.waitUntil(bumpMember(this.env as never, owner));
@@ -249,6 +257,26 @@ export class Engine extends DurableObject<EngEnv> {
       throw e;
     }
   }
+  /** 기본 역할 심기: 멱등(user_pref 표시를 먼저 차지) · 주인 제외 · 역할이 이미 있으면 그대로 · 온보딩(메인 봇 줄)이 끝난 회원만 · 기기 소켓이 붙어 있을 때만(안 붙었으면 표시도 안 하고 다음 hello 때) */
+  async seedRoles(owner: string) {
+    const db = this.env.DB, { device, harness } = await this.who();
+    if (harness || !device || flagOwner(this.env as { ALLOW_EMAILS?: string }, owner) === "" || !this.online()) return { seeded: 0 };
+    const { rules } = await ownerCfg(db, owner);
+    if (rules.default_roles !== true) return { seeded: 0 };
+    if (!(await db.prepare("SELECT 1 x FROM member_bot WHERE owner = ?").bind(owner).first())) return { seeded: 0 };
+    const have = await db.prepare("SELECT (SELECT count(*) FROM role WHERE owner = ?1) + (SELECT count(*) FROM engine_window WHERE owner = ?1 AND kind = 'role') n").bind(owner).first<{ n: number }>();
+    const now = Date.now(), claim = await db.prepare("INSERT OR IGNORE INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").bind(owner, "default_roles_seeded", have?.n ? "had-roles" : "seeded", now).run();
+    if (!claim.meta.changes || have?.n) return { seeded: 0 };
+    let opened = 0, why = "";
+    for (const r of DEFAULT_ROLES) {
+      const cwd = `~/boarder/${r.id}`;
+      await db.prepare("INSERT OR IGNORE INTO role(owner, id, name, instructions, intake, engine, source, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(owner, r.id, r.name, r.instructions, r.brief, JSON.stringify({ device, engine: "tmux", model: MODEL, cwd }), "default", now, now).run();
+      try { await this.open({ owner, kind: "role", role_id: r.id, name: r.name, cwd, prompt: rolePrompt(r.name, r.instructions, rules.one_goal !== false) }); opened++; }
+      catch (e) { why = shortWhy(e); }
+    }
+    await sysLine(db, owner, opened ? `기본 역할 ${opened}개(${DEFAULT_ROLES.map(r => r.name).join(" · ")})를 만들었어요` : `기본 역할을 만들었지만 창은 못 열었어요${why ? ` — ${why}` : ""}`).catch(() => null);
+    return { seeded: DEFAULT_ROLES.length, opened };
+  }
   async ensureMain(owner: string, device: string) {
     const db = this.env.DB;
     const main = await db.prepare("SELECT id, state, device_id FROM engine_window WHERE owner = ? AND kind = 'main' AND state NOT IN ('closed','failed') ORDER BY created_at DESC LIMIT 1").bind(owner).first<{ id: string; state: string; device_id: string }>();
@@ -257,7 +285,10 @@ export class Engine extends DurableObject<EngEnv> {
     const bot = await db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(owner).first<{ name: string }>().catch(() => null);
     const name = bot?.name || "Primary";
     const { rules } = await ownerCfg(db, owner).catch(() => ({ rules: RULES }));
-    const r = await this.open({ owner, kind: "main", name, cwd: "~/boarder/primary", prompt: MAIN_HELLO, system: mainSystem(owner, name, rules.one_goal !== false) }).catch(() => null);
+    const r = await this.open({ owner, kind: "main", name, cwd: "~/boarder/primary", prompt: MAIN_HELLO, system: mainSystem(owner, name, rules.one_goal !== false) }).catch(async (e: unknown) => {
+      await sysLine(db, owner, `메인 봇을 못 열었어요 — ${shortWhy(e)}`).catch(() => null);
+      return null;
+    });
     if (r) await sysLine(db, owner, "메인 봇이 이 기기에서 시작했어요", r.id);
     return r?.id || null;
   }

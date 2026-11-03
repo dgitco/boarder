@@ -6,7 +6,8 @@ type Out = { status: number; body: unknown };
 
 const REP = "U0000000000";
 const BOARD_NAME = "Owner (보드)";
-const CHANNELS = ["primary", "company", "personal", "dgit", "shop"];   // chat.CHANNELS
+const CHANNELS = ["primary", "company", "personal", "dgit", "shop"];   // chat.CHANNELS 기본 다섯
+const AGENT_CH = /^[a-z][a-z0-9_]{1,30}$/;   // 등록한 에이전트 채널 키 — 진짜 있는지는 build 가 cfg.channels 로 봄(없으면 다리로)
 const FREQ_DEFAULT = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];
 const PAGE = 100;
 const HUMAN_SUBTYPES = new Set([null, "bot_message", "file_share", "thread_broadcast", "tombstone"]);
@@ -45,7 +46,7 @@ const guess = (n: unknown) => { const m = /\.([^./]+)$/.exec(String(n || "")); r
 export function route(path: string): Route | null {
   const p = path.split("?")[0];
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?(?:\?before=(\d{10}\.\d{6}))?$/.exec(path);
-  if (m && CHANNELS.includes(m[1])) return m[2] ? { group: "chat", kind: "thread", a: m[1], b: m[2] } : { group: "chat", kind: "channel", a: m[1], b: m[3] };
+  if (m && (CHANNELS.includes(m[1]) || AGENT_CH.test(m[1]))) return m[2] ? { group: "chat", kind: "thread", a: m[1], b: m[2] } : { group: "chat", kind: "channel", a: m[1], b: m[3] };
   if ((m = /^\/api\/nodechat\?w=([^&]{1,400})$/.exec(path))) return { group: "chat", kind: "nodechat", a: m[1] };
   if (p === "/api/emoji/frequent") return { group: "chat", kind: "frequent" };
   if (p === "/api/inbox") return { group: "cards", kind: "inbox" };

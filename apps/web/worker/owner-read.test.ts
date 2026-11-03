@@ -119,3 +119,14 @@ if (process.env.INBOX_DUMP) {   // 기대값 다시 뽑기: INBOX_OLD=<옛 owner
   for (const [name, state, on] of CASES) { const db = new DatabaseSync(":memory:"); seed(db, state); out[name] = await oldInbox(db, on); }
   writeFileSync(process.env.INBOX_DUMP, JSON.stringify(out, null, 1) + "\n");
 }
+
+test("등록한 에이전트 채널 키도 채팅 길(있는지는 build 가 cfg.channels 로 — 없으면 null 로 다리)", async () => {
+  assert.deepEqual(OR.route("/api/chat/harness"), { group: "chat", kind: "channel", a: "harness", b: undefined });
+  assert.deepEqual(OR.route("/api/chat/harness/1703300000.000100"), { group: "chat", kind: "thread", a: "harness", b: "1703300000.000100" });
+  assert.deepEqual(OR.route("/api/chat/company"), { group: "chat", kind: "channel", a: "company", b: undefined });   // 기본 다섯은 그대로
+  assert.equal(OR.route("/api/chat/Harness"), null);
+  assert.equal(OR.route("/api/chat/x"), null);
+  const { d1, n } = fakeD1(new DatabaseSync(":memory:"));
+  assert.equal(await OR.build(d1, { channels: { primary: "CPRI" } }, OR.route("/api/chat/harness")!), null);   // 등록 전(cfg 에 없음) → D1 안 묻고 다리로
+  assert.equal(n.round, 0);
+});

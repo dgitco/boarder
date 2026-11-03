@@ -1024,6 +1024,8 @@ app.post("/api/me/bot", async c => {
   const me = botKey(c.env, s.user.email), now = Date.now();
   await c.env.DB.prepare("INSERT INTO member_bot (owner, seed, hue, name, photo, icon, fav, updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(owner) DO UPDATE SET seed = excluded.seed, hue = excluded.hue, name = excluded.name, photo = excluded.photo, icon = excluded.icon, fav = excluded.fav, updated_at = excluded.updated_at")
     .bind(me, seed, hue, name, photo, icon, fav, now).run();
+  // 온보딩을 마친 순간 기기가 이미 붙어 있으면 기본 역할을 바로 심음(멱등 — 안 붙었으면 다음 hello 때)
+  if (!isOwner(c.env, me)) c.executionCtx.waitUntil((async () => { const dev = await liveDevice(c.env.DB, me); if (dev) await (engineOf(c.env, dev) as unknown as { seedRoles(o: string): Promise<unknown> }).seedRoles(me); })().catch(() => {}));
   return c.json({ bot: { seed, hue, name, photo, icon, fav } });
 });
 const photoOk = async (env: Env, photo: string) => { if (!photo) return true; if (!BLOB_ID.test(photo)) return false; const h = await env.RESULTS.head(`blobs/${photo}`); return !!h && /^image\/(png|jpeg|webp)$/.test(h.httpMetadata?.contentType || ""); };
@@ -1547,7 +1549,7 @@ app.post("/api/admin/engine-rules", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ owner?: string; rules?: Record<string, number | boolean> | null }>().catch(() => ({} as { owner?: string; rules?: Record<string, number | boolean> | null }));
   const owner = String(b.owner || "").toLowerCase(); if (!owner) return c.json({ error: "owner" }, 400);
-  const rules = b.rules ? Object.fromEntries(Object.entries(b.rules).filter(([k, v]) => k in RULES && (k === "one_goal" ? typeof v === "boolean" : typeof v === "number" && v >= 1 && v <= 1440))) : null;
+  const rules = b.rules ? Object.fromEntries(Object.entries(b.rules).filter(([k, v]) => k in RULES && (k === "one_goal" || k === "default_roles" ? typeof v === "boolean" : typeof v === "number" && v >= 1 && v <= 1440))) : null;
   await c.env.DB.prepare("INSERT INTO engine_owner(owner, rules, updated_at) VALUES (?,?,?) ON CONFLICT(owner) DO UPDATE SET rules = excluded.rules, updated_at = excluded.updated_at").bind(owner, rules ? JSON.stringify(rules) : null, Date.now()).run();
   return c.json({ ok: true, rules: (await ownerCfg(c.env.DB, owner)).rules });
 });
