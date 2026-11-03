@@ -3,11 +3,12 @@ html.bx-x{--xbg:#fff;--xink:#000;--xname:#1d1d1d;--xmut:#949494;--xline:#dadada;
 html.bx-x[data-theme="dark"]{--xbg:#101010;--xink:#f3f3f3;--xname:#f3f3f3;--xmut:#7a7a82;--xline:#313232;--xthr:#313232;--xsoft:#c2c2c8;--xsunk:#232326}
 html.bx-x body > *:not(#bxx):not(#toast):not(#mview):not(.sscrim){display:none!important}
 html.bx-x body{background:var(--xbg);overflow:hidden}
+html.bx-x #toast{bottom:calc(96px + env(safe-area-inset-bottom,0px))!important}   /* 보드 안내 글이 아래 막대를 가리지 않게 */
 #bxx{position:fixed;inset:0;z-index:30;background:var(--xbg);color:var(--xink);font-family:var(--f,"Geist","Noto Sans KR",system-ui,sans-serif);-webkit-font-smoothing:antialiased}
-#bxx .xv{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:110px;max-width:640px;margin:0 auto;border-left:1px solid transparent;border-right:1px solid transparent}
+#bxx .xv{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-bottom:110px;max-width:640px;margin:0 auto;border-left:1px solid transparent;border-right:1px solid transparent}
 @media (min-width:700px){#bxx .xv{border-color:var(--xline)}}
 #bxx .xv[hidden]{display:none}
-#bxx .xhd{position:sticky;top:0;z-index:3;height:52px;display:flex;align-items:center;gap:10px;padding:0 16px;background:color-mix(in srgb,var(--xbg) 88%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--xline)}
+#bxx .xhd{position:sticky;top:0;z-index:3;margin:0;box-sizing:border-box;flex-wrap:nowrap;height:52px;display:flex;align-items:center;gap:10px;padding:0 16px;background:color-mix(in srgb,var(--xbg) 88%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--xline)}
 #bxx .xhd b{font-size:22px;font-weight:700}
 #bxx .xhd.xbk{justify-content:center}#bxx .xhd.xbk b{font-size:16px;font-weight:600}
 #bxx .xback{position:absolute;left:10px;width:40px;height:40px;display:grid;place-items:center;color:var(--xink);background:none;border:0}
@@ -31,12 +32,6 @@ html.bx-x body{background:var(--xbg);overflow:hidden}
 #bxx .xselpop .xav{width:22px;height:22px;border-radius:7px}
 /* 글: 곧은 이음선 = 사진 가운데(x 30)에서 다음 글 사진 위까지 */
 #bxx .xu{position:relative;overflow:hidden;border-bottom:1px solid var(--xline)}
-#bxx .xfg{position:relative;background:var(--xbg);transition:transform .18s ease-out}
-#bxx .xbgok,#bxx .xbgsv{position:absolute;inset:0;display:none;align-items:flex-start;padding-top:28px;color:#fff}
-#bxx .xbgok{background:var(--xok);justify-content:flex-start;padding-left:34px}
-#bxx .xbgsv{background:var(--xsave);justify-content:flex-end;padding-right:38px}
-#bxx .xu.sr .xbgok,#bxx .xu.sl .xbgsv{display:flex}
-#bxx .xu.sr .xfg,#bxx .xu.sl .xfg{transition:none}
 #bxx .xp{display:grid;grid-template-columns:36px minmax(0,1fr);gap:0 12px;padding:16px 16px 12px 12px;position:relative}
 #bxx .xp.j{padding-bottom:0}
 #bxx .xp > .xl{position:absolute;left:29px;top:56px;bottom:-12px;width:2px;border-radius:1px;background:var(--xthr)}
@@ -56,6 +51,7 @@ html.bx-x body{background:var(--xbg);overflow:hidden}
 #bxx .xact{display:flex;gap:16px;align-items:center;margin-top:10px;color:var(--xink)}
 #bxx .xact button{display:inline-flex;align-items:center;gap:5px;border:0;background:none;padding:0;color:inherit;font:inherit;font-size:13.5px;cursor:pointer}
 #bxx .xck.on{color:var(--xok)}
+#bxx .xact .xck{order:0}#bxx .xact .xsv{order:1}#bxx .xact .xrp{order:2}#bxx .xsv.on{color:var(--xsave)}
 /* 투표(X · Threads poll 꼴) */
 #bxx .xpoll{margin:10px 0 2px}
 #bxx .xop{position:relative;display:flex;align-items:center;gap:8px;width:100%;border:1px solid var(--xline);border-radius:14px;padding:11px 14px;margin-top:6px;background:var(--xbg);color:var(--xink);font:inherit;font-size:15px;text-align:left;overflow:hidden;cursor:pointer}
@@ -77,12 +73,22 @@ html.bx-x body{background:var(--xbg);overflow:hidden}
 #bxx .xpb{display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:0}
 #bxx .xpbtn{flex:none;white-space:nowrap;border:1px solid var(--xline);border-radius:10px;padding:7px 14px;font-size:14px;font-weight:600;color:var(--xink);text-decoration:none}
 #bxx .xtabs{display:flex;border-bottom:1px solid var(--xline);padding:0 16px}#bxx .xtabs b{padding:10px 0;border-bottom:2px solid var(--xink);font-size:14.5px}
-#bxx .xglass{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:6;display:flex;gap:4px;align-items:center;padding:6px;border-radius:999px;
-  background:color-mix(in srgb,var(--xbg) 55%,transparent);-webkit-backdrop-filter:blur(18px) saturate(180%);backdrop-filter:blur(18px) saturate(180%);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 1px rgba(255,255,255,.35),0 0 0 .5px rgba(0,0,0,.08),0 10px 30px rgba(0,0,0,.16)}
-#bxx .xt{position:relative;width:58px;height:48px;border-radius:999px;display:grid;place-items:center;border:0;background:none;color:var(--xsoft);cursor:pointer}
-#bxx .xt.on{background:color-mix(in srgb,var(--xbg) 85%,#fff);color:var(--xink);box-shadow:0 1px 4px rgba(0,0,0,.08)}
-#bxx .xbdg{position:absolute;top:4px;right:8px;min-width:18px;height:18px;border-radius:9px;background:var(--xacc);color:#fff;font-size:11px;font-weight:600;display:grid;place-items:center;padding:0 5px}
+#bxx .xglass{position:fixed;left:0;right:0;margin:0 auto;width:calc(100% - 32px);max-width:520px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:6;height:64px;padding:6px;border-radius:32px;
+  display:grid;grid-template-columns:repeat(5,1fr);gap:2px;align-items:center;isolation:isolate;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.85),inset 0 -1px 0 rgba(255,255,255,.3),inset 0 0 0 1px rgba(255,255,255,.4),0 0 0 .5px rgba(0,0,0,.07),0 10px 30px rgba(0,0,0,.14)}
+#bxx .xglass::before,#bxx .xglass::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1}
+#bxx .xglass::before{background:color-mix(in srgb,var(--xbg) 26%,transparent);-webkit-backdrop-filter:blur(2.5px) saturate(185%) brightness(1.06);backdrop-filter:blur(2.5px) saturate(185%) brightness(1.06)}
+#bxx .xglass::after{padding:9px;background:linear-gradient(180deg,rgba(255,255,255,.42),rgba(255,255,255,0) 46%);-webkit-backdrop-filter:blur(9px) saturate(220%);backdrop-filter:blur(9px) saturate(220%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}
+#bxx .xt{position:relative;height:52px;border-radius:26px;display:grid;place-items:center;border:0;background:none;color:var(--xsoft);cursor:pointer;-webkit-tap-highlight-color:transparent}
+#bxx .xt.on{background:rgba(255,255,255,.62);color:var(--xink);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 1px 6px rgba(0,0,0,.08)}
+@media (prefers-color-scheme:dark){html.bx-x:not([data-theme="light"]) #bxx .xglass{box-shadow:inset 0 1px 0 rgba(255,255,255,.28),inset 0 0 0 1px rgba(255,255,255,.12),0 10px 30px rgba(0,0,0,.5)}
+  html.bx-x:not([data-theme="light"]) #bxx .xglass::after{background:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,0) 46%)}
+  html.bx-x:not([data-theme="light"]) #bxx .xt.on{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}}
+html.bx-x[data-theme="dark"] #bxx .xglass{box-shadow:inset 0 1px 0 rgba(255,255,255,.28),inset 0 0 0 1px rgba(255,255,255,.12),0 10px 30px rgba(0,0,0,.5)}
+html.bx-x[data-theme="dark"] #bxx .xglass::after{background:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,0) 46%)}
+html.bx-x[data-theme="dark"] #bxx .xt.on{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+#bxx .xbdg{position:absolute;top:6px;right:calc(50% - 22px);min-width:18px;height:18px;border-radius:9px;background:var(--xacc);color:#fff;font-size:11px;font-weight:600;display:grid;place-items:center;padding:0 5px}
 #bxx .xtoast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:7;display:flex;gap:14px;align-items:center;background:#111113;color:#fff;border-radius:12px;padding:10px 14px;font-size:13.5px;white-space:nowrap}
 #bxx .xtoast[hidden]{display:none}
 #bxx .xtoast button{border:0;background:none;color:#9fe0b5;font:inherit;font-weight:600;cursor:pointer}

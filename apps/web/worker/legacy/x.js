@@ -37,7 +37,7 @@
 
   // ── 상태
   const DK = 'bx-x-done', ld = () => { try { const o = JSON.parse(localStorage.getItem(DK) || '{}'), cut = Date.now() - 14 * 864e5; return new Map(Object.entries(o).filter(([, t]) => t > cut)); } catch { return new Map(); } };
-  const X = {tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), hide: new Set(), undo: null, seenT: new Map()};   // hide = 방금 저장해 피드에서만 잠깐 뺀 것(서버 저장 목록이 정본)
+  const X = {tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map()};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
   const keepDone = () => { try { localStorage.setItem(DK, JSON.stringify(Object.fromEntries(X.done))); } catch {} };
   const root = document.createElement('div'); root.id = 'bxx'; document.body.append(root);
   root.innerHTML = `<div class="xv" data-v="home"></div><div class="xv" data-v="thread" hidden></div><div class="xv" data-v="save" hidden></div><div class="xv" data-v="me" hidden></div>
@@ -59,11 +59,10 @@
   const qList = (k, m) => [m, ...rest(k, m)].filter(qOf);
   const cardRoots = () => { const s = new Set(); for (const c of openCards()) s.add(c.thread || c.ts); return s; };
   function items(){
-    const rk = askRank(), un = unreadSet(), cr = cardRoots(), it = [], sv = new Map((window.HBInbox?.state?.saved || []).filter(x => !x.thread || x.thread === x.ts).map(x => [x.ts, +x.saved_at || 0]));   // 뿌리 글 저장만(답 하나 저장으로 스레드가 빠지지 않게)
+    const rk = askRank(), un = unreadSet(), cr = cardRoots(), it = [];
     for (const {k, m} of roots()){
-      const dAt = X.done.get(m.ts); if (X.hide.has(m.ts) || (dAt && Math.max(+m.ts || 0, +m.latest || 0) * 1000 <= dAt)) continue;   // 완료 뒤 새 답이 오면 다시 뜸
+      const dAt = X.done.get(m.ts); if ((dAt && Math.max(+m.ts || 0, +m.latest || 0) * 1000 <= dAt)) continue;   // 완료 뒤 새 답이 오면 다시 뜸
       const ask = cr.has(m.ts) || !!askIn(k, m);
-      if (!ask && sv.has(m.ts) && Math.max(+m.ts || 0, +m.latest || 0) <= sv.get(m.ts)) continue;   // 저장한 뒤 새 활동 · 고를 것이 없으면 저장됨 칸에만
       it.push({k, m, ask, un: un.has(m.ts), at: Math.max(+m.ts || 0, +m.latest || 0), rank: rk.has(m.ts) ? rk.get(m.ts) : 1e6});
     }
     return it.sort((a, b) => (b.ask - a.ask) || (a.ask && b.ask ? a.rank - b.rank : 0) || (b.un - a.un) || (b.at - a.at)).slice(0, 80);
@@ -71,8 +70,11 @@
 
   const head = (m, k) => `<div class="xh"><b>${E(who(m))}</b><span class="xtm">${ago(m.ts)}</span></div>`;
   const body = m => { const f = files(m); return `${f.text ? `<div class="xbd">${mdx(f.text, m.who !== 'owner')}</div>` : ''}${f.html || ''}`; };
-  const acts = (k, m, n, done) => `<div class="xact"><button type="button" class="xck${done ? ' on' : ''}" data-xdone="${E(m.ts)}" data-k="${E(k)}" aria-label="완료 · 읽음">${CHK()}</button>`
-    + `<button type="button" class="xrp" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}" aria-label="답글">${MSG}${n ? `<span>${n}</span>` : ''}</button></div>`;
+  const acts = (k, m, n, done, sts) => `<div class="xact"><button type="button" class="xck${done ? ' on' : ''}" data-xdone="${E(m.ts)}" data-k="${E(k)}" aria-label="완료 · 읽음">${CHK()}</button>`
+    + `<button type="button" class="xrp" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}" aria-label="답글">${MSG}${n ? `<span>${n}</span>` : ''}</button>`
+    + (() => { const rt = sts || m.thread || m.ts, on = isSaved(rt);   // sts = 저장됨 탭에서 그 줄이 저장한 글(답 글 하나만 저장했을 수 있음)
+      return `<button type="button" class="xsv${on ? ' on' : ''}" data-xsave="${E(rt)}" data-k="${E(k)}" aria-pressed="${on}" aria-label="${on ? '저장 풀기' : '저장'}">${ji('save', on, 20)}</button>`; })() + '</div>';
+  const isSaved = ts => X.sv.has(ts) ? X.sv.get(ts) : !!window.HBInbox?.isSaved?.(ts);   // 보드 저장 표(saved_ids — 200개 넘어도 전부)
   function pollState(k, rootM, m){
     const pk = m.picked || G('picked')?.[m.ts]?.label;
     if (pk) return {st: 'voted', pick: pk};
@@ -94,7 +96,7 @@
     const bd = body(m), part = q ? (o.part ? nn(o.part) : o.feed ? nn('1/2') : '') : '';
     const goto = q && o.feed ? `<button type="button" class="xgo" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}">${MSG}<span>${o.more ? `<b>투표</b>에서 고르기 · ${E(o.more)}` : '<b>2/2 투표</b>에서 고르기 · 눌러서 열기'}</span></button>` : '';
     return `<article class="xp${o.joined ? ' j' : ''}${o.dim ? ' rd' : ''}${o.ask ? ' ask' : ''}" data-ts="${E(m.ts)}" data-k="${E(k)}" data-root="${E(o.root || m.ts)}">${o.joined ? '<i class="xl"></i>' : ''}`
-      + `<span class="xav">${av(who(m), 36)}</span><div class="xc">${head(m, k)}${bd.replace(/<\/p>/, part + '</p>')}${goto}${o.pollHere ? '' : ''}${acts(k, m, o.n || 0, o.done)}</div></article>`;
+      + `<span class="xav">${av(who(m), 36)}</span><div class="xc">${head(m, k)}${bd.replace(/<\/p>/, part + '</p>')}${goto}${o.pollHere ? '' : ''}${acts(k, m, o.n || 0, o.done, o.sts)}</div></article>`;
   }
   // 피드 한 묶음: 뿌리 글 + 볼 답 하나(물음이 있으면 그 글, 없으면 마지막 답) — 곧은 이음선
   function unit(x){
@@ -104,11 +106,11 @@
     const qs = qList(k, m), bundle = qs.length > 1, open = qs.filter(isAsk), bq = bundle ? (open[0] || qs[qs.length - 1]) : null;
     const bo = bundle ? {part: `${qs.indexOf(bq) + 1}/${qs.length}`, more: open.length ? `${qs.length}개 중 ${open.length}개 남음` : `${qs.length}개 모두 접수됨`} : {};
     const show = bundle ? bq : pv;
-    if (!show) return wrap(x, post(k, m, {feed: true, n: m.replies || 0, dim, ask: x.ask}));
-    if (show === m) return wrap(x, post(k, m, {feed: true, n: m.replies || r.length, dim, ask: x.ask, ...bo}));
-    return wrap(x, post(k, m, {joined: true, feed: true, dim, ask: x.ask}) + post(k, show, {feed: true, root: m.ts, n: m.replies || r.length, dim, ask: x.ask, ...bo}));
+    if (!show) return wrap(x, post(k, m, {feed: true, n: m.replies || 0, dim, ask: x.ask, sts: x.sts}));
+    if (show === m) return wrap(x, post(k, m, {feed: true, n: m.replies || r.length, dim, ask: x.ask, sts: x.sts, ...bo}));
+    return wrap(x, post(k, m, {joined: true, feed: true, dim, ask: x.ask, sts: x.sts}) + post(k, show, {feed: true, root: m.ts, n: m.replies || r.length, dim, ask: x.ask, sts: x.sts, ...bo}));
   }
-  const wrap = (x, h) => `<div class="xu${x.ask ? ' ask' : ''}" data-root="${E(x.m.ts)}" data-k="${E(x.k)}"><div class="xbgok">${CHK(40, 2.6)}</div><div class="xbgsv">${ji('save', true, 40)}</div><div class="xfg">${h}</div></div>`;
+  const wrap = (x, h) => `<div class="xu${x.ask ? ' ask' : ''}" data-root="${E(x.m.ts)}" data-k="${E(x.k)}">${h}</div>`;
 
   // ── 홈(X2 · X9): 맨 위 새 글 칸 + 피드
   const NAMES = () => Object.fromEntries(chs().map(k => [k, k === 'primary' ? (AN().primary || 'Primary') : String(AN()[k] || k).replace(/\s*리드\s*$/, '')]));
@@ -120,7 +122,7 @@
   }
   let lastSig = '';
   function drawHome(force){
-    const v = V('home'), it = items(), sig = JSON.stringify(it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked]));
+    const v = V('home'), it = items(), sig = JSON.stringify([it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked]), it.map(x => isSaved(x.m.ts))]);
     if (!force && sig === lastSig && v.firstChild) return; lastSig = sig;
     // 글 칸은 한 번만 만듦(다시 그려도 쓰던 글 · 포커스 · 한글 조합 · 첨부 · 토픽 창이 그대로) — 피드만 바꿈
     if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd"><b>홈</b></header>${composer()}<div class="xfeed"></div>`;
@@ -160,8 +162,8 @@
   // ── 저장됨(X11) · 프로필(X12)
   function drawSave(){
     const v = V('save'), s = window.HBInbox?.state?.saved || [], by = new Map(roots().map(x => [x.m.ts, x]));
-    const rows = s.map(x => { const r = by.get(x.thread || x.ts) || by.get(x.ts); return r ? unit({...r, ask: false, un: true}) : `<div class="xrow" data-xopen="${E(x.thread || x.ts)}" data-k="${E(x.chan)}"><b>${E(x.author || '')}</b><span>${E(String(x.text || '').slice(0, 120))}</span></div>`; }).join('');
-    v.innerHTML = `<header class="xhd"><b>저장됨</b></header><div class="xfeed">${rows || '<p class="xempty">저장한 글이 없어요. 글을 오른쪽에서 왼쪽으로 밀면 여기 모여요.</p>'}</div>`;
+    const rows = s.map(x => { const r = by.get(x.thread || x.ts) || by.get(x.ts); return r ? unit({...r, ask: false, un: true, sts: x.ts}) : `<div class="xrow" data-xopen="${E(x.thread || x.ts)}" data-k="${E(x.chan)}"><b>${E(x.author || '')}</b><span>${E(String(x.text || '').slice(0, 120))}</span></div>`; }).join('');
+    v.innerHTML = `<header class="xhd"><b>저장됨</b></header><div class="xfeed">${rows || '<p class="xempty">저장한 글이 없어요. 글 아래 책갈피를 누르면 여기 모여요.</p>'}</div>`;
   }
   function drawMe(){
     const v = V('me'), mine = roots().filter(x => x.m.who === 'owner').sort((a, b) => b.m.ts - a.m.ts).slice(0, 20);
@@ -196,34 +198,22 @@
     if (!quiet) sched();
   }
 
-  // ── 완료(✓ · 왼쪽 → 오른쪽) · 저장(오른쪽 → 왼쪽), 되돌리기(X6 · X8)
+  // ── 완료(✓, 되돌리기) · 저장(책갈피 단추, 다시 누르면 풀기)
   function done(k, rootTs){
     const was = X.done.get(rootTs); X.done.set(rootTs, Date.now()); keepDone(); readOne(k, rootTs, true); drawHome(true);
     note('완료로 내렸어요', () => { X.done.delete(rootTs); if (was) X.done.set(rootTs, was); keepDone(); drawHome(true); });
   }
+  const redraw = () => { if (X.tab === 'home') drawHome(true); else if (X.tab === 'thread') drawThread(); else if (X.tab === 'save') drawSave(); else if (X.tab === 'me') drawMe(); };
   function save(k, rootTs){
-    const p = window.HBInbox?.save?.(rootTs, true); X.hide.add(rootTs); drawHome(true);   // 저장은 서버 저장 목록이 정본 — 피드에서만 잠깐 뺌(기억 안 함)
-    const back = () => { X.hide.delete(rootTs); drawHome(true); say('저장하지 못했어요'); };
-    Promise.resolve(p).then(ok => { if (ok === false) back(); }, back);
-    note('저장됨에 넣었어요', () => { window.HBInbox?.save?.(rootTs, false); X.hide.delete(rootTs); drawHome(true); });
-    return p;
+    const on = !isSaved(rootTs); X.sv.set(rootTs, on); redraw();
+    let p; try { p = window.HBInbox?.save?.(rootTs, on); } catch (e) { p = Promise.reject(e); }
+    const back = () => { X.sv.delete(rootTs); redraw(); say(on ? '저장하지 못했어요' : '저장을 풀지 못했어요'); };
+    return Promise.resolve(p).then(ok => { if (ok === false) back(); else { X.sv.delete(rootTs); redraw(); } }, back);
   }
   function note(m, undo){
     const t = root.querySelector('.xtoast'); X.undo = undo; t.innerHTML = `<span>${E(m)}</span>${undo ? '<button type="button" data-xundo>되돌리기</button>' : ''}`; t.hidden = false;
     clearTimeout(note.t); note.t = setTimeout(() => { t.hidden = true; X.undo = null; }, 5000);
   }
-
-  // 밀기: 손가락으로 글 묶음을 좌우로 — 80px 넘으면 완료(→) · 저장(←)
-  let sw = null;
-  root.addEventListener('touchstart', e => { const u = e.target.closest('.xu'); if (!u || e.touches.length !== 1 || e.target.closest('button, a, textarea, .xpoll')) return;
-    sw = {u, x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, lock: null}; }, {passive: true});
-  root.addEventListener('touchmove', e => { if (!sw) return; const dx = e.touches[0].clientX - sw.x, dy = e.touches[0].clientY - sw.y;
-    if (sw.lock === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) sw.lock = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-    if (sw.lock !== 'x') return; sw.dx = dx; sw.u.classList.toggle('sr', dx > 0); sw.u.classList.toggle('sl', dx < 0);
-    sw.u.querySelector('.xfg').style.transform = `translateX(${dx}px)`; }, {passive: true});
-  root.addEventListener('touchend', () => { if (!sw) return; const {u, dx, lock} = sw; sw = null; const fg = u.querySelector('.xfg'); fg.style.transform = '';
-    u.classList.remove('sr', 'sl'); if (lock !== 'x') return;
-    if (dx > 80) done(u.dataset.k, u.dataset.root); else if (dx < -80) save(u.dataset.k, u.dataset.root); });
 
   // ── 누름
   root.addEventListener('click', e => {
@@ -243,6 +233,7 @@
     const dn = q('[data-xdone]'); if (dn){ const u = dn.closest('.xu'); const k = dn.dataset.k, rt = u?.dataset.root || dn.closest('.xp')?.dataset.root || dn.dataset.xdone;
       if (X.tab === 'thread'){ readOne(k, rt); return say('완료로 내렸어요'); }
       return done(k, rt); }
+    const sb = q('[data-xsave]'); if (sb) return void save(sb.dataset.k, sb.dataset.xsave);
     const o = q('[data-xopen]'); if (o) return openThread(o.dataset.k, o.dataset.xopen);
     if (q('[data-xsel]')) return selOpen();
     const pick = q('[data-xpick]'); if (pick){ X.sel = pick.dataset.xpick; selClose(); return drawHome(true); }
