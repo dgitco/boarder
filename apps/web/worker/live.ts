@@ -10,9 +10,9 @@ export const liveOf = (env: LEnv, email: string) => {
   return env.SNAP.get(env.SNAP.idFromName(name), { locationHint: "apac" });
 };
 /** 바뀐 칸 알리기(실패는 삼킴 — 화면은 폴링 · 다시 붙기로 따라잡음) */
-export const bump = (env: LEnv, email: string, t: Record<string, string>) => liveOf(env, email).bump(t).catch(() => 0);
+export const bump = (env: LEnv, email: string, t: Record<string, string>, gap?: number) => liveOf(env, email).bump(t, undefined, gap).catch(() => 0);
 export const bumpLedger = (env: LEnv) => bump(env, env.ALLOW_EMAILS.split(",")[0].trim(), { chat: "~" + Date.now() });
-export const bumpMember = (env: LEnv, email: string) => { const v = "~" + Date.now(); return bump(env, email, { data: v, chat: v }); };
+export const bumpMember = (env: LEnv, email: string) => { const v = "~" + Date.now(); return bump(env, email, { data: v, chat: v }, isOwner(env, email) ? undefined : 1000); };
 
 export async function table(env: LEnv, email: string, memberTags: () => Promise<{ data: string; chat: string }>): Promise<{ t: Record<string, string>; age?: number | null }> {
   if (!isOwner(env, email)) return { t: await memberTags() };   // 회원 보드는 요청 때 D1 에서 만듦 — 나이 없음

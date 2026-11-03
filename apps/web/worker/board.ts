@@ -181,16 +181,18 @@ export class BoardSnap extends DurableObject<object> {
   }
   pend: Record<string, string> | null = null;
   pendDd: string[] | null = null;   // 이 글에 실을 data 바뀐 칸들(차례대로, 그때 글로 — 뒤 고침 줄이 같은 판을 고쳐도 섞이지 않게). 하나라도 못 만들면(null) 안 실음 — 화면이 다시 읽음
-  bump(t: Record<string, string>, dd?: unknown) {
+  flushAt = 0;
+  bump(t: Record<string, string>, dd?: unknown, gap = 25) {
     if (!this.ctx.getWebSockets("live").length) return 0;
     const first = !this.pend; this.pend = { ...(this.pend || {}), ...t };
     if (first) this.pendDd = [];
     if (dd === null) this.pendDd = null; else if (dd && this.pendDd) this.pendDd.push(JSON.stringify(dd));
-    if (first) setTimeout(() => this.flush(), 25);
+    if (first) setTimeout(() => this.flush(), Math.max(25, this.flushAt + gap - Date.now()));
     return 1;
   }
   flush() {
     const t = this.pend, dd = this.pendDd; this.pend = null; this.pendDd = null; if (!t) return;
+    this.flushAt = Date.now();
     const age = this.dataAge(); this.beatAt = Date.now();
     const head = JSON.stringify({ t, ...(age === null ? {} : { age }) });   // age: 화면이 「갱신 멈춤」 · 낡으면 다시 읽기를 서버 시계로 가름
     let msg = dd && dd.length ? head.slice(0, -1) + ',"dd":[' + dd.join(",") + "]}" : head;

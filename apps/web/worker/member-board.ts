@@ -90,7 +90,18 @@ export async function nodeFaceList(db: D1Database, me: string, bot: { name?: str
   }).sort((a, b) => Number(b.head) - Number(a.head));
 }
 
+const FRESHING = new Map<string, number>();
 export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
+  const t0 = Date.now(); if (t0 - (FRESHING.get(me) || 0) < 10_000) return;
+  FRESHING.set(me, t0);
+  try { await fresh0(env, me); } finally { FRESHING.delete(me); }
+}
+const DATA_GATE = new Map<string, { at: number; n: number }>(), DATA_MAX = 60;
+export function dataGate(me: string, now = Date.now()) {
+  let g = DATA_GATE.get(me); if (!g || now - g.at >= 5_000) DATA_GATE.set(me, g = { at: now, n: 0 });
+  return ++g.n <= DATA_MAX;
+}
+async function fresh0(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
   const [la, lw] = await env.DB.batch([
     env.DB.prepare("SELECT MAX(at) at FROM imp_audit WHERE owner = ?").bind(me),
     env.DB.prepare("SELECT MAX(x) at FROM (SELECT MAX(at) x FROM board_log WHERE owner = ? UNION ALL SELECT MAX(COALESCE(answered_at, at)) FROM board_card WHERE owner = ?)").bind(me, me),

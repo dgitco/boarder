@@ -71,3 +71,24 @@ test("빈 목록(--stop) · MCP · 역할을 같이 보낸 것은 건너뛰지 �
   assert.notEqual((await post({ host: "laptop", kinds: ["window"], items: [] })).same, true);
   assert.equal(audits(db), n + 1);
 });
+
+const { fresh, dataGate } = await import("../member-board.ts");
+test("fresh: 같은 사람 묶기가 도는 중이면 겹쳐 돌리지 않고, 끝나면 다음 것은 다시 묶음", async () => {
+  const { db, D1 } = d1(), post = app(D1), env = { DB: D1, PUBLIC_URL: "https://example.test" };
+  await post(body());
+  const log = () => db.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").run(MEMBER, "laptop:tmux:1", "progress", "새 줄", Date.now() + 1000);
+  log();
+  const n = audits(db);
+  await Promise.all(Array.from({ length: 8 }, () => fresh(env as never, MEMBER)));
+  assert.equal(audits(db), n + 1, "여덟 번 불러도 묶기 한 번");
+  db.prepare("UPDATE imp_audit SET at = 0 WHERE owner = ?").run(MEMBER);   // 다시 낡음
+  await fresh(env as never, MEMBER);
+  assert.ok((db.prepare("SELECT MAX(at) m FROM imp_audit WHERE owner = ?").get(MEMBER) as { m: number }).m > 0, "끝난 뒤에는 다시 묶음");
+});
+test("dataGate: 한 사람 5초에 60번까지, 넘으면 거절, 창이 지나면 다시 · 사람마다 따로", () => {
+  const t = 1_000_000, me = "gate@example.com";
+  for (let i = 0; i < 60; i++) assert.equal(dataGate(me, t + i), true);
+  assert.equal(dataGate(me, t + 61), false);
+  assert.equal(dataGate("other@example.com", t + 61), true);
+  assert.equal(dataGate(me, t + 5_000), true);
+});
