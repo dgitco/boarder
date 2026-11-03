@@ -1,6 +1,7 @@
 import { nodeRoot, primaryRoot, primaryThread } from "./member-board";
 import { overdue } from "./member-views";
 import { splitAdd } from "./member-split";
+import { splitText, type SplitSend } from "./member-split-send";
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 // 카드 id 는 지금 카드 꼴(초.여섯 자리)과 같게 — 도구 입력 검사(tsId)를 그대로 씀
 const cardId = () => `${Math.floor(Date.now() / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
@@ -12,7 +13,7 @@ export const askedAt = (v: unknown): number | null => {
 };
 type Card = { id: string; state: string; question: string; choices: string; answer: string | null; answered_at: number | null; done: string | null; win: string; at: number };
 
-export function localTools(db: D1Database, owner: string, win: string, publicUrl: string, key = "", onCard?: (card: { id: string; question: string; kind?: string; urgent: boolean; at: number; orig_at: number | null }) => void) {
+export function localTools(db: D1Database, owner: string, win: string, publicUrl: string, key = "", onCard?: (card: { id: string; question: string; kind?: string; urgent: boolean; at: number; orig_at: number | null }) => void, send?: SplitSend) {
   const wid = /:(ew_[a-z0-9]{6,30})$/.exec(key)?.[1] ?? null;
   const log = (kind: string, text: string, thread?: string) =>
     db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(owner, win, kind, text, thread ?? null, Date.now(), wid).run();
@@ -68,8 +69,13 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
         if (!(await primaryRoot(db, owner, a.thread))) throw new Error("없는 스레드 — 이 사람 Primary 채팅의 사람 글 id 만");
         await log("say", a.text, primaryThread(a.thread)); return { ok: true };
       }
-      // 나누기(0049 member_split): 내 Primary 글 하나에 일이 여럿이면 노드마다 몫 글 + 원글 갈래 칩 — 내 노드만(member-split.ts)
-      case "chat_split": return splitAdd(db, owner, a.thread, a.parts);
+      case "chat_split": {
+        const { added, ...r } = await splitAdd(db, owner, a.thread, a.parts);
+        if (!send) return r;
+        const sent = [];
+        for (const p of added) sent.push({ node: p.node, ...(await send(p.pane, splitText(a.thread, p.text, a.why))) });
+        return { ...r, sent };
+      }
       case "role_draft": {
         const cfg = await db.prepare("SELECT (SELECT rules FROM engine_owner WHERE owner = ?1) rules, (SELECT json_extract(data, '$.rules.one_goal') FROM node_setting WHERE owner = ?1 AND json_valid(data)) og").bind(owner).first<{ rules: string | null; og: number | null }>().catch(() => null);
         let oneGoal = true; try { oneGoal = JSON.parse(cfg?.rules || "{}").one_goal !== false; } catch {}
@@ -78,7 +84,7 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
         if (oneGoal) {
           const live = (await db.prepare("SELECT r.name, w.id FROM role r JOIN engine_window w ON w.role_id = r.id AND w.owner = r.owner WHERE r.owner = ? AND w.state NOT IN ('closed','failed') AND w.device_id IN (SELECT id FROM device WHERE revoked_at IS NULL)").bind(owner).all<{ name: string; id: string }>()).results;
           const same = live.find(x => norm(x.name) === norm(a.name));
-          if (same) return { refused: true, same_role: same.name, window: same.id, why: `「${same.name}」 role already has a window — one role = one goal. Tell the person to write in that role's channel (it goes to that window) instead of drafting it again.` };
+          if (same) return { refused: true, same_role: same.name, window: same.id, why: `「${same.name}」 role already has a window — one role = one goal. Hand the ask to it with chat_split (one part for that role) instead of drafting it again.` };
         }
         const id = `rd_${Date.now().toString(36)}${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`, now = Date.now();
         await db.batch([

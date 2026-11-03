@@ -120,3 +120,58 @@ test("칩 상태: 그 노드 열린 결정 = 내 차례, 아니면 장부 마지
   const pc = await get(D1, A, "/api/chat/primary");
   assert.ok(pc.messages.length >= 2 && !pc.messages.some((x: any) => x.splits));
 });
+
+test("chat_split → 몫마다 그 창에 「[보드 · Primary · 스레드 <원글>]」 + 까닭 한 줄, 창 답은 원글 스레드로 · 다시 나누면 안 넣음", async () => {
+  const { D1, root } = setup();
+  const { replyCall } = await import("../../../packages/cli/src/turn.mjs");
+  const got: [string, string][] = [];
+  const send = async (pane: string, text: string) => { got.push([pane, text]); return pane === MB.paneOfId("ew_mail01") ? { state: "sending" as const } : { state: "in" as const }; };
+  const tool = localTools(D1, A, "메인 봇", "https://board.example", "", undefined, send);
+  const r = await tool("chat_split", { thread: root, why: "서류는 매출 보고 일, 견적 답장은 메일 비서 일", parts: PARTS }) as any;
+  assert.deepEqual(r.sent, [{ node: "매출 보고", state: "in" }, { node: "메일 비서", state: "sending" }]);
+  assert.ok(!("added" in r), "안쪽 칸은 도구 답에 안 나감");
+  assert.deepEqual(got.map(x => x[0]), [MB.paneOfId("n-1"), MB.paneOfId("ew_mail01")], "몫마다 그 노드 판으로 한 번씩");
+  for (const [i, [, text]] of got.entries()) {
+    assert.ok(text.startsWith(`[보드 · Primary · 스레드 ${root}] [Boarder chat] (나눔 — `), text);
+    assert.match(text, /까닭: 서류는 매출 보고 일, 견적 답장은 메일 비서 일\)/);
+    assert.ok(text.includes(PARTS[i].text), "그 노드 몫 글 그대로");
+    assert.ok(!text.includes(PARTS[1 - i].text), "다른 노드 몫은 안 넣음");
+    assert.ok(text.includes(`boarder chat --thread ${root}`), "답하는 길");
+    assert.ok(!/[\n\r]/.test(text), "한 줄(tmux 중간 Enter 없음)");
+  }
+  const call = replyCall(got[0][1], "서류 목록을 정리했어요");
+  assert.deepEqual(call, ["chat_say", { text: "서류 목록을 정리했어요", thread: root }]);
+  const sup = localTools(D1, A, "매출 보고", "https://board.example");
+  assert.deepEqual(await sup(call[0], call[1]), { ok: true });
+  const th = await get(D1, A, `/api/chat/primary/${root}`);
+  assert.equal(th.messages[0].ts, root);
+  assert.ok(th.messages.slice(1).some((m: any) => m.text === "서류 목록을 정리했어요"), "답이 원글 스레드에");
+  const pc = await get(D1, A, "/api/chat/primary");
+  assert.equal(pc.messages.find((x: any) => x.ts === root).replies, 1, "목록엔 답글 수만");
+  assert.ok(!pc.messages.some((x: any) => x.text === "서류 목록을 정리했어요"), "답 줄은 목록 바깥에 안 나옴");
+  // 같은 노드로 다시 나누면 건너뛰고 창에도 안 넣음
+  const again = await tool("chat_split", { thread: root, why: "다시", parts: [PARTS[0]] }) as any;
+  assert.deepEqual(again.skipped, ["매출 보고"]); assert.deepEqual(again.sent, []); assert.equal(got.length, 2);
+  // 까닭이 없으면 그 칸만 빠짐(옛 CLI) · 못 넣은 창은 fail 과 까닭
+  const { D1: D2, root: r2 } = setup();
+  const t2 = localTools(D2, A, "메인 봇", "https://board.example", "", undefined, async () => ({ state: "fail" as const, why: "이 노드엔 글을 넣을 창이 없어요" }));
+  assert.deepEqual((await t2("chat_split", { thread: r2, parts: [PARTS[0]] }) as any).sent, [{ node: "매출 보고", state: "fail", why: "이 노드엔 글을 넣을 창이 없어요" }]);
+  const { splitText } = await import("./member-split-send.ts");
+  assert.ok(!splitText(r2, "몫", null).includes("까닭"), "까닭 없음");
+  // 남의 글은 아무 창에도 안 넣음
+  const { D1: D3, bRoot } = setup(), sent3: string[] = [];
+  const t3 = localTools(D3, A, "메인 봇", "https://board.example", "", undefined, async p => { sent3.push(p); return { state: "in" as const }; });
+  await assert.rejects(t3("chat_split", { thread: bRoot, why: "x", parts: PARTS }), /없는 글/);
+  assert.equal(sent3.length, 0);
+});
+
+test("queueToImported post: 켜면 args.post = true(보내기 · 다시 열기 둘 다), 기본은 없음", async () => {
+  const { D1, db } = setup();
+  const { queueToImported } = await import("./member-imported.ts");
+  const w = { key: "k1", engine: "tmux", handle: null, title: "매출 보고", device_id: "d1", state: "idle" } as never;
+  const parked = { key: "k2", engine: "tmux", handle: null, title: "자료 정리", device_id: "d1", state: "parked" } as never;
+  const a = await queueToImported(D1, A, w, "몫", undefined, true), b = await queueToImported(D1, A, parked, "몫", undefined, true), c = await queueToImported(D1, A, w, "답", "1793000000.000001");
+  const args = (id: string) => JSON.parse(String((db.prepare("SELECT args FROM engine_cmd WHERE id = ?").get(id) as any).args));
+  assert.equal(args(a).post, true); assert.equal(args(b).post, true);
+  assert.ok(!("post" in args(c)), "기본은 표지 없음");
+});

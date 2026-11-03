@@ -78,16 +78,16 @@ export async function splitAdd(db: D1Database, me: string, root: string, parts: 
   const bad = got.filter(x => !x.t).map(x => x.p.node);
   if (bad.length) throw new Error(`없는 노드: ${bad.join(", ")} — 보드의 노드 · role_list 의 역할 창 이름만`);
   const have = new Set(((await db.prepare(`${ROWS} AND s.root_ts = ?2`).bind(me, root).all<R>()).results).map(r => String(r.node_id)));
-  const skipped: string[] = [], now = Date.now(), st: D1PreparedStatement[] = [];
+  const skipped: string[] = [], added: { node: string; pane: string; text: string }[] = [], now = Date.now(), st: D1PreparedStatement[] = [];
   for (const { p, t } of got) {
     if (have.has(t!.id)) { skipped.push(t!.name); continue; }
-    have.add(t!.id);
+    have.add(t!.id); added.push({ node: t!.name, pane: t!.pane, text: p.text });
     // 몫 글 줄과 이음을 한 batch 로(이음은 방금 넣은 줄의 id · ts — 줄만 남고 칩이 없는 일이 없게)
     st.push(db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, t!.name.slice(0, 120), "me", p.text, null, now, null),
       db.prepare("INSERT INTO member_split(owner, root_ts, log_id, post_ts, node_id, at) SELECT owner, ?, id, CAST(at / 1000 AS INTEGER) || '.' || printf('%06d', id % 1000000), ?, ? FROM board_log WHERE rowid = last_insert_rowid() AND owner = ?").bind(root, t!.id, now, me));
   }
   if (st.length) await db.batch(st);
-  return { ok: true, splits: await splitsOf(db, me, root), ...(skipped.length ? { skipped } : {}) };
+  return { ok: true, splits: await splitsOf(db, me, root), ...(skipped.length ? { skipped } : {}), added };   // added = 이번에 새로 남긴 몫(그 창에 넣을 것 — local.ts 가 쓰고 도구 답에선 뺌)
 }
 
 export async function splitMove(db: D1Database, me: string, post: string, pane: string) {

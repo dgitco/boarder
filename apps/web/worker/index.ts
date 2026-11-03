@@ -14,6 +14,7 @@ import { cleanSide, readSide, saveSide } from "./side-order";
 import { canBePrimary, primaryPick, PARK_H_LIM, type Item } from "./importer/group";
 import { landingPage } from "./landing";
 import { localTools } from "./local";
+import { splitSender } from "./member-split-send";
 import { addFeedback } from "./feedback";
 export { BoardSnap } from "./board";
 export { Bridge } from "./bridge";
@@ -510,7 +511,7 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
       return `${c.env.PUBLIC_URL}/api/agent/result/${id}`;
     },
     owner, person: who.owner || "",   // person = 봉함 DEK 주인(주인 '')
-    ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card))) } : {}),
+    ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)), splitSender(c.env, who.owner)) } : {}),
     host: who.host, win: who.win || who.pane,
     conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
   };

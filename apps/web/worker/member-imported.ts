@@ -26,7 +26,7 @@ export async function importedWindow(db: D1Database, owner: string, card: { wid:
   return w.state === "gone" || w.state === "parked" ? { ...w, state: "parked" } : w;
 }
 
-export async function queueToImported(db: D1Database, owner: string, w: Item, text: string, card?: string) {
+export async function queueToImported(db: D1Database, owner: string, w: Item, text: string, card?: string, post = false) {
   const line = text.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 2000);
   if (w.state === "parked") {
     const q = await db.prepare("SELECT id, args FROM engine_cmd WHERE owner = ? AND device_id = ? AND verb = 'reopen' AND state = 'queued' AND json_extract(args, '$.item') = ? ORDER BY at DESC LIMIT 1").bind(owner, w.device_id, w.key).first<{ id: string; args: string }>();
@@ -39,12 +39,12 @@ export async function queueToImported(db: D1Database, owner: string, w: Item, te
     const busy = await db.prepare("SELECT id FROM engine_cmd WHERE owner = ? AND device_id = ? AND verb = 'reopen' AND state IN ('taken', 'waiting') AND taken_at > ? AND json_extract(args, '$.item') = ? LIMIT 1").bind(owner, w.device_id, Date.now() - 180_000, w.key).first<{ id: string }>();
     if (busy) {
       const id = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
-      await db.prepare("INSERT INTO engine_cmd(id, owner, device_id, verb, args, at) VALUES (?,?,?,?,?,?)").bind(id, owner, w.device_id, "send", JSON.stringify({ item: w.key, engine: w.engine, handle: null, fresh: true, title: w.title, text: line, ...(card ? { card } : {}) }), Date.now()).run();
+      await db.prepare("INSERT INTO engine_cmd(id, owner, device_id, verb, args, at) VALUES (?,?,?,?,?,?)").bind(id, owner, w.device_id, "send", JSON.stringify({ item: w.key, engine: w.engine, handle: null, fresh: true, title: w.title, text: line, ...(post ? { post: true } : {}), ...(card ? { card } : {}) }), Date.now()).run();
       return id;
     }
   }
   const id = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
-  const args = { item: w.key, engine: w.engine, handle: json(w.handle, null), title: w.title, text: line, ...(card ? { card } : {}) };
+  const args = { item: w.key, engine: w.engine, handle: json(w.handle, null), title: w.title, text: line, ...(post ? { post: true } : {}), ...(card ? { card } : {}) };
   await db.prepare("INSERT INTO engine_cmd(id, owner, device_id, verb, args, at) VALUES (?,?,?,?,?,?)").bind(id, owner, w.device_id, w.state === "parked" ? "reopen" : "send", JSON.stringify(args), Date.now()).run();
   return id;
 }
