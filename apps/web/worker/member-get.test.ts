@@ -93,3 +93,14 @@ test("채널 읽기: ETag 이 붙고 같은 ETag 로 다시 읽으면 304, 글�
   const r3 = await get(f.D1, A, null, U("/api/chat/primary"), emo, t1!, "A");
   assert.equal(r3!.status, 200); assert.notEqual(r3!.headers.get("etag"), t1);
 });
+
+test("회원 판: 같은 분 안에 같은 ETag 로 다시 읽으면 304(초 단위 칸이 판을 바꾸지 않음)", async (t) => {
+  const f = seed(), U = (p: string) => new URL("https://x" + p), emo = async () => null;
+  const base = Math.floor(Date.now() / 60_000) * 60_000 + 5_000;   // 분 첫머리 + 5초
+  t.mock.timers.enable({ apis: ["Date"], now: base });
+  const r1 = await get(f.D1, A, { name: "메인 봇" }, U("/api/data"), emo, undefined, "A");
+  assert.equal(r1!.status, 200); const t1 = r1!.headers.get("etag"); assert.ok(t1);
+  t.mock.timers.setTime(base + 20_000);   // 20초 뒤(같은 분)
+  const r2 = await get(f.D1, A, { name: "메인 봇" }, U("/api/data"), emo, t1!, "A");
+  assert.equal(r2!.status, 304, "같은 분인데 판이 달라짐 — 초 단위 칸이 남아 있음");
+});

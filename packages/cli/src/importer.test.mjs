@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { refsOf, normRepo, tomlMcp, frontmatter, collectMcp } from './importer.mjs';
+import { refsOf, normRepo, tomlMcp, frontmatter, collectMcp, since, sameAsSent, markSent, SAME_MAX } from './importer.mjs';
 
 test('링크 뽑기: Slack 스레드 · GitHub 이슈/PR · Linear · 리포 안 #번호', () => {
   const r = refsOf('see https://acme.slack.com/archives/C0000000001/p1700000000000100 and https://github.com/Acme/Ledger/pull/88 and linear.app/acme/issue/ENG-12 fix #3720', 'github.com/acme/ledger');
@@ -31,4 +31,19 @@ test('MCP 모으기: 비밀값(env · 머리 · 주소 쿼리)은 안 나가고 
 test('역할 문서 머리말', () => {
   const { meta, body } = frontmatter('---\nname: reviewer\ndescription: "PR 리뷰"\nmodel: opus\n---\n# 리뷰\n본문');
   assert.equal(meta.name, 'reviewer'); assert.equal(meta.description, 'PR 리뷰'); assert.match(body, /본문/);
+});
+
+test('장부 줄 없는 창의 state_at: 같은 상태면 처음 본 때 그대로, 상태가 바뀌면 그때로(1분마다 Date.now() 라 늘 「바뀜」)', () => {
+  assert.equal(since('window:h:tmux:9', 'working', 1000), 1000);
+  assert.equal(since('window:h:tmux:9', 'working', 61_000), 1000);
+  assert.equal(since('window:h:tmux:9', 'idle', 121_000), 121_000);
+  assert.equal(since('window:h:tmux:9', 'idle', 181_000), 121_000);
+  assert.equal(since('window:h:tmux:8', 'idle', 181_000), 181_000, '창마다 따로');
+});
+test('--follow 같은 목록: 보낸 지 5분 안이면 안 보냄, 5분 넘거나 다르면 보냄', () => {
+  assert.equal(sameAsSent('a', 0), false, '보낸 적 없으면 보냄');
+  markSent('a', 1000);
+  assert.equal(sameAsSent('a', 1000 + 60_000), true);
+  assert.equal(sameAsSent('b', 1000 + 60_000), false);
+  assert.equal(sameAsSent('a', 1000 + SAME_MAX), false);
 });

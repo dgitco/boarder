@@ -169,7 +169,19 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     const sent = new Set(valid.map(i => i.key)), kinds = new Set(b.kinds);
     const goneKeys = [...have.values()].filter(o => !o.gone_at && o.state !== "parked" && kinds.has(o.kind as never) && !sent.has(String(o.key))).map(o => String(o.key));
     for (let i = 0; i < goneKeys.length; i += 80) st.push(DB.prepare(`UPDATE imp_item SET gone_at = ?, state = 'gone' WHERE owner = ? AND device_id = ? AND key IN (${goneKeys.slice(i, i + 80).map(() => "?").join(",")})`).bind(t, owner, d.id, ...goneKeys.slice(i, i + 80)));
+    const same = !st.length && !b.connectors?.length && !b.roles?.length && items.length > 0;
     st.push(DB.prepare("DELETE FROM imp_item WHERE owner = ? AND gone_at < ?").bind(owner, t - 7 * 86400_000));
+    if (same) {
+      const [au, ns] = await DB.batch([
+        DB.prepare("SELECT at, data FROM imp_audit WHERE owner = ? ORDER BY at DESC LIMIT 1").bind(owner),
+        DB.prepare("SELECT state, COUNT(*) n FROM mnode WHERE owner = ? AND archived_at IS NULL GROUP BY state").bind(owner),
+      ]);
+      const a = au.results[0] as { at: number; data: string } | undefined;
+      if (a && t - a.at < 5 * 60_000) {
+        const audit = json<{ nodes?: number }>(a.data, {}), states = Object.fromEntries((ns.results as { state: string; n: number }[]).map(r => [r.state, r.n]));
+        return c.json({ ok: true, items: items.length, dropped, nodes: audit.nodes ?? Object.values(states).reduce((x, n) => x + n, 0), states, audit, proposal_card: null, url: `${env(c).PUBLIC_URL}/#nodes`, same: true });
+      }
+    }
     for (let i = 0; i < st.length; i += 90) await DB.batch(st.slice(i, i + 90));
     const set = await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner).first<{ data: string }>();
     const cur = json<{ unit?: Unit; unit_by?: string }>(set?.data, {});

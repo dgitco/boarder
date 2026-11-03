@@ -108,6 +108,8 @@ function ownHerdr() {
 let ENGINE;
 async function engine() { if (ENGINE === undefined) { try { ENGINE = await import('./engine/index.mjs'); } catch { ENGINE = null; } } return ENGINE; }
 
+const SINCE = new Map();
+export const since = (key, state, now = Date.now()) => { const o = SINCE.get(key); if (o && o.state === state) return o.at; SINCE.set(key, { state, at: now }); return now; };
 export async function collectWindows() {
   const H = host(), items = [], live = liveClaude(), bySid = new Map(live.map(l => [l.sid, l]));
   const byPane = new Map(live.filter(l => l.tmux).map(l => [`${l.tmux.split(':')[0]}|${l.tmux.split('.').pop()}`, l]));
@@ -120,7 +122,7 @@ export async function collectWindows() {
       const l = w.session_id && bySid.get(w.session_id); if (l) taken.add(l.pid);
       items.push({ key: `window:${H}:${w.id}`, kind: 'window', engine: w.engine, title: clip(w.name || w.id, 120), cwd: w.cwd || '', win: `${H}:${w.id}`,
         session: w.session_id ? `session:claude:${w.session_id}` : '', state: ({ busy: 'working', waiting: 'question', background: 'working', starting: 'working', none: 'gone' })[st] || (st || 'idle'),
-        state_at: l?.at || Date.now(), handle: { engine: w.engine, id: w.id, tool: 'claude', session_id: w.session_id || '', cwd: w.cwd || '', name: w.name || '' } });
+        state_at: l?.at || 0, handle: { engine: w.engine, id: w.id, tool: 'claude', session_id: w.session_id || '', cwd: w.cwd || '', name: w.name || '' } });
     }
   }
   const pt = procTable();
@@ -133,7 +135,7 @@ export async function collectWindows() {
     const n = p.pane.slice(1), state = l ? (ST[l.status] || 'idle') : paneState(capture(p.pane));
     const cfgDir = l?.dir && path.resolve(l.dir) !== path.resolve(path.join(home(), '.claude')) ? l.dir : '';
     items.push({ key: `window:${H}:tmux:${n}`, kind: 'window', engine: 'tmux-own', title: clip(!/^(zsh|bash|sh|fish|node|claude|codex)$/.test(p.name) ? p.name : l?.name || `${p.sess}:${p.wi}`, 120), cwd: l?.cwd || p.cwd, win: `${H}:tmux:${n}`,
-      session: sid ? `session:${a.tool}:${sid}` : '', state, state_at: l?.at || Date.now(),
+      session: sid ? `session:${a.tool}:${sid}` : '', state, state_at: l?.at || 0,
       handle: { engine: 'tmux-own', pane: p.pane, tsession: p.sess, tool: a.tool, session_id: sid, cwd: l?.cwd || p.cwd, name: p.name, ...(cfgDir ? { config_dir: cfgDir } : {}) } });
   }
   const ours = new Set(engWins.filter(w => w.engine === 'herdr' && w.pane).map(w => w.pane));
@@ -144,7 +146,7 @@ export async function collectWindows() {
     const sid = l?.sid || '';
     const cfgDir = l?.dir && path.resolve(l.dir) !== path.resolve(path.join(home(), '.claude')) ? l.dir : '';
     items.push({ key: `window:${H}:herdr:${h.pane}`, kind: 'window', engine: 'herdr-own', title: clip(h.name || h.label || l?.name || `${tool} · ${path.basename(h.cwd || '')}`, 120), cwd: l?.cwd || h.cwd, win: `${H}:herdr:${h.pane}`,
-      session: sid ? `session:${tool}:${sid}` : '', state: l ? (ST[l.status] || HS[h.status] || 'idle') : (HS[h.status] || 'idle'), state_at: l?.at || Date.now(),
+      session: sid ? `session:${tool}:${sid}` : '', state: l ? (ST[l.status] || HS[h.status] || 'idle') : (HS[h.status] || 'idle'), state_at: l?.at || 0,
       handle: { engine: 'herdr-own', pane: h.pane, workspace: h.workspace, tool, session_id: sid, cwd: l?.cwd || h.cwd, name: h.name || h.label, park: false, ...(cfgDir ? { config_dir: cfgDir } : {}) } });
   }
   for (const l of live) {
@@ -152,6 +154,7 @@ export async function collectWindows() {
     items.push({ key: `window:${H}:claude:${l.pid}`, kind: 'window', engine: 'terminal', title: clip(l.name || `claude · ${path.basename(l.cwd)}`, 120), cwd: l.cwd, win: `${H}:claude:${l.pid}`,
       session: `session:claude:${l.sid}`, state: ST[l.status] || 'idle', state_at: l.at, handle: { engine: 'terminal', tool: 'claude', session_id: l.sid, cwd: l.cwd, park: false } });
   }
+  for (const i of items) if (!i.state_at) i.state_at = since(i.key, i.state);
   return items;
 }
 
@@ -352,13 +355,19 @@ async function api(method, p, body) {
   return j;
 }
 
-// background: 서비스 · 타이머가 부른 것 — 도는 사이 --stop 이 오면 올리지 않고, 이미 올렸으면 빈 목록으로 되돌림
-export async function importOnce({ setup = false, days = 7, print = false, quiet = false, gh = true, background = false } = {}) {
+export const SAME_MAX = 300_000;
+let SENT = null;
+export const sameAsSent = (sig, now = Date.now()) => !!SENT && SENT.sig === sig && now - SENT.at < SAME_MAX;
+export const markSent = (sig, at = Date.now()) => { SENT = { sig, at }; };
+export async function importOnce({ setup = false, days = 7, print = false, quiet = false, gh = true, background = false, skipSame = false } = {}) {
   const body = await collect({ days, setup, gh });
   if (background && stopped()) return null;
+  const sig = JSON.stringify(body);
+  if (skipSame && !setup && sameAsSent(sig)) return { skipped: true };
   if (print) console.log(JSON.stringify(body, null, 2));
   const j = await api('POST', '/api/import', body);
   if (background && stopped()) { await api('POST', '/api/import', EMPTY()); return null; }
+  markSent(sig);
   writeSecret(importMark(), { at: Date.now(), days, nodes: j.nodes });   // 들여오기를 켠 기기 — 감시 타이머(watch)가 5분마다 이어서 들여옴
   if (!quiet) {
     const by = Object.entries(j.states || {}).map(([k, n]) => `${({ turn: 'your turn', blocked: 'blocked', working: 'running', idle: 'idle', parked: 'parked', done: 'done' })[k] || k} ${n}`).join(' · ');
@@ -596,7 +605,7 @@ export async function importCommand(flags) {
       // 기기 상태(설정 › 기기)도 이 서비스가 5분마다 — 보기 전용 기본엔 따로 타이머가 없음
       if (Date.now() - watched > 300_000) { watched = Date.now(); try { const W = await import('./watch.mjs'); await W.sendMetrics(); } catch (e) { if (e.code === 'NO_DEVICE' || e.code === 'REVOKED') throw e; } }
       const n = await drainOnce();
-      if (first || n || Date.now() - last > 60_000) { await importOnce({ ...opt, setup: first && !!flags.setup, quiet: !first, print: false, background: true }); last = Date.now(); first = false; }
+      if (first || n || Date.now() - last > 60_000) { await importOnce({ ...opt, setup: first && !!flags.setup, quiet: !first, print: false, background: true, skipSame: !first && !n }); last = Date.now(); first = false; }
     } catch (e) { if (e.code === 'NO_DEVICE' || e.code === 'REVOKED') throw e; console.error(e.message); }
     await sleep(5000);
   }
