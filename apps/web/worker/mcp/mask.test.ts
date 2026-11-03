@@ -65,3 +65,60 @@ test("가림을 끈 도구(mask 0)의 숫자는 그대로", async () => {
   assert.deepEqual(shape("crm__x", { n: 9001011234567, t: 1793170372568 }, false), { n: 9001011234567, t: 1793170372568 });
   assert.deepEqual(shape("crm__x", { t: 1793170372568, ok: true, n: 3 }, true), { t: 1793170372568, ok: true, n: 3 });   // 가릴 것 없는 숫자는 숫자 그대로
 });
+
+test("계좌: 은행 · 계좌 낱말 뒤 번호는 끝 4자리만 남김", async () => {
+  const { maskText } = await import("./registry.ts");
+  assert.equal(maskText("신한은행 계좌 110-123-456789 로"), "신한은행 계좌 ***-***-**6789 로");
+  assert.equal(maskText("국민은행 123-45-6789012"), "국민은행 ***-**-***9012");
+  assert.equal(maskText("계좌: 1002-345-678901"), "계좌: ****-***-**8901");
+  assert.equal(maskText("주문번호 110-123-456789"), "주문번호 110-123-456789");   // 낱말 없음 — 그대로
+});
+
+test("계좌: 날짜 · 전화 · 사업자번호는 계좌로 안 가림", async () => {
+  const { maskText } = await import("./registry.ts");
+  assert.equal(maskText("계좌 정리일 2026-11-04"), "계좌 정리일 2026-11-04");
+  assert.equal(maskText("은행 담당 010-1234-5678"), "은행 담당 010-****-5678");   // 휴대전화 규칙으로만
+  assert.equal(maskText("은행 사업자 123-45-67890"), "은행 사업자 123-45-67890");
+});
+
+test("계좌: 키 이름이 계좌 낱말이면 값만으로 가림, mask=false 면 그대로", async () => {
+  const { shape } = await import("./registry.ts");
+  assert.deepEqual(shape("crm__x", { 계좌: "110-123-456789" }, true), { 계좌: "***-***-**6789" });
+  assert.deepEqual(shape("crm__x", { bank_account: "110-123-456789", acct: ["1002-345-678901"], memo: "110-123-456789" }, true),
+    { bank_account: "***-***-**6789", acct: ["****-***-**8901"], memo: "110-123-456789" });
+  assert.deepEqual(shape("crm__x", { 계좌: "110-123-456789" }, false), { 계좌: "110-123-456789" });
+});
+
+test("계좌: 이전 규칙(주민 · 카드 · 전화)과 같은 글에서 서로 안 망가뜨림", async () => {
+  const { maskText } = await import("./registry.ts");
+  const out = maskText("계좌 110-123-456789, 주민 900101-1234567, 카드 4111-1111-1111-1111, 전화 02-123-4567");
+  assert.equal(out, "계좌 ***-***-**6789, 주민 ******-*******, 카드 ****-****-****-1111, 전화 02-****-4567");
+});
+
+test("계좌: 계좌 꼴 뒤에 붙은 주민번호도 끝까지 가림(리뷰 P1)", async () => {
+  const { maskText } = await import("./registry.ts");
+  assert.equal(maskText("계좌 12-34-900101 1234567"), "계좌 **-**-****** *******");   // 겹친 구간은 숫자 전부 *
+});
+
+test("계좌: 계좌 안에 주민 · 전화 · 카드 꼴이 겹쳐도 계좌 앞자리가 안 샘(리뷰 P1 두 번째)", async () => {
+  const { maskText } = await import("./registry.ts");
+  assert.equal(maskText("계좌 123456-010-12345678"), "계좌 ******-***-********");
+  assert.equal(maskText("계좌 123456-900101-1234567"), "계좌 ******-******-*******");
+  assert.equal(maskText("계좌 4111 1111 1111-1111-12345678"), "계좌 **** **** ****-****-********");
+  assert.equal(maskText("계좌 12-34-010 1234 8210 123 4567"), "계좌 **-**-*** **** **** *** ****");
+  assert.equal(maskText("주민 900101-1234567, 계좌 110-123-456789"), "주민 ******-*******, 계좌 ***-***-**6789");   // 겹침 없으면 각자 규칙
+});
+
+test("계좌: 계좌 키 아래 한 단계 더 들어간 키 · 값도 가림", async () => {
+  const { shape } = await import("./registry.ts");
+  assert.deepEqual(shape("crm__x", { 계좌: { "110-123-456789": "예금" } }, true), { 계좌: { "***-***-**6789": "예금" } });
+  assert.deepEqual(shape("crm__x", { 계좌: { 번호: "110-123-456789" } }, true), { 계좌: { 번호: "***-***-**6789" } });
+});
+
+test("계좌: 긴 글도 한 번 훑기(덩어리마다 한 번)", async () => {
+  const { maskText } = await import("./registry.ts");
+  const big = "계좌 110-123-456789 전화 010-1234-5678 ".repeat(30000);
+  const t0 = Date.now(); const out = maskText(big);
+  assert.ok(Date.now() - t0 < 2000, `${Date.now() - t0}ms`);
+  assert.ok(!out.includes("110-123-456789") && !out.includes("1234-5678"));
+});

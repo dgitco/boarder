@@ -91,13 +91,46 @@ const PII: [RegExp, (m: string) => string][] = [
   [new RegExp(`(?<!\\d)(?:\\+?82${SEP}|0)1[016789]${SEP}\\d{3,4}${SEP}\\d{4}(?!\\d)`, "g"), m => `010-****-${m.replace(/\D/g, "").slice(-4)}`],
   [/(?<!\d)0(?:2|[3-6][1-5])[-\u2013\u2014. ]\d{3,4}[-\u2013\u2014. ]\d{4}(?!\d)/g, m => `${m.split(/[-\u2013\u2014. ]/)[0]}-****-${m.slice(-4)}`],
 ];
-export const maskText = (s: string) => PII.reduce((v, [re, f]) => v.replace(re, f), s.replace(/[\uFF10-\uFF19]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)));   // 전각 숫자만(NFKC 는 ①②③ 까지 바꿈)
+const RE_ACCT = /(?<![\d-])(\d{2,6})-(\d{2,6})-(\d{2,8})(?![\d-])/g, BANK_WORD = /은행|계좌/;
+export const ACCT_KEY = /은행|계좌|bank|acct|account/i;   // 이 키 이름의 값은 낱말 없이도 계좌 꼴을 가림
+const daysIn = (y: number, m: number) => m === 2 ? (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31;
+const isDate = (a: string, b: string, c: string) => a.length === 4 && b.length === 2 && c.length === 2 && +b >= 1 && +b <= 12 && +c >= 1 && +c <= daysIn(+a, +b);
+// 계좌 구간 [시작, 끝) — 원래 글 기준, 시작 순
+const acctSpans = (s: string, force: boolean) => [...s.matchAll(RE_ACCT)].filter(m => {
+  const [, a, b, c] = m, i = m.index!;
+  if (isDate(a, b, c)) return false;                                    // 날짜
+  if (a[0] === "0" && c.length === 4) return false;                     // 전화(0 으로 시작 · 끝 4자리) — 전화 규칙이 가림
+  if (a.length === 3 && b.length === 2 && c.length === 5) return false; // 사업자번호
+  return force || BANK_WORD.test(s.slice(Math.max(0, i - 120), i));
+}).map(m => [m.index!, m.index! + m[0].length] as [number, number]);
+const CLUMP = /[\d\s\-\u2013\u2014.+]+/g;   // 숫자 덩어리 — 계좌 · 주민 · 카드 · 전화 꼴의 글자가 모두 이 안
+const keepLast4 = (m: string) => { let keep = 4; return [...m].reverse().map(ch => /\d/.test(ch) ? (keep-- > 0 ? ch : "*") : ch).reverse().join(""); };
+const maskPii = (s: string) => PII.reduce((v, [re, f]) => v.replace(re, f), s);
+export const maskText = (raw: string, acctKey = false) => {
+  const s = raw.replace(/[\uFF10-\uFF19]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));   // 전각 숫자만(NFKC 는 ①②③ 까지 바꿈)
+  const acct = acctSpans(s, acctKey);
+  if (!acct.length) return maskPii(s);
+  const out: string[] = []; let at = 0, j = 0;
+  for (const m of s.matchAll(CLUMP)) {
+    const a = m.index!, b = a + m[0].length, inside: [number, number][] = [];
+    while (j < acct.length && acct[j][0] < b) { if (acct[j][0] >= a) inside.push(acct[j]); j++; }   // 계좌는 숫자와 - 뿐이라 한 덩어리 안에 통째로 듦
+    if (!inside.length) continue;
+    out.push(maskPii(s.slice(at, a)));
+    const first = m[0].search(/\d/), last = m[0].length - [...m[0]].reverse().findIndex(c => /\d/.test(c));
+    const core = m[0].slice(first, last);
+    const only = inside.length === 1 && inside[0][0] === a + first && inside[0][1] === a + last && maskPii(core) === core;   // 안에 주민 · 카드 · 전화 꼴이 있으면 끝 4자리도 안 남김
+    out.push(only ? m[0].slice(0, first) + keepLast4(core) + m[0].slice(last) : m[0].replace(/\d/g, "*"));
+    at = b;
+  }
+  out.push(maskPii(s.slice(at)));
+  return out.join("");
+};
 
-function deep(v: unknown, mask: boolean): unknown {
-  if (typeof v === "string") { const m = mask ? maskText(v) : v; return m.length > MAX_STR ? `${m.slice(0, MAX_STR)}…(${m.length - MAX_STR}자 줄임)` : m; }
+function deep(v: unknown, mask: boolean, acctKey = false): unknown {   // acctKey: 바로 위 키 이름이 은행 · 계좌 낱말
+  if (typeof v === "string") { const m = mask ? maskText(v, acctKey) : v; return m.length > MAX_STR ? `${m.slice(0, MAX_STR)}…(${m.length - MAX_STR}자 줄임)` : m; }
   if (typeof v === "number" && mask) { const s = String(v), m = maskText(s); return m === s ? v : m; }
-  if (Array.isArray(v)) return v.map(x => deep(x, mask));
-  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [mask ? maskText(k) : k, deep(x, mask)]));
+  if (Array.isArray(v)) return v.map(x => deep(x, mask, acctKey));
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [mask ? maskText(k, acctKey) : k, deep(x, mask, acctKey || ACCT_KEY.test(k))]));
   return v;
 }
 export function shape(name: string, out: unknown, mask: boolean): unknown {
