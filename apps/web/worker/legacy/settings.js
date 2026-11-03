@@ -342,11 +342,11 @@
   function rename(c){
     const li = main.querySelector(`.bxs-conn[data-id="${CSS.escape(c.id)}"] .bxs-cm`) || main.querySelector(`.gk-rw[data-id="${CSS.escape(c.id)}"] .gk-n`) || main.querySelector('[data-rename-at]');
     if (!li) return;
-    li.innerHTML = `<div class="bxs-row"><input class="bxs-in sm" value="${esc(c.label)}" placeholder="라벨 없음" aria-label="${esc(c.prefix)} 라벨" data-rl>${btn('저장', 'data-rs', 'sm pri')}${btn('취소', 'data-rc', 'sm ghost')}</div><p class="bxs-mut">로그인은 그대로예요. 도구 이름이 새 라벨로 바뀌어요.</p>`;
+    li.innerHTML = `<div class="bxs-row"><input class="bxs-in sm" value="${esc(c.label)}" placeholder="라벨 없음 · 영문·숫자·-" aria-label="${esc(c.prefix)} 라벨" data-rl>${btn('저장', 'data-rs', 'sm pri')}${btn('취소', 'data-rc', 'sm ghost')}</div><p class="bxs-mut">로그인은 그대로예요. 도구 이름이 새 라벨로 바뀌어요.</p>`;
     const i = li.querySelector('[data-rl]'); i.focus(); i.select();
     li.onclick = async e => {
       if (e.target.closest('[data-rc]')) return render();
-      if (e.target.closest('[data-rs]')){ try { await api('PATCH', 'api/connections/' + encodeURIComponent(c.id), {label: i.value.trim()}); toast('이름을 바꿨어요'); render(); } catch (err) { toast(err.message); } }
+      if (e.target.closest('[data-rs]')){ const v = i.value.trim(), sl = v.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24); if (v && !sl) return toast('영문·숫자·-만 쓸 수 있어요'); try { await api('PATCH', 'api/connections/' + encodeURIComponent(c.id), {label: v}); toast(v && sl !== v ? `이름을 「${sl}」 로 바꿨어요(영문·숫자·-만)` : '이름을 바꿨어요'); render(); } catch (err) { toast(err.message); } }
     };
     i.onkeydown = e => { if (e.key === 'Escape') render(); if (e.key === 'Enter') li.querySelector('[data-rs]').click(); };
   }
