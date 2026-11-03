@@ -56,7 +56,22 @@ function nameOf(s: string) {
   return null;
 }
 
-async function file(env: Env, ix: Index, key: string, html: boolean): Promise<Out | null> {
+export function byteRange(range: string | undefined, n: number): { a: number; z: number } | "bad" | null {
+  const m = /^bytes=(\d*)-(\d*)$/.exec((range || "").trim()); if (!m || (!m[1] && !m[2])) return null;
+  const a = m[1] ? +m[1] : Math.max(0, n - +m[2]), z = m[1] ? Math.min(m[2] ? +m[2] : n - 1, n - 1) : n - 1;
+  return a > z || a >= n ? "bad" : { a, z };
+}
+// 판(HTML) 말고 파일만 Range: 머리로 크기를 보고 그 조각만 R2 에서 받음
+async function ranged(env: Env, key: string, range: string): Promise<Out | null> {
+  const hd = await env.RESULTS.head(key); if (!hd) return null;
+  const r = byteRange(range, hd.size), ct = hd.httpMetadata?.contentType || "application/octet-stream";
+  if (r === "bad") return { status: 416, headers: { "content-range": `bytes */${hd.size}`, "cache-control": "no-store" }, body: new Uint8Array(0) };
+  const o = await env.RESULTS.get(key, r ? { range: { offset: r.a, length: r.z - r.a + 1 } } : undefined); if (!o) return null;
+  return { status: r ? 206 : 200, headers: { "content-type": ct, "accept-ranges": "bytes", ...(r ? { "content-range": `bytes ${r.a}-${r.z}/${hd.size}` } : {}), "cache-control": "no-store" }, body: await bytes(o) };
+}
+
+async function file(env: Env, ix: Index, key: string, html: boolean, range?: string): Promise<Out | null> {
+  if (!html && range) return ranged(env, key, range);
   const o = await env.RESULTS.get(key); if (!o) return null;
   const b = await bytes(o);
   return html ? { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: shim(ix, b) }
@@ -64,7 +79,7 @@ async function file(env: Env, ix: Index, key: string, html: boolean): Promise<Ou
 }
 
 // artview.serve(parts)
-async function art(env: Env, ix: Index, parts: string[], anon = false): Promise<Out | null> {
+async function art(env: Env, ix: Index, parts: string[], anon = false, range?: string): Promise<Out | null> {
   if (parts.length === 1 && parts[0] === "_kit.js") { const o = await env.RESULTS.get(SYS + "kit.js"); return o ? { status: 200, headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" }, body: await bytes(o) } : null; }
   if (!parts.length || !ID.test(parts[0])) return text(404, "not found");
   const aid = parts[0], rest = parts.slice(1).filter(p => !["", ".", ".."].includes(p)), it = ix.arts[aid];
@@ -77,7 +92,7 @@ async function art(env: Env, ix: Index, parts: string[], anon = false): Promise<
   }
   if (it.kind === "page") {
     const rel = rest.length ? rest.join("/") : it.main || "";
-    return rel ? file(env, ix, `art/${aid}/${rel}`, suffix(rel) === ".html") : null;
+    return rel ? file(env, ix, `art/${aid}/${rel}`, suffix(rel) === ".html", range) : null;
   }
   if (!rest.length) {
     const o = await env.RESULTS.get(SYS + "artcanvas.html"); if (!o) return null;
@@ -86,9 +101,9 @@ async function art(env: Env, ix: Index, parts: string[], anon = false): Promise<
   }
   if (rest[rest.length - 1] === "support.js") return { status: 200, headers: { "content-type": "text/javascript", "cache-control": "no-store" }, body: te.encode(SUPPORT_JS) };
   const name = rest.join("/"), html = suffix(name) === ".html";
-  if (it.map?.[name]) return file(env, ix, `art/${aid}/${it.map[name]}`, html);
+  if (it.map?.[name]) return file(env, ix, `art/${aid}/${it.map[name]}`, html, range);
   for (const rel of [...new Set([it.cv ? `${it.cv}/${name}` : name, name, `project/${name}`])]) {
-    const o = await file(env, ix, `art/${aid}/${rel}`, html); if (o) return o;
+    const o = await file(env, ix, `art/${aid}/${rel}`, html, range); if (o) return o;
   }
   return null;
 }
@@ -158,10 +173,10 @@ export async function answer(env: Env, path: string, headers: Record<string, str
   const raw = unq(p); if (raw === null) return null;
   const parts = raw.split("/").filter(Boolean);
   const ix = await index(env); if (!ix) return null;
-  if (parts[0] === "art") return art(env, ix, parts.slice(1), anon);
+  if (parts[0] === "art") return art(env, ix, parts.slice(1), anon, headers.range);
   const h = parts.length === 2 ? parts[1] : "";   // artview.blob — 다리는 Referer 없이 불렀으니 모든 백업의 _assets 에서 처음 것
   if (!BLOB.test(h)) return text(404, "not found");
-  return ix.blobs[h] ? file(env, ix, ix.blobs[h], false) : null;
+  return ix.blobs[h] ? file(env, ix, ix.blobs[h], false, headers.range) : null;
 }
 
 // 그림자 대조(shadow_files): 다리 답 · R2 답의 몸통 해시(JSON 은 키 순서를 맞춘 글) — 다르면 어디서인지 PostHog 에

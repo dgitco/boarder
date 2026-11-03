@@ -29,7 +29,10 @@ function r2() {
   const obj = (key: string) => { const v = m.get(key)!; return { key, size: v.b.length, httpMetadata: v.httpMetadata, customMetadata: v.customMetadata, body: new Response(v.b as BodyInit).body, arrayBuffer: async () => v.b.slice().buffer, text: async () => new TextDecoder().decode(v.b), json: async () => JSON.parse(new TextDecoder().decode(v.b)) }; };
   const R = {
     put: async (key: string, b: ArrayBuffer | string | Uint8Array | Blob, o: { httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string> } = {}) => { m.set(key, { b: typeof b === "string" ? new TextEncoder().encode(b) : b instanceof Blob ? new Uint8Array(await b.arrayBuffer()) : new Uint8Array(b as ArrayBuffer), ...o }); return {}; },
-    get: async (key: string) => m.has(key) ? obj(key) : null,
+    get: async (key: string, o?: { range?: { offset: number; length: number } }) => {   // R2 range 받기(조각 몸통 · size 는 전체)
+      if (!m.has(key)) return null; const x = obj(key), r = o?.range; if (!r) return x;
+      const b = m.get(key)!.b.slice(r.offset, r.offset + r.length); return { ...x, body: new Response(b as BodyInit).body, arrayBuffer: async () => b.slice().buffer };
+    },
     head: async (key: string) => m.has(key) ? obj(key) : null,
     list: async (o: { prefix?: string }) => ({ objects: [...m.keys()].filter(k => k.startsWith(o.prefix || "")).sort().map(obj), truncated: false }),
     delete: async (k: string | string[]) => { for (const x of Array.isArray(k) ? k : [k]) m.delete(x); },
@@ -217,4 +220,28 @@ test("지우기: 파일 지우다 중간에 실패해도 표지가 남아 다시
   assert.equal((await del()).status, 200);
   assert.ok(![...s.m.keys()].some(k => k.includes(`/${a.id}`)));
   assert.equal((await del()).status, 404);
+});
+
+test("Range: 회원 캔버스 영상은 206 조각 · 끝 n 바이트 · 파일 밖 416, 로그인 · 표 길 둘 다(아이폰 사파리)", async () => {
+  const s = await setup(), vid = new Uint8Array(5000).map((_, i) => i % 251);
+  const j = await (await s.put(TOK.A, { "index.html": PAGE, "clip.mp4": vid })).json() as any;
+  const get = async (path: string, range?: string, email: string | null = A) => s.go(path, { headers: { ...(range ? { range } : {}), ...(email ? { cookie: await cookie(email) } : {}) } });
+  const r1 = await get(`/art/${j.id}/clip.mp4`, "bytes=0-1023");
+  assert.equal(r1.status, 206); assert.equal(r1.headers.get("content-range"), "bytes 0-1023/5000"); assert.equal(r1.headers.get("accept-ranges"), "bytes");
+  assert.deepEqual(new Uint8Array(await r1.arrayBuffer()), vid.slice(0, 1024));
+  const r2 = await get(`/art/${j.id}/clip.mp4`, "bytes=-100");
+  assert.equal(r2.status, 206); assert.equal(r2.headers.get("content-range"), "bytes 4900-4999/5000");
+  assert.deepEqual(new Uint8Array(await r2.arrayBuffer()), vid.slice(4900));
+  const r3 = await get(`/art/${j.id}/clip.mp4`, "bytes=4000-");   // 끝 없는 꼴 · 끝 넘는 끝은 파일 끝으로
+  assert.equal(r3.headers.get("content-range"), "bytes 4000-4999/5000"); assert.equal((await r3.arrayBuffer()).byteLength, 1000);
+  const r4 = await get(`/art/${j.id}/clip.mp4`, "bytes=5000-");
+  assert.equal(r4.status, 416); assert.equal(r4.headers.get("content-range"), "bytes */5000");
+  const r5 = await get(`/art/${j.id}/clip.mp4`);   // Range 없으면 예전처럼 통째 200
+  assert.equal(r5.status, 200); assert.equal((await r5.arrayBuffer()).byteLength, 5000);
+  const t = await MC.token(SECRET, await MC.keyOf(A), j.id);
+  const r6 = await get(`/art/${j.id}/clip.mp4?bxt=${t}`, "bytes=10-19", null);
+  assert.equal(r6.status, 206); assert.equal(r6.headers.get("content-range"), "bytes 10-19/5000");
+  assert.deepEqual(new Uint8Array(await r6.arrayBuffer()), vid.slice(10, 20));
+  const r7 = await get(`/art/${j.id}/`, "bytes=0-9");   // 판(HTML)은 Range 를 안 봄 — 표를 끼운 통째
+  assert.equal(r7.status, 200); assert.match(await r7.text(), /지어낸 글/);
 });

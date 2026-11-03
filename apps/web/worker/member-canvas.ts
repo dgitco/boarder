@@ -80,9 +80,17 @@ export async function list(env: Env, email: string) {
   return out;
 }
 
-export type Got = { body: ReadableStream | Uint8Array; ct: string; html: boolean; shell?: boolean };
+export type Got = { body: ReadableStream | Uint8Array; ct: string; html: boolean; shell?: boolean; status?: number; extra?: Record<string, string> };
+async function blob(env: Env, key: string, guess: string, range?: string): Promise<Got | null> {
+  if (!range) { const o = await env.RESULTS.get(key); return o ? { body: o.body, ct: o.httpMetadata?.contentType || guess, html: false } : null; }
+  const hd = await env.RESULTS.head(key); if (!hd) return null;
+  const r = files.byteRange(range, hd.size), ct = hd.httpMetadata?.contentType || guess;
+  if (r === "bad") return { body: new Uint8Array(0), ct, html: false, status: 416, extra: { "content-range": `bytes */${hd.size}` } };
+  const o = await env.RESULTS.get(key, r ? { range: { offset: r.a, length: r.z - r.a + 1 } } : undefined); if (!o) return null;
+  return { body: o.body, ct, html: false, status: r ? 206 : 200, extra: { "accept-ranges": "bytes", ...(r ? { "content-range": `bytes ${r.a}-${r.z}/${hd.size}` } : {}) } };
+}
 const te2 = new TextEncoder(), td = new TextDecoder();
-export async function file(env: Env, mk: string, id: string, rel: string): Promise<Got | null> {
+export async function file(env: Env, mk: string, id: string, rel: string, range?: string): Promise<Got | null> {
   if (!ID.test(id)) return null;
   const m = await metaOf(env, mk, id); if (!m) return null;
   if (m.kind === "canvas") {
@@ -95,9 +103,9 @@ export async function file(env: Env, mk: string, id: string, rel: string): Promi
     if (rel === "support.js" || rel.endsWith("/support.js")) return { body: te2.encode(files.SUPPORT_JS), ct: "text/javascript; charset=utf-8", html: false };
     for (const p of [...new Set([m.cv ? `${m.cv}/${rel}` : rel, rel, `project/${rel}`])]) {
       if (!okPath(p)) continue;
+      if (!isHtml(p)) { const g = await blob(env, fileKey(mk, id, m.ver, p), typeOf(p), range); if (g) return g; continue; }
       const o = await env.RESULTS.get(fileKey(mk, id, m.ver, p)); if (!o) continue;
       const ct = o.httpMetadata?.contentType || typeOf(p);
-      if (!isHtml(p)) return { body: o.body, ct, html: false };
       const ix = await files.index(env).catch(() => null), b = new Uint8Array(await o.arrayBuffer());
       return { body: ix?.shim ? files.shim(ix, b) : b, ct, html: true };
     }
@@ -105,8 +113,9 @@ export async function file(env: Env, mk: string, id: string, rel: string): Promi
   }
   const p = !rel || rel.endsWith("/") ? rel + "index.html" : rel;
   if (!okPath(p)) return null;
+  if (!isHtml(p)) return blob(env, fileKey(mk, id, m.ver, p), typeOf(p), range);
   const o = await env.RESULTS.get(fileKey(mk, id, m.ver, p)); if (!o) return null;
-  return { body: o.body, ct: o.httpMetadata?.contentType || typeOf(p), html: isHtml(p) };
+  return { body: o.body, ct: o.httpMetadata?.contentType || typeOf(p), html: true };
 }
 
 export async function ownerWin(env: Env, email: string, art: string) {

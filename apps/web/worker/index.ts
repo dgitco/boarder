@@ -1598,7 +1598,7 @@ const PASS_RES = ["x-retry-safe", "content-type", "content-encoding", "etag", "c
 const ART_ROOT = /^\/art\/([A-Za-z0-9]{16,40})\/$/;
 const ART_DEEP = /^\/art\/([A-Za-z0-9]{16,40})\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*\/){1,4}[A-Za-z0-9_-][^/?#]*\.(?:html|js|css|json|png|jpe?g|webp|gif|avif|svg|woff2?)$/;   // 마디 첫 글자는 점이 아님(.. 막음)
 const edgeCache = () => (caches as unknown as { default: Cache }).default;   // Workers 입구 캐시(DOM 타입엔 없음)
-const ART_FILE = /^\/art\/([A-Za-z0-9]{16,40})\/(?:project\/)?(?:canvas\.json|[^/?#]+\.(?:html|js|css|png|jpe?g|webp|gif|avif|svg)|_assets\/[A-Za-z0-9_-]{1,80}\.(?:png|jpe?g|webp|gif|avif|svg))$/;
+const ART_FILE = /^\/art\/([A-Za-z0-9]{16,40})\/(?:project\/)?(?:canvas\.json|[^/?#]+\.(?:html|js|css|png|jpe?g|webp|gif|avif|svg|mp4|webm|mov|m4v|mp3|m4a|wav|ogg)|_assets\/[A-Za-z0-9_-]{1,80}\.(?:png|jpe?g|webp|gif|avif|svg))$/;
 const artTagHtml = (id: string, t: string, body: ReadableStream) => {
   const tag = (v: string) => !v.trim() || /^(?:[a-z][a-z0-9+.-]*:|[\\/][\\/]|#|data:)/i.test(v.trim()) ? v : v.replace(/^([^?#\s]*)(\?[^#\s]*)?/, (_m, p: string, q?: string) => `${p}${q ? `${q}&` : "?"}bxt=${encodeURIComponent(t)}`);
   return new HTMLRewriter()
@@ -1621,10 +1621,10 @@ const artFetchShim = (id: string, t: string) => `<script>(()=>{const T=${JSON.st
 
 const ART_CSP = "sandbox allow-scripts allow-popups allow-downloads; form-action 'none'";
 async function memberArt(c: Context<{ Bindings: Env }>, mk: string, id: string, rel: string, tok?: string, self?: () => Promise<string>) {
-  const f = await memberCanvas.file(c.env as never, mk, id, rel); if (!f) return null;
-  const h = new Headers({ "content-type": f.ct, "x-content-type-options": "nosniff", "content-security-policy": ART_CSP, "cache-control": "private, no-store", "x-boarder-src": "member" });
+  const f = await memberCanvas.file(c.env as never, mk, id, rel, c.req.header("range")); if (!f) return null;
+  const h = new Headers({ "content-type": f.ct, "x-content-type-options": "nosniff", "content-security-policy": ART_CSP, "cache-control": "private, no-store", "x-boarder-src": "member", ...f.extra });
   if (tok) h.set("access-control-allow-origin", "*");
-  if (c.req.method === "HEAD") return new Response(null, { status: 200, headers: h });
+  if (c.req.method === "HEAD") return new Response(null, { status: f.status || 200, headers: h });
   let body = f.body;
   if (f.shell && self && body instanceof Uint8Array) {
     const name = await self().catch(() => "");
@@ -1632,7 +1632,7 @@ async function memberArt(c: Context<{ Bindings: Env }>, mk: string, id: string, 
   }
   const stream = () => body instanceof Uint8Array ? new Response(body as unknown as BodyInit).body! : body;
   if (f.html) return new Response(artTagHtml(id, tok || await memberCanvas.token(c.env.BETTER_AUTH_SECRET, mk, id), stream()), { status: 200, headers: h });
-  return new Response(stream(), { status: 200, headers: h });
+  return new Response(stream(), { status: f.status || 200, headers: h });
 }
 
 const MANIFEST = JSON.stringify({ name: "보더", short_name: "보더", start_url: "/", scope: "/", display: "standalone", background_color: "#fafafa", theme_color: "#fafafa", lang: "ko",
@@ -1859,10 +1859,10 @@ app.all("*", async c => {
   if (!aj && c.req.method === "GET" && url.searchParams.has("bxt") && !/%2f|%5c/i.test(url.pathname)) { const d = ART_DEEP.exec(url.pathname); if (d && (await artKind(c.env, chOf(c), d[1])) === "page") aj = d; }
   if (aj && await artOk(c.env, aj[1], url.searchParams.get("bxt"))) {
     try {
-      const fh = { accept: c.req.header("accept") || "*/*", "accept-encoding": "gzip" }, fr = await filesFirst(c, url.pathname, fh);
+      const rg = c.req.header("range"), fh: Record<string, string> = { accept: c.req.header("accept") || "*/*", "accept-encoding": "gzip", ...(rg ? { range: rg } : {}) }, fr = await filesFirst(c, url.pathname, fh);
       const t1 = Date.now(), r = fr ?? await boardCall(c.env, chOf(c), { method: "GET", path: url.pathname, headers: fh }); if (!fr) { bridgeSeg(c.req.raw, Date.now() - t1, r.headers); filesShadow(c, url.pathname, fh, r, "anon"); }
       const h = new Headers({ "access-control-allow-origin": "*", "x-content-type-options": "nosniff", "content-security-policy": "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads", "cache-control": "private, no-store" });
-      for (const k of ["content-type", "content-encoding"]) if (r.headers[k]) h.set(k, r.headers[k]);
+      for (const k of ["content-type", "content-encoding", "content-range", "accept-ranges"]) if (r.headers[k]) h.set(k, r.headers[k]);
       if (fr) fromR2(h);
       if (r.status === 200 && (url.pathname.endsWith(".html") || (url.pathname.endsWith("/") && (r.headers["content-type"] || "").includes("text/html")))) {
         let b = new Response(r.body as unknown as BodyInit).body!;
