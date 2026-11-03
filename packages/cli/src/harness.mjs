@@ -194,7 +194,7 @@ const unitBins = text => [...text.matchAll(/%h\/\.local\/bin\/([\w.-]+)/g)].map(
 
 /** 켜기 — 앞서 깐 것은 먼저 걷고 지금 값으로 다시(다시 돌려도 같음) */
 export async function enableHarness({ log = console.log, name, lang } = {}) {
-  if (process.platform === 'win32') { log('Windows runs without the harness — Boarder uses your own subscription (SDK engine). 윈도우는 하네스 없이 내 구독(SDK)으로 써요.'); return { skipped: 'win32' }; }
+  if (process.platform === 'win32') { log('Windows runs without the harness — Boarder uses your own subscription (SDK engine). 윈도우는 하네스 없이 내 구독(SDK)으로 써요.'); return { ok: true, skipped: 'win32' }; }
   const p = await fetchPlan();
   const values = await askValues({ name, lang, log });
   const prev = loadState(); if (prev) disableHarness({ log: () => {}, keepFiles: true });

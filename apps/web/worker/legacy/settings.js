@@ -800,7 +800,7 @@
       if (m){ try { localStorage.setItem('hb-still', m.dataset.st); } catch {} uiSave('still', m.dataset.st); R.classList.toggle('bx-still', m.dataset.st === '1'); return draw(); }
     };
   };
-  const FT = {report: ['에이전트가 직접 보고', 'AI 도구에 보더 MCP · 시작 훅 · 스킬을 넣어요(먼저 백업, 끄면 그 칸만 빠짐)'], engine: ['보더 엔진', '보더가 이 기기에서 창을 열고 · 깨우고 · 주차하고 · 닫아요(보더 자신의 tmux)']};
+  const FT = {report: ['에이전트가 직접 보고', 'AI 도구에 보더 MCP · 시작 훅 · 스킬을 넣어요(먼저 백업, 끄면 그 칸만 빠짐)'], engine: ['보더 엔진', '보더가 이 기기에서 창을 열고 · 깨우고 · 주차하고 · 닫아요(쓰던 도구면 tmux, 처음이면 내 구독 SDK)']};
   const featCards = (N, perm) => {
     const ds = (N.devices || []).filter(d => d.features), pend = (N.cmds || []).filter(x => x.verb === 'feature' && (x.state === 'queued' || x.state === 'taken'));
     const row = (t, d, right) => `<div class="bxs-row between"><div><b>${t}</b><p class="bxs-mut" style="margin:2px 0 0">${d}</p></div>${right}</div>`;
