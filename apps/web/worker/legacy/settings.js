@@ -152,6 +152,7 @@
   const PAGES = {};
   PAGES.connectors = async (el, id, live) => {
     if (id === 'hooks') return unboundHooks(el, live);
+    if (id && id.startsWith('svc~')) return svcPage(el, id.slice(4), live);
     if (id) return detail(el, id, live);
     const [{connections}, cat, {hooks}] = await Promise.all([api('GET', 'api/connections'), catalog ? Promise.resolve(catalog) : api('GET', 'api/connectors').then(x => (catalog = x)), api('GET', 'api/hooks')]);
     if (!live()) return;
@@ -172,7 +173,7 @@
     const have = new Set(groups.keys());
     const more = [...(cat.services || []).filter(s => !have.has(s.service) && !s.needs_app).map(s => ({svc: s.service, title: s.title, attr: `data-cs="${esc(s.service)}"`})),
       ...(cat.apis || []).filter(s => !have.has(s.service) && s.ready).map(s => ({svc: s.service, title: s.title, attr: s.oauth ? `data-aoauth="${esc(s.service)}"` : `data-ap="${esc(s.service)}"`}))];
-    const moreTile = m => `<div class="gk-it" data-ask="${esc(m.svc)}">${gic(m.svc, m.title)}<div class="gk-m"><b>${esc(m.title)}</b><span>연결 안 됨</span></div>${btn('연결하기', `data-gkask="${esc(m.svc)}" data-gkattr="${esc(m.attr)}" data-gktitle="${esc(m.title)}"`, 'sm')}</div>`;
+    const moreTile = m => `<div class="gk-it" data-ask="${esc(m.svc)}">${gic(m.svc, m.title)}<div class="gk-m"><b>${esc(m.title)}</b><span>연결 안 됨</span></div>${btn('연결하기', m.attr, 'sm')}</div>`;
     const rows = `<div class="gk-grid">${[...groups].sort(([a], [b]) => a.localeCompare(b)).sort(([, a], [, b]) => b.some(bad) - a.some(bad)).map(tile).join('')}`
       + (unbound.length ? `<div class="gk-it" data-to="#settings/connectors/hooks" tabindex="0" role="button"><span class="gk-ic" style="background:hsl(210 20% 40%)">${IC.hooks}</span><div class="gk-m"><b>웹훅</b><span>받는 주소 ${unbound.length}개</span></div></div>` : '') + '</div>'
       + (more.length ? `<div class="gk-h2">연결할 수 있는 서비스</div><div class="gk-grid">${more.slice(0, 24).map(moreTile).join('')}</div>` : '');
@@ -235,24 +236,16 @@
       add.querySelector('[data-q]').dispatchEvent(new Event('input'));
       history.replaceState(history.state, '', location.hash.split('?')[0]);
     }
-    const mod = h => { el.querySelector('.gk-mod')?.remove(); const d = mk('div', 'gk-mod', `<div class="gk-card" role="dialog" aria-modal="true"><button type="button" class="bxs-icon gk-x" data-gkclose aria-label="닫기">${IC.x}</button>${h}</div>`); el.append(d); return d; };
-    const svcModal = svc => {
-      const xs = groups.get(svc) || []; if (!xs.length) return;
-      mod(`<div class="gk-hd">${gic(svc, xs[0].title)}<b>${esc(xs[0].title)}</b></div><div class="gk-sec">계정</div><div class="gk-box">${xs.map(c => `<div class="gk-rw" data-id="${esc(c.id)}"><span class="gk-n"><a href="#settings/connectors/${encodeURIComponent(c.id)}" data-to="#settings/connectors/${encodeURIComponent(c.id)}">${esc(c.label || c.account || '기본')}</a>${c.account && c.label ? `<small> ${esc(c.account)}</small>` : ''}</span>${bad(c) ? (canRecon(c) ? btn('다시 연결', `data-recon="${esc(c.id)}"`, 'sm gk-warn') : apiReady(c) ? btn('키 넣기', `data-apikey="${esc(c.id)}"`, 'sm gk-warn') : '<span class="gk-bad">끊김</span>') : '<span class="gk-ok">연결됨</span>'}<button type="button" class="bxs-more" data-more="${esc(c.id)}" aria-label="${esc(c.prefix)} 메뉴" aria-haspopup="menu">${IC.more}</button></div>`).join('')}<div class="gk-rw gk-add" data-gkplus="${esc(svc)}">+ 계정 더하기</div></div>${hooksOf(svc).length ? `<div class="gk-sec">웹훅</div><div class="gk-box">${hooksOf(svc).map(h => `<div class="gk-rw"><a class="gk-n" href="#settings/connectors/hooks" data-to="#settings/connectors/hooks">${esc(h.name)}</a><span class="bxs-mut">${h.enabled ? `받음 ${h.count}` : '꺼짐'}</span></div>`).join('')}</div>` : ''}`);
-    };
-    const askModal = (svc, attr, title) => mod(`<div class="gk-cm">${gic(svc, title)}<h3>${esc(title)}에 연결</h3><p>에이전트가 내 대신 이 서비스를 쓰게 해요</p><div class="gk-chk"><div><i>✓</i><span><b>안전하게 로그인해요</b>비밀번호는 보더가 보지 못해요</span></div><div><i>✓</i><span><b>무엇을 할지 내가 정해요</b>내가 허락한 것만 쓰게 돼요</span></div><div><i>✓</i><span><b>언제든 연결을 끊을 수 있어요</b>설정 › 커넥터에서 바로 제거해요</span></div></div><small>연결은 설정 › 커넥터에서 언제든 관리할 수 있어요</small><button type="button" class="bxs-btn pri gk-go" ${attr}>계속</button></div>`);
     el.onclick = async e => {
       const t = e.target;
-      if (t.closest('[data-gkclose]') || t.classList.contains('gk-mod')){ el.querySelector('.gk-mod')?.remove(); return; }
-      const gp = t.closest('[data-gkplus]'); if (gp){ const x = groups.get(gp.dataset.gkplus)[0]; if (x.kind === 'api'){ const ps = (cat.apis || []).find(p => p.service === x.service); el.querySelector('.gk-mod')?.remove(); if (ps?.oauth) return connect({service: x.service, api: {preset: x.service}}, gp); add.hidden = false; add.scrollIntoView?.({block: 'nearest'}); return ps ? apiKeys(x.service) : apiManual(); } return connect({service: x.service}, gp); }
-      const gq = t.closest('[data-gkask]'); if (gq) return askModal(gq.dataset.gkask, gq.dataset.gkattr, gq.dataset.gktitle);
-      if (!t.closest('button, a, [data-more]')){ const sv = t.closest('.gk-it[data-svc]'); if (sv) return svcModal(sv.dataset.svc); }
-      const bs = t.closest('button[data-svc]'); if (bs) return svcModal(bs.dataset.svc);
+      const goSvc = svc => go('#settings/connectors/svc~' + encodeURIComponent(svc));
+      if (!t.closest('button, a, [data-more]')){ const sv = t.closest('.gk-it[data-svc]'); if (sv) return goSvc(sv.dataset.svc); }
+      const bs = t.closest('button[data-svc]'); if (bs) return goSvc(bs.dataset.svc);
       if (t.closest('[data-add]')){ add.hidden = false; find(); return; }
       if (t.closest('[data-close]')){ add.hidden = true; add.innerHTML = ''; return; }
       if (t.closest('[data-manual]')){ manual(); return; }
       if (t.closest('[data-amanual]')){ apiManual(); return; }
-      const ap = t.closest('[data-ap]'); if (ap){ el.querySelector('.gk-mod')?.remove(); add.hidden = false; add.scrollIntoView?.({block: 'nearest'}); apiKeys(ap.dataset.ap, ap.dataset.apre); return; }
+      const ap = t.closest('[data-ap]'); if (ap){ add.hidden = false; add.scrollIntoView?.({block: 'nearest'}); apiKeys(ap.dataset.ap, ap.dataset.apre); return; }
       // 구글 로그인 API(캘린더 · Gmail): 키 칸 없이 구글 동의 화면으로 — 돌아오면 「연결했어요」
       const ao = t.closest('[data-aoauth]'); if (ao) return connect({service: ao.dataset.aoauth, label: add.querySelector('[data-label]')?.value.trim() || undefined, api: {preset: ao.dataset.aoauth}}, ao);
       const ag = t.closest('[data-ago]'); if (ag){
@@ -280,6 +273,34 @@
       const m = t.closest('[data-more]'); if (m) return moreMenu(m, connections.find(x => x.id === m.dataset.more));
     };
   };
+
+  async function svcPage(el, svc, live){
+    const [{connections}, cat, {hooks}] = await Promise.all([api('GET', 'api/connections'), catalog ? Promise.resolve(catalog) : api('GET', 'api/connectors').then(x => (catalog = x)), api('GET', 'api/hooks')]);
+    if (!live()) return;
+    const xs = connections.filter(c => c.service === svc).sort((a, b) => a.label.localeCompare(b.label));
+    if (!xs.length) return go('#settings/connectors', true);
+    const f = xs[0], bad = c => suspect(c) || c.status !== 'ok', hs = hooks.filter(h => h.service === svc);
+    const on = xs.reduce((n, c) => n + (c.tools == null ? 0 : c.tools - c.off), 0), all = xs.reduce((n, c) => n + (c.tools == null ? 0 : c.tools), 0);
+    const hue = [...svc].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 360, 0);
+    el.innerHTML = `<a href="#settings/connectors" class="bxs-crumb" data-to="#settings/connectors">‹ 커넥터</a>`
+      + `<div class="gk-hd"><span class="gk-ic" style="background:hsl(${hue} 45% 42%)" aria-hidden="true">${esc(f.title.slice(0, 1).toUpperCase())}</span><b>${esc(f.title)}</b><span class="bxs-row">${btn('제거', 'data-gkrm', 'sm')}</span></div>`
+      + `<p class="gk-desc">${esc(f.host)} · 연결한 계정마다 도구가 <code>${esc(f.prefix.split('__')[0])}__…</code> 로 에이전트에게 보여요.</p>`
+      + `<div class="gk-sec">계정</div><div class="gk-box">${xs.map(c => `<div class="gk-rw" data-id="${esc(c.id)}"><span class="gk-n"><a href="#settings/connectors/${encodeURIComponent(c.id)}" data-to="#settings/connectors/${encodeURIComponent(c.id)}">${esc(c.label || c.account || '기본')}</a>${c.account && c.label ? `<small> ${esc(c.account)}</small>` : ''}</span>${bad(c) ? (canRecon(c) ? btn('다시 연결', `data-recon="${esc(c.id)}"`, 'sm gk-warn') : apiReady(c) ? btn('키 넣기', `data-apikey="${esc(c.id)}"`, 'sm gk-warn') : '<span class="gk-bad">끊김</span>') : '<span class="gk-ok">연결됨</span>'}<button type="button" class="bxs-more" data-more="${esc(c.id)}" aria-label="${esc(c.prefix)} 메뉴" aria-haspopup="menu">${IC.more}</button></div>`).join('')}<div class="gk-rw gk-add" data-gkplus tabindex="0" role="button">+ 계정 더하기</div></div>`
+      + `<div class="gk-sec">도구</div><div class="gk-box"><div class="gk-rw"><span class="gk-n">${all}개 중 ${on}개 켬</span><span class="bxs-mut">계정을 눌러 도구를 켜고 꺼요</span></div></div>`
+      + (hs.length ? `<div class="gk-sec">웹훅</div><div class="gk-box">${hs.map(h => `<div class="gk-rw"><a class="gk-n" href="#settings/connectors/hooks" data-to="#settings/connectors/hooks">${esc(h.name)}</a><span class="bxs-mut">${h.enabled ? `받음 ${h.count}` : '꺼짐'}</span></div>`).join('')}</div>` : '')
+      + `<div class="gk-sec">정보</div><dl class="gk-kv"><dt>서비스</dt><dd>${esc(f.title)}</dd><dt>주소</dt><dd>${esc(f.host)}</dd><dt>종류</dt><dd>${f.kind === 'api' ? 'API' : 'MCP'}</dd><dt>계정</dt><dd>${xs.length}개</dd></dl>`;
+    el.onclick = async e => {
+      const t = e.target;
+      if (t.closest('[data-gkplus]')){
+        if (f.kind === 'api'){ const ps = (cat.apis || []).find(p => p.service === svc); if (ps?.oauth) return connect({service: svc, api: {preset: svc}}, t.closest('[data-gkplus]')); return go('#settings/connectors?connect=' + encodeURIComponent(svc)); }
+        return connect({service: svc}, t.closest('[data-gkplus]'));
+      }
+      if (t.closest('[data-gkrm]') && await confirmBox(`<b>${esc(f.title)}</b> 연결 ${xs.length}개를 모두 끊을까요? 에이전트가 이 도구를 더 못 써요.`, '모두 끊기')){ try { for (const c of xs) await api('DELETE', 'api/connections/' + encodeURIComponent(c.id)); toast('끊었어요'); go('#settings/connectors', true); } catch (err) { toast(err.message); render(); } return; }
+      const ak = t.closest('[data-apikey]'); if (ak) return go('#settings/connectors/' + encodeURIComponent(ak.dataset.apikey) + '?rekey=1');
+      const rc = t.closest('[data-recon]'); if (rc){ const c = xs.find(x => x.id === rc.dataset.recon); return connect({service: c.service, reconnect: c.id}, rc); }
+      const m = t.closest('[data-more]'); if (m) return moreMenu(m, xs.find(x => x.id === m.dataset.more));
+    };
+  }
   function moreMenu(anchor, c){
     document.querySelector('.bxs-pop')?.remove();
     const p = mk('div', 'bxs-pop', `<button type="button" data-a="tools">도구와 자세히</button>${canRecon(c) ? '<button type="button" data-a="recon">다시 연결</button>' : ''}<button type="button" data-a="rename">이름 바꾸기</button><hr><button type="button" data-a="rm" class="danger">끊기</button>`);
