@@ -265,8 +265,8 @@
     try { for (const file of att) ids.push(await G('upOne')({f: file})); } catch { return say('일시적인 오류가 발생했어요'); }
     const ch = X.sel, kept = att; ta.value = ''; grow(ta); X.att = []; const a = root.querySelector('.xatt'); if (a) a.textContent = '';
     const r = await send({channel: ch, text, ...(ids.length ? {files: ids} : {})}, 'new:' + ch);
-    if (r === 'ok') return say(`# ${NAMES()[ch] || ch} 에 올렸어요`);
-    if (r === 'maybe') return say(`# ${NAMES()[ch] || ch} 에 올라갔을 수 있어요. 피드에서 확인해 주세요`);
+    if (r === 'ok') return say(`# ${NAMES()[ch] || ch}에 올렸어요`);
+    if (r === 'maybe') return say(`# ${NAMES()[ch] || ch}에 올라갔을 수 있어요. 피드에서 확인해 주세요`);
     if (!ta.value){ ta.value = text; grow(ta); X.att = kept; if (a) a.textContent = kept.length ? `첨부 ${kept.length}개` : ''; }
     say('올리지 못했어요. 글은 칸에 다시 넣어 뒀어요');
   });
@@ -283,7 +283,8 @@
   // 셀렉터(X9): 토픽 = 채널(비서가 알맞은 창에 넘김) · 에이전트에게 바로(Primary)
   function selOpen(){ selClose(); const n = NAMES();
     const p = document.createElement('div'); p.className = 'xselpop'; p.setAttribute('role', 'listbox');
-    p.innerHTML = `<h5>토픽 — 비서가 알맞은 창에 넘겨요</h5>${chs().filter(k => k !== 'primary').map(k => `<button type="button" data-xpick="${E(k)}"${k === X.sel ? ' aria-selected="true"' : ''}><b>#</b>${E(n[k])}</button>`).join('')}`
+    const tp = chs().filter(k => k !== 'primary');   // 토픽 채널이 없는 사람(새 회원)은 머리도 안 띄움
+    p.innerHTML = `${tp.length ? '<h5>토픽 — 비서가 알맞은 창에 넘겨요</h5>' : ''}${tp.map(k => `<button type="button" data-xpick="${E(k)}"${k === X.sel ? ' aria-selected="true"' : ''}><b>#</b>${E(n[k])}</button>`).join('')}`
       + `<h5>에이전트에게 바로</h5><button type="button" data-xpick="primary"${X.sel === 'primary' ? ' aria-selected="true"' : ''}><span class="xav">${av(n.primary, 22)}</span>${E(n.primary)}</button>`;
     root.querySelector('.xcmp')?.append(p); }
   function selClose(){ root.querySelector('.xselpop')?.remove(); }
