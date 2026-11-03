@@ -48,7 +48,7 @@ function bridgeNs(paths: string[]) {
   const te = new TextEncoder();
   const call = async (r: { method: string; path: string }) => {
     paths.push(r.path);
-    if (r.path === "/") return { status: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: te.encode(BOARD) };
+    if (r.path.split("?")[0] === "/") return { status: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: te.encode(BOARD) };
     return { status: 404, headers: { "content-type": "application/json" }, body: te.encode('{"error":"not found"}') };
   };
   return { idFromName: (n: string) => n, get: () => ({ call }) };
@@ -178,4 +178,25 @@ test("/ea/ → 301 /ea, 회원 /ea → /es(퍼스널 리드가 없음)", async (
   assert.equal(m.status, 302);
   assert.equal(new URL(m.headers.get("location")!, "https://example.test").pathname, "/es");
   assert.deepEqual(paths, []);
+});
+
+test("보더 화면 경로: /nodes · /chat/<채널>/<스레드> · /canvas/<id> · /inbox · /settings/… = / 와 같은 보드 + 경로 모드 머리(base · HB_PATHS), 비슷한 다른 주소는 아님", async () => {
+  for (const p of ["/nodes", "/nodes/%2512", "/chat/primary", "/chat/primary/1793681208.264390", "/chat/team/1793681208.264390?thread=1700000000.000001", "/canvas", "/canvas/abcdefghijklmnop", "/inbox", "/unread", "/timeline", "/settings/nodes", "/w/Q-1", "/nf"]) {
+    const { paths, get } = setup();
+    const r = await get(p);
+    assert.equal(r.status, 200, p);
+    assert.deepEqual(paths.slice(0, 1), ["/"], p + " → 다리에 / 로");
+    const html = await r.text();
+    assert.ok(html.includes('<base href="/">') && html.includes("window.HB_PATHS=1"), p + " → 경로 모드 머리");
+  }
+  for (const p of ["/canvas/short", "/chatx", "/nodes/a/b/c"]) {
+    const { paths, get } = setup();
+    await get(p);
+    assert.ok(!paths.includes("/"), p + " → 보드 아님");
+  }
+  for (const p of ["/es", "/ea", "/?embed=primary"]) {
+    const html = await (await setup().get(p)).text();
+    assert.ok(!html.includes("HB_PATHS=1") && !html.includes('<base href="/">'), p + " → 경로 모드 아님");
+    assert.ok(html.includes("window.HBR=window.HBR||"), p + " → 기본 HBR 은 있음(틀이 부름)");
+  }
 });

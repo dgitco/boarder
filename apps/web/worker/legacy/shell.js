@@ -184,7 +184,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     S.ret = null; if (!ans.hidden) closeAns();
     if (S.ib !== k){ ibM?.destroy(); ibM = window.HBInbox.mount(ibox, k, {}); }
     S.ib = k; ibox.hidden = false; scrollTo(0, 0); document.querySelector('.wrap')?.scrollTo(0, 0);
-    if (!fromPop && !EMBED && location.hash.slice(1) !== k) history.pushState(null, '', '#' + k);
+    if (!fromPop && !EMBED && !HBR.same(HBR.hash(), '#' + k)) history.pushState(null, '', '#' + k);
     sync();
   }
   function ibClose(){ if (!S.ib) return; ibM?.destroy(); ibM = null; S.ib = null; ibox.hidden = true; }
@@ -205,7 +205,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   new MutationObserver(() => {
     const open = !ans.hidden;
     if (open && !S.chat && cur?.tab === 'chat' && cur.chan){ S.chat = cur.chan; if (!/^i:/.test(cur.chan)) S.last = cur.chan; }
-    if (!open && wasOpen && S.chat){ S.chat = null; const back = S.ret; S.ret = null; if (back && !(applying && location.hash.startsWith('#chat/'))) return ibOpen(back, true); }
+    if (!open && wasOpen && S.chat){ S.chat = null; const back = S.ret; S.ret = null; if (back && !(applying && HBR.hash().startsWith('#chat/'))) return ibOpen(back, true); }
     if (!open) S.chat = null;
     wasOpen = open; sync();
   }).observe(ans, {attributes: true, attributeFilter: ['hidden', 'class']});
@@ -223,7 +223,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (g === 'chat') return openChan(S.last);
     if (g === 'canvas') return show('arts');
     if (g === 'node'){ if (!ans.hidden && cur?.chan?.startsWith('n:')) closeAns();   // 노드 채팅에서 「노드」 = 트리로
-      if (current === 'arts') return show('tree'); ibClose(); if (!EMBED && location.hash.slice(1) !== current) history.pushState(null, '', '#' + current); return sync(); }
+      if (current === 'arts') return show('tree'); ibClose(); if (!EMBED && !HBR.same(HBR.hash(), '#' + current)) history.pushState(null, '', '#' + current); return sync(); }
   }
   for (const n of [sb, dr]) n.addEventListener('click', e => {
     const f = e.target.closest('[data-fold]');
@@ -321,7 +321,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const p = Object.values(byPane).find(x => winT(x) === t); if (p) return openAns({p: p.pane, page: true});
     const k = Object.keys(parkBy).find(id => winT(parkBy[id]) === t); if (k) return openAns({p: k, page: true});
     if (typeof openNode === 'function') return openNode(t);
-    location.hash = '#settings/nodes';
+    HBR.go('#settings/nodes');
   }
   function cardGo(c){
     if (typeof window.HBOpenCard === 'function' && /^\d{10}\.\d{6}$|^[qw]:/.test(c.ts || '')) return window.HBOpenCard(c.ts, c.thread ? {c: CH.includes(c.ch) ? c.ch : 'primary', t: c.thread} : null);
@@ -422,27 +422,29 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && R.classList.contains('bx-dron')){ e.stopPropagation(); closeDr(); menu.focus(); } }, true);
   const ROUTE = /^#(chat\/|art\/|node\/|w\/|inbox$)/;
   const MVv = () => MV.el && document.body.contains(MV.el) && MV.el === S.artEl ? S.art : null;
+  const nodeKey = p => { if (/^g:/.test(p || '')) return p.slice(2); const x = (typeof byPane !== 'undefined' && byPane[p]) || (typeof parkBy !== 'undefined' && parkBy[p]); const n = x && typeof nodeTitle === 'function' ? nodeTitle(x) : ''; return n || p; };   // 닫힌 노드(g:<이름>)는 이름만
+  const nodePane = a => (typeof byPane !== 'undefined' && byPane[a]) ? a : (typeof liveNode === 'function' && liveNode(a)?.pane) || '';
   function want(){
     const a = MVv(); if (a) return '#art/' + a;
     if (!ans.hidden && cur){
-      if (cur.tab === 'chat' && cur.chan && cur.chan.startsWith('n:')) return '#node/' + encodeURIComponent(cur.p);
+      if (cur.tab === 'chat' && cur.chan && cur.chan.startsWith('n:')) return '#node/' + encodeURIComponent(nodeKey(cur.p));
       if (cur.tab === 'chat' && cur.chan === 'i:turn') return '#inbox';
       if (cur.tab === 'chat' && /^i:(unread|saved|drafts)$/.test(cur.chan || '')) return '#' + cur.chan.slice(2);
       if (cur.tab === 'chat' && cur.chan) return '#chat/' + cur.chan + (CS.th?.ts && CS.th.k === cur.chan ? '/' + CS.th.ts : '');
       if (cur.w) return '#w/' + encodeURIComponent(cur.w);
-      if (cur.p) return '#node/' + encodeURIComponent(cur.p);
+      if (cur.p) return '#node/' + encodeURIComponent(nodeKey(cur.p));
     }
     return '#' + (S.ib || current);
   }
   let applying = 0, recQ = 0, backing = 0, G = 0;
   function record(){
     recQ = 0;
-    if (applying || backing || !on() || /^#settings(\/|$|\?)/.test(location.hash)) return;   // 설정 화면(settings.js)이 주소를 맡음
+    if (applying || backing || !on() || /^#settings(\/|$|\?)/.test(HBR.hash())) return;   // 설정 화면(settings.js)이 주소를 맡음
     if (EMBED) return;
-    const h = want(); if (h === location.hash) return;
-    if (/^#t=/.test(location.hash) || !location.hash) return history.replaceState(history.state, '', h);   // 보드 글 링크(#t=…)로 연 것은 그 자리를 바꿈
+    const h = want(); if (HBR.same(h, HBR.hash())) return;
+    if (/^#t=/.test(HBR.hash()) || !HBR.hash()) return history.replaceState(history.state, '', h);   // 보드 글 링크(#t=…)로 연 것은 그 자리를 바꿈
     if (history.state?.bx && history.state.from === h){ backing = setTimeout(() => { backing = 0; recLater(); }, 1500); return history.back(); }
-    history.pushState({bx: 1, from: location.hash}, '', h);
+    history.pushState({bx: 1, from: HBR.hash()}, '', h);
   }
   const recLater = () => { if (!recQ) recQ = requestAnimationFrame(record); };
   new MutationObserver(recLater).observe(ans, {attributes: true, childList: true, subtree: true});
@@ -458,37 +460,39 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const linkUntil = async (ok, ms = 30000) => { const t = setTimeout(() => linkSpin(true), 300); try { return await until(ok, ms); } finally { clearTimeout(t); linkSpin(false); } };
   const linkFail = () => toast('링크를 열지 못했어요');
   async function apply(){
-    if (!on() || /^#settings(\/|$|\?)/.test(location.hash)) return;
+    if (!on() || /^#settings(\/|$|\?)/.test(HBR.hash())) return;
     if (backing){ clearTimeout(backing); backing = 0; }
-    if (location.hash === '#chat') history.replaceState(history.state, '', '#chat/primary');
-    const h = location.hash, [k, a, b] = h.slice(1).split('/').map(x => decodeURIComponent(x || ''));
+    if (HBR.hash() === '#chat') history.replaceState(history.state, '', '#chat/primary');
+    const h = HBR.hash(), [k, a, b] = h.slice(1).split('/').map(x => decodeURIComponent(x || ''));
     const gen = ++G;
     let moved = false;   // 글 링크를 서버가 알려 준 자리로 옮겼으면 끝에서 주소를 링크로 되돌리지 않음
     applying++;
     try {
       if (k !== 'art' && MVv()) mvClose();
-      if (k === 'art'){ if (MVv() !== a){ if (await linkUntil(() => ARTS[a])){ if (gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ if (!ans.hidden) closeAns(); openArt(a); } } else if (gen === G) linkFail(); } }
+      if (k === 'art'){ if (MVv() !== a){ if (await linkUntil(() => ARTS[a])){ if (gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ if (!ans.hidden) closeAns(); openArt(a); } } else if (gen === G) linkFail(); } }
       else if (k === 'chat' && CH.includes(a)){
         if (b && typeof window.HBOpenCard === 'function' && !(chatMode() && cur.chan === a && CS.th?.ts === b)){
           const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail();
-          if (ready && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ ibClose(); S.ret = null;
+          if (ready && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ ibClose(); S.ret = null;
             await window.HBOpenCard(b, {c: a, t: b});
-            if (gen === G){ const w = want(); if (w && w !== location.hash) history.replaceState(history.state, '', w); moved = true; } }
+            if (gen === G){ const w = want(); if (w && !HBR.same(w, HBR.hash())) history.replaceState(history.state, '', w); moved = true; } }
         }
         else if (!(chatMode() && cur.chan === a)){ ibClose(); openChan(a, b || undefined); }
         else if ((CS.th?.ts || '') !== (b || '')){ if (b) await th0(a, b); else { CS.th = null; viewChat(true); } }
       }
       else if (k === 'inbox'){ if (cur?.chan !== 'i:turn'){ ibClose(); window.HBInbox?.openFeed('turn'); } }
-      else if (k === 'node'){ const got = !!byPane[a] || await linkUntil(() => byPane[a]); if (!got && gen === G) linkFail(); else if (got && gen === G && !/^#settings(\/|$|\?)/.test(location.hash) && !(cur?.page && cur.p === a)){ ibClose(); openAns({p: a, page: true}); } }
+      else if (k === 'node'){ const got = !!nodePane(a) || await linkUntil(() => nodePane(a) || (typeof panes !== 'undefined' && panes.length ? '-' : '')) && !!nodePane(a), pa = nodePane(a);
+        if (!got && gen === G){ if (typeof openNode === 'function' && typeof nodeName === 'function' && nodeName(a)) openNode(a); else linkFail(); }   // 닫힌 노드는 이름으로(보드 openNode)
+        else if (got && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash()) && !(cur?.page && cur.p === pa)){ ibClose(); openAns({p: pa, page: true}); } }
       else if (k === 'w'){ if (cur?.w !== a){ ibClose(); openAns({w: a}); } }
-      else if (FEED(k)){ S.ret = null; if (ibChat() !== k){ const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail(); else if (ready && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ ibClose(); window.HBInbox.openFeed(k); } } }
+      else if (FEED(k)){ S.ret = null; if (ibChat() !== k){ const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail(); else if (ready && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ ibClose(); window.HBInbox.openFeed(k); } } }
       else if (IBK.includes(k)){ S.ret = null; if (!ans.hidden) closeAns(); ibOpen(k, true); }
       else if (views[k]){ S.ret = null; if (!ans.hidden) closeAns(); if (S.ib){ ibClose(); } if (current !== k) show(k); }
       sync();
     } finally {
       applying--;
       if (gen === G){ R.classList.remove('bx-route'); window.HBViewWake?.(); }
-      if (gen === G && !moved && location.hash !== h && !/^#settings(\/|$|\?)/.test(location.hash)) history.replaceState(history.state, '', h);
+      if (gen === G && !moved && !HBR.same(HBR.hash(), h) && !/^#settings(\/|$|\?)/.test(HBR.hash())) history.replaceState(history.state, '', h);
       recLater();   // 도는 사이 열린 화면은 그다음 주소로
     }
   }
@@ -555,8 +559,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const nav = performance.getEntriesByType?.('navigation')[0]?.type;
     if (!EMBED && nav === 'navigate' && !history.state?.bx){
       const guard = () => { removeEventListener('pointerup', guard, true); removeEventListener('keydown', guard, true);
-        if (history.state?.bx || !ROUTE.test(location.hash) && !IBK.includes(location.hash.slice(1))) return;
-        const here = location.hash; history.replaceState(null, '', '#tree'); history.pushState({bx: 1, from: '#tree'}, '', here); };
+        if (history.state?.bx || !ROUTE.test(HBR.hash()) && !IBK.includes(HBR.hash().slice(1))) return;
+        const here = HBR.hash(); history.replaceState(null, '', '#tree'); history.pushState({bx: 1, from: '#tree'}, '', here); };
       addEventListener('pointerup', guard, true); addEventListener('keydown', guard, true);
     }
   }

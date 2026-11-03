@@ -84,8 +84,8 @@
   const copy = async (t, what) => { try { await navigator.clipboard.writeText(t); toast(`${what} 복사했어요`); } catch { toast('일시적인 오류가 발생했어요'); } };
   const spin = '<span class="bxs-spin" aria-label="불러오는 중"></span>';
 
-  const parse = () => { const h = location.hash.split('?')[0]; const m = /^#settings(?:\/([a-z]*))?(?:\/(.+))?$/.exec(h); if (!m) return null; let id = ''; try { id = m[2] ? decodeURIComponent(m[2]) : ''; } catch {} return {tab: m[1] || '', id}; };
-  const query = () => new URLSearchParams(location.hash.split('?')[1] || '');
+  const parse = () => { const h = HBR.hash().split('?')[0]; const m = /^#settings(?:\/([a-z]*))?(?:\/(.+))?$/.exec(h); if (!m) return null; let id = ''; try { id = m[2] ? decodeURIComponent(m[2]) : ''; } catch {} return {tab: m[1] || '', id}; };
+  const query = () => new URLSearchParams(HBR.hash().split('?')[1] || '');
   const on = () => !!parse();
   let backTo = (() => { try { return sessionStorage.getItem('bx-set-back') || '#tree'; } catch { return '#tree'; } })();
   const steps = () => Number.isInteger(history.state?.bxs) ? history.state.bxs : 0;
@@ -95,7 +95,7 @@
     if (tab === 'feedback') return feedbackBox();   // 피드백은 설정 칸이 아니라 보내기 창
     if (tab === 'invite-box') return inviteBox();   // 아바타 메뉴 「초대」 = 그 자리 창(설정 › 관리 › 사람 초대 칸은 그대로)
     if (tab === 'emoji-add') return emojiBox();
-    if (!on()){ backTo = /^#settings/.test(location.hash) ? '#tree' : (location.hash || '#tree'); try { sessionStorage.setItem('bx-set-back', backTo); } catch {} }
+    if (!on()){ backTo = /^#settings/.test(HBR.hash()) ? '#tree' : (HBR.hash() || '#tree'); try { sessionStorage.setItem('bx-set-back', backTo); } catch {} }
     go('#settings' + (PC.matches || tab ? '/' + (tab || DEF()) : ''));
   }
   function leave(){
@@ -134,8 +134,8 @@
     try { await (Object.hasOwn(PAGES, r.tab) ? PAGES[r.tab] : PAGES.connectors)(page, r.id, () => my === gen); }
     catch (e) { if (my === gen) page.innerHTML = `<p class="bxs-err">${esc(e.message)}</p>`; }
     const q = query();
-    if (q.get('connected')){ toast('연결했어요'); history.replaceState(history.state, '', location.hash.split('?')[0]); }
-    if (q.get('error')){ toast('연결하지 못했어요: ' + q.get('error').slice(0, 120)); history.replaceState(history.state, '', location.hash.split('?')[0]); }
+    if (q.get('connected')){ toast('연결했어요'); history.replaceState(history.state, '', HBR.hash().split('?')[0]); }
+    if (q.get('error')){ toast('연결하지 못했어요: ' + q.get('error').slice(0, 120)); history.replaceState(history.state, '', HBR.hash().split('?')[0]); }
   }
   main.addEventListener('click', e => {
     if (e.target.closest('[data-leave]')) return leave();
@@ -256,7 +256,7 @@
       add.hidden = false; find();
       add.querySelector('[data-q]').value = want; add.querySelector('[data-label]').value = query().get('label') || '';
       add.querySelector('[data-q]').dispatchEvent(new Event('input'));
-      history.replaceState(history.state, '', location.hash.split('?')[0]);
+      history.replaceState(history.state, '', HBR.hash().split('?')[0]);
     }
     el.onclick = async e => {
       const t = e.target;
@@ -416,7 +416,7 @@
         if (t.closest('[data-rm]') && await confirmBox(`<b>${esc(c.prefix)}</b> 연결을 끊을까요?`, '끊기')){ await api('DELETE', 'api/connections/' + encodeURIComponent(id)); toast('끊었어요'); return go('#settings/connectors', true); }
       } catch (err) { toast(err.message); }
     };
-    if (query().get('rekey') === '1'){ history.replaceState(history.state, '', location.hash.split('?')[0]); if (c.kind === 'api' && apiReady(c)) rekey(el, c); }
+    if (query().get('rekey') === '1'){ history.replaceState(history.state, '', HBR.hash().split('?')[0]); if (c.kind === 'api' && apiReady(c)) rekey(el, c); }
     el.querySelector('[data-tf]')?.addEventListener('input', e => { const v = e.target.value.toLowerCase(); for (const r of el.querySelectorAll('[data-tn]')) r.hidden = !!v && !r.dataset.tn.toLowerCase().includes(v); });
   }
 
@@ -461,7 +461,7 @@
     const {hooks} = await api('GET', 'api/hooks'); if (!live()) return;
     el.innerHTML = `<a href="#settings/connectors" class="bxs-crumb" data-to="#settings/connectors">‹ 커넥터</a>` + header('웹훅', '어느 서비스에도 안 묶인 받는 주소(아무 서비스 · Standard Webhooks). 서비스에 묶인 웹훅은 그 서비스 화면에 있어요.') + '<div data-hb></div>';
     hookBlock(el.querySelector('[data-hb]'), hooks.filter(h => !h.service), '', query().get('new') === '1');
-    if (query().has('new')) history.replaceState(history.state, '', location.hash.split('?')[0]);   // 판을 연 뒤 주소에서 뗌
+    if (query().has('new')) history.replaceState(history.state, '', HBR.hash().split('?')[0]);   // 판을 연 뒤 주소에서 뗌
   }
 
   // ── CLI 프로필(boarder profile 이 올린 표)
@@ -1063,7 +1063,7 @@
       const sd = e.target.closest('[data-fsend]'); if (!sd) return;
       const text = ta.value.trim(); if (!text) return toast('내용을 적어요');
       sd.disabled = true;
-      try { await api('POST', 'api/me/feedback', {text, kind, page: (location.hash.split('?')[0] || '').slice(0, 200)}); close(); toast('보냈어요'); }
+      try { await api('POST', 'api/me/feedback', {text, kind, page: (HBR.hash().split('?')[0] || '').slice(0, 200)}); close(); toast('보냈어요'); }
       catch (err) { sd.disabled = false; toast(err.message); }
     });
   }
