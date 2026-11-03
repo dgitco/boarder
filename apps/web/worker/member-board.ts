@@ -303,6 +303,7 @@ function msg(r: R, my: string, mainName: string) {
 }
 export const CARD_TS = /^\d{10}\.\d{6}$/;
 export const TODO_DONE = "했어요";
+export const TODO_DROP = "없앴어요 — 필요 없어졌어요";
 export function nextMorning(now: number) {
   const k = now + 9 * 3600_000, day = Math.floor(k / 86_400_000) * 86_400_000, eight = day + 8 * 3600_000;
   return (k < eight ? eight : eight + 86_400_000) - 9 * 3600_000;
@@ -695,12 +696,12 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     console.log(JSON.stringify({ ev: "client_error", member: true, where: f("where", 120), path: f("path", 100), method: f("method", 10), status: f("status", 10), rid: f("rid", 64), kind: f("kind", 10), page: f("page", 80), err: f("err"), client_at: Number(b.at) || null, late: !!(b.late || b.queued) }));
     return { ok: { ok: true } };
   }
-  if (path === "/api/todo") {   // 할 일 끝냄(틀 { area, id }) = 그 할 일 카드에 「했어요」로 답(카드를 낸 창에 넘어감 · 에이전트 wait 가 받음)
+  if (path === "/api/todo") {   // 할 일 끝냄(틀 { area, id }) = 그 할 일 카드에 「했어요」로 답(카드를 낸 창에 넘어감 · 에이전트 wait 가 받음). drop: true 면 「없앴어요」로
     const id = String(b.id || b.ts || "");
     const c = CARD_TS.test(id) ? await db.prepare("SELECT id, state FROM board_card WHERE id = ? AND owner = ? AND kind = 'todo'").bind(id, me).first<{ id: string; state: string }>() : null;
     if (!c) return { error: "없는 할 일이에요", status: 404 };
     if (c.state !== "open") return { ok: { ok: true, state: "ok" } };   // 이미 끝냄(다시 보낸 것)
-    return { path: `/api/me/cards/${c.id}/answer`, body: { choice: TODO_DONE, free: true } };
+    return { path: `/api/me/cards/${c.id}/answer`, body: { choice: b.drop === true ? TODO_DROP : TODO_DONE, free: true } };
   }
   if (path === "/api/nodepri") {
     const title = cut(String(b.title || "").replace(/^\d+\s+/, "").trim(), 80), pri = String(b.pri || "");

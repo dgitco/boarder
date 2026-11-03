@@ -5,7 +5,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { register } from "node:module";
 
 register("./test-hooks.mjs", import.meta.url);
-const { data, post, nextMorning, TODO_DONE } = await import("./member-board.ts");
+const { data, post, nextMorning, TODO_DONE, TODO_DROP } = await import("./member-board.ts");
 const { localTools } = await import("./local.ts");
 
 const MIG = new URL("../migrations/", import.meta.url);
@@ -55,6 +55,8 @@ test("할 일도 cardlist 에 kind todo 로 — 사이드바 「결정 · 할 �
 test("할 일 끝냄(POST /api/todo { id }) = 그 카드에 「했어요」 답, 남의 · 없는 할 일은 404", async () => {
   const { D1 } = seed();
   assert.deepEqual(await post(D1, A, "/api/todo", { area: "primary", id: "1793000000.000002" }), { path: "/api/me/cards/1793000000.000002/answer", body: { choice: TODO_DONE, free: true } });
+  assert.deepEqual(await post(D1, A, "/api/todo", { area: "primary", id: "1793000000.000002", drop: true }), { path: "/api/me/cards/1793000000.000002/answer", body: { choice: TODO_DROP, free: true } });
+  assert.deepEqual(await post(D1, A, "/api/todo", { id: "1793000000.000002", drop: "1" }), { path: "/api/me/cards/1793000000.000002/answer", body: { choice: TODO_DONE, free: true } });
   assert.deepEqual(await post(D1, A, "/api/todo", { id: "1793000000.000004" }), { error: "없는 할 일이에요", status: 404 });
   assert.deepEqual(await post(D1, A, "/api/todo", { id: "1793000000.000001" }), { error: "없는 할 일이에요", status: 404 });
 });
