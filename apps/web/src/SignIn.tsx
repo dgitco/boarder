@@ -32,6 +32,7 @@ export function SignIn({ onDone }: { onDone: () => void }) {
   return (
     <AuthFlow
       methods={{ code: true, google: !!m?.google }}
+      codeAuto
       finishing={!m || (!!m.google && auto)}
       initialError={gErr || backErr}
       brand={<img src="/icons/primary-blob.svg" alt="보더" width={40} height={40} />}

@@ -108,6 +108,7 @@
     {
       "name": "EMAIL",
       "allowed_sender_addresses": [
+        "login@dgit.co",
         "login@0bridge.dev"
       ]
     }

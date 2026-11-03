@@ -59,8 +59,10 @@ export function createAuth(env: Env) {
         storeOTP: otpStore(env.BETTER_AUTH_SECRET),
         async sendVerificationOTP({ email, otp, type }) {
           if (type !== "sign-in") return;   // 로그인 코드만(다른 종류는 주소 상한 밖 길일 수 있음)
-          if (!(await member(env, email))) return;   // 밖 주소: 조용히 아무것도 안 보냄(있는 주소인지 알려 주지 않음)
-          await env.EMAIL.send({ to: email, from: { email: "login@0bridge.dev", name: "Boarder" }, ...codeMail(otp) } as any);
+          if (!(await member(env, email))) return;
+          const mail = codeMail(otp);
+          try { await env.EMAIL.send({ to: email, from: { email: "login@dgit.co", name: "Boarder" }, ...mail } as any); }
+          catch (e) { console.error("login mail dgit.co failed, fallback 0bridge.dev", String(e).slice(0, 200)); await env.EMAIL.send({ to: email, from: { email: "login@0bridge.dev", name: "Boarder" }, ...mail } as any); }
         },
       }),
     ],
