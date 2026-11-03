@@ -18,7 +18,7 @@ function setup() {
     db.prepare("INSERT INTO mnode(owner, id, name, state, created_at, updated_at) VALUES (?,?,?,?,?,?)").run(o, id, name, "working", now, now);
     db.prepare("INSERT INTO mnode_item(owner, item, node) VALUES (?,?,?)").run(o, "win:" + win, id);
   }
-  const log = (o: string, win: string, text: string, at: number, thread: string | null = null) => Number(db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(o, win, "progress", text, thread, at).lastInsertRowid);
+  const log = (o: string, win: string, text: string, at: number, thread: string | null = null) => Number(db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(o, win, "reply", text, thread, at).lastInsertRowid);
   const l1 = log(A, "팀장 창", "이슈를 만들고 넘겼어요", now - 5000);
   const lb = log(B, "남의 창", "남의 글", now - 4000);
   const lp = log(A, "팀장 창", "Primary 글", now - 3000, "primary");
@@ -29,7 +29,7 @@ function setup() {
   const D1 = { prepare: (sql: string) => stmt(sql), batch: async (ss: { sql: string; args: unknown[] }[]) => ss.map(s => exec(s.sql, s.args)) } as unknown as D1Database;
   const at = (id: number) => (db.prepare("SELECT at FROM board_log WHERE id = ?").get(id) as { at: number }).at;
   const tsOf = (id: number) => `${Math.floor(at(id) / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;
-  return { D1, ts: { l1: tsOf(l1), lb: tsOf(lb), lp: tsOf(lp), lc: tsOf(lc) } };
+  return { D1, tsOf, ts: { l1: tsOf(l1), lb: tsOf(lb), lp: tsOf(lp), lc: tsOf(lc) } };
 }
 // 틀이 부르는 꼴 그대로: 채널 이름은 인코딩 안 한 채 붙이고 브라우저가 한글을 %인코딩
 const chat = async (D1: D1Database, me: string, ch: string, ts: string) => { const u = new URL(`https://x/api/chat/${ch}/${ts}`); const r = await MB.get(D1, me, { name: "메인 봇" }, u, async () => null) as Response | null; return r ? r.json() as Promise<any> : null; };
@@ -62,4 +62,15 @@ test("남의 노드 · 남의 글 · Primary 글 · 모르는 노드는 빈 답(
   assert.deepEqual((await chat(D1, A, "n:예시 팀장", ts.lp)).messages, []);
   assert.deepEqual((await chat(D1, A, "n:없는 노드", ts.l1)).messages, []);
   assert.deepEqual((await chat(D1, B, "n:남의 노드", "1793000000.000123")).messages, [], "남의 카드");
+});
+
+test("스레드 글의 quiet 표시: 상태 · 작업 기록 줄만 quiet — 화면이 「새 답」 선을 서버 새 답 수(n)와 같게 셈", async () => {
+  const { D1, ts } = setup(), now = Date.now();
+  for (const [k, txt, d] of [["reply", "답 A", 400], ["progress", "진행 P1", 300], ["status", "상태 S1", 200]] as const)
+    await D1.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(A, "팀장 창", k, txt, ts.l1, now - d).run();
+  const j = await chat(D1, A, "n:예시 팀장", ts.l1);
+  const q = Object.fromEntries(j.messages.map((m: any) => [m.text, !!m.quiet]));
+  assert.deepEqual(q, { "이슈를 만들고 넘겼어요": false, "답 A": false, "진행 P1": true, "상태 S1": true });
+  const it = (await MI.inbox(D1, A)).unread.find((u: any) => u.thread === ts.l1);
+  assert.equal(it?.n, 1); assert.equal(it?.text, "답 A");   // 서버 새 답 수 = quiet 아닌 답만
 });

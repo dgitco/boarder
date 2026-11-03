@@ -31,7 +31,7 @@ function setup() {
   db.prepare("INSERT INTO mnode_item(owner, item, node) VALUES (?,?,?)").run(A, "win:영업 창", "n-a");
   db.prepare("INSERT INTO mnode(owner, id, name, state, created_at, updated_at) VALUES (?,?,?,?,?,?)").run(B, "n-b", "남의 노드", "working", now, now);
   db.prepare("INSERT INTO mnode_item(owner, item, node) VALUES (?,?,?)").run(B, "win:남의 창", "n-b");
-  const log = (owner: string, win: string, text: string, at: number, kind = "progress", thread: string | null = null) => Number(db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(owner, win, kind, text, thread, at).lastInsertRowid);
+  const log = (owner: string, win: string, text: string, at: number, kind = "reply", thread: string | null = null) => Number(db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(owner, win, kind, text, thread, at).lastInsertRowid);
   const card = (id: string, owner: string, win = "영업 창") => db.prepare("INSERT INTO board_card(id, owner, win, question, choices, at) VALUES (?,?,?,?,?,?)").run(id, owner, win, "자료 받기", '["가"]', now);
   const q = (sql: string, ...a: unknown[]) => db.prepare(sql).all(...(a as never[])).map(r => ({ ...r }));
   return { db: d1(db) as unknown as D1Database, log, card, q, now };
@@ -213,4 +213,20 @@ test("반응이 노드 채팅 · 메인 봇 채팅 글에 틀 꼴로 보임(내 
   assert.deepEqual(nc.messages.find((m: any) => m.text === "에이전트 글").reactions, [{ name: "eyes", count: 1, mine: true }]);
   const pc = await get(A, "/api/chat/primary");
   assert.deepEqual(pc.messages.find((m: any) => m.text === "봇 글").reactions, [{ name: "+1", count: 1, mine: true }]);
+});
+
+test("읽지 않음: 상태(inbox_status) · 작업 기록(start · progress · done) 줄은 안 셈 — 채널 · 스레드 둘 다, 막힘 · 결정 · 답은 그대로", async () => {
+  const s = setup(), t = s.now;
+  for (const [k, txt] of [["status", "쉬는 중"], ["start", "시작"], ["progress", "진행 중"], ["done", "끝남"]] as const) s.log(A, "영업 창", txt, t - 50_000, k);
+  const blk = s.log(A, "영업 창", "막힘: 로그인 필요", t - 40_000, "blocked"), dec = s.log(A, "영업 창", "고를 것 — 추천 A", t - 30_000, "decision"), rep = s.log(A, "영업 창", "답이에요", t - 20_000, "reply");
+  const got = (await MI.inbox(s.db, A)).unread.map((x: any) => x.ts).sort();
+  assert.deepEqual(got, [tsOf(t - 40_000, blk), tsOf(t - 30_000, dec), tsOf(t - 20_000, rep)].sort());
+  // 내 글 스레드 안의 진행 · 상태 줄도 안 셈, 답은 셈
+  const root = s.log(A, "영업 창", "이거 봐 줘", t - 15_000, "me"), rts = tsOf(t - 15_000, root);
+  s.log(A, "영업 창", "보는 중", t - 10_000, "progress", rts); s.log(A, "영업 창", "쉬는 중", t - 9_000, "status", rts);
+  let th = (await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === rts);
+  assert.equal(th.length, 0, "진행 · 상태 줄만 있는 스레드는 읽지 않음에 안 뜸");
+  const ans = s.log(A, "영업 창", "봤어요", t - 5_000, "reply", rts);
+  th = (await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === rts);
+  assert.equal(th.length, 1); assert.equal(th[0].ts, tsOf(t - 5_000, ans)); assert.equal(th[0].n, 1, "새 답 수에도 진행 줄은 안 셈");
 });

@@ -2,7 +2,7 @@
 // 예전 회원 길은 반응 · 고치기 「아직 안 돼요」(400), 모아 보기(/api/inbox) · 초안(/api/drafts)은 늘 빈 답, 저장 · 읽음 · 초안 저장은 저장 없이 ok 였음.
 // 표: member_react · member_saved · member_draft · member_seen(0041). 모두 owner = 나, 남의 것은 404 · 빈 답
 import type { Context } from "hono";
-import { paneLogs, ME, OWN, NOT_CHAT } from "./member-board";
+import { paneLogs, ME, OWN, NOT_CHAT, QUIET } from "./member-board";
 
 type Env = { DB: D1Database };
 type C = Context<{ Bindings: Env }>;
@@ -41,6 +41,7 @@ async function seeUpTo(db: D1Database, me: string, pane: string, at: number) {
 }
 
 // ── 모아 보기(/api/inbox) ──
+// 읽지 않음에서 빼는 줄 = QUIET(member-board.ts — 화면 글의 quiet 표시와 같은 목록)
 export async function inbox(db: D1Database, me: string) {
   const { P, key, chanOf } = await chans(db, me), now = Date.now();
   const [sn, sv, dr] = await db.batch([
@@ -52,7 +53,7 @@ export async function inbox(db: D1Database, me: string) {
   const unread: R[] = [];
   for (const c of P.chans) {
     const s = seen.get(c.pane) ?? now - FIRST_DAY;   // 처음 보는 채널은 하루 안 글만
-    for (const r of c.rows) if (!TS.test(String(r.thread || "")) && Number(r.at) > s && !((seen.get(thKey(tsOf(r.at, r.id))) ?? 0) >= Number(r.at))) unread.push({ ts: tsOf(r.at, r.id), chan: key.get(c.pane), thread: null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author: c.name });   // 스레드 답은 아래 threadUnread(채널 읽음과 따로)
+    for (const r of c.rows) if (!QUIET.has(String(r.kind)) && !TS.test(String(r.thread || "")) && Number(r.at) > s && !((seen.get(thKey(tsOf(r.at, r.id))) ?? 0) >= Number(r.at))) unread.push({ ts: tsOf(r.at, r.id), chan: key.get(c.pane), thread: null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author: c.name });   // 스레드 답은 아래 threadUnread(채널 읽음과 따로)
   }
   unread.push(...await threadUnread(db, me, seen, now, P, key));
   unread.sort((a, b) => b.at - a.at);
@@ -115,7 +116,7 @@ async function threadUnread(db: D1Database, me: string, seen: Map<string, number
   for (const r of rows) { const root = rootOf(r.thread); if (root && (mine(r) || reacted.has(Number(r.id)))) floor.set(root, Math.max(floor.get(root) ?? 0, Number(r.at))); }
   const out: R[] = [], byRoot = new Map<string, R>();   // rows 는 새것부터 — 처음 만난 답이 그 스레드 항목
   for (const r of rows) {
-    const root = rootOf(r.thread); if (!root || mine(r) || OWN.test(String(r.win)) || r.win === "보더") continue;
+    const root = rootOf(r.thread); if (!root || mine(r) || OWN.test(String(r.win)) || r.win === "보더" || QUIET.has(String(r.kind))) continue;
     if (Number(r.at) <= Math.max(all, seen.get(thKey(root)) ?? 0, floor.get(root) ?? 0)) continue;
     const prim = PTH.test(String(r.thread)), pane = prim ? null : P.paneOfLog({ win: String(r.win), kind: r.kind, thread: null }), chan = prim ? "primary" : pane && pane !== PRIMARY ? key.get(pane) : null;
     if (!chan) continue;
