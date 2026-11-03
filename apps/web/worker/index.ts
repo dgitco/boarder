@@ -409,7 +409,7 @@ app.get("/api/board/:key", async c => {
   const r = await snap(c.env).get(key);
   if (!r) return c.json({ error: "아직 없음" }, 404);
   const h = { etag: r.etag, "cache-control": "private, no-cache", "x-snap-at": String(r.at) };
-  if (c.req.header("if-none-match") === r.etag) return new Response(null, { status: 304, headers: h });
+  if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === r.etag) return new Response(null, { status: 304, headers: h });
   return new Response(r.body, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
 });
 
@@ -1755,7 +1755,7 @@ async function ownMisc(c: Context<{ Bindings: Env }>, url: URL): Promise<Respons
   if (!["/emoji.json", "/api/push/key", "/api/drafts"].includes(p) || !(await ledger.f7On(c.env.DB, "read_misc"))) return null;
   if (p === "/emoji.json") {
     const e = await snap(c.env).get("emoji"); if (!e) return null;
-    if (c.req.header("if-none-match") === e.etag) return new Response(null, { status: 304, headers: { etag: e.etag } });
+    if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === e.etag) return new Response(null, { status: 304, headers: { etag: e.etag } });
     return new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag, "x-f7": "snap" } });
   }
   if (p === "/api/drafts" && await ledger.f7On(c.env.DB, "write_state")) { const d = await OS.get(c.env.DB, "drafts").catch(() => null); if (d) return j(d.v); }
@@ -2112,7 +2112,7 @@ app.all("*", async c => {
       if (d?.diff) capture(c.env, c.executionCtx, "f7_shadow_diff", s.user.email, { route: rd.kind, group: rd.group, at: d.diff, n_bridge: d.n_bridge, n_d1: d.n_d1, ms_d1: d.ms });
       else if (d && Math.random() < 0.05) capture(c.env, c.executionCtx, "f7_shadow_ok", s.user.email, { route: rd.kind, group: rd.group, n_bridge: d.n_bridge, ms_d1: d.ms, ms_bridge: bms });   // 차이 0 이 이어지는지 · 빠르기(5% 표본)
     }).catch(e => capture(c.env, c.executionCtx, "f7_shadow_diff", s.user.email, { route: rd.kind, group: rd.group, at: "error " + String((e as Error)?.name || "") })));   // 오류 글은 안 실음(JSON 오류는 몸통 조각을 담음)
-    if (r.status === 200 && inm && r.headers.etag === inm) { bridgeSeg(c.req.raw, Date.now() - t0, r.headers); return new Response(null, { status: 304, headers: { etag: inm, "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
+    if (r.status === 200 && inm && r.headers.etag === inm.replace(/^W\//, "")) { bridgeSeg(c.req.raw, Date.now() - t0, r.headers); return new Response(null, { status: 304, headers: { etag: inm, "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
   }
   if (!fr) bridgeSeg(c.req.raw, Date.now() - t0, r.headers);
   if (!fr && !own && c.req.method === "GET") filesShadow(c, url.pathname + url.search, headers, r, s.user.email);

@@ -87,6 +87,8 @@ test("채널 읽기: ETag 이 붙고 같은 ETag 로 다시 읽으면 304, 글�
   assert.equal(r1!.status, 200); const t1 = r1!.headers.get("etag"); assert.ok(t1);
   const r2 = await get(f.D1, A, null, U("/api/chat/primary"), emo, t1!, "A");
   assert.equal(r2!.status, 304); assert.equal(r2!.headers.get("etag"), t1);
+  const rw = await get(f.D1, A, null, U("/api/chat/primary"), emo, "W/" + t1!, "A");   // Cloudflare 가 약한 꼴로 바꾼 ETag 로 와도 304
+  assert.equal(rw!.status, 304, "약한 꼴 ETag 로 304 안 됨");
   f.db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(A, "메인 봇", "chat", "새 글", "primary", Date.now());
   const r3 = await get(f.D1, A, null, U("/api/chat/primary"), emo, t1!, "A");
   assert.equal(r3!.status, 200); assert.notEqual(r3!.headers.get("etag"), t1);

@@ -493,6 +493,7 @@ export async function chatLog(db: D1Database, me: string, sid: string, now = Dat
 export async function etag(b: string) { return '"m' + [...new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(b)))].slice(0, 8).map(x => x.toString(16).padStart(2, "0")).join("") + '"'; }
 const ETAG_PATHS = /^\/api\/(chat\/|nodechat$|topics$|inbox$)/;
 export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>)): Promise<Response | null> {
+  inm = inm?.replace(/^W\//, "");
   const r = await getInner(db, me, bot, url, emoji, inm, who);
   if (!r || r.status !== 200 || r.headers.has("etag") || !ETAG_PATHS.test(url.pathname) || !(r.headers.get("content-type") || "").startsWith("application/json")) return r;
   const txt = await r.text(), t = await etag(txt.replace(/"read_at":\d+,?/g, ""));
