@@ -97,10 +97,12 @@ test("채널 읽기: ETag 이 붙고 같은 ETag 로 다시 읽으면 304, 글�
 test("회원 판: 같은 분 안에 같은 ETag 로 다시 읽으면 304(초 단위 칸이 판을 바꾸지 않음)", async (t) => {
   const f = seed(), U = (p: string) => new URL("https://x" + p), emo = async () => null;
   const base = Math.floor(Date.now() / 60_000) * 60_000 + 5_000;   // 분 첫머리 + 5초
+  f.db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(A, "일 창", "진행", "25초 전 줄", null, base - 25_000);
+  f.db.prepare("INSERT INTO member_promise(owner, win, who, what, check_by, due, state, at) VALUES (?,?,?,?,?,?,?,?)").run(A, "일 창", "동료", "결과 알려 드리기", "장부", "2026-01-01", "open", base - 25_000);
   t.mock.timers.enable({ apis: ["Date"], now: base });
   const r1 = await get(f.D1, A, { name: "메인 봇" }, U("/api/data"), emo, undefined, "A");
   assert.equal(r1!.status, 200); const t1 = r1!.headers.get("etag"); assert.ok(t1);
-  t.mock.timers.setTime(base + 20_000);   // 20초 뒤(같은 분)
+  t.mock.timers.setTime(base + 50_000);   // 50초 뒤(같은 분) — 그 사이 「몇 분 전」이 반올림으로 넘어가는 줄이 있어도(아래 25초 전 줄 — 0분 → 1분) 판은 같아야 함
   const r2 = await get(f.D1, A, { name: "메인 봇" }, U("/api/data"), emo, t1!, "A");
   assert.equal(r2!.status, 304, "같은 분인데 판이 달라짐 — 초 단위 칸이 남아 있음");
 });

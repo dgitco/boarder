@@ -170,15 +170,15 @@ const STATE: Record<string, string> = { working: "일하는 중", busy: "일하�
 
 const PSTATE: Record<string, string> = { working: "일하는 중", question: "질문" };
 export async function data(db: D1Database, me: string, bot: { name?: string } | null, pre?: Awaited<ReturnType<typeof load>>) {
-  const L = pre || await load(db, me), now = Date.now(), ago = (ms: number) => Math.max(0, Math.round((now - ms) / 60_000));
+  const L = pre || await load(db, me), now = Date.now(), nowMin = Math.floor(now / 60_000) * 60_000, ago = (ms: number) => Math.max(0, Math.round((nowMin - ms) / 60_000));
   const line = (r: R) => ({ id: r.id, ago: ago(r.at), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 220), handled: false, short: cut(r.text, 60), short_ok: true, title: cut(r.text, 30) });
   const logsOf = (n: Node | null, wins?: string[]) => L.logs.filter(r => !inPrim(r) && r.kind !== "me" && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n : wins!.includes(r.win)));
   const pane = (o: { pane: string; win: string; kind: string; state: string; cwd?: string; branch?: string; rows: R[]; blockedOwner?: boolean }) => {
     const last = o.rows[0] ? line(o.rows[0]) : null, real = o.rows.find(r => r.kind !== "status"), rl = real ? line(real) : null, blk = rl && rl.kind === "막힘" ? rl : null;
     return { win: o.win, area: "primary", role: "리드", pane: o.pane, acct: "", state: o.state, dur: "", stuck: "", cwd: o.cwd || "", branch: o.branch || "", kind: o.kind, last: blk || last, blocked: blk,
       recent: o.rows.slice(0, 5).reverse().map(r => ({ ago: ago(r.at), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 260) })),
-      hist: o.rows.filter(r => now - r.at < 86_400_000).reverse().map(r => ({ m: ago(r.at), k: KIND_KO[r.kind] || r.kind })), topics: [], pri: priOf(L.pri, o.win), owner: !!blk,
-      watch: !blk && o.rows[0]?.kind === "status" && now - Number(o.rows[0].at) < 86_400_000 ? cut(o.rows[0].text, 60) : "" };   // 막힘 동안은 막힘이 먼저
+      hist: o.rows.filter(r => nowMin - r.at < 86_400_000).reverse().map(r => ({ m: ago(r.at), k: KIND_KO[r.kind] || r.kind })), topics: [], pri: priOf(L.pri, o.win), owner: !!blk,
+      watch: !blk && o.rows[0]?.kind === "status" && nowMin - Number(o.rows[0].at) < 86_400_000 ? cut(o.rows[0].text, 60) : "" };   // 막힘 동안은 막힘이 먼저
   };
   const mainName = bot?.name || "Primary";
   // 메인 봇 판: 엔진 메인 창이 있으면 그 상태, 없으면 있던 primary 창(들여온 것)의 상태 · 폴더 — 그 창이 보드에 올린 보고 줄도 봇 줄로
@@ -290,7 +290,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const archived = ((await db.prepare("SELECT COALESCE(pinned_name, name) AS n FROM mnode WHERE owner = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 300").bind(me).all<R>()).results).map(r => String(r.n || "노드"));
   // 약속(member_promise, 0047): 열린 것 = 주인 D.promises 꼴, 기한이 지난 것은 to_check(「지켰는지 확인」) — 표가 아직 없으면(이주 전) 빈 꼴
   const promPane = (w: string) => { const ew = L.engineNodes.find(x => x.name === w), p = ew ? paneOfId(ew.id) : ""; return p && known.has(p) ? p : toPane(w); };
-  const { promises, to_check } = await promiseRows(db, me, promPane, now);
+  const { promises, to_check } = await promiseRows(db, me, promPane, nowMin);
   return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 60_000) * 60, open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
     cards: [], cardlist, attn: null, relinks: {}, todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
