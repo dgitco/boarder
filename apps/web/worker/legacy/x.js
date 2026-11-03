@@ -68,10 +68,10 @@
     return it.sort((a, b) => (b.ask - a.ask) || (a.ask && b.ask ? a.rank - b.rank : 0) || (b.un - a.un) || (b.at - a.at)).slice(0, 80);
   }
 
-  const head = (m, k) => `<div class="xh"><b>${E(who(m))}</b><span class="xtm">${ago(m.ts)}</span></div>`;
+  const head = (m, k, turn) => `<div class="xh"><b>${E(who(m))}</b><span class="xtm">${ago(m.ts)}</span>${turn ? '<span class="xturn">· 내 차례</span>' : ''}</div>`;
   const body = m => { const f = files(m); return `${f.text ? `<div class="xbd">${mdx(f.text, m.who !== 'owner')}</div>` : ''}${f.html || ''}`; };
-  const acts = (k, m, n, done, sts) => `<div class="xact"><button type="button" class="xck${done ? ' on' : ''}" data-xdone="${E(m.ts)}" data-k="${E(k)}" aria-label="완료 · 읽음">${CHK()}</button>`
-    + `<button type="button" class="xrp" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}" aria-label="답글">${MSG}${n ? `<span>${n}</span>` : ''}</button>`
+  const acts = (k, m, n, done, sts, un) => `<div class="xact"><button type="button" class="xck${done ? ' on' : ''}" data-xdone="${E(m.ts)}" data-k="${E(k)}" aria-label="완료 · 읽음">${CHK()}</button>`
+    + `<button type="button" class="xrp" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}" aria-label="${un ? '답글 · 읽지 않음' : '답글'}">${MSG}${n ? `<span>${n}</span>` : ''}${un ? '<i class="xnew"></i>' : ''}</button>`
     + (() => { const rt = sts || m.thread || m.ts, on = isSaved(rt);   // sts = 저장됨 탭에서 그 줄이 저장한 글(답 글 하나만 저장했을 수 있음)
       return `<button type="button" class="xsv${on ? ' on' : ''}" data-xsave="${E(rt)}" data-k="${E(k)}" aria-pressed="${on}" aria-label="${on ? '저장 풀기' : '저장'}">${ji('save', on, 20)}</button>`; })() + '</div>';
   const isSaved = ts => X.sv.has(ts) ? X.sv.get(ts) : !!window.HBInbox?.isSaved?.(ts);   // 보드 저장 표(saved_ids — 200개 넘어도 전부)
@@ -96,7 +96,7 @@
     const bd = body(m), part = q ? (o.part ? nn(o.part) : o.feed ? nn('1/2') : '') : '';
     const goto = q && o.feed ? `<button type="button" class="xgo" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}">${MSG}<span>${o.more ? `<b>투표</b>에서 고르기 · ${E(o.more)}` : '<b>2/2 투표</b>에서 고르기 · 눌러서 열기'}</span></button>` : '';
     return `<article class="xp${o.joined ? ' j' : ''}${o.dim ? ' rd' : ''}${o.ask ? ' ask' : ''}" data-ts="${E(m.ts)}" data-k="${E(k)}" data-root="${E(o.root || m.ts)}">${o.joined ? '<i class="xl"></i>' : ''}`
-      + `<span class="xav">${av(who(m), 36)}</span><div class="xc">${head(m, k)}${bd.replace(/<\/p>/, part + '</p>')}${goto}${o.pollHere ? '' : ''}${acts(k, m, o.n || 0, o.done, o.sts)}</div></article>`;
+      + `<span class="xav">${av(who(m), 36)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${goto}${o.pollHere ? '' : ''}${acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
   }
   // 피드 한 묶음: 뿌리 글 + 볼 답 하나(물음이 있으면 그 글, 없으면 마지막 답) — 곧은 이음선
   function unit(x){
@@ -106,9 +106,10 @@
     const qs = qList(k, m), bundle = qs.length > 1, open = qs.filter(isAsk), bq = bundle ? (open[0] || qs[qs.length - 1]) : null;
     const bo = bundle ? {part: `${qs.indexOf(bq) + 1}/${qs.length}`, more: open.length ? `${qs.length}개 중 ${open.length}개 남음` : `${qs.length}개 모두 접수됨`} : {};
     const show = bundle ? bq : pv;
-    if (!show) return wrap(x, post(k, m, {feed: true, n: m.replies || 0, dim, ask: x.ask, sts: x.sts}));
-    if (show === m) return wrap(x, post(k, m, {feed: true, n: m.replies || r.length, dim, ask: x.ask, sts: x.sts, ...bo}));
-    return wrap(x, post(k, m, {joined: true, feed: true, dim, ask: x.ask, sts: x.sts}) + post(k, show, {feed: true, root: m.ts, n: m.replies || r.length, dim, ask: x.ask, sts: x.sts, ...bo}));
+    const tgt = !x.ask ? null : bundle ? bq : (ask || m);   // 「내 차례」를 붙일 글 = 실제로 고를 글(뿌리 물음 · 열린 카드 뿌리면 뿌리, 묶음이면 열린 물음)
+    if (!show) return wrap(x, post(k, m, {feed: true, n: m.replies || 0, dim, ask: x.ask, turn: tgt === m, un: x.un, sts: x.sts}));
+    if (show === m) return wrap(x, post(k, m, {feed: true, n: m.replies || r.length, dim, ask: x.ask, turn: tgt === m, un: x.un, sts: x.sts, ...bo}));
+    return wrap(x, post(k, m, {joined: true, feed: true, dim, ask: x.ask, turn: tgt === m, sts: x.sts}) + post(k, show, {feed: true, root: m.ts, n: m.replies || r.length, dim, ask: x.ask, turn: tgt === show, un: x.un, sts: x.sts, ...bo}));
   }
   const wrap = (x, h) => `<div class="xu${x.ask ? ' ask' : ''}" data-root="${E(x.m.ts)}" data-k="${E(x.k)}">${h}</div>`;
 
@@ -162,13 +163,13 @@
   // ── 저장됨(X11) · 프로필(X12)
   function drawSave(){
     const v = V('save'), s = window.HBInbox?.state?.saved || [], by = new Map(roots().map(x => [x.m.ts, x]));
-    const rows = s.map(x => { const r = by.get(x.thread || x.ts) || by.get(x.ts); return r ? unit({...r, ask: false, un: true, sts: x.ts}) : `<div class="xrow" data-xopen="${E(x.thread || x.ts)}" data-k="${E(x.chan)}"><b>${E(x.author || '')}</b><span>${E(String(x.text || '').slice(0, 120))}</span></div>`; }).join('');
+    const rows = s.map(x => { const r = by.get(x.thread || x.ts) || by.get(x.ts); return r ? unit({...r, ask: false, un: false, sts: x.ts}) : `<div class="xrow" data-xopen="${E(x.thread || x.ts)}" data-k="${E(x.chan)}"><b>${E(x.author || '')}</b><span>${E(String(x.text || '').slice(0, 120))}</span></div>`; }).join('');
     v.innerHTML = `<header class="xhd"><b>저장됨</b></header><div class="xfeed">${rows || '<p class="xempty">저장한 글이 없어요. 글 아래 책갈피를 누르면 여기 모여요.</p>'}</div>`;
   }
   function drawMe(){
     const v = V('me'), mine = roots().filter(x => x.m.who === 'owner').sort((a, b) => b.m.ts - a.m.ts).slice(0, 20);
     v.innerHTML = `<header class="xhd"><b>${E(ME())}</b></header><div class="xpf"><span class="xav xbig">${av(ME(), 72)}</span><div class="xpb"><a class="xpbtn" href="/#settings">설정</a><a class="xpbtn" href="/#settings/connect">연결</a><a class="xpbtn" href="/">보더</a></div></div>`
-      + `<div class="xtabs"><b>내 요청</b></div><div class="xfeed">${mine.map(x => unit({...x, ask: false, un: true})).join('') || '<p class="xempty">아직 쓴 글이 없어요</p>'}</div>`;
+      + `<div class="xtabs"><b>내 요청</b></div><div class="xfeed">${mine.map(x => unit({...x, ask: false, un: false})).join('') || '<p class="xempty">아직 쓴 글이 없어요</p>'}</div>`;
   }
 
   // ── 화면 바꾸기 · 그리기 일정
