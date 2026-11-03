@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 type Out = { status: number; headers: Record<string, string>; body: Uint8Array };
-type Wait = { resolve: (o: Out) => void; reject: (e: Error) => void; parts: string[]; status: number; headers: Record<string, string>; timer: ReturnType<typeof setTimeout>; ws?: WebSocket; t0?: number };
+type Wait = { resolve: (o: Out) => void; reject: (e: Error) => void; parts: string[]; status: number; headers: Record<string, string>; timer: ReturnType<typeof setTimeout>; ws?: WebSocket; t0?: number; resend?: boolean };
 
 const b64 = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const enc64 = (u: Uint8Array) => { let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
@@ -36,7 +36,7 @@ export class Bridge extends DurableObject<object> {
   }
   online() { return !!this.sock(); }
   health() { const n = this.ctx.getWebSockets().length, s = this.sock(); return { sockets: n, fresh_s: s ? Math.round((Date.now() - this.seen(s)) / 1000) : null }; }
-  async ready(): Promise<WebSocket | undefined> { let ws = this.sock(); for (let t = 0; !ws && t < 32; t++) { await new Promise(ok => setTimeout(ok, 250)); ws = this.sock(); } return ws; }
+  async ready(): Promise<WebSocket | undefined> { let ws = this.sock(); for (let t = 0; !ws && t < 80; t++) { await new Promise(ok => setTimeout(ok, 250)); ws = this.sock(); } return ws; }
   // 머리를 보내다 예외 = 실행기 · 릴레이는 아무것도 못 받음 — 그 연결을 빼고 다음(다시 붙는) 연결로 한 번 더(쓰기도 안전). 조각을 보내다 예외는 그대로 실패
   async call(r: { method: string; path: string; headers: Record<string, string>; body?: Uint8Array }): Promise<Out> {
     for (;;) { try { return await this.call1(r); } catch (e) { if (!(e instanceof Unsent)) throw e; } }
@@ -47,7 +47,7 @@ export class Bridge extends DurableObject<object> {
     const id = crypto.randomUUID();
     return new Promise<Out>((resolve, reject) => {
       const timer = setTimeout(() => { this.wait.delete(id); this.drop(ws, "답 없음"); reject(new Error("릴레이 답 없음")); }, 25000);
-      this.wait.set(id, { resolve, reject, parts: [], status: 0, headers: {}, timer, ws, t0: Date.now() });
+      this.wait.set(id, { resolve, reject, parts: [], status: 0, headers: {}, timer, ws, t0: Date.now(), resend: true });
       const body = r.body && r.body.length ? enc64(r.body) : "", n = Math.ceil(body.length / PART);
       let head = false;
       try {
@@ -89,11 +89,12 @@ export class Bridge extends DurableObject<object> {
     }
   }
   async webSocketError(ws: WebSocket) { await this.webSocketClose(ws); }
-  async webSocketClose(ws: WebSocket) {
+  async webSocketClose(ws: WebSocket, code?: number, reason?: string) {
     let keep = false; try { keep = !!(ws.deserializeAttachment() as { keep?: boolean } | null)?.keep; } catch {}
     this.dead.add(ws); try { ws.close(1011, "닫힘"); } catch {}
     for (const [id, w] of this.wait) {
       if (w.ws && w.ws !== ws) continue;
+      if (keep && code === 1001 && reason === "stopping" && w.resend && w.ws === ws && !w.status && !w.parts.length){ clearTimeout(w.timer); this.wait.delete(id); w.reject(new Unsent()); continue; }
       if (keep) { w.ws = undefined; continue; }   // 실행기: 그 요청의 답은 다시 붙은 연결로 옴(실행기가 다시 보냄) — 안 오면 원래 시간 넘김(25초)
       clearTimeout(w.timer); w.reject(new Error("릴레이 끊김")); this.wait.delete(id);
     }

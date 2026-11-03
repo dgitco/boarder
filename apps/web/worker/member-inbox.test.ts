@@ -249,3 +249,14 @@ test("읽지 않음: 다른 노드 창이 카드 스레드에 단 답 — 채널
   const bad = await MB.get(s.db, A, { name: "메인 봇" }, new URL(`https://x/api/chat/${encodeURIComponent("n:회사")}/1793000000.000777`), async () => null);
   assert.equal(((await bad!.json()) as any).messages.length, 0, "예전 채널(답한 창 쪽)로는 글 0 — 화면의 「없는 스레드예요」(고치기 전 꼴)");
 });
+
+test("모아 보기 GET: ETag 이 붙고 같은 ETag(W/ 꼴 포함)이면 304, 글이 늘면 200", async () => {
+  const s = setup(), U = new URL("https://x/api/inbox");
+  const c = (inm?: string) => ({ env: { DB: s.db }, executionCtx: { waitUntil() {} }, req: { method: "GET", header: (k: string) => k.toLowerCase() === "if-none-match" ? inm : undefined },
+    json: (o: unknown, st = 200, h: Record<string, string> = {}) => new Response(JSON.stringify(o), { status: st, headers: { "content-type": "application/json", ...h } }) });
+  const r1 = (await MI.route(c() as never, A, U))!; assert.equal(r1.status, 200); const t = r1.headers.get("etag"); assert.ok(t);
+  assert.equal((await MI.route(c(t!) as never, A, U))!.status, 304);
+  assert.equal((await MI.route(c("W/" + t!) as never, A, U))!.status, 304, "약한 꼴 ETag 로 304 안 됨");
+  s.log(A, "영업 창", "새 답", s.now + 1000);
+  const r3 = (await MI.route(c(t!) as never, A, U))!; assert.equal(r3.status, 200);
+});

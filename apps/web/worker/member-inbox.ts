@@ -2,7 +2,7 @@
 // 예전 회원 길은 반응 · 고치기 「아직 안 돼요」(400), 모아 보기(/api/inbox) · 초안(/api/drafts)은 늘 빈 답, 저장 · 읽음 · 초안 저장은 저장 없이 ok 였음.
 // 표: member_react · member_saved · member_draft · member_seen(0041). 모두 owner = 나, 남의 것은 404 · 빈 답
 import type { Context } from "hono";
-import { paneLogs, ME, OWN, NOT_CHAT, QUIET } from "./member-board";
+import { paneLogs, ME, OWN, NOT_CHAT, QUIET, etag } from "./member-board";
 
 type Env = { DB: D1Database };
 type C = Context<{ Bindings: Env }>;
@@ -191,7 +191,10 @@ export async function seenByLabel(db: D1Database, me: string, label: string, now
 export async function route(c: C, me: string, url: URL, body?: R | null): Promise<Response | null> {
   const p = url.pathname, db = c.env.DB, J = (o: R, st = 200) => c.json(o, st as 200, { "cache-control": "no-store" });
   if (c.req.method === "GET") {
-    if (p === "/api/inbox") return J(await inbox(db, me));
+    if (p === "/api/inbox") {
+      const b = JSON.stringify(await inbox(db, me)), t = await etag(b), h = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", etag: t };
+      return (c.req.header("if-none-match") || "").replace(/^W\//, "") === t ? new Response(null, { status: 304, headers: h }) : new Response(b, { headers: h });
+    }
     if (p === "/api/drafts") return J(await draftMap(db, me));
     if (p === "/api/nodechat") { const w = String(url.searchParams.get("w") || "").trim(); if (w) c.executionCtx.waitUntil(seenByLabel(db, me, w).catch(e => console.error("읽음", e))); }
     return null;
