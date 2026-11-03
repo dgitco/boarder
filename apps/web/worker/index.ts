@@ -11,6 +11,7 @@ import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, t
 import { BUNDLE_KEYS } from "./harness-bundles";
 import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
 import { cleanSide, readSide, saveSide } from "./side-order";
+import * as artView from "./art-view";
 import { canBePrimary, primaryPick, PARK_H_LIM, type Item } from "./importer/group";
 import { landingPage } from "./landing";
 import { localTools } from "./local";
@@ -791,6 +792,16 @@ async function todoReply(c: Context<{ Bindings: Env }>, email: string, b: unknow
     return c.json(o, st as 200, { "cache-control": "no-store" });
   } catch (e) { console.error("할 일", e); return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503); }
 }
+app.get("/api/me/art-views", async c => {
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  return c.json({ views: await artView.list(c.env.DB, todoOwner(c.env, s.user.email), +(c.req.query("since") || 0)) }, 200, { "cache-control": "no-store" });
+});
+app.post("/api/device/art-views", async c => {
+  const d = await deviceOf(c, { harness: true }); if (!d) return c.json({ ok: false, error: "기기 토큰" }, 401);
+  if (!(await member(c.env, d.owner))) return c.json({ ok: false, error: "기기 토큰" }, 401);
+  const b = Object(await c.req.json().catch(() => ({}))) as { since?: unknown };
+  return c.json({ ok: true, views: await artView.list(c.env.DB, todoOwner(c.env, d.owner), +(b.since as number) || 0) });
+});
 app.post("/api/device/todos", async c => {
   const d = await deviceOf(c, { harness: true }); if (!d) return c.json({ ok: false, error: "기기 토큰" }, 401);
   if (!(await member(c.env, d.owner))) return c.json({ ok: false, error: "기기 토큰" }, 401);
@@ -2063,7 +2074,9 @@ app.all("*", async c => {
         const an = /^\/api\/artnotes\/([A-Za-z0-9]{16,40})$/.exec(url.pathname);
         if (an) { try { const [st, o] = await memberCanvas.artnotes(c.env as never, me, an[1]); return c.json(o, st as 200, { "cache-control": "no-store" }); } catch { return queue.retrySafe(c); } }
         if (pa) { const r = await memberArt(c, await memberCanvas.keyOf(me), pa.id, pa.rel, undefined,
-          async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name || ""); if (r) return r; }
+          async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name || "");
+          if (r && r.status === 200 && !pa.rel && artView.viewable(c.req.method, c.req.header("sec-fetch-dest"), url.search)) c.executionCtx.waitUntil(artView.record(c.env.DB, me, pa.id).catch(e => console.error("열람 기록", e)));
+          if (r) return r; }
         if (url.pathname.startsWith("/art/")) return docNav(c, url) ? c.redirect("/#nf", 302) : c.text("not found", 404, { "cache-control": "no-store" });
         if (url.pathname === "/api/data") await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드
@@ -2183,6 +2196,8 @@ app.all("*", async c => {
     out.set("content-security-policy", "frame-ancestors 'self'"); out.set("x-frame-options", "SAMEORIGIN");
     return boardShell(c, new Response(unzip(), { status: r.status, headers: out }), s.user.email, "", await ledger.f7On(c.env.DB, "write_queue"), ea);
   }
+  if (shell && r.status === 200 && (r.headers["content-type"] || "").includes("text/html") && artView.viewable(c.req.method, c.req.header("sec-fetch-dest"), url.search))
+    c.executionCtx.waitUntil(artView.record(c.env.DB, todoOwner(c.env, s.user.email), shell[1]).catch(e => console.error("열람 기록", e)));
   if (canvasShell && r.status === 200 && (r.headers["content-type"] || "").includes("text/html")) {
     const t = await artTok(c.env, shell![1], Date.now() + 2 * 3600_000);
     return new HTMLRewriter().on("head", { element: e => { e.prepend(artFetchShim(shell![1], t), { html: true }); } })
