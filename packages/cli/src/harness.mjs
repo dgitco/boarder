@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dir, ensureDir, home, loadDevice, readJson, server } from './config.mjs';
 import { targets } from './targets.mjs';
+import { LABEL_PREFIX, unitName, unitToPlist } from './launchd.mjs';
 
 export const TOUCHES = ['phone-alert', 'external-send', 'account-autoswitch'];
 const MARK = '# boarder harness — `boarder disable harness` removes this file';
@@ -169,6 +170,25 @@ function linkOne(dest, src, log, kind) {
   }
   mkdirp(path.dirname(dest)); symlinkSync(src, dest); return true;
 }
+const agentsDir = () => path.join(home(), 'Library', 'LaunchAgents');
+const sha = t => createHash('sha256').update(t).digest('hex');
+export function launchctlRunner({ log = () => {}, dry = process.env.BOARDER_HARNESS_LAUNCHCTL === 'dry' } = {}) {
+  const dom = `gui/${os.userInfo().uid}`;
+  const run = args => { if (dry) { log(`(dry) launchctl ${args.join(' ')}`); return true; } return sh('launchctl', args); };
+  return { up: (label, file) => { run(['bootout', `${dom}/${label}`]); return run(['bootstrap', dom, file]); }, down: label => run(['bootout', `${dom}/${label}`]) };
+}
+/** 끄기(맥): 상태 파일에 적힌 우리 plist 만 — 라벨이 우리 접두사이고 내용이 우리가 쓴 그대로일 때만 지움(사람이 고쳤으면 남김) */
+export function removeLaunchd(units, { lc, log = () => {}, load = true } = {}) {
+  const done = [];
+  for (const u of units || []) {
+    if (!u?.plist || !u.label?.startsWith(LABEL_PREFIX) || path.basename(u.plist) !== `${u.label}.plist`) continue;
+    let t; try { t = readFileSync(u.plist, 'utf8'); } catch { continue; }
+    if (sha(t) !== u.sha256) { log(`kept ${u.plist} — it was changed after the harness wrote it`); continue; }
+    if (load) lc.down(u.label);
+    rmSync(u.plist, { force: true }); done.push(u.plist);
+  }
+  return done;
+}
 const unitBins = text => [...text.matchAll(/%h\/\.local\/bin\/([\w.-]+)/g)].map(m => m[1]);
 
 /** 켜기 — 앞서 깐 것은 먼저 걷고 지금 값으로 다시(다시 돌려도 같음) */
@@ -218,6 +238,27 @@ export async function enableHarness({ log = console.log, name, lang } = {}) {
       sh('systemctl', ['--user', 'daemon-reload']);
       for (const u of st.units) if (!sh('systemctl', ['--user', 'enable', '--now', u.start])) log(`systemd --user did not start ${u.start}`);
     } else if (st.units.length) log(`HOME (${home()}) is not your login home — wrote the units but did not start them`);
+  } else if (process.platform === 'darwin') {
+    const sys = path.join(harnessDir(), 'systemd'), load = realHome(), lc = launchctlRunner({ log });
+    const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    for (const u of plan.units) {
+      const files = (u.files || []).filter(f => /^[\w.@-]+\.(service|timer)$/.test(f));
+      if (!files.length || !files.every(f => existsSync(path.join(sys, f)))) continue;
+      const texts = files.map(f => readFileSync(path.join(sys, f), 'utf8'));
+      const bad = texts.flatMap(unitBins).filter(b => plan.blocked.has(b) || !plan.bins.includes(b));
+      if (bad.length) { log(`skipped ${u.start} — it runs ${[...new Set(bad)].join(', ')}, which is off`); continue; }
+      const name = unitName(u.start), svc = files.indexOf(`${name}.service`), tmr = files.indexOf(`${name}.timer`);
+      if (svc < 0) { log(`skipped ${u.start} — no ${name}.service`); continue; }
+      const r = unitToPlist({ name, service: texts[svc], timer: tmr < 0 ? null : texts[tmr], home: home(), nodeDir: path.dirname(process.execPath), localTz });
+      if (r.skip) { log(`skipped ${u.start} on macOS — ${r.skip}`); continue; }
+      const file = path.join(agentsDir(), r.file);
+      if (present(file)) { log(`kept your ${file} — not replaced`); continue; }
+      mkdirp(agentsDir()); mkdirp(path.dirname(r.log));
+      writeFileSync(file, r.plist, { mode: 0o644 });
+      st.units.push({ start: u.start, label: r.label, plist: file, sha256: sha(r.plist), files: [] });
+    }
+    if (st.units.length && load) { for (const u of st.units) if (!lc.up(u.label, u.plist)) log(`launchd did not start ${u.label}`); }
+    else if (st.units.length) log(`HOME (${home()}) is not your login home — wrote the launchd plists but did not load them`);
   } else if (plan.units.length) log('timers: systemd only — skipped on this OS');
   st.env = prev?.env?.made ? { ...writeEnv(values, p.bundles), made: true } : writeEnv(values, p.bundles);
   if (prev?.env?.keys?.length && !st.env.made) st.env.keys = [...new Set([...prev.env.keys, ...st.env.keys])];
@@ -231,7 +272,9 @@ export async function enableHarness({ log = console.log, name, lang } = {}) {
 /** 끄기 — 적어 둔 것만, 그리고 지금 Claude 설정 폴더에 남은 우리 훅도 */
 export function disableHarness({ log = console.log, keepFiles = false } = {}) {
   const st = loadState() || {}, done = [];
-  if (st.units?.length) {
+  const mac = (st.units || []).filter(u => u?.plist);
+  if (mac.length) done.push(...removeLaunchd(mac, { lc: launchctlRunner({ log }), log, load: realHome() }));
+  if (st.units?.length && !mac.length) {
     if (realHome()) for (const u of st.units) sh('systemctl', ['--user', 'disable', '--now', u.start]);
     for (const u of st.units) for (const f of u.files) { try { if (readFileSync(f, 'utf8').startsWith(MARK)) { rmSync(f, { force: true }); done.push(f); } } catch {} }
     if (realHome()) sh('systemctl', ['--user', 'daemon-reload']);
@@ -271,7 +314,7 @@ export async function listHarness({ log = console.log } = {}) {
 export const HARNESS_HELP = `  boarder enable harness [--name <what agents call you>] [--lang ko|en|…]
                                     install the harness bundles you turned on in Settings › Nodes (hosted Boarder, member machines):
                                     work commands in ~/.local/bin, skills in each AI tool, guard hooks added to Claude settings.json
-                                    (your own entries stay), the timers that are on (systemd --user). Bundles that reach people
+                                    (your own entries stay), the timers that are on (systemd --user; launchd LaunchAgents on macOS). Bundles that reach people
                                     (phone alerts, sending outside, account auto-switch) are never installed while they are off
   boarder disable harness           take all of it back out
   boarder harness list              which bundles are on and what is installed here`;
