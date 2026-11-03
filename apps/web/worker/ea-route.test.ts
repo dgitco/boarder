@@ -94,7 +94,7 @@ test("주인 /es: / 와 같은 몸통(다리 path 「/」)에 틀 + head 맨 앞
   assert.ok(eaCss.includes("html.bx-ea"), "마지막 css = ea.css");
 });
 
-test("머리 글 주소 대기: 채팅 · 스레드 · 캔버스 · 노드 · 모아 보기 주소만 bx-route(트리 대신 스피너), 주소는 #tree 로 · HB_HASH0 은 원래 주소", async () => {
+test("머리 글 주소 대기: 채팅 · 스레드 · 캔버스 · 노드 · 모아 보기 주소만 bx-route(트리 대신 스피너), 주소는 그대로(#tree 로 안 바꿈) · HB_HASH0 은 원래 주소", async () => {
   const { get } = setup();
   const html = await (await get("/")).text();
   const head = /<script>(window\.HB_HASH0 = [^<]*)<\/script>/.exec(html)?.[1];
@@ -106,11 +106,11 @@ test("머리 글 주소 대기: 채팅 · 스레드 · 캔버스 · 노드 · �
     new Function("window", "location", "document", "history", "setTimeout", head!)(w, loc, doc, hist, () => 0);
     return { route: cls.has("bx-route"), boot: cls.has("bx-boot"), hash: loc.hash, h0: w.HB_HASH0 };
   };
-  for (const h of ["#chat/primary/1793681208.264390", "#chat/primary", "#art/abcdefghijklmnop", "#node/%2512", "#w/Q-1", "#inbox", "#unread", "#saved", "#drafts"]) {
+  for (const h of ["#chat/primary/1793681208.264390", "#chat/primary", "#art/abcdefghijklmnop", "#node/%2512", "#w/Q-1", "#inbox", "#unread", "#saved", "#drafts", "#settings", "#settings/nodes"]) {
     const r = run(h); assert.ok(r.route && r.boot, h + " → bx-route"); assert.equal(r.h0, h);
   }
-  for (const h of ["", "#tree", "#timeline", "#arts", "#t=1793681208.264390&c=primary", "#settings/nodes", "#nf"]) assert.equal(run(h).route, false, (h || "빈 주소") + " → 가림막 없음");
-  assert.equal(run("#chat/primary").hash, "#tree", "보드가 모르는 주소는 예전처럼 #tree 로(틀이 HB_HASH0 으로 되돌림)");
+  for (const h of ["", "#tree", "#timeline", "#arts", "#t=1793681208.264390&c=primary", "#nf"]) assert.equal(run(h).route, false, (h || "빈 주소") + " → 가림막 없음");
+  for (const h of ["#chat/primary", "#chat/primary/1793681208.264390", "#art/abcdefghijklmnop", "#node/%2512", "#inbox", "#settings/connectors", "#t=1793681208.264390&c=primary"]) assert.equal(run(h).hash, h, h + " → 주소 그대로(#tree 를 거치지 않게)");
   const css = (await Promise.all([...html.matchAll(/\/bxs\/([0-9a-f]{32})\.css/g)].map(async m => (await get(`/bxs/${m[1]}.css`)).text()))).join("\n");
   assert.ok(css.includes("html.bx-route .wrap{visibility:hidden}") && css.includes("html.bx-route body::after"), "틀 css: 가림막 · 스피너");
 });

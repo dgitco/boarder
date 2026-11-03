@@ -491,6 +491,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   async function apply(){
     if (!on() || /^#settings(\/|$|\?)/.test(HBR.hash())) return;
     if (backing){ clearTimeout(backing); backing = 0; }
+    if (history.state?.bxRoot) history.replaceState(null, '', '#tree');   // 뒤로 가서 딥링크 밑 첫 화면 칸에 닿음 = 트리(사용자가 간 곳)
     if (HBR.hash() === '#chat') history.replaceState(history.state, '', '#chat/primary');
     const h = HBR.hash(), [k, a, b] = h.slice(1).split('/').map(x => decodeURIComponent(x || ''));
     const gen = ++G;
@@ -509,6 +510,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
         else if (!(chatMode() && cur.chan === a)){ ibClose(); openChan(a, b || undefined); }
         else if ((CS.th?.ts || '') !== (b || '')){ if (b) await th0(a, b); else { CS.th = null; viewChat(true); } }
       }
+      else if (k === 'chat' && a){ moved = true; history.replaceState(history.state, '', '#' + (S.ib || current)); }   // 없는 채널 = 열 화면이 없음 → 지금 보기 주소로 바꿈(쌓지 않음 — 뒤로 가기가 이 주소로 돌아와 갇히지 않게)
       else if (k === 'inbox'){ if (cur?.chan !== 'i:turn'){ ibClose(); window.HBInbox?.openFeed('turn'); } }
       else if (k === 'node'){ const got = !!nodePane(a) || await linkUntil(() => nodePane(a) || (typeof panes !== 'undefined' && panes.length ? '-' : '')) && !!nodePane(a), pa = nodePane(a);
         if (!got && gen === G){ if (typeof openNode === 'function' && typeof nodeName === 'function' && nodeName(a)) openNode(a); else linkFail(); }   // 닫힌 노드는 이름으로(보드 openNode)
@@ -581,7 +583,6 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   PC.addEventListener('change', () => { place(); sync(); });
   if (!ans.hidden && cur && cur.tab === 'chat' && cur.chan){ S.chat = S.last = cur.chan; wasOpen = true; }
   place(); sync();
-  // 딥링크: Worker 머리 글이 보드보다 먼저 주소를 #tree 로 바꿔 둠(보드가 모르는 주소를 #tree 로 밀어 칸이 둘 생기지 않게) → 원래 주소로 되돌리고 그 화면을 엶
   const h0 = String(window.HB_HASH0 || '');
   if (on() && (ROUTE.test(h0) || IBK.includes(h0.slice(1)))){
     history.replaceState(history.state, '', h0); apply();
@@ -589,11 +590,11 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (!EMBED && nav === 'navigate' && !history.state?.bx){
       const guard = () => { removeEventListener('pointerup', guard, true); removeEventListener('keydown', guard, true);
         if (history.state?.bx || !ROUTE.test(HBR.hash()) && !IBK.includes(HBR.hash().slice(1))) return;
-        const here = HBR.hash(); history.replaceState(null, '', '#tree'); history.pushState({bx: 1, from: '#tree'}, '', here); };
+        const here = HBR.hash(); history.replaceState({bxRoot: 1}, '', here); history.pushState({bx: 1, from: '#tree'}, '', here); };
       addEventListener('pointerup', guard, true); addEventListener('keydown', guard, true);
     }
   }
-  else { R.classList.remove('bx-route'); recLater(); }
+  else { if (!/^#settings(\/|$|\?)/.test(h0) || !on()) R.classList.remove('bx-route'); recLater(); }   // 설정 주소는 설정 화면(settings.js)이 그린 뒤 걷음 — 그 사이 트리가 비치지 않게
 })();
 (() => {
   if (!window.HB_LIVE) return;

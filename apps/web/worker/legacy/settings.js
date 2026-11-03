@@ -120,7 +120,7 @@
   async function render(){
     const r = parse();
     closePops();
-    R.classList.toggle('bx-set', !!r);
+    R.classList.toggle('bx-set', !!r); if (r) R.classList.remove('bx-route');   // 설정 주소로 들어온 첫 화면: 머리 글 · 틀이 걸어 둔 가림막을 설정 화면이 덮은 뒤 걷음
     if (!r){ side.innerHTML = ''; main.innerHTML = ''; return; }
     if (PC.matches && !r.tab) return go('#settings/' + DEF(), true);
     side.innerHTML = PC.matches ? menuHtml(r.tab) : '';
@@ -1105,7 +1105,6 @@
   }, true);
   for (const el of [main, side]) el.addEventListener('keydown', e => { if (!e.metaKey && !e.ctrlKey) e.stopPropagation(); });
   PC.addEventListener('change', render);
-  // 딥링크: Worker 머리 글이 #settings 를 #tree 로 바꿔 둠 → 원래 주소로
   const h0 = String(window.HB_HASH0 || '');
   if (/^#settings(\/|$|\?)/.test(h0)){ history.replaceState(null, '', h0); }
   render();
