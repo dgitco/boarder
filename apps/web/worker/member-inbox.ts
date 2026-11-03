@@ -115,12 +115,16 @@ async function threadUnread(db: D1Database, me: string, seen: Map<string, number
   const floor = new Map<string, number>();
   for (const r of rows) { const root = rootOf(r.thread); if (root && (mine(r) || reacted.has(Number(r.id)))) floor.set(root, Math.max(floor.get(root) ?? 0, Number(r.at))); }
   const out: R[] = [], byRoot = new Map<string, R>();   // rows 는 새것부터 — 처음 만난 답이 그 스레드 항목
+  const fresh = (r: R) => { const root = rootOf(r.thread); return !!root && !mine(r) && !OWN.test(String(r.win)) && r.win !== "보더" && !QUIET.has(String(r.kind)) && Number(r.at) > Math.max(all, seen.get(thKey(root)) ?? 0, floor.get(root) ?? 0); };
+  const home = new Map<string, R | null>();
+  for (const r of rows) { if (!fresh(r) || PTH.test(String(r.thread))) continue; const root = rootOf(r.thread)!; if (home.has(root)) continue;
+    home.set(root, (await cardByTs(db, me, root)) || (await logByTs(db, me, root))); }
   for (const r of rows) {
-    const root = rootOf(r.thread); if (!root || mine(r) || OWN.test(String(r.win)) || r.win === "보더" || QUIET.has(String(r.kind))) continue;
-    if (Number(r.at) <= Math.max(all, seen.get(thKey(root)) ?? 0, floor.get(root) ?? 0)) continue;
-    const prim = PTH.test(String(r.thread)), pane = prim ? null : P.paneOfLog({ win: String(r.win), kind: r.kind, thread: null }), chan = prim ? "primary" : pane && pane !== PRIMARY ? key.get(pane) : null;
+    if (!fresh(r)) continue;
+    const root = rootOf(r.thread)!, h = home.get(root);
+    const prim = PTH.test(String(r.thread)), pane = prim ? null : P.paneOfLog(h ? { win: String(h.win), kind: h.kind ? String(h.kind) : undefined, thread: null } : { win: String(r.win), kind: r.kind, thread: null }) || (h ? P.paneOfLog({ win: String(r.win), kind: r.kind, thread: null }) : null), chan = prim || (h && pane === PRIMARY) ? "primary" : pane && pane !== PRIMARY ? key.get(pane) : null;
     if (!chan) continue;
-    const author = prim ? bot : P.chans.find(c => c.pane === pane)?.name || String(r.win || "");
+    const author = prim ? bot : P.chans.find(c => c.pane === P.paneOfLog({ win: String(r.win), kind: r.kind, thread: null }))?.name || String(r.win || "");   // 답한 이 = 답을 쓴 창(채널은 뿌리 쪽이어도)
     const had = byRoot.get(root); if (had) { had.n++; continue; }
     const it: R = { ts: tsOf(r.at, r.id), chan, thread: root, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author, n: 1, kind: "thread" };
     byRoot.set(root, it); out.push(it);

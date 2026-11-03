@@ -230,3 +230,22 @@ test("읽지 않음: 상태(inbox_status) · 작업 기록(start · progress · 
   th = (await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === rts);
   assert.equal(th.length, 1); assert.equal(th[0].ts, tsOf(t - 5_000, ans)); assert.equal(th[0].n, 1, "새 답 수에도 진행 줄은 안 셈");
 });
+
+test("읽지 않음: 다른 노드 창이 카드 스레드에 단 답 — 채널은 카드가 사는 노드, 그 채널로 열면 스레드가 보임(「없는 스레드예요」 아님)", async () => {
+  const s = setup(), sl = (ms: number) => new Promise(r => setTimeout(r, ms));
+  const raw = (s.db as any);
+  await raw.prepare("INSERT INTO mnode(owner, id, name, state, created_at, updated_at) VALUES (?,?,?,?,?,?)").bind(A, "n-lead", "회사", "working", s.now, s.now).run();
+  await raw.prepare("INSERT INTO mnode_item(owner, item, node) VALUES (?,?,?)").bind(A, "win:팀장", "n-lead").run();
+  s.card("1793000000.000777", A, "영업 창");   // 담당 창(예시 팀 영업 노드)이 낸 카드
+  await sl(20); s.log(A, "팀장", "제가 맡을게요", Date.now(), "say", "1793000000.000777"); await sl(20);
+  const it = (await MI.inbox(s.db, A)).unread.filter((x: any) => x.thread === "1793000000.000777");
+  assert.equal(it.length, 1);
+  assert.equal(it[0].chan, "n:예시 팀 영업", "카드가 사는 노드 채널 — 답한 창의 노드(회사)면 그 채널엔 이 카드가 없음");
+  assert.equal(it[0].author, "회사", "답한 이는 답을 쓴 창 쪽");
+  const res = await MB.get(s.db, A, { name: "메인 봇" }, new URL(`https://x/api/chat/${encodeURIComponent(it[0].chan)}/1793000000.000777`), async () => null);
+  assert.equal(res!.status, 200);
+  const j = (await res!.json()) as any;
+  assert.ok(j.messages.some((m: any) => /제가 맡을게요/.test(m.text || "")), "스레드에 그 답이 보임");
+  const bad = await MB.get(s.db, A, { name: "메인 봇" }, new URL(`https://x/api/chat/${encodeURIComponent("n:회사")}/1793000000.000777`), async () => null);
+  assert.equal(((await bad!.json()) as any).messages.length, 0, "예전 채널(답한 창 쪽)로는 글 0 — 화면의 「없는 스레드예요」(고치기 전 꼴)");
+});
