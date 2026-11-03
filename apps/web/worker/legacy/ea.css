@@ -301,6 +301,11 @@ html.bx-ea #ans .ccomp textarea::placeholder{color:var(--muted)}
 html.bx-ea #ans .ccomp .crow > .vmemo,html.bx-ea #ans .ccomp .crow > .send{flex:none;width:32px!important;height:32px!important;border-radius:50%}
 html.bx-ea #ans .ccomp .crow:has(textarea:not(:placeholder-shown)) > .vmemo{display:none}   /* 글이 있으면 마이크 대신 보내기 하나(Grok · 메시지)*/
 html.bx-ea #ans .ccomp .crow > .vmemo{background:color-mix(in srgb,var(--ink) 7%,transparent);color:var(--muted)}
+html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box){margin-left:0;min-height:0;padding:8px!important;border-radius:28px!important;box-shadow:0 0 0 1px var(--line)!important}
+html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) .crow{min-height:0;padding:0;align-items:end}
+html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) .crow .plus{position:static;left:auto;width:36px;height:36px;background:none!important;box-shadow:none}
+html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) textarea{min-height:0;padding:7px 10px}
+html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) .crow > .vmemo,html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) .crow > .send{width:36px!important;height:36px!important}
 /* 다크: 흰 알약 대신 한 단 밝은 회색(Grok 다크 꼴) — 바탕(--surface)과 같으면 알약이 묻힘 */
 @media (prefers-color-scheme:dark){html.bx-ea:not([data-theme="light"]) #ans .ccomp .box:not(.ibpx .box),html.bx-ea:not([data-theme="light"]) .bx-ea-h :is(.bx-ea-back,.bx-ea-ib,.bx-ea-who),html.bx-ea:not([data-theme="light"]) #ans .ccomp .crow .plus{background:var(--bubble)!important}}
 html.bx-ea[data-theme="dark"] #ans .ccomp .box:not(.ibpx .box),html.bx-ea[data-theme="dark"] .bx-ea-h :is(.bx-ea-back,.bx-ea-ib,.bx-ea-who),html.bx-ea[data-theme="dark"] #ans .ccomp .crow .plus{background:var(--bubble)!important}

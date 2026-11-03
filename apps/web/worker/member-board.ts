@@ -679,7 +679,11 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     return { path: `/api/me/cards/${c.id}/answer`, body: { choice: text, free: true } };
   }
   if (path === "/api/split/move") return splitMove(db, me, String(b.post || ""), String(b.pane || ""));   // 갈래 칩 끌어 옮기기(주인 split_move_post 와 같은 몸통 · 답 { ok, splits }) — 내 몫 글 · 내 노드만, 아니면 404
-  if (path === "/api/clientlog") return { ok: { ok: true } };   // 화면 오류 기록(keepalive) — 회원은 PostHog 로만 남김(400 이 또 오류로 쌓이지 않게)
+  if (path === "/api/clientlog") {
+    const f = (k: string, n = 160) => b[k] == null ? null : String(b[k]).slice(0, n);
+    console.log(JSON.stringify({ ev: "client_error", member: true, where: f("where", 120), path: f("path", 100), method: f("method", 10), status: f("status", 10), rid: f("rid", 64), kind: f("kind", 10), page: f("page", 80), err: f("err"), client_at: Number(b.at) || null, late: !!(b.late || b.queued) }));
+    return { ok: { ok: true } };
+  }
   if (path === "/api/todo") {   // 할 일 끝냄(틀 { area, id }) = 그 할 일 카드에 「했어요」로 답(카드를 낸 창에 넘어감 · 에이전트 wait 가 받음)
     const id = String(b.id || b.ts || "");
     const c = CARD_TS.test(id) ? await db.prepare("SELECT id, state FROM board_card WHERE id = ? AND owner = ? AND kind = 'todo'").bind(id, me).first<{ id: string; state: string }>() : null;

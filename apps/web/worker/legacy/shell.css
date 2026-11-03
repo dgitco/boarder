@@ -84,7 +84,7 @@ html.bx .bx-seg button:hover{color:var(--ink)}
 html.bx .bx-seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px var(--shadow)}
 html.bx .bx-seg[hidden]{display:none}
 
-html.bx .ccomp .box{border:0!important;background:var(--surface)!important;box-shadow:0 2px 14px rgba(0,0,0,.08),0 0 0 1px var(--line)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+html.bx .ccomp .box{border:0!important;background:var(--surface)!important;box-shadow:0 0 0 1px var(--line)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 html.bx .ccomp .crow > .plus{color:var(--ink)}
 @media (hover:hover){html.bx .ccomp .crow > .plus:hover{background:var(--sunk)}}
 html.bx .ccomp .crow > .send,html.bx .ccomp .crow > .cvoice,html.bx .ans .ig .send{background:var(--ink);color:var(--surface);opacity:1;border:0}
@@ -150,7 +150,7 @@ html.bx .ccomp .crow > .send:disabled,html.bx .ans .ig .send:disabled{opacity:1;
   html.bx.bx-chat #ans > .ah .mtabs,html.bx.bx-chat #ans > .ah .vcallh,html.bx.bx-chat #ans > .ah .aback:not(.npb){display:none}
   html.bx.bx-chat #ans .cmain > .chd:not(:has(.stale)){display:none}
   html.bx.bx-chat #ans .cmain > .chd .t,html.bx.bx-chat #ans .cmain > .chd .d{display:none}
-  html.bx.bx-chat #ans .cth .ccomp .box{background:color-mix(in srgb,var(--bubble) 78%,transparent);box-shadow:0 2px 12px var(--shadow)}
+  html.bx.bx-chat #ans .cth .ccomp .box{background:color-mix(in srgb,var(--bubble) 78%,transparent);box-shadow:0 0 0 1px var(--line)}
   html.bx #v-arts .arts{display:flex;gap:0;align-items:stretch;min-height:calc(100vh - 110px)}
   html.bx .bx-aside{display:none}
   html.bx .bx-top{position:relative}

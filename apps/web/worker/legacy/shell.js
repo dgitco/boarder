@@ -16,7 +16,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     chat: lu('message-square'),
     node: lu('network'),
     hash: lu('hash'),
-    canvas: lu('layout-grid'),
+    canvas: lu('image'),
     unread: lu('message-square-dot'),
     saved: lu('bookmark'),
     copy: lu('copy'),
