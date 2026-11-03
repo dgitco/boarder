@@ -94,3 +94,22 @@ test("카드 inbox_say 는 예전 그대로 · 카드 머리 줄의 채널 = 카
   assert.equal(await MB.channelOf(D1, A, WIN), NODE);
   assert.equal(await MB.channelOf(D1, A, "모르는 창"), "모르는 창");
 });
+
+test("노드 채널 글 스레드: 노드 채팅 글 ch = n:<노드>(그 주소로 스레드가 열림) · 판 없이 n:<노드> 채널 스레드에 쓴 답(읽지 않음 화면)도 그 노드 창으로", async () => {
+  const { D1, line } = setup();
+  const root = line(A, WIN, "me", "맨 위에 쓴 글"); line(A, WIN, "say", "창 답", root);
+  const nc = await get(D1, A, "/api/nodechat?w=" + encodeURIComponent(NODE));
+  const m = nc.messages.find((x: any) => x.ts === root);
+  assert.equal(m.ch, "n:" + NODE); assert.equal(m.replies, 1);
+  assert.equal((await get(D1, A, "/api/nodechat?w=" + encodeURIComponent("12 " + NODE))).messages.find((x: any) => x.ts === root).ch, "n:" + NODE);
+  const th = await get(D1, A, `/api/chat/${encodeURIComponent(m.ch)}/${root}`);
+  assert.deepEqual(th.messages.map((x: any) => x.text), ["맨 위에 쓴 글", "창 답"]);
+  for (const extra of [{}, { pane: "%1" }, { pane: "%9999999" }]) {
+    const hop = await MB.post(D1, A, "/api/chat", { channel: "n:" + NODE, thread: root, text: "읽지 않음에서 쓴 답", ...extra }) as any;
+    assert.equal(hop.path, "/api/me/nodes/cmd", JSON.stringify(extra));
+    assert.equal(hop.body.text, `[보드 · ${NODE} · 스레드 ${root}] 읽지 않음에서 쓴 답`);
+    assert.equal(hop.log.thread, root);
+  }
+  // 남의 노드 이름 · 없는 노드는 예전처럼 막힘(다른 채널로 새지 않음)
+  assert.equal((await MB.post(D1, A, "/api/chat", { channel: "n:없는 노드", thread: root, text: "x" }) as any).status, 400);
+});

@@ -565,7 +565,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     // 카드 글은 답하거나 닫혀도 채널에 남음 — 할 일 목록(load)과 따로 읽음
     const cards = (await db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results
       .filter(c => CARD_TS.test(String(c.id)) && (n ? L.nodeOfWin(String(c.win)) === n : ew ? c.win === ew.name : false));
-    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...withThread(msg(r, my, r.win), threadReplies(L.logs, tsOf(r.at, r.id)), my), ch: "primary", ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, ...(stuck.get(String(r.wid)) ? { waiting: true } : {}), to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })),
+    const out = [...rows.map(r => ({ at: Number(r.at), m: { ...withThread(msg(r, my, r.win), threadReplies(L.logs, tsOf(r.at, r.id)), my), ch: "n:" + (n?.name ?? (ew ? String(ew.name) : t)), ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, ...(stuck.get(String(r.wid)) ? { waiting: true } : {}), to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })),
       ...cards.map(c => ({ at: Number(c.at), m: { ...cardMsg(c, L.logs.filter(r => r.thread === c.id), my), ch: "primary" } }))]
       .sort((a, b) => a.at - b.at).slice(-300).map(x => x.m);
     const fold = n ? convoFold(n, mainName, my) : null;
@@ -629,7 +629,12 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     const text = String(b.text || "").trim(); if (!text) return { error: "내용을 적어요", status: 400 };
     const bk = /^w:(\d+)$/.exec(String((b.blocker as R | undefined)?.ref || ""));
     if (bk) return post(db, me, "/api/answer", { item: "w" + bk[1], text });
-    const pane = String(b.pane || "");
+    let pane = String(b.pane || "");
+    if (/^n:/.test(String(b.channel || "")) && CARD_TS.test(String(b.thread || ""))) {
+      const raw = String(b.channel).slice(2), t = raw.replace(/^\d+\s+/, "").trim(), L0 = await load(db, me);
+      const n0 = L0.nodes.find(x => x.name === raw) || L0.nodes.find(x => x.name === t), e0 = n0 ? null : L0.engineNodes.find(x => x.name === raw || x.name === t);
+      pane = n0 ? n0.pane : e0 ? paneOfId(e0.id) : pane;
+    }
     if (pane && pane !== PRIMARY) {
       const L = await load(db, me), n = L.nodes.find(x => x.pane === pane);
       const root = CARD_TS.test(String(b.thread || "")) ? await nodeRoot(db, me, String(b.thread)) : null;
