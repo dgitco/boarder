@@ -515,7 +515,7 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
     owner, person: who.owner || "",   // person = 봉함 DEK 주인(주인 '')
     ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)), splitSender(c.env, who.owner)) } : {}),
     host: who.host, win: who.win || who.pane,
-    conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
+    conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", card: undefined, catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
   };
 }
 const ProfileSync = z.object({ host: z.string().regex(/^[\w.@-]{1,60}$/), profiles: z.array(z.object({ name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/), clis: z.array(z.object({ cli: z.enum(["wrangler", "gh"]), account: z.string().max(80) })).max(4) })).max(30),

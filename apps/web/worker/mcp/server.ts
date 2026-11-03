@@ -3,6 +3,7 @@ import { quickjsSandbox } from "./quickjs";
 import { run, search, describe, onlyReads, type Ctx } from "./tools";
 import { shape } from "./registry";
 import { isConnectorTool, searchLines, describeTool, runTool } from "../connectors/mcp";
+import { offerConnect } from "../connectors/connect-card";
 
 const sandbox = quickjsSandbox();
 const PROTOCOL = "2025-06-18";
@@ -24,8 +25,16 @@ async function searchAll(ctx: Ctx, query: string, limit: number) {
   const more = await searchLines(ctx.conn, ctx.conn.scope, query.toLowerCase().split(/\s+/).filter(Boolean), Math.min(25, limit)).catch(() => []);
   return more.length ? `${inbox}\n${more.map(x => x.line).join("\n")}` : inbox;
 }
+// 연결 없음 · 끊김으로 실패한 서비스 도구: 오류 글에 「채팅 카드에서 연결」 안내를 붙이고, 그 회원 채팅에 「연결하기」 카드를 한 번만 올림(connect-card.ts)
+async function withConnectHint<T>(ctx: Ctx, name: string, f: () => Promise<T>): Promise<T> {
+  try { return await f(); }
+  catch (e) {
+    const hint = ctx.conn ? await offerConnect(ctx.conn, name, e).catch(() => null) : null;
+    throw hint ? new Error(`${e instanceof Error ? e.message : e} — ${hint}`) : e;
+  }
+}
 const describeAny = (ctx: Ctx, name: string) => isConnectorTool(name)
-  ? (ctx.conn ? describeTool(ctx.conn, ctx.conn.scope, name) : Promise.reject(new Error(`없는 도구: ${name}`)))
+  ? (ctx.conn ? withConnectHint(ctx, name, () => describeTool(ctx.conn!, ctx.conn!.scope, name)) : Promise.reject(new Error(`없는 도구: ${name}`)))
   : Promise.resolve(describe(ctx.view, name));
 
 async function execute(ctx: Ctx, args: any, write: boolean) {
@@ -34,7 +43,7 @@ async function execute(ctx: Ctx, args: any, write: boolean) {
     if (++calls > MAX_CALLS) throw new Error(`도구 부르기는 ${MAX_CALLS} 번까지`);
     if (isConnectorTool(name)) {
       if (!ctx.conn) throw new Error(`없는 도구: ${name}`);
-      return shape(name, await runTool(ctx.conn.env, ctx.conn, ctx.conn.scope, name, a, write), true);   // 가림 · 긴 글 자르기는 inbox 도구와 같게
+      return shape(name, await withConnectHint(ctx, name, () => runTool(ctx.conn!.env, ctx.conn!, ctx.conn!.scope, name, a, write)), true);   // 가림 · 긴 글 자르기는 inbox 도구와 같게
     }
     if (!write && !onlyReads(name)) throw new Error(`${name} 은 바꾸는 도구 — ${EXECUTE_WRITE} 로`);
     return run(ctx, name, a);

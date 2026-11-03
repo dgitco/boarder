@@ -57,6 +57,7 @@ export async function upsert(env: Env, owner: string, v: { service: string; labe
   // 읽고 넣는 사이에 다른 요청이 같은 줄을 먼저 만들었으면(드묾) 남은 id 로 다시 봉함 — 그새 또 바뀌었으면 그쪽이 이김(auth = ? 맞을 때만)
   if (r!.id !== id && sealed.startsWith("v2.")) await env.DB.prepare("UPDATE connection SET auth = ? WHERE id = ? AND auth = ?").bind(await sealAuth(env, { owner, id: r!.id }, v.auth), r!.id, sealed).run();
   forget(r!.id);
+  try { await env.DB.prepare("UPDATE board_card SET state = 'closed', done = '연결했어요' WHERE owner = ? AND state = 'open' AND kind LIKE ? ESCAPE '\\'").bind(owner, `connect:${v.service}|%`).run(); } catch {}   // 「연결하기」 카드(connect-card.ts) 닫기
   return r!.id;
 }
 

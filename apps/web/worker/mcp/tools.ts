@@ -15,7 +15,7 @@ export type Ctx = {
   local?: (name: string, args: Record<string, any>) => Promise<unknown>;
   flag?: (text: string) => void;
   win?: string;
-  conn?: import("../connectors/mcp").Conn & { env: import("../connectors/store").Env; owner: string; scope: string };
+  conn?: import("../connectors/mcp").Conn & { env: import("../connectors/store").Env; owner: string; scope: string; card?: (card: { id: string; question: string }) => void };
 };
 
 const CTRL = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/, CTRL_NL = /[\x00-\x1f\x7f-\x9f]/;

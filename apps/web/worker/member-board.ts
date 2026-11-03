@@ -1,5 +1,6 @@
 
 import { regroup } from "./importer/routes";
+import { parseConnectKind, titleOf, readsOf, oauthApi, CONNECT_TTL } from "./connectors/connect-card";
 import { boardHead, withHead } from "./board-head";
 import { primaryPick, notChat, type Item } from "./importer/group";
 import { prefsOf } from "./node-prefs";
@@ -98,7 +99,9 @@ export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: str
   if (w > a || (a && Date.now() - a > 10 * 60_000)) await regroup(env as never, me);
 }
 
+const closeStaleConnect = (db: D1Database, me: string) => db.prepare("UPDATE board_card SET state = 'closed', done = '만료' WHERE owner = ? AND state = 'open' AND kind LIKE 'connect:%' AND at < ?").bind(me, Date.now() - CONNECT_TTL).run().catch(() => {});   // 10분 지난 「연결하기」 카드(connect-card.ts)
 export async function load(db: D1Database, me: string) {
+  await closeStaleConnect(db, me);
   const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb, cx] = await db.batch([
     db.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
@@ -311,8 +314,10 @@ export function nextMorning(now: number) {
   return (k < eight ? eight : eight + 86_400_000) - 9 * 3600_000;
 }
 const replyTs = (c: R) => tsOf(Number(c.answered_at || c.at), Number(c.n));
-function cardMsg(c: R, said: R[] = [], my = ME) {   // said = 에이전트가 그 카드 스레드에 쓴 줄(boarder say · log)
-  const buttons = [...json<string[]>(c.choices, []).map(label => ({ label })), ...(OWN.test(String(c.win)) ? [] : [{ label: "기타", other: true }])];   // 들여오기 질문은 고르기만
+export function cardMsg(c: R, said: R[] = [], my = ME) {   // said = 에이전트가 그 카드 스레드에 쓴 줄(boarder say · log)
+  const conn = parseConnectKind(c.kind);   // 「연결하기」 카드(connect-card.ts): 단추가 답이 아니라 동의 모달 → 로그인 길 · 직접 쓰기 없음
+  const buttons = conn ? json<string[]>(c.choices, []).map(label => ({ label, connect: { service: conn.service, label: conn.label, reconnect: conn.reconnect, title: titleOf(conn.service), reads: readsOf(conn.service), ...(!conn.reconnect && oauthApi(conn.service) ? { apiPreset: conn.service } : {}) } }))
+    : [...json<string[]>(c.choices, []).map(label => ({ label })), ...(OWN.test(String(c.win)) ? [] : [{ label: "기타", other: true }])];   // 들여오기 질문은 고르기만
   const last = said.reduce((a, r) => Math.max(a, Number(r.at)), 0), ans = c.answer ? Number(c.answered_at || c.at) : 0;
   const latest = !said.length && !ans ? null : ans >= last ? replyTs(c) : tsOf(last, Number(said.find(r => Number(r.at) === last)!.id));
   return { ts: String(c.id), ...(Number(c.n) > 0 ? { lid: -Number(c.n) } : {}), thread: null, who: "agent", name: String(c.win), board: false, text: [c.question, c.body].filter(Boolean).join("\n\n"), buttons, files: [], replies: said.length + (c.answer ? 1 : 0), latest, rnames: c.answer ? [my] : [], reactions: [], owner: null, ...(c.state !== "open" ? { picked: String(c.answer || "·") } : {}) };
@@ -576,7 +581,8 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
     const stuck = new Map(((await db.prepare("SELECT id, state, at FROM engine_cmd WHERE owner = ? AND verb IN ('send','reopen','assign') AND state IN ('queued','taken','sending','failed','waiting')").bind(me).all<R>()).results).filter(c => c.state === "failed" || c.state === "waiting" || Date.now() - Number(c.at) > 60_000).map(c => ["cmd:" + c.id, c.state === "waiting"]));
     const rows = L.logs.filter(r => !inPrim(r) && !inCard(r) && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n || (r.kind === "me" && r.win === n.name) : ew ? r.win === ew.name : false)).slice(0, 300).reverse();
     // 카드 글은 답하거나 닫혀도 채널에 남음 — 할 일 목록(load)과 따로 읽음
-    const cards = (await db.prepare("SELECT rowid AS n, id, win, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results
+    await closeStaleConnect(db, me);
+    const cards = (await db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results
       .filter(c => CARD_TS.test(String(c.id)) && (n ? L.nodeOfWin(String(c.win)) === n : ew ? c.win === ew.name : false));
     const out = [...rows.map(r => ({ at: Number(r.at), m: { ...withThread(msg(r, my, r.win), threadReplies(L.logs, tsOf(r.at, r.id)), my), ch: "n:" + (n?.name ?? (ew ? String(ew.name) : t)), ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, ...(stuck.get(String(r.wid)) ? { waiting: true } : {}), to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })),
       ...cards.map(c => ({ at: Number(c.at), m: { ...cardMsg(c, L.logs.filter(r => r.thread === c.id), my), ch: "primary" } }))]
