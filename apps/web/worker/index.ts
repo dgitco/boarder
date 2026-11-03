@@ -64,6 +64,7 @@ import * as memberBoard from "./member-board";
 import * as memberVoice from "./member-voice";
 import { boardHead, HEAD_RE, withHead } from "./board-head";
 import * as memberInbox from "./member-inbox";
+import * as nodeTodo from "./node-todo";
 import * as memberFiles from "./member-files";
 import { importedWindow, queueToImported } from "./member-imported";
 import { claimEndpoint, memberPushWanted, releaseEndpoint, type PushCard } from "./member-push";
@@ -779,6 +780,39 @@ app.post("/api/device/voice", async c => {
   const primary = async (who: string, text: string) => await primaryWinSend(c.env, who, text) ?? await chatToMain(c.env, who, text);
   try { const [st, o] = await memberVoice.deviceOp(c.env as never, me, b, { primary }, mainName); return c.json(o, st as 200); }
   catch (e) { console.error("통화 기기 op", e); return c.json({ ok: false, text: "일시적인 오류가 발생했어요" }, 503); }
+});
+const todoOwner = (env: Env, email: string) => isOwner(env, email) ? env.ALLOW_EMAILS.split(",")[0].trim().toLowerCase() : email.trim().toLowerCase();
+const todoBump = (c: Context<{ Bindings: Env }>, who: string) => { quiet(c.req.raw); c.executionCtx.waitUntil(live.bump(c.env, who, { todo: "~" + Date.now() })); };
+async function todoReply(c: Context<{ Bindings: Env }>, email: string, b: unknown, device: boolean) {
+  const me = todoOwner(c.env, email), write = !!b && typeof b === "object" && (b as { op?: unknown }).op !== "list";
+  try {
+    const [st, o] = await nodeTodo.op(c.env.DB, me, b, { member: !isOwner(c.env, email), device });
+    if (st === 200 && write) todoBump(c, me); else quiet(c.req.raw);
+    return c.json(o, st as 200, { "cache-control": "no-store" });
+  } catch (e) { console.error("할 일", e); return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503); }
+}
+app.post("/api/device/todos", async c => {
+  const d = await deviceOf(c, { harness: true }); if (!d) return c.json({ ok: false, error: "기기 토큰" }, 401);
+  if (!(await member(c.env, d.owner))) return c.json({ ok: false, error: "기기 토큰" }, 401);
+  if (+(c.req.header("content-length") || 0) > 256_000) return c.json({ ok: false, error: "너무 커요" }, 413);
+  return todoReply(c, d.owner, await c.req.json().catch(() => null), true);
+});
+app.get("/api/todos", async c => {
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  const me = todoOwner(c.env, s.user.email), raw = c.req.query("node");
+  try {
+    const node = await nodeTodo.resolveNode(c.env.DB, me, raw, !isOwner(c.env, s.user.email));
+    const [todos, n] = await Promise.all([nodeTodo.list(c.env.DB, me, node, { all: c.req.query("all") === "1" }), nodeTodo.counts(c.env.DB, me, node)]);
+    return c.json({ ok: true, node, todos, ...n }, 200, { "cache-control": "no-store" });
+  } catch (e) {
+    if (e instanceof nodeTodo.TodoError) return c.json({ ok: false, error: e.message }, e.status as 400);
+    console.error("할 일 읽기", e); return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503);
+  }
+});
+app.post("/api/todos", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  return todoReply(c, s.user.email, await c.req.json().catch(() => null), false);
 });
 // 주인이 아닌 사람의 보드(첫 화면이 4초마다 읽음)
 app.get("/api/me/board", async c => {
