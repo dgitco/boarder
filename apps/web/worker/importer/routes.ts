@@ -4,6 +4,7 @@ import { group, pickUnit, notChat, type Item, type Unit } from "./group";
 import { prefsOf, parkHOf } from "../node-prefs";
 import { importedWindow, queueToImported } from "../member-imported";
 import { engineOf, widPane } from "../engine";
+import { paneOfId } from "../member-board";
 import { proposalFrom, applyProposal, imported, PROPOSAL_CHOICES, IMPORT_WIN } from "./proposal";
 
 type Env = { DB: D1Database; PUBLIC_URL: string; [k: string]: unknown };
@@ -214,13 +215,21 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
   app.post("/api/me/nodes/parent", async c => {
     const me = await closer(c, true); if (!me) return c.json({ error: "로그인" }, 401);
     const b = await c.req.json<{ node?: unknown; parent?: unknown }>().catch(() => ({} as { node?: unknown; parent?: unknown }));
-    const node = typeof b.node === "string" ? b.node : "", parent = b.parent === null ? null : typeof b.parent === "string" ? b.parent : undefined;
+    let node = typeof b.node === "string" ? b.node : "", parent = b.parent === null ? null : typeof b.parent === "string" ? b.parent : undefined;
     if (!node || node.length > 80 || parent === undefined || (parent && (parent.length > 80 || parent === node))) return c.json({ error: "노드 · 상위" }, 400);
-    const DB = env(c).DB, want = parent && parent !== "top" ? [node, parent] : [node];   // "top" = 맨 위(열 머리) 표지
+    const DB = env(c).DB;
+    if (node.startsWith("%") || (parent && parent.startsWith("%"))) {
+      const ids = ((await DB.prepare("SELECT id FROM mnode WHERE owner = ?").bind(me).all()).results as { id: string }[]).map(r => r.id);
+      const byPane = (p: string) => ids.find(id => paneOfId(id) === p) || p;
+      if (node.startsWith("%")) node = byPane(node);
+      if (parent && parent.startsWith("%")) parent = parent === "%1" ? "top" : byPane(parent);
+      if (parent === node) return c.json({ error: "노드 · 상위" }, 400);
+    }
+    const want = parent && parent !== "top" ? [node, parent] : [node];   // "top" = 맨 위(열 머리) 표지
     const mine = ((await DB.prepare("SELECT id FROM mnode WHERE owner = ? AND id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(want)).all()).results as { id: string }[]).length;
     if (mine !== want.length) return c.json({ error: "없는 노드" }, 404);
     const cur = json<{ parent?: Record<string, string> }>((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data, {}).parent || {};
-    if (parent && cur[parent] === node) return c.json({ error: "서로 상위가 될 수 없어요" }, 400);
+    for (let x: string | undefined = parent || undefined, i = 0; x && x !== "top" && i < 50; i++, x = cur[x]) if (cur[x] === node) return c.json({ error: "서로 상위가 될 수 없어요" }, 400);
     const patch = JSON.stringify({ [node]: parent });   // json_patch: null 이면 그 칸 지움
     await DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('parent', json_patch('{}', json(?2))), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.parent', json_patch(CASE WHEN json_valid(data) AND json_type(json_extract(data, '$.parent')) = 'object' THEN json_extract(data, '$.parent') ELSE '{}' END, json(?2))), updated_at = ?3").bind(me, patch, now()).run();
     return c.json({ ok: true, node, parent });

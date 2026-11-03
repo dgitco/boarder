@@ -120,6 +120,28 @@ test("맨 위 표지(parent = top): 이름이 머리 이름이 아니어도(「�
   assert.ok(!d.panes.some((p: any) => p.area === "primary" && p.kind === "lead"), "메인 봇 밑에 남은 노드 없음");
 });
 
+test("영역 열이 없는 회원도 맨 위(top) 노드가 열 머리, 상위 사슬로 그 열 — 끌어 놓기 뒤 트리가 바뀌어 보임, 상위 없는 노드는 Primary", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_l", "팀장", ""); add(db, A, "n_d", "개발 리드", ""); add(db, A, "n_ui", "화면 고치기", "", "working"); add(db, A, "n_fx", "글자 고치기", ""); add(db, A, "n_x", "혼자 노드", "");
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_l: "top", n_d: "top", n_ui: "n_d", n_fx: "n_ui" } }), T);
+  const d = await data(d1, A, null) as any;
+  assert.deepEqual(d.areas.slice(1).map((a: any) => a.lead_name).sort(), ["개발 리드", "팀장"].sort());
+  const col = (name: string) => d.areas.find((a: any) => a.lead_name === name).key, areaOf = (w: string) => d.panes.find((p: any) => p.win === w).area;
+  assert.deepEqual([areaOf("화면 고치기"), areaOf("글자 고치기"), areaOf("혼자 노드")], [col("개발 리드"), col("개발 리드"), "primary"]);
+});
+
+test("영역 열이 없는 회원의 첫 끌어 놓기(상위 없는 노드 밑에 놓음)도 보임 — 그 뿌리 노드가 열 머리, 상위가 하나도 없으면 예전 그대로 Primary 한 열", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_1", "가", ""); add(db, A, "n_2", "나", ""); add(db, A, "n_3", "다", "");
+  let d = await data(d1, A, null) as any;
+  assert.deepEqual(d.areas.map((a: any) => a.key), ["primary"]);
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_2: "n_1" } }), T);
+  d = await data(d1, A, null);
+  assert.deepEqual(d.areas.slice(1).map((a: any) => a.lead_name), ["가"]);
+  const areaOf = (w: string) => d.panes.find((p: any) => p.win === w).area;
+  assert.deepEqual([areaOf("나"), areaOf("다")], [d.areas[1].key, "primary"]);
+});
+
 test("영역이 하나뿐이면 예전처럼 Primary 한 열", async () => {
   const { db, d1 } = fakeD1();
   add(db, A, "n_1", "가", "acme"); add(db, A, "n_2", "나", "acme");

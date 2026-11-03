@@ -13,10 +13,11 @@ export const SECRET_PATTERNS = [
   /\b0b_[A-Za-z0-9_-]{20,}/g,
   /\bbx[a-z]_[A-Za-z0-9_-]{20,}/g, // Boarder tokens
   /(?<=\bBearer\s+)[A-Za-z0-9._~+\/=-]{16,}/g, // Authorization Bearer values
-  /(?<=:\/\/[^\s/:@]+:)[^\s/@]{6,}(?=@)/g, // password in a URL
-  // KEY=value / "token": "value" where the name says it's a secret
-  /(?<=\b[A-Za-z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|ACCESS_KEY)[A-Za-z0-9_]*["']?\s*[:=]\s*["']?)[^\s"'`,;]{8,}/gi,
+  /(?<=:\/\/[^\s/:@]+:)[^\s/@]{6,}(?=@)/g,
+  /(?<=\b[A-Za-z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|ACCESS_KEY|KEK|HMAC|CREDENTIAL|SIGNING_?KEY|ENCRYPTION_?KEY)[A-Za-z0-9_]*["']?\s*[:=]\s*["']?)[^\s"'`,;]{8,}/gi,
 ];
+
+const SECRET_NAME = /(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|ACCESS_KEY|KEK|HMAC|CREDENTIAL|SIGNING_?KEY|ENCRYPTION_?KEY)/i;
 
 export function redact(text) {
   for (const re of SECRET_PATTERNS) text = text.replace(re, '[secret]');
@@ -26,7 +27,8 @@ export function redact(text) {
 // Parse first so masking never damages JSON escapes or changes object keys.
 export function redactLine(line) {
   try {
-    return JSON.stringify(JSON.parse(line, (_key, value) => typeof value === 'string' ? redact(value) : value));
+    // {"BOARDER_DATA_KEK_1": "값"} 은 키와 값이 따로 와 이름 규칙이 안 걸리므로 키 이름도 본다
+    return JSON.stringify(JSON.parse(line, (key, value) => typeof value !== 'string' ? value : SECRET_NAME.test(key) && value.length >= 8 ? '[secret]' : redact(value)));
   } catch {
     return redact(line);
   }

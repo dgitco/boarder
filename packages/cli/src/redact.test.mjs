@@ -90,3 +90,14 @@ test('session save uploads masked lines and keeps offsets across repeated saves'
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('env dump: names without TOKEN/SECRET (KEK, HMAC) are masked, plain and as JSON', () => {
+  const v1 = 'Zk9Qw3Lr7TnXv2Hs8Bd5Pc1Mj6Ya4Ue0';
+  const v2 = 'q8W3e5R7t9Y1u3I5o7P9a2S4d6F8g0H1';
+  const dump = `BOARDER_DATA_KEK_1=${v1}\nBOARDER_RELAY_HMAC=${v2}\nPATH=/usr/bin`;
+  const out = dump.split('\n').map(redactLine).join('\n');
+  assert.ok(!out.includes(v1) && !out.includes(v2));
+  assert.ok(out.includes('PATH=/usr/bin'));
+  const j = redactLine(JSON.stringify({ output: dump, BOARDER_DATA_KEK_1: v1 }));
+  assert.ok(!j.includes(v1) && !j.includes(v2));
+});

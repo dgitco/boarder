@@ -249,6 +249,19 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
       }
     }
   }
+  if (areas.length === 1 && Object.keys(L.parents).length) {
+    const shown = new Set([...nodeOfPane.values()]), hasKid = new Set(Object.entries(L.parents).filter(([k]) => shown.has(k)).map(([, v]) => v));
+    const tops = panes.filter(p => { const id = nodeOfPane.get(p.pane) || "", up = L.parents[id];
+      return p.kind === "lead" && p.pane !== PRIMARY && (up === TOP || (hasKid.has(id) && (!up || !shown.has(up)))); });
+    const colOfNode = new Map<string, string>();
+    tops.forEach((h, i) => { const key = "t" + i, id = nodeOfPane.get(h.pane) || "", avatar = L.faces[id] || faceOf(String(h.win));
+      h.area = key; h.avatar = avatar; colOfNode.set(id, key); areas.push({ key, name: String(h.win), lead: h.pane, lead_name: h.win, avatar }); });
+    const colOf = (id: string) => { for (let i = 0, x: string | undefined = id; x && i < 20; i++) { if (colOfNode.has(x)) return colOfNode.get(x); x = L.parents[x]; } return undefined; };
+    if (tops.length) {
+      for (const p of panes) if (p.kind === "lead" && !tops.includes(p)) { const k = colOf(nodeOfPane.get(p.pane) || ""); if (k) p.area = k; }
+      for (const q of parked) { const n = L.nodes.find(x => x.pane === q.pane), k = n ? colOf(n.id) : undefined; if (k) q.area = k; }
+    }
+  }
   const known = new Set(panes.map(p => p.pane)), dp = L.defaultNode?.pane || (/^ew_/.test(L.primaryWin) ? paneOfId(L.primaryWin) : ""), dflt = dp && known.has(dp) ? dp : PRIMARY,
     toPane = (win: string) => { const n = L.nodeOfWin(win); return n && known.has(n.pane) ? n.pane : dflt; };
   const nameN = new Map<string, number>(); for (const n of L.nodes) nameN.set(n.name, (nameN.get(n.name) || 0) + 1);

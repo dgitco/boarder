@@ -13,6 +13,7 @@ register("data:text/javascript," + encodeURIComponent(`export async function res
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
 const { mountImport } = await import("./routes.ts");
 const { IMPORT_WIN } = await import("./proposal.ts");
+const { paneOfId } = await import("../member-board.ts");
 const { Hono } = await import("hono");
 
 const MIG = new URL("../../migrations/", import.meta.url);
@@ -145,4 +146,23 @@ test("상위 정하기: parent = top(맨 위 표지)은 노드가 아니어도 �
   const { db, D1 } = seed(), call = app(D1);
   assert.equal((await call("POST", "/api/me/nodes/parent", { node: "n_keep", parent: "top" })).status, 200);
   assert.deepEqual(JSON.parse(String(db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(A)!.data)).parent, { n_keep: "top" });
+});
+
+test("상위 정하기: 보드 트리 끌어 놓기는 판 번호(%N)로 — 내 노드로 바꿔 저장, 메인 봇 %1 은 맨 위, 남의 · 모르는 판은 404", async () => {
+  const { db, D1 } = seed(), call = app(D1);
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: paneOfId("n_tmp"), parent: paneOfId("n_keep") })).status, 200);
+  assert.deepEqual(JSON.parse(String(db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(A)!.data)).parent, { n_tmp: "n_keep" });
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: paneOfId("n_keep"), parent: "%1" })).status, 200);
+  assert.deepEqual(JSON.parse(String(db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(A)!.data)).parent, { n_tmp: "n_keep", n_keep: "top" });
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: paneOfId("n_other"), parent: "%1" })).status, 404, "남의 노드 판");
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: "%4242", parent: paneOfId("n_keep") })).status, 404, "모르는 판");
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: paneOfId("n_tmp"), parent: paneOfId("n_tmp") })).status, 400, "자기 자신");
+});
+
+test("상위 정하기: 여러 단계 고리도 400 — X 밑 Y 밑 Z 일 때 X 를 Z 밑으로", async () => {
+  const { db, D1 } = seed(), call = app(D1);
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_tmp: "n_keep", sl_C01: "n_tmp" } }), Date.now());
+  const r = await call("POST", "/api/me/nodes/parent", { node: "n_keep", parent: "sl_C01" });
+  assert.equal(r.status, 400); assert.equal(((await r.json()) as any).error, "서로 상위가 될 수 없어요");
+  assert.equal((await call("POST", "/api/me/nodes/parent", { node: "n_keep", parent: "top" })).status, 200, "맨 위는 고리 아님");
 });
