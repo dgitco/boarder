@@ -77,7 +77,8 @@
   const api = async (method, p, body) => {
     const r = await fetch(p, {method, credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: body === undefined ? undefined : JSON.stringify(body)});
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw Object.assign(new Error(j.error || '일시적인 오류가 발생했어요'), {status: r.status, data: j});
+    const said = String(j.error || ''), msg = r.status >= 500 || !/[가-힣]/.test(said) || said.length > 60 ? '일시적인 오류가 발생했어요' : said.replace(/[「」]/g, '');
+    if (!r.ok) throw Object.assign(new Error(msg), {status: r.status, data: j});
     return j;
   };
   const toast = t => { let el = document.getElementById('bx-toast'); if (!el){ el = mk('div', 'bx-toast'); el.id = 'bx-toast'; el.setAttribute('role', 'status'); document.body.append(el); } el.textContent = t; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 2200); };
