@@ -35,6 +35,7 @@ fi
 if [ -z "${NODE}" ]; then
   case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) die "unsupported system $(uname -s) - on Windows use install.ps1" ;; esac
   case "$(uname -m)" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) die "unsupported CPU $(uname -m)" ;; esac
+  if [ "${os}" = darwin ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = 1 ]; then arch=arm64; fi
   if [ "${os}" = linux ] && ldd --version 2>&1 | grep -qi musl; then die "Node 20+ is needed (Alpine/musl: apk add nodejs), then run this again"; fi
   say "Node 20+ not found - downloading Node 22 for ${os}-${arch}..."
   D=https://nodejs.org/dist/latest-v22.x
@@ -60,6 +61,10 @@ rm -rf "${SHARE}/cli.old"
 
 mkdir -p "${BIN}"
 if [ "${NODE}" = node ]; then N=node; else N="\"${NODE}\""; fi
+if [ "${NODE}" = node ] && [ "$(uname -s)" = Darwin ]; then
+  NP=$(command -v node)
+  case "${NP}" in /*) N="\"$(cd "$(dirname "${NP}")" && pwd -P)/$(basename "${NP}")\"" ;; esac
+fi
 printf '#!/bin/sh\nexec %s "%s/cli/bin/boarder.mjs" "$@"\n' "${N}" "${SHARE}" > "${BIN}/boarder"
 chmod +x "${BIN}/boarder"
 "${BIN}/boarder" --version >/dev/null || die "installed, but \`${BIN}/boarder --version\` failed"

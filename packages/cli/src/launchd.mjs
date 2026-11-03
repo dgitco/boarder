@@ -105,20 +105,21 @@ const envPairs = v => (splitExec(v) || []).map(p => { const i = p.indexOf('='); 
  * 유닛 하나(.service 글 + 있으면 .timer 글) → plist.
  * @returns {{ label, file, log, plist }} 또는 {{ skip }}
  */
-export function unitToPlist({ name, service, timer, home, nodeDir, localTz }) {
+export function unitToPlist({ name, service, timer, home, nodeDir, localTz, runDir, runHas = () => true }) {
   if (!/^[\w.@-]+$/.test(name || '')) return { skip: `bad unit name ${name}` };
   const sv = parseUnit(service).Service || {};
   const exec = sv.ExecStart || [];
   if (exec.length !== 1) return { skip: `${name} has ${exec.length} ExecStart lines — launchd runs one command` };
   if (/%[^h%]/.test(exec[0])) return { skip: `${name} uses systemd % names launchd does not know` };
-  const argv = splitExec(expand(exec[0], home));
+  const lb = path.join(home, '.local', 'bin') + path.sep;
+  const argv = splitExec(expand(exec[0], home))?.map(a => runDir && a.startsWith(lb) && !a.slice(lb.length).includes('/') && runHas(a.slice(lb.length)) ? path.join(runDir, a.slice(lb.length)) : a);
   if (!argv?.length) return { skip: `${name} ExecStart could not be read` };
   if ((sv.EnvironmentFile || []).length) return { skip: `${name} reads an EnvironmentFile — not converted` };
   const env = {};
   for (const v of sv.Environment || []) for (const [k, x] of envPairs(expand(v, home))) env[k] = x;
-  const lead = [path.join(home, '.local', 'bin'), ...(nodeDir ? [nodeDir] : [])];
+  const lead = [path.join(home, '.local', 'bin'), ...(nodeDir ? [nodeDir] : []), '/opt/homebrew/bin', '/usr/local/bin'];
   const rest = String(env.PATH || '/usr/local/bin:/usr/bin:/bin').split(':').filter(Boolean);
-  env.PATH = [...new Set([...lead, ...rest, '/opt/homebrew/bin'])].join(':');
+  env.PATH = [...new Set([...lead, ...rest])].join(':');
   const label = LABEL_PREFIX + name;
   const log = path.join(home, 'Library', 'Logs', 'harness', `${name}.log`);
   const d = { Label: label, ProgramArguments: argv, EnvironmentVariables: env, StandardOutPath: log, StandardErrorPath: log };

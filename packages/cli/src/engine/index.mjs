@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dir, ensureDir, loadDevice, readJson } from '../config.mjs';
 import * as tmux from './tmux.mjs';
 import * as herdr from './herdr.mjs';
@@ -130,11 +130,15 @@ const TMUX_SHA = {
   'darwin-arm64': ['tmux-3.7c-macos-arm64.tar.gz', '0a763dd0380aa980d239509654da1bc7455843706a3c050f6709c8cd2e13d12d'],
   'darwin-x64': ['tmux-3.7c-macos-x86_64.tar.gz', '1c21f9ade964e4a539be05ffe3a4e95854ab76a0a9c4c05d0ffbe7fc6c4d783f'],
 };
+/** p 가 mine 경로를 품은 작은 글 파일(셸 감싸기)인가 — 진짜 tmux 바이너리는 크고 이 경로를 품지 않음 */
+export function wrapsMine(p, mine) {
+  try { const real = realpathSync(p); if (real === mine || statSync(real).size > 64 * 1024) return false; return readFileSync(real, 'utf8').includes(mine); } catch { return false; }
+}
 export async function ensureTmux({ log = console.log, force = false } = {}) {
   const mine = path.join(dir(), 'bin', 'tmux');
   if (!force) {
     const sys = which('tmux');
-    if (sys) return { path: sys, how: 'found' };
+    if (sys && !wrapsMine(sys, mine)) return { path: sys, how: 'found' };
     if (existsSync(mine)) return { path: mine, how: 'found' };
   }
   const k = TMUX_SHA[`${process.platform}-${process.arch}`];

@@ -88,6 +88,7 @@ async function download(p) {
   const bin = path.join(harnessDir(), 'bin'), lib = path.join(harnessDir(), 'lib');
   for (const n of existsSync(bin) ? readdirSync(bin) : []) { copyFileSync(path.join(bin, n), path.join(run, n)); chmodSync(path.join(run, n), 0o755); }
   for (const n of existsSync(lib) ? readdirSync(lib) : []) if (!present(path.join(run, n))) symlinkSync(path.join(lib, n), path.join(run, n));
+  if (process.platform === 'darwin') writeFileSync(path.join(run, '.built-by-harness'), 'boarder enable harness\n');
 }
 
 // ── 묻기(호칭 · 언어 둘만)
@@ -249,7 +250,8 @@ export async function enableHarness({ log = console.log, name, lang } = {}) {
       if (bad.length) { log(`skipped ${u.start} — it runs ${[...new Set(bad)].join(', ')}, which is off`); continue; }
       const name = unitName(u.start), svc = files.indexOf(`${name}.service`), tmr = files.indexOf(`${name}.timer`);
       if (svc < 0) { log(`skipped ${u.start} — no ${name}.service`); continue; }
-      const r = unitToPlist({ name, service: texts[svc], timer: tmr < 0 ? null : texts[tmr], home: home(), nodeDir: path.dirname(process.execPath), localTz });
+      const r = unitToPlist({ name, service: texts[svc], timer: tmr < 0 ? null : texts[tmr], home: home(), nodeDir: path.dirname(process.execPath), localTz,
+        runDir: runDir(), runHas: n => existsSync(path.join(runDir(), n)) });
       if (r.skip) { log(`skipped ${u.start} on macOS — ${r.skip}`); continue; }
       const file = path.join(agentsDir(), r.file);
       if (present(file)) { log(`kept your ${file} — not replaced`); continue; }
