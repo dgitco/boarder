@@ -764,6 +764,7 @@ export function apiReady(env: AppEnv, service: string, email: string): { ready: 
   if (a.type !== "oauth") return { ready: p.ready, note: p.note };
   // Gmail 테스트 사용자가 아니면 「곧」 대신 메일(IMAP)로 — via = 화면이 그 커넥터 키 칸을 엶
   if (a.app === "gmail" && (!googleApp(env, a) || !gmailTester(env, email))) return { ready: false, oauth: true, via: "imap", note: GMAIL_VIA_IMAP };
+  if (a.provider === "github") return githubApp(env, a) && p.tools.length ? { ready: true, oauth: true, note: "" } : { ready: false, oauth: true, note: p.note };   // 회원마다 본인 GitHub 계정으로(GitHub 앱 사용자 토큰)
   if (a.provider === "slack") return slackApp(env, a) && p.tools.length ? { ready: true, oauth: true, note: "" } : { ready: false, oauth: true, note: p.note };   // 회원마다 본인 Slack 계정으로(사용자 토큰)
   if (a.provider !== "google" || !googleApp(env, a) || !p.tools.length) return { ready: false, oauth: true, note: p.note };
   return { ready: true, oauth: true, note: p.note };
@@ -792,6 +793,19 @@ export async function slackExchange(client: { client_id: string; client_secret: 
   const u = j.authed_user;
   if (!j.ok || !u?.access_token) throw new GoogleTokenError(`Slack 로그인 실패: ${j.error || res.status}`, res.status >= 400 ? res.status : 400, j.error);
   return { access_token: u.access_token, refresh_token: u.refresh_token, expires_at: Date.now() + (u.expires_in ?? 43_200) * 1000, account: (j.team?.name || "").slice(0, 120) };
+}
+export function githubAuthUrl(client: { client_id: string }, redirectUri: string, state: string): string {
+  const u = new URL("https://github.com/login/oauth/authorize");
+  u.search = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, state }).toString();
+  return u.href;
+}
+export async function githubExchange(client: { client_id: string; client_secret: string }, code: string, redirectUri: string): Promise<{ access_token: string; refresh_token?: string; expires_at: number; account: string }> {
+  const res = await fetch("https://github.com/login/oauth/access_token", { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify({ ...client, code, redirect_uri: redirectUri }), signal: AbortSignal.timeout(15_000) });
+  const j = await res.json().catch(() => ({})) as { access_token?: string; refresh_token?: string; expires_in?: number; error?: string };
+  if (!j.access_token) throw new GoogleTokenError(`GitHub 로그인 실패: ${j.error || res.status}`, 400, j.error);
+  let account = "";
+  try { const u = await fetch(`${GITHUB_API}/user`, { headers: { authorization: `Bearer ${j.access_token}`, accept: "application/vnd.github+json", "user-agent": "boarder" }, signal: AbortSignal.timeout(10_000) }); account = ((await u.json().catch(() => ({}))) as { login?: string }).login || ""; } catch { /* 계정 칸은 비워 둠 */ }
+  return { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + (j.expires_in ?? 28_800) * 1000, account: account.slice(0, 120) };
 }
 export async function slackToken(client: { client_id: string; client_secret: string }, refresh_token: string): Promise<{ access_token: string; refresh_token?: string; expires_at: number }> {
   const res = await fetch("https://slack.com/api/oauth.v2.access", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ ...client, grant_type: "refresh_token", refresh_token }), signal: AbortSignal.timeout(15_000) });

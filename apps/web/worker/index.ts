@@ -170,7 +170,7 @@ app.use("*", async (c, next) => {
   const rid = (c.req.header("x-request-id") || "").slice(0, 40);
   if (c.res.status >= 400 && url.pathname.startsWith("/api/")) console.log(JSON.stringify({ ev: "api_error", rid, path: normPath(url.pathname), method: c.req.method, status: c.res.status, ms: total, ...rec.seg }));   // Workers Logs(observability)
   if (!rec.who && c.res.status < 500) return;
-  const np = normPath(url.pathname), sample = sampleOf(np, c.req.method, c.res.status);
+  const np = normPath(url.pathname), sample = total > 5000 ? 1 : sampleOf(np, c.req.method, c.res.status);
   if (sample > 1 && Math.random() >= 1 / sample) return;
   capture(c.env, c.executionCtx, "boarder_request", rec.who || "anon", {
     path: np, method: c.req.method, status: c.res.status, total_ms: total, sample, ...(rid ? { rid } : {}),

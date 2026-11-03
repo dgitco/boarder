@@ -9,7 +9,7 @@ const PEND = (state: string) => ({ tbl: "connection_pending" as const, pk: state
 import { accountOfIdToken } from "./identity";
 import { exposedName } from "./naming";
 import * as store from "./store";
-import { API_PRESETS, apiReady, checkKey, googleAccountOf, googleApp, googleAuthUrl, googleToken, keyNames, parseAuth, slackApp, slackAuthUrl, slackExchange, type ApiSpec } from "./apis";
+import { API_PRESETS, apiReady, checkKey, githubApp, githubAuthUrl, githubExchange, googleAccountOf, googleApp, googleAuthUrl, googleToken, keyNames, parseAuth, slackApp, slackAuthUrl, slackExchange, type ApiSpec } from "./apis";
 
 type Env = store.Env & { PUBLIC_URL: string; ALT_URLS?: string };
 type C = Context<{ Bindings: Env }>;
@@ -71,16 +71,17 @@ export function mountConnectors(host: Hono<any>, who: Who) {
 
   const startGoogle = async (c: C, owner: string, service: string, label: string, spec: ApiSpec, back?: string) => {
     if (spec.auth.type !== "oauth") return c.json({ error: "구글 로그인 API 가 아니에요" }, 400);
-    const slack = spec.auth.provider === "slack";   // Slack 도 같은 길(사용자 토큰)
-    const app = slack ? slackApp(c.env as unknown as Record<string, unknown>, spec.auth) : googleApp(c.env as unknown as Record<string, unknown>, spec.auth); if (!app) return c.json({ error: slack ? "Slack 로그인 앱이 없어요" : "구글 로그인 앱이 없어요" }, 422);
+    const slack = spec.auth.provider === "slack", github = spec.auth.provider === "github";   // Slack · GitHub 앱도 같은 길(사용자 토큰)
+    const envR = c.env as unknown as Record<string, unknown>;
+    const app = slack ? slackApp(envR, spec.auth) : github ? githubApp(envR, spec.auth) : googleApp(envR, spec.auth); if (!app) return c.json({ error: slack ? "Slack 로그인 앱이 없어요" : github ? "GitHub 앱이 없어요" : "구글 로그인 앱이 없어요" }, 422);
     if (new URL(c.req.url).origin !== c.env.PUBLIC_URL.replace(/\/+$/, "")) return c.json({ error: `${service} 은 ${c.env.PUBLIC_URL} 에서 연결해요`, open: `${c.env.PUBLIC_URL}/#settings/connectors` }, 409);
     const redirect = `${c.env.PUBLIC_URL.replace(/\/+$/, "")}/api/connectors/callback`, state = randomId(24), bind = randomId(24);
     await c.env.DB.batch([
       c.env.DB.prepare("DELETE FROM connection_pending WHERE expires_at < ?").bind(Date.now()),
       c.env.DB.prepare("INSERT INTO connection_pending(state, owner, service, label, url, auth, back, bind, expires_at) VALUES (?,?,?,?,?,?,?,?,?)")
-        .bind(state, owner, service, label, spec.baseUrl, await sealSecret(c.env, owner, PEND(state), { ...(slack ? { slack: true } : { google: true }), spec, redirect_uri: redirect }), back || "#settings/connectors", await sha(bind), Date.now() + PENDING_MS),
+        .bind(state, owner, service, label, spec.baseUrl, await sealSecret(c.env, owner, PEND(state), { ...(slack ? { slack: true } : github ? { github: true } : { google: true }), spec, redirect_uri: redirect }), back || "#settings/connectors", await sha(bind), Date.now() + PENDING_MS),
     ]);
-    return c.json({ state: "authenticating", authUrl: slack ? slackAuthUrl(app, redirect, state, spec.auth.scope) : googleAuthUrl(app, redirect, state, spec.auth.scope) }, 200, { "set-cookie": `bx_oc_${state.slice(0, 12).replace(/[^A-Za-z0-9]/g, "x")}=${bind}; Path=/api/connectors/callback; Secure; HttpOnly; SameSite=Lax; Max-Age=600` });
+    return c.json({ state: "authenticating", authUrl: slack ? slackAuthUrl(app, redirect, state, spec.auth.scope) : github ? githubAuthUrl(app, redirect, state) : googleAuthUrl(app, redirect, state, spec.auth.scope) }, 200, { "set-cookie": `bx_oc_${state.slice(0, 12).replace(/[^A-Za-z0-9]/g, "x")}=${bind}; Path=/api/connectors/callback; Secure; HttpOnly; SameSite=Lax; Max-Age=600` });
   };
 
   app.get("/api/connectors", async c => {
@@ -191,11 +192,20 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     if (!p || p.expires_at < Date.now()) return back("#settings/connectors", "error", "연결 시간이 지났어요 — 다시 눌러요");
     if (p.owner !== w.owner) return back(p.back, "error", "이 연결을 시작한 사람이 아니에요");
     if (q.get("error")) return back(p.back, "error", `${p.service}: ${q.get("error_description") || q.get("error")}`.slice(0, 200));
-    const g = await openSecret<{ google?: boolean; slack?: boolean; spec?: ApiSpec; redirect_uri?: string }>(c.env, p.owner, PEND(state), p.auth);
+    const g = await openSecret<{ google?: boolean; slack?: boolean; github?: boolean; spec?: ApiSpec; redirect_uri?: string }>(c.env, p.owner, PEND(state), p.auth);
     if (g.slack && g.spec) {
       const app = slackApp(c.env as unknown as Record<string, unknown>, g.spec.auth); if (!app) return back(p.back, "error", "Slack 로그인 앱이 없어요");
       try {
         const t = await slackExchange(app, q.get("code") || "", g.redirect_uri!);
+        const id = await store.upsert(c.env, w.owner, { service: p.service, label: p.label, kind: "api", url: g.spec.baseUrl,
+          auth: { api: g.spec, key: t.access_token, refresh_token: t.refresh_token, expires_at: t.expires_at }, account: t.account });
+        return back(p.back, "connected", id);
+      } catch (e) { return back(p.back, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200)); }
+    }
+    if (g.github && g.spec) {
+      const app = githubApp(c.env as unknown as Record<string, unknown>, g.spec.auth); if (!app) return back(p.back, "error", "GitHub 앱이 없어요");
+      try {
+        const t = await githubExchange(app, q.get("code") || "", g.redirect_uri!);
         const id = await store.upsert(c.env, w.owner, { service: p.service, label: p.label, kind: "api", url: g.spec.baseUrl,
           auth: { api: g.spec, key: t.access_token, refresh_token: t.refresh_token, expires_at: t.expires_at }, account: t.account });
         return back(p.back, "connected", id);
