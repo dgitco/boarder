@@ -41,6 +41,22 @@ const Features = z.object({
 });
 
 const now = () => Date.now();
+const TASK_STATES = ["working", "blocked", "waiting", "done", "cancelled"] as const;
+type Task = { state: typeof TASK_STATES[number]; line: string; body: string; issue: string };
+const TASK_NODE_STATE: Record<Task["state"], string> = { working: "working", blocked: "blocked", waiting: "idle", done: "done", cancelled: "done" };
+const TOP = "top";   // 상위 칸의 「맨 위」(열 머리) 표지 — member-board TOP 과 같음
+const TaskIn = z.object({
+  key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/),
+  name: s(140).optional(), area: s(60).optional(),
+  parent: z.union([z.string().min(1).max(80), z.null()]).optional(),
+  state: z.enum(TASK_STATES).optional(),
+  line: s(200).optional(), body: s(4000).optional(),
+  issue: z.union([z.number().int().positive().max(99_999_999), z.string().regex(/^(?:[\w.-]+\/[\w.-]+)?#?\d{1,8}$/), z.literal(""), z.null()]).optional(),
+});
+const TasksIn = z.object({ tasks: z.array(TaskIn).min(1).max(200) });
+// 상위 노드 칸 고치기(node_setting.data.parent): patch 의 값이 null 이면 그 칸 지움(json_patch). nodes/parent · device/tasks 가 같이 씀
+const parentStmt = (DB: D1Database, me: string, patch: Record<string, string | null>) =>
+  DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('parent', json_patch('{}', json(?2))), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.parent', json_patch(CASE WHEN json_valid(data) AND json_type(json_extract(data, '$.parent')) = 'object' THEN json_extract(data, '$.parent') ELSE '{}' END, json(?2))), updated_at = ?3").bind(me, JSON.stringify(patch), now());
 const UNIT_Q = "노드를 어떻게 묶을까요?";
 const UNIT_CHOICE: Record<Unit, string> = { agent: "에이전트마다 채널 · 일은 스레드", goal: "일마다 채널" };
 export async function setUnit(env: Env, owner: string, unit: Unit, by: "auto" | "me") {
@@ -59,7 +75,7 @@ export async function regroup(env: Env, owner: string) {
     env.DB.prepare(`SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) AND kind != 'me' ${notChat("board_log")} ORDER BY at DESC LIMIT 400`).bind(owner),
     env.DB.prepare(`SELECT id, win, state, question, at FROM board_card WHERE owner = ? ${notChat("board_card")} ORDER BY at DESC LIMIT 200`).bind(owner),
     env.DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(owner),
-    env.DB.prepare("SELECT id, name, pinned_name, area, state, why, counts, created_at, updated_at, archived_at FROM mnode WHERE owner = ? AND id NOT LIKE 'sl\\_%' ESCAPE '\\'").bind(owner),   // Slack 채널 노드(slack-import.ts)는 묶기 밖 — 보관 · 이름 바꾸기 안 함
+    env.DB.prepare("SELECT id, name, pinned_name, area, state, why, counts, created_at, updated_at, archived_at FROM mnode WHERE owner = ? AND id NOT LIKE 'sl\\_%' ESCAPE '\\' AND id NOT LIKE 'tk\\_%' ESCAPE '\\'").bind(owner),
     env.DB.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(owner),
     env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT name FROM role WHERE owner = ? UNION SELECT name FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed','gone')").bind(owner, owner),
@@ -83,7 +99,7 @@ export async function regroup(env: Env, owner: string) {
   for (let i = 0; i < gone.length; i += 80) st.push(env.DB.prepare(`DELETE FROM mnode_item WHERE owner = ? AND item IN (${gone.slice(i, i + 80).map(() => "?").join(",")})`).bind(owner, ...gone.slice(i, i + 80)));
   const old = new Map((nd.results as { id: string; name: string; area: string; state: string; why: string; counts: string; updated_at: number; archived_at: number | null }[]).map(n => [n.id, n]));
   for (const n of r.nodes) {
-    if (n.id.startsWith("sl_")) continue;   // 사람이 Slack 노드로 옮겨 넣은 것(pin)이 있어도 그 노드 줄은 slack-import 것
+    if (n.id.startsWith("sl_") || n.id.startsWith("tk_")) continue;   // 사람이 Slack · 업무 노드로 옮겨 넣은 것(pin)이 있어도 그 노드 줄은 slack-import · /api/device/tasks 것
     const o = old.get(n.id), counts = JSON.stringify(n.counts), arch = n.archived ? (o?.archived_at || (set.unit ? Math.min(t, n.updated_at || t) : t)) : null;   // 고른 사람은 보관 시각 = 마지막 움직임 — 옛 세션 수십 개가 「끝난 노드」 목록에 하루 동안 쌓이지 않게
     if (o && o.name === n.name && o.area === n.area && o.state === n.state && o.why === n.why && o.counts === counts && o.updated_at === n.updated_at && (o.archived_at ?? null) === arch) continue;
     st.push(env.DB.prepare(
@@ -156,7 +172,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     for (let i = 0; i < st.length; i += 90) await DB.batch(st.slice(i, i + 90));
     const set = await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner).first<{ data: string }>();
     const cur = json<{ unit?: Unit; unit_by?: string }>(set?.data, {});
-    const fresh = items.length && !cur.unit && !(await DB.prepare("SELECT 1 FROM mnode WHERE owner = ? AND id NOT LIKE 'sl\\_%' ESCAPE '\\' LIMIT 1").bind(owner).first());
+    const fresh = items.length && !cur.unit && !(await DB.prepare("SELECT 1 FROM mnode WHERE owner = ? AND id NOT LIKE 'sl\\_%' ESCAPE '\\' AND id NOT LIKE 'tk\\_%' ESCAPE '\\' LIMIT 1").bind(owner).first());   // 업무 노드(tk_)만 있는 사람도 처음 들여오기
     let picked = fresh ? pickUnit(items, (b.roles || []).map(x => x.name)) : null;
     if (picked) await setUnit(env(c), owner, picked, "auto");
     const r = await regroup(env(c), owner);
@@ -208,9 +224,10 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
   app.get("/api/me/nodes/list", async c => {
     const me = await closer(c, false); if (!me) return c.json({ error: "로그인" }, 401);
     const DB = env(c).DB, closed = await closedOf(DB, me);
-    const rows = (await DB.prepare("SELECT id, name, pinned_name, area, state, archived_at FROM mnode WHERE owner = ? ORDER BY updated_at DESC LIMIT 1000").bind(me).all()).results as { id: string; name: string; pinned_name: string | null; area: string | null; state: string; archived_at: number | null }[];
+    const q = (cols: string) => DB.prepare(`SELECT id, name, pinned_name, area, state, archived_at${cols} FROM mnode WHERE owner = ? ORDER BY updated_at DESC LIMIT 1000`).bind(me).all();
+    const rows = (await q(", task").catch(e => /no such column/i.test(String(e)) ? q("") : Promise.reject(e))).results as { id: string; name: string; pinned_name: string | null; area: string | null; state: string; archived_at: number | null; task?: string | null }[];
     const parent = json<{ parent?: Record<string, string> }>((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data, {}).parent || {};
-    return c.json({ nodes: rows.map(r => ({ id: r.id, name: r.pinned_name || r.name, area: r.area || "", state: r.state, archived: !!r.archived_at, closed: closed.has(r.id), parent: parent[r.id] || null })) }, 200, { "cache-control": "no-store" });
+    return c.json({ nodes: rows.map(r => ({ id: r.id, name: r.pinned_name || r.name, area: r.area || "", state: r.state, archived: !!r.archived_at, closed: closed.has(r.id), parent: parent[r.id] || null, ...(r.task ? { task: json(r.task, {}) } : {}) })) }, 200, { "cache-control": "no-store" });   // task = 업무 노드(tk_) 값
   });
   app.post("/api/me/nodes/parent", async c => {
     const me = await closer(c, true); if (!me) return c.json({ error: "로그인" }, 401);
@@ -230,9 +247,48 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     if (mine !== want.length) return c.json({ error: "없는 노드" }, 404);
     const cur = json<{ parent?: Record<string, string> }>((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data, {}).parent || {};
     for (let x: string | undefined = parent || undefined, i = 0; x && x !== "top" && i < 50; i++, x = cur[x]) if (cur[x] === node) return c.json({ error: "서로 상위가 될 수 없어요" }, 400);
-    const patch = JSON.stringify({ [node]: parent });   // json_patch: null 이면 그 칸 지움
-    await DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('parent', json_patch('{}', json(?2))), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.parent', json_patch(CASE WHEN json_valid(data) AND json_type(json_extract(data, '$.parent')) = 'object' THEN json_extract(data, '$.parent') ELSE '{}' END, json(?2))), updated_at = ?3").bind(me, patch, now()).run();
+    await parentStmt(DB, me, { [node]: parent }).run();
     return c.json({ ok: true, node, parent });
+  });
+
+  app.post("/api/device/tasks", async c => {
+    const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);
+    if (+(c.req.header("content-length") || 0) > 1_000_000) return c.json({ error: "너무 큼" }, 413);
+    const p = TasksIn.safeParse(await c.req.json().catch(() => null));
+    if (!p.success) return c.json({ error: p.error.issues.slice(0, 3).map(i => `${i.path.join(".")} ${i.message}`).join("; ") }, 400);
+    const tasks = p.data.tasks, ids = tasks.map(t => "tk_" + t.key);
+    if (new Set(ids).size !== ids.length) return c.json({ error: "같은 key 가 두 번" }, 400);
+    const DB = env(c).DB, t0 = now();
+    const want = [...new Set([...ids, ...tasks.map(t => t.parent).filter((x): x is string => !!x && x !== TOP && !ids.includes(x))])];
+    type Row = { id: string; name: string; pinned_name: string | null; area: string; state: string; why: string; task: string | null; archived_at: number | null };
+    const have = new Map(((await DB.prepare("SELECT id, name, pinned_name, area, state, why, task, archived_at FROM mnode WHERE owner = ? AND id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(want)).all()).results as Row[]).map(r => [r.id, r]));
+    const nameless = tasks.filter((t, i) => !have.has(ids[i]) && !t.name).map(t => t.key);
+    if (nameless.length) return c.json({ error: "새 업무엔 이름", keys: nameless }, 400);
+    const missing = want.filter(id => !ids.includes(id) && !have.has(id));
+    if (missing.length) return c.json({ error: "없는 노드", missing }, 404);   // 남의 노드 · 없는 id
+    const cur = { ...json<{ parent?: Record<string, string> }>((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data, {}).parent || {} };
+    const patch: Record<string, string | null> = {};
+    tasks.forEach((t, i) => { if (t.parent !== undefined && (cur[ids[i]] ?? null) !== t.parent) patch[ids[i]] = t.parent; });   // 바뀐 상위만
+    for (const [k, v] of Object.entries(patch)) if (v === null) delete cur[k]; else cur[k] = v;
+    // 고리 막기: 바꾼 노드마다 위로 따라가 제가 다시 나오면 안 됨(이미 있는 사슬과 이번 묶음을 합친 것으로 — 저를 상위로 둔 것도 여기서 걸림)
+    for (const id of Object.keys(patch)) for (let x: string | undefined = cur[id], i = 0; x && x !== TOP && i < 60; i++, x = cur[x]) if (x === id) return c.json({ error: "서로 상위가 될 수 없어요" }, 400);
+    const st: D1PreparedStatement[] = [];
+    const out = tasks.map((t, i) => {
+      const id = ids[i], o = have.get(id), was = json<Task>(o?.task, { state: "working", line: "", body: "", issue: "" });
+      const issue = t.issue === undefined ? was.issue : t.issue === null ? "" : typeof t.issue === "number" || /^\d+$/.test(t.issue) ? "#" + t.issue : t.issue;
+      const task: Task = { state: t.state ?? was.state, line: t.line ?? was.line, body: t.body ?? was.body, issue };
+      const name = t.name || o?.name || "업무", pinned = t.name ? null : o?.pinned_name ?? null, area = t.area ?? o?.area ?? "", state = TASK_NODE_STATE[task.state], why = task.line.slice(0, 80), tj = JSON.stringify(task);
+      const done = task.state === "done" || task.state === "cancelled", arch = done ? o?.archived_at ?? t0 : null;
+      if (o && o.name === name && (o.pinned_name ?? null) === pinned && o.area === area && o.state === state && o.why === why && o.task === tj && (o.archived_at ?? null) === arch) return { key: t.key, id, created: false, changed: false };
+      st.push(DB.prepare(
+        "INSERT INTO mnode(owner, id, name, pinned_name, area, state, why, counts, task, created_at, updated_at, archived_at) VALUES (?,?,?,?,?,?,?,'{}',?,?,?,?) " +
+        "ON CONFLICT(owner, id) DO UPDATE SET name = excluded.name, pinned_name = excluded.pinned_name, area = excluded.area, state = excluded.state, why = excluded.why, task = excluded.task, updated_at = excluded.updated_at, archived_at = excluded.archived_at")
+        .bind(me, id, name, pinned, area, state, why, tj, t0, t0, arch));
+      return { key: t.key, id, created: !o, changed: true };
+    });
+    if (Object.keys(patch).length) st.push(parentStmt(DB, me, patch));
+    if (st.length) await DB.batch(st);   // 노드 · 상위를 한 번에(D1 batch = 한 트랜잭션) — 노드만 서고 상위가 빠진 채 남지 않게
+    return c.json({ ok: true, nodes: out, changed: out.filter(x => x.changed).length, parents: Object.keys(patch).length });
   });
   app.post("/api/me/nodes/close", async c => {
     const me = await closer(c, true); if (!me) return c.json({ error: "로그인" }, 401);
