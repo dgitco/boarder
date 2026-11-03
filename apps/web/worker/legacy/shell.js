@@ -2,7 +2,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   try { const reg = await navigator.serviceWorker.getRegistration(), sub = await reg?.pushManager.getSubscription(); if (!sub) return;
     await fetch('api/push/unsubscribe', {method: 'POST', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({endpoint: sub.endpoint})}).catch(() => {}); await sub.unsubscribe(); } catch (e) {} };
 (() => {
-  if (!window.HB_LIVE || !window.show) return;
+  if (!window.HB_LIVE || !window.show) return document.documentElement.classList.remove('bx-route');   // 틀이 안 뜨면 주소 대기 가림막도 걷음
   const MOBILE_ON = true;
   const R = document.documentElement, PC = matchMedia('(min-width: 861px)');
   const on = () => PC.matches || MOBILE_ON;
@@ -65,8 +65,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const menu = mk('button', 'bx-menu bx-glass', I.menu); menu.type = 'button'; menu.setAttribute('aria-label', '메뉴');
   const cmb = mk('button', 'bx-chatmenu', I.menu); cmb.type = 'button'; cmb.setAttribute('aria-label', '메뉴');
   cmb.addEventListener('click', () => openDr());
-  const seg = mk('div', 'bx-seg', '<button type="button" data-bxv="tree">트리</button><button type="button" data-bxv="timeline">타임라인</button>');
-  seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', '노드 보기');
+  const seg = mk('div', 'bx-seg', '');
+  seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', '트리 보기');
   const cap = mk('div', 'bx-cap bx-glass');
   const ibox = mk('section', 'bx-inbox'); ibox.hidden = true;
   const hr = document.querySelector('header .hr'), hrt = hr.querySelector('.hrt');
@@ -108,7 +108,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       + `<div class="bx-sbody" data-sec="ss"${SB.fold.ss ? ' hidden' : ''}>${chats().map(c => `<button type="button" class="bx-it bx-chat" data-chat="${esc(c.sid)}" title="${esc(c.title)}"${qa === 'q:' + c.sid ? ' aria-current="page"' : ''}><span>${esc(c.title)}</span></button>`).join('')}</div>`;
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas');
-    const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = (nd ? sec('nd', '채널', nd) : ''), ags = sec('ch', '에이전트', ch);
+    const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
     const body = '<div class="bx-sbsc">' + head + sec('ib', '모아 보기', ib) + (agentsFirst ? ags + chs : chs + ags) + (rc ? sec('rc', '최근 캔버스', rc) : '') + ss + '</div>';
     const foot = `<div class="bx-foot"><button type="button" class="bx-me" data-me aria-haspopup="true" aria-expanded="false">${meAv()}<span>${esc(window.HB_MEMBER?.name || ME()?.name || 'Owner')}</span></button></div>`;
     const fb = `<button type="button" class="bx-colb" data-go="find" aria-label="찾기" title="찾기 ⌘K">${I.search}</button>`;
@@ -168,9 +168,12 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     R.classList.toggle('bx-chat', chatMode());
     if (!PC.matches && chatMode()){ const ah = ans.querySelector(':scope > .ah'), r = ah?.getBoundingClientRect(); if (r && r.height){ R.style.setProperty('--bx-cmt', Math.round(r.top - ans.getBoundingClientRect().top + (r.height - 40) / 2) + 'px'); R.style.setProperty('--bx-cmz', String((parseInt(getComputedStyle(ans).zIndex) || 20) + 1)); } }   // 폰 채팅 머리 왼쪽 메뉴 단추 자리
     R.classList.toggle('bx-ib', !!S.ib);
-    seg.hidden = act !== 'node';
-    for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-pressed', b.dataset.bxv === current);
+    if (current === 'timeline' && typeof show === 'function') show('tree');   // 타임라인 보기는 없앰 — 예전에 보던 사람도 트리로
+    const tb = [];
+    seg.hidden = act !== 'node' || !tb.length;
+    seg.innerHTML = '';
     lists(); arts();
+    window.HBViewWake?.();   // 채팅 · 모아 보기를 닫아 보기가 드러나면 미뤄 둔 그리기를 바로(board.html viewDraw)
   }
 
   function ibOpen(k, fromPop){
@@ -182,6 +185,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     sync();
   }
   function ibClose(){ if (!S.ib) return; ibM?.destroy(); ibM = null; S.ib = null; ibox.hidden = true; }
+  window.HB_VIEW_OFF = () => on() && (R.classList.contains('bx-chat') || R.classList.contains('bx-route') || R.classList.contains('bx-set') || !!S.ib || !!document.querySelector('#mview.full'));
+  let wakeQ = 0; const wakeLater = () => { if (!wakeQ) wakeQ = requestAnimationFrame(() => { wakeQ = 0; window.HBViewWake?.(); }); };
+  new MutationObserver(wakeLater).observe(R, {attributes: true, attributeFilter: ['class']});
+  new MutationObserver(wakeLater).observe(document.body, {childList: true});
 
   const show0 = window.show, chan0 = window.openChan;
   window.show = function(v){ S.ret = null; ibClose(); const r = show0.apply(this, arguments); sync(); return r; };
@@ -405,7 +412,6 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (!fd.hidden && e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); return findClose(); }
     if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k' && on() && !EMBED && !document.querySelector('#mview')){ e.preventDefault(); fd.hidden ? findOpen() : findClose(); }
   }, true);
-  seg.addEventListener('click', e => { const b = e.target.closest('[data-bxv]'); if (b && b.dataset.bxv !== current) show(b.dataset.bxv); });
   function openDr(){ R.classList.add('bx-dron'); lists(); dr.querySelector('[aria-current]')?.focus?.({preventScroll: true}); }
   function closeDr(){ R.classList.remove('bx-dron'); }
   menu.addEventListener('click', openDr);
@@ -462,7 +468,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       else if (k === 'chat' && CH.includes(a)){
         if (b && typeof window.HBOpenCard === 'function' && !(chatMode() && cur.chan === a && CS.th?.ts === b)){
           const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail();
-          if (ready && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ ibClose(); S.ret = null; await window.HBOpenCard(b, {c: a, t: b});
+          if (ready && gen === G && !/^#settings(\/|$|\?)/.test(location.hash)){ ibClose(); S.ret = null;
+            await window.HBOpenCard(b, {c: a, t: b});
             if (gen === G){ const w = want(); if (w && w !== location.hash) history.replaceState(history.state, '', w); moved = true; } }
         }
         else if (!(chatMode() && cur.chan === a)){ ibClose(); openChan(a, b || undefined); }
@@ -477,6 +484,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       sync();
     } finally {
       applying--;
+      if (gen === G){ R.classList.remove('bx-route'); window.HBViewWake?.(); }
       if (gen === G && !moved && location.hash !== h && !/^#settings(\/|$|\?)/.test(location.hash)) history.replaceState(history.state, '', h);
       recLater();   // 도는 사이 열린 화면은 그다음 주소로
     }
@@ -549,7 +557,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       addEventListener('pointerup', guard, true); addEventListener('keydown', guard, true);
     }
   }
-  else recLater();
+  else { R.classList.remove('bx-route'); recLater(); }
 })();
 (() => {
   if (!window.HB_LIVE) return;

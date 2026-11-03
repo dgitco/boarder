@@ -39,7 +39,29 @@
     R.classList.toggle('bx-acc', !!hex);
   }
   applyAccent();
-  if (!window.HB_BLOB) document.addEventListener('DOMContentLoaded', applyAccent);   // 블롭 부품이 이 글 뒤에 오는 화면이면 그때
+  if (!window.HB_BLOB) document.addEventListener('DOMContentLoaded', applyAccent);
+  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0']];
+  const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+  const uiSave = (k, v) => fetch('api/me/ui', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({k, v})}).catch(() => {});
+  window.bxUiSave = uiSave;   // 보드 위 테마 단추(board.html)도 같은 길
+  const uiApply = () => {
+    const t = lsGet('hb-theme') || 'system';
+    if (typeof theme !== 'undefined' && typeof applyTheme === 'function'){ theme = t; applyTheme(); } else if (t === 'system') R.removeAttribute('data-theme'); else R.setAttribute('data-theme', t);
+    R.classList.toggle('bx-still', lsGet('hb-still') === '1');
+    applyAccent();
+  };
+  fetch('api/me/ui', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => {
+    if (!j || typeof j !== 'object') return;
+    let changed = false;
+    for (const [k, ls, dflt] of UIK) {
+      const sv = typeof j[k] === 'string' ? j[k] : null, lv = lsGet(ls);
+      if (sv == null){ if (lv != null) uiSave(k, lv); continue; }   // 계정에 없음 — 이 브라우저에서 고른 값이 있으면 올림
+      if (sv === (lv ?? dflt)) continue;
+      try { if (k === 'accent' && sv === 'bot') localStorage.removeItem(ls); else localStorage.setItem(ls, sv); } catch {}
+      changed = true;
+    }
+    if (changed) uiApply();
+  }).catch(() => {});   // 블롭 부품이 이 글 뒤에 오는 화면이면 그때
   const svg = (d, s = 18) => `<svg width="${s}" height="${s}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
   const lu = (n, w = 18) => window.LU ? window.LU(n, w) : '';
   const IC = {
@@ -756,14 +778,14 @@
     const cur = () => { try { return localStorage.getItem('hb-theme') || 'system'; } catch { return 'system'; } };
     const still = () => { try { return localStorage.getItem('hb-still') === '1'; } catch { return false; } };
     let draw = () => {
-      el.innerHTML = header('모양', '이 브라우저의 화면 설정이에요.')
+      el.innerHTML = header('모양', '내 계정에 저장돼 다른 기기에서도 같아요.')
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>테마</b><p class="bxs-mut">시스템은 기기 설정(라이트 · 다크)을 따라요</p></div><div class="bxs-seg" role="radiogroup" aria-label="테마">${TH.map(([k, v]) => `<button type="button" role="radio" aria-checked="${cur() === k}" data-th="${k}">${v}</button>`).join('')}</div></div></div>`
         + accCard()
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>움직임 줄이기</b><p class="bxs-mut">블롭 · 파비콘 깜빡임 · 화면 전환 움직임을 멈춰요(기기의 움직임 줄이기도 따라요)</p></div>${sw(still(), `data-st="${still() ? 0 : 1}"`, '움직임 줄이기')}</div></div>`;
     };
     const setAcc = (v, redraw = true) => {
       const old = ACC(); if (v === old) return;
-      try { if (v === 'bot') localStorage.removeItem('hb-accent'); else localStorage.setItem('hb-accent', v); if (ACC() !== v) throw 0; }
+      try { if (v === 'bot') localStorage.removeItem('hb-accent'); else localStorage.setItem('hb-accent', v); if (ACC() !== v) throw 0; uiSave('accent', v); }
       catch { try { if (old === 'bot') localStorage.removeItem('hb-accent'); else localStorage.setItem('hb-accent', old); } catch {} toast('일시적인 오류가 발생했어요'); }
       applyAccent(); if (redraw) draw();
     };
@@ -773,9 +795,9 @@
       const am = e.target.closest('[data-accm]');
       if (am) return setAcc(am.dataset.accm === 'bot' ? 'bot' : ACC() === 'bot' ? accHex() : ACC());   // 사용자 지정으로 바꾸면 지금 색(봇 색)에서 시작 — 바꾸는 순간 색이 튀지 않게
       const t = e.target.closest('[data-th]');
-      if (t){ try { localStorage.setItem('hb-theme', t.dataset.th); } catch {} if (typeof theme !== 'undefined'){ theme = t.dataset.th; applyTheme(); } else if (t.dataset.th === 'system') R.removeAttribute('data-theme'); else R.setAttribute('data-theme', t.dataset.th); return draw(); }
+      if (t){ try { localStorage.setItem('hb-theme', t.dataset.th); } catch {} uiSave('theme', t.dataset.th); if (typeof theme !== 'undefined'){ theme = t.dataset.th; applyTheme(); } else if (t.dataset.th === 'system') R.removeAttribute('data-theme'); else R.setAttribute('data-theme', t.dataset.th); return draw(); }
       const m = e.target.closest('[data-st]');
-      if (m){ try { localStorage.setItem('hb-still', m.dataset.st); } catch {} R.classList.toggle('bx-still', m.dataset.st === '1'); return draw(); }
+      if (m){ try { localStorage.setItem('hb-still', m.dataset.st); } catch {} uiSave('still', m.dataset.st); R.classList.toggle('bx-still', m.dataset.st === '1'); return draw(); }
     };
   };
   const FT = {report: ['에이전트가 직접 보고', 'AI 도구에 보더 MCP · 시작 훅 · 스킬을 넣어요(먼저 백업, 끄면 그 칸만 빠짐)'], engine: ['보더 엔진', '보더가 이 기기에서 창을 열고 · 깨우고 · 주차하고 · 닫아요(보더 자신의 tmux)']};

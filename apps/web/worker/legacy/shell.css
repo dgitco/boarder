@@ -1,3 +1,7 @@
+html.bx-route .wrap{visibility:hidden}
+html.bx-route body::after{content:"";position:fixed;left:50%;top:50%;width:11px;height:11px;margin:-7px 0 0 -7px;border:1.5px solid var(--line);border-top-color:var(--ink);border-radius:50%;visibility:visible;pointer-events:none;z-index:60}
+html.bx-route:has(#bx-lw) body::after{display:none}
+@media (prefers-reduced-motion:no-preference){html.bx-route body::after{animation:spin .9s linear infinite}}
 :root{--frame:#ebebef;--glass:rgba(255,255,255,.6);--glass-line:rgba(0,0,0,.06);--glass-hi:rgba(255,255,255,.95)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--frame:#0b0b0c;--glass:rgba(38,38,42,.6);--glass-line:rgba(255,255,255,.08);--glass-hi:rgba(255,255,255,.06)}}
 :root[data-theme="dark"]{--frame:#0b0b0c;--glass:rgba(38,38,42,.6);--glass-line:rgba(255,255,255,.08);--glass-hi:rgba(255,255,255,.06)}

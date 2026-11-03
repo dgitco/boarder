@@ -1114,6 +1114,22 @@ app.get("/api/me/onboarding", async c => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   return c.json(await onboarding(c.env.DB, s.user.email.toLowerCase(), { server: c.env.PUBLIC_URL, push: await ledger.f7On(c.env.DB, "member_push").catch(() => false) }), 200, { "cache-control": "no-store" });
 });
+const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1" };
+app.get("/api/me/ui", async c => {
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  const rs = (await c.env.DB.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(s.user.email.toLowerCase()).all<{ k: string; v: string }>()).results || [];
+  const out: Record<string, string> = {}; for (const r of rs) { const k = r.k.slice(3); if (UI_PREF[k]?.(r.v)) out[k] = r.v; }
+  return c.json(out, 200, { "cache-control": "no-store" });
+});
+app.post("/api/me/ui", async c => {   // { k: "theme" | "accent" | "still", v }
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const { k, v } = await c.req.json<{ k?: string; v?: string }>().catch(() => ({} as { k?: string; v?: string }));
+  const key = String(k || ""), val = String(v ?? "");
+  if (!UI_PREF[key] || !UI_PREF[key](val)) return c.json({ ok: false, error: "모르는 값" }, 400);
+  await c.env.DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(s.user.email.toLowerCase(), "ui:" + key, val, Date.now()).run();
+  return c.json({ ok: true });
+});
 app.get("/api/me/primary-window", async c => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   const v = (await c.env.DB.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(s.user.email.toLowerCase()).first<{ v: string }>())?.v || null;
@@ -1840,7 +1856,7 @@ async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: s
   const bx = await shellTags(c.env, c.executionCtx).catch(() => null);
   return new HTMLRewriter()
       .on('meta[name="apple-mobile-web-app-title"]', { element: e => { e.setAttribute("content", "보더"); } })
-      .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|settings)/.test(location.hash)) history.replaceState(history.state, '', '#tree'); document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000)</script>", { html: true });
+      .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|settings)/.test(location.hash)) history.replaceState(history.state, '', '#tree'); document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000); if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|unread$|saved$|drafts$)/.test(window.HB_HASH0)) { document.documentElement.classList.add('bx-route'); setTimeout(function(){ document.documentElement.classList.remove('bx-route') }, 35000) }</script>", { html: true });
         if (ea) e.prepend(`<script>window.BX_EA=1${ea === "personal" ? ';window.BX_EA_MODE="personal"' : ""}</script>`, { html: true });
         e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>`) + (ea ? (bx ? bx.eaHead : `<style id="hbx-ea-css">${eaCss}</style>`) : "") + snippet(c.env, await phId(c.env, email)), { html: true }); } })
       .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script>`) + (ea ? (bx ? bx.eaBody : `<script>${eaJs.replace(/<\//g, "<\\/")}</script><script>${eaSecretJs.replace(/<\//g, "<\\/")}</script>`) : "") + `<script>document.documentElement.classList.remove('bx-boot')</script>`, { html: true }); } })
