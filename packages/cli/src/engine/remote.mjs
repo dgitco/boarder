@@ -6,7 +6,8 @@ import { accountFolder, accountList, accountNames, findCli, isLoggedIn, loginSpe
 
 const PROV = ['claude', 'codex'];
 const NAME = /^\w[\w.-]{0,39}$/;
-const URL_RE = /https?:\/\/[^\s"'<>\x1b]+/;
+const URL_RE = /https:\/\/[^\s"'<>\x1b]+/;   // https 만 — Codex 는 첫 줄에 http://localhost:1455 (기기 안 로그인 서버)를 먼저 찍음
+const URL_DONE = /https:\/\/[^\s"'<>\x1b]+(?=[\s"'<>\x1b])/;   // 주소 뒤에 공백 · 줄바꿈이 와야 잡음 — 파이프가 주소를 두 조각으로 줘도 잘린 채 잡지 않게
 const clean = u => u.replace(/[).,;:]+$/, '');
 const running = new Map();   // "공급자/이름" → { url, done, kill } — 같은 계정 로그인이 겹치면 지금 것을 돌려줌
 const bad = (msg, code = 64) => Object.assign(new Error(msg), { code });
@@ -37,14 +38,15 @@ export function startLogin(cfg, prov, name, { find = findCli, launch = spawn, mk
     running.set(key, st);
     let buf = '', settled = false;
     const finish = v => { if (!settled) { settled = true; clearTimeout(t); resolve(v); } };
-    const feed = d => { if (st.url) return; buf = (buf + String(d)).slice(-4000); const m = URL_RE.exec(buf); if (m) { st.url = clean(m[0]); finish({ url: st.url, started: true }); } };
+    const feed = d => { if (st.url) return; buf = (buf + String(d)).slice(-4000); const m = URL_DONE.exec(buf); if (m) { st.url = clean(m[0]); finish({ url: st.url, started: true }); } };
+    const last = () => { if (!st.url) { const m = URL_RE.exec(buf); if (m) st.url = clean(m[0]); } };   // 끝나거나 기다림이 다 되면 남은 것에서 마지막으로 한 번
     ch.stdout?.on('data', feed); ch.stderr?.on('data', feed);
-    const end = () => { st.done = true; finish({ url: st.url, started: true }); };
+    const end = () => { st.done = true; last(); finish({ url: st.url, started: true }); };
     ch.on('error', () => { end(); });
     ch.on('exit', end);
     const kill = setTimeout(() => { try { ch.kill(); } catch {} }, ttlMs); kill.unref?.();
     ch.on('exit', () => clearTimeout(kill));
-    const t = setTimeout(() => finish({ url: st.url, started: true }), waitMs);
+    const t = setTimeout(() => { last(); finish({ url: st.url, started: true }); }, waitMs);
   });
 }
 

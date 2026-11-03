@@ -143,6 +143,11 @@ test("끼운 /art: 주인만 그 /art 표를 받고, 표가 붙은 첫 화면(�
   assert.notEqual(deep.status, 200, "캔버스 표로 하위 폴더까지 열림");
   const pdeep = await call(`/art/${P}/img/a.png?bxt=${encodeURIComponent(tp.t)}`, { "sec-fetch-dest": "image" });
   assert.notEqual(pdeep.status, 401); assert.notEqual(pdeep.headers.get("location") || "", "/login", "페이지 표로 그 페이지 하위 그림은 표 길로(로그인 화면 아님)");
+  const cimg = await call(`/art/${A}/qa-guest/pc-00.png?bxt=${encodeURIComponent(ta.t)}`, { "sec-fetch-dest": "image" });
+  assert.notEqual(cimg.status, 401); assert.notEqual(cimg.headers.get("location") || "", "/login", "캔버스 표로 그 캔버스 하위 그림은 표 길로");
+  assert.match(cimg.headers.get("content-security-policy") || "", /^sandbox /, "캔버스 하위 그림도 표 길(sandbox 머리)");
+  const cjs = await call(`/art/${A}/qa-guest/x.js?bxt=${encodeURIComponent(ta.t)}`, { "sec-fetch-dest": "script" });
+  assert.notEqual(cjs.status, 200, "캔버스 표로 하위 폴더 스크립트까지 열림");
   const trav = await call(`/art/${P}/../${A}/x.html?bxt=${encodeURIComponent(tp.t)}`, { "sec-fetch-dest": "iframe" });
   assert.notEqual(trav.status, 200, "점점으로 다른 /art");
   const D = newId("I"); arts[D] = { kind: "doc" }; later(6_000);

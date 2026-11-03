@@ -1942,7 +1942,7 @@ app.all("*", async c => {
     return r ?? c.text("not found", 404, { "cache-control": "no-store" });
   }
   let aj = c.req.method === "GET" && url.searchParams.has("bxt") && !/%2f|%5c/i.test(url.pathname) ? ART_FILE.exec(url.pathname) || ART_ROOT.exec(url.pathname) : null;
-  if (!aj && c.req.method === "GET" && url.searchParams.has("bxt") && !/%2f|%5c/i.test(url.pathname)) { const d = ART_DEEP.exec(url.pathname); if (d && (await artKind(c.env, chOf(c), d[1])) === "page") aj = d; }
+  if (!aj && c.req.method === "GET" && url.searchParams.has("bxt") && !/%2f|%5c/i.test(url.pathname)) { const d = ART_DEEP.exec(url.pathname); if (d) { const k = await artKind(c.env, chOf(c), d[1]); if (k === "page" || (k === "canvas" && /\.(?:png|jpe?g|webp|gif|avif|svg|woff2?)$/i.test(url.pathname))) aj = d; } }
   if (aj && await artOk(c.env, aj[1], url.searchParams.get("bxt"))) {
     try {
       const rg = c.req.header("range"), fh: Record<string, string> = { accept: c.req.header("accept") || "*/*", "accept-encoding": "gzip", ...(rg ? { range: rg } : {}) }, fr = await filesFirst(c, url.pathname, fh);

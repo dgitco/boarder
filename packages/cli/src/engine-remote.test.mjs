@@ -69,3 +69,23 @@ test('engine_choose: sdk 는 준비돼 있어야 · 없으면 설치 시도 · t
   assert.equal(t.default, 'tmux');
   assert.equal(await R.remoteVerb('open', {}, {}), null);
 });
+
+test('account_login: Codex 는 http://localhost:1455 를 먼저 찍어도 https 로그인 주소를 돌려줌', async () => {
+  const cfg = { sdk: { accounts: { codex: { w: path.join(home, 'acc-w') } } } };
+  const r = await R.remoteVerb('account_login', { provider: 'codex', name: 'w' }, { cfg, find: () => ({ cmd: '/x/codex', pre: [], shell: false }), launch: fakeLaunch(['Starting local login server on http://localhost:1455.\nIf your browser did not open, navigate to this URL to authenticate:\n\nhttps://auth.openai.com/oauth/authorize?response_type=code&client_id=abc\n']) });
+  assert.deepEqual(r, { url: 'https://auth.openai.com/oauth/authorize?response_type=code&client_id=abc', started: true });
+  fakeLaunch.last.emit('exit', 0);
+});
+
+test('account_login: 주소가 두 조각으로 와도 잘린 주소를 잡지 않음', async () => {
+  const cfg = { sdk: { accounts: { codex: { z: path.join(home, 'acc-z') } } } };
+  const r = await R.remoteVerb('account_login', { provider: 'codex', name: 'z' }, { cfg, find: () => ({ cmd: '/x/codex', pre: [], shell: false }), launch: fakeLaunch(['go\nhttps://auth.openai.com/oauth/auth', 'orize?x=1\n']) });
+  assert.deepEqual(r, { url: 'https://auth.openai.com/oauth/authorize?x=1', started: true });
+  fakeLaunch.last.emit('exit', 0);
+});
+
+test('account_login: 줄바꿈 없이 끝나는 주소도 프로세스가 끝나면 잡음', async () => {
+  const cfg = { sdk: { accounts: { claude: { y: path.join(home, 'acc-y') } } } };
+  const r = await R.remoteVerb('account_login', { provider: 'claude', name: 'y' }, { cfg, find: () => ({ cmd: '/x/claude', pre: [], shell: false }), launch: fakeLaunch(['visit https://claude.ai/o?a=1'], { exit: 0 }) });
+  assert.deepEqual(r, { url: 'https://claude.ai/o?a=1', started: true });
+});
