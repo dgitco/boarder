@@ -186,3 +186,30 @@ test('hasMark: 이 창 표지가 없으면 false(기록을 읽지 않고 끝), �
   T.markTurn(['ew_withmark'], '글');
   assert.equal(T.hasMark([null, 'x', 'ew_withmark']), true);
 });
+
+test('promptLine: 맡긴 글 첫 줄 → 노드 상태 줄 — 머리 떼기 · 가림 · 60자, 보드 글 · 시스템 글 · 빗금 명령은 없음', () => {
+  const { promptLine } = T;
+  assert.equal(promptLine('이번 달 분기 자료 확인해 줘\n자세한 건 아래'), '요청: 이번 달 분기 자료 확인해 줘');
+  assert.equal(promptLine('[팀장 → 새 담당 · #2736 온보딩 끝까지] 당신은 대표 태스크 #2736 을 맡아요'), '요청: 당신은 대표 태스크 #2736 을 맡아요');
+  assert.equal(promptLine('[팀장 17:44]\n새 대표 태스크를 맡깁니다.'), '요청: 새 대표 태스크를 맡깁니다.', '머리 뒤가 비면 다음 줄');
+  assert.equal(promptLine('[보드 · 영업 담당 · 스레드 1793000000.000001] 자료 받았어요'), null, '보드에서 넣은 글은 이미 채널에 보임');
+  assert.equal(promptLine('<task-notification>끝남</task-notification>'), null);
+  assert.equal(promptLine('/compact'), null);
+  assert.equal(promptLine('   \n  '), null);
+  const long = promptLine('가'.repeat(80)); assert.equal(Array.from(long).length, '요청: '.length + 60); assert.ok(long.endsWith('…'));
+  assert.ok(!/sk-ant-[A-Za-z0-9]/.test(promptLine('키는 sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 이걸로 해') || ''), '비밀값 꼴은 가림');
+});
+
+test('hook prompt: 사람이 맡긴 글 → 그 창 토큰으로 inbox_log progress 「요청: …」 한 번, 출력 없음 · 보드 글은 안 올림 · 끄면 안 올림', async () => {
+  await hookWorld(async ({ hook, posts }) => {
+    const r = await hook(['prompt'], JSON.stringify({ session_id: SID, prompt: '[팀장 → 새 담당 · #2736] 온보딩 셋째 단계 확인해 줘' }));
+    assert.equal(r.code, 0); assert.equal(r.out, '', '훅은 출력 없음(글을 막거나 덧붙이지 않음)');
+    assert.equal(posts.length, 1, JSON.stringify(posts));
+    assert.equal(posts[0].tool, 'inbox_log'); assert.match(posts[0].auth, /^Bearer bxa_/);
+    assert.deepEqual(posts[0].body, { kind: 'progress', text: '요청: 온보딩 셋째 단계 확인해 줘' });
+    await hook(['prompt'], JSON.stringify({ session_id: SID, prompt: '[보드 · 팀장] 이건 보드에서 넣은 글' }));
+    assert.equal(posts.length, 1, '보드에서 넣은 글은 이미 채널에 보여 안 올림');
+    await hook(['prompt'], '{ 깨진 JSON');
+    assert.equal(posts.length, 1);
+  });
+});

@@ -53,6 +53,18 @@ export function lastTurn(jsonl) {
 const SAID = /boarder\s+(chat|say)\b|chat_say|inbox_say/;
 
 export const HEAD_RE = /^\[보드 · ([^\]·]{1,60}?)(?: · (스레드|카드) (\d{10}\.\d{6}))?\] ?/;
+export function promptLine(prompt) {
+  const s = String(prompt || '').replace(/\r/g, '');
+  if (!s.trim() || HEAD_RE.test(s.trimStart()) || /^\s*[<\/]/.test(s)) return null;
+  const lines = s.split('\n').map(x => x.trim()).filter(Boolean);
+  let line = lines[0] || '';
+  const m = /^\[[^\]]{0,160}\]\s*(.*)$/.exec(line);
+  if (m) line = m[1] || lines[1] || line.slice(1, -1);
+  line = redact(line).replace(/\s+/g, ' ').trim();
+  if (!line) return null;
+  const a = Array.from(line);
+  return '요청: ' + (a.length > 60 ? a.slice(0, 59).join('') + '…' : line);
+}
 export function parseHead(prompt) {
   const m = HEAD_RE.exec(String(prompt || '').trimStart()); if (!m) return null;
   if (m[3] && m[2] === '스레드' && m[1] === 'Primary') return { primary: true, thread: m[3] };

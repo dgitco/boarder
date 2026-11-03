@@ -171,6 +171,16 @@ async function turnHook(kind, arg) {
   if (text && !t.said) await postReply(text, t.prompt, T);   // 창이 그 턴에 스스로 boarder chat · say 로 답했으면 또 올리지 않음
 }
 
+async function promptHook() {
+  if (process.env.BOARDER_PROMPT_STATUS === '0') return;
+  if (!loadDevice()?.token && !process.env.BOARDER_TOKEN) return;
+  let j; try { j = JSON.parse(await readStdin(1000)); } catch { return; }
+  const T = await import('./turn.mjs'), text = T.promptLine(j?.prompt);
+  if (!text) return;
+  const w = await windowToken({ timeoutMs: 2000 });
+  await fetch(`${server()}/api/agent/inbox_log`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${w.token}` }, body: JSON.stringify({ kind: 'progress', text }), signal: AbortSignal.timeout(2500) });
+}
+
 async function status() {
   const d = loadDevice(), srv = server(), ok = s => `✓ ${s}`, todo = (s, fix) => `● ${s}${fix ? `  → ${fix}` : ''}`;
   const lines = [`Boarder ${VERSION} · ${srv}`];
@@ -216,7 +226,7 @@ export async function main(argv) {
     if (cmd === 'mcp') return await mcp();
     if (cmd === 'status' && !pos.length) return await status();
     if (cmd === 'headers') { const w = await windowToken(); return console.log(JSON.stringify({ Authorization: `Bearer ${w.token}` })); }
-    if (cmd === 'hook' && ['session-start', 'stop'].includes(pos[0]) && /^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT || '')) return;
+    if (cmd === 'hook' && ['session-start', 'stop', 'prompt'].includes(pos[0]) && /^sdk/i.test(process.env.CLAUDE_CODE_ENTRYPOINT || '')) return;
     if (cmd === 'hook' && pos[0] === 'artifact') {
       try {
         const { artifactHook } = await import('./artifact.mjs'), { canvasPut } = await import('./canvas.mjs');
@@ -232,6 +242,7 @@ export async function main(argv) {
       return console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: note } }));
     }
     if (cmd === 'hook' && (pos[0] === 'stop' || pos[0] === 'codex-turn')) { await turnHook(pos[0], pos[1]).catch(() => {}); return; }
+    if (cmd === 'hook' && pos[0] === 'prompt') { await promptHook().catch(() => {}); return; }
     const num = v => v === undefined ? undefined : Number(v);
     const plan = {
       ask: () => ['inbox_ask', { question: pos[0], choices: flags.choice || [], recommend: flags.rec, urgency: flags.urgency, urgent: !!flags.urgent, backlog: !!flags.backlog, asked_at: flags['asked-at'], body: flags.body, due: flags.due, wait_s: num(flags.wait) }],

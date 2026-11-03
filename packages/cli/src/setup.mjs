@@ -113,7 +113,7 @@ export async function restore(id, { only } = {}) {
 const TOML_SEC = /^\[mcp_servers\.boarder\][ \t]*\r?\n(?:(?![ \t]*\[).*(?:\r?\n|$))*/m;
 const TOML_SEC_END = /(?<=\n)\r?\n\[mcp_servers\.boarder\][ \t]*\r?\n(?:(?![ \t]*\[).*(?:\r?\n|$))*$/;
 const mcpEntry = { command: NODE, args: [BIN, 'mcp'] };
-const HOOKS = [['SessionStart', 'hook session-start', 10], ['Stop', 'hook stop', 20], ['PostToolUse', 'hook artifact', 60, 'mcp__.*[Aa]rtifact.*']];
+const HOOKS = [['SessionStart', 'hook session-start', 10], ['UserPromptSubmit', 'hook prompt', 10], ['Stop', 'hook stop', 20], ['PostToolUse', 'hook artifact', 60, 'mcp__.*[Aa]rtifact.*']];
 const ours = (x, sub) => JSON.stringify(x).includes(sub) && JSON.stringify(x).includes('boarder');
 // Codex: 턴이 끝나면 부르는 notify(맨 위 칸, 하나뿐) — 사람이 이미 notify 를 쓰면 건드리지 않음. 우리가 넣은 줄 = boarder 의 hook codex-turn
 const TOML_NOTIFY = /^notify[ \t]*=[ \t]*\[[^\n]*"hook",[ \t]*"codex-turn"\][ \t]*\r?\n/m;
