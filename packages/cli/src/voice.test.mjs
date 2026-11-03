@@ -1,7 +1,7 @@
 // node --test packages/cli/src/voice.test.mjs
 // 회원 통화: 데몬 동사 rtc_start · rtc_poll · rtc_note · rtc_say · rtc_stop 이 그 기기 codex app-server 와 주인 쪽 통화와 같은 말(JSON-RPC 한 줄씩)로 주고받는지.
 // codex 는 가짜 스크립트(받은 줄을 파일에 적고, 정해 둔 알림 · 도구 부름을 보냄) — 진짜 Codex · ChatGPT 로그인 · OpenAI 에는 안 닿음. 글 · id 는 다 지어낸 것
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import * as V from './engine/voice.mjs';
@@ -44,10 +44,13 @@ rl.on('line', l => { const m = JSON.parse(l); log(m);
     if (op === 'status') return { ok: true, handoffs: [{ id: 'cid0-1', state: 'working', kind: '진행', line: '통화 넘김 cid0-1 보고서 쓰는 중' }] };
     return { ok: true };
   };
-  const lines = () => fs.existsSync(LOG) ? fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+  // 가짜 codex 가 줄을 쓰는 도중에 읽으면 마지막 조각이 반쪽 JSON — 끝 줄바꿈 뒤 조각은 버림(서버가 바쁠 때 「Unterminated string」으로 깨지던 것)
+  const lines = () => { if (!fs.existsSync(LOG)) return []; const p = fs.readFileSync(LOG, 'utf8').split('\n'); p.pop(); return p.filter(Boolean).map(l => JSON.parse(l)); };
   return { H, env, server, calls, lines, deps: { server, env, home: H } };
 }
 const OFFER = 'v=0\r\no=offer';
+// 시험이 중간에 실패해도 열린 통화(가짜 app-server)를 닫음 — 남으면 다음 시험이 「동시 3개」에 걸리고 남은 자식 때문에 파일이 끝나지 않음
+afterEach(() => V.stopAll());
 
 test('available: codex 없음 · 로그인 없음 · 됨 — 이유는 사람이 할 일 한 줄', () => {
   const H = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-voice-a-'));
