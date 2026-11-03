@@ -112,9 +112,11 @@
     const d = data(), s = d.sig + '#' + d.open + '#' + (PC.matches ? 1 : 0);
     if (!force && s === sig) return;
     sig = s;
+    const keepAv = window.HBKeepAv?.(rowsEl);   // 같은 아바타는 애니메이션을 이어서(다시 안 틂, 보드 HBKeepAv)
     pinsEl.innerHTML = '';
     const me = list.querySelector('.bx-ea-me'); if (me && me.dataset.n !== meName()){ me.dataset.n = meName(); me.innerHTML = av(meName(), 40); }
     rowsEl.innerHTML = BOTS.map(b => row(b.k, b.name(), av(b.av(), 44), when(b.at?.()), b.pre(), b.n() > 0 || unread(b.k.slice(2)), d.open === b.k, d.lk.has(b.k), '')).join('') + d.ws.map(p => row('n:' + p.pane, nm(p), av(nm(p), 44), ago(p.last?.ago), preview(p) === status(p) ? '' : preview(p), rows(p.pane) > 0, d.open === 'n:' + p.pane, d.lk.has('n:' + p.pane), status(p))).join('');
+    keepAv?.();
     lay();
   }
   // 대화 머리 · 열림 표시

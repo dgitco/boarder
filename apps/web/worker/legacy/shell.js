@@ -145,7 +145,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const keep = [sb, dr].map(x => x.querySelector('.bx-sbsc')?.scrollTop || 0);
     const sbH = `<div class="top">${logo}<span class="tr">${fb}<button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + body + foot;
     const drH = `<div class="top">${logo}<span class="tr">${fb}</span></div>` + body + foot;
-    if (lists.html !== sbH + drH){ lists.html = sbH + drH; sb.innerHTML = sbH; dr.innerHTML = drH; }
+    if (lists.html !== sbH + drH){ lists.html = sbH + drH; const k1 = window.HBKeepAv?.(sb), k2 = window.HBKeepAv?.(dr); sb.innerHTML = sbH; dr.innerHTML = drH; k1?.(); k2?.(); }   // 같은 아바타는 애니메이션을 이어서(다시 안 틂, 보드 HBKeepAv)
     [sb, dr].forEach((x, i) => { const sc = x.querySelector('.bx-sbsc'); if (sc && keep[i]) sc.scrollTop = keep[i]; });
     (PC.matches ? sb : dr).querySelector('.bx-foot').append(tools);
     placeLogo();
