@@ -58,7 +58,7 @@ import * as ownerRead from "./owner-read";
 import * as OS from "./owner-state";
 import * as memberBoard from "./member-board";
 import * as memberVoice from "./member-voice";
-import { boardHead, HEAD_RE } from "./board-head";
+import { boardHead, HEAD_RE, withHead } from "./board-head";
 import * as memberInbox from "./member-inbox";
 import * as memberFiles from "./member-files";
 import { importedWindow, queueToImported } from "./member-imported";
@@ -1799,13 +1799,35 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   if ("ok" in hop) return c.json({ rid, ...hop.ok });
   const qrid = hop.log ? queue.ridOfBody(b) : "";
   if (qrid) { try { if (await queue.ridSeen(c.env.DB, qrid)) return c.json({ ok: true, rid, state: "ok", channel: "primary", already: true }); } catch { return queue.retrySafe(c); } }
+  let body = hop.body as Record<string, unknown>, pre: { id: number; at: number; again?: boolean } | null = null;
+  if (hop.log && !hop.log.thread && typeof hop.log.ch === "string" && boardHead({ channel: hop.log.ch }) !== boardHead({})) {
+    const at = Date.now(), lg = hop.log, tag = qrid ? `rid:${qrid}` : null;
+    try {
+      const old = tag ? await c.env.DB.prepare("SELECT id, at FROM board_log WHERE owner = ? AND kind = 'me' AND wid = ? AND at > ? LIMIT 1").bind(me, tag, at - 86_400_000).first<{ id: number; at: number }>() : null;
+      if (old) pre = { id: old.id, at: old.at, again: true };
+      else { const row = await c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?) RETURNING id").bind(me, lg.win.slice(0, 120), "me", lg.text.slice(0, 4000), null, at, tag).first<{ id: number }>(); pre = row ? { id: row.id, at } : null; }
+    } catch { return queue.retrySafe(c); }   // 아직 아무것도 안 넘김 — 다시 보내도 됨
+    if (pre) { const head = boardHead({ channel: lg.ch, thread: memberBoard.tsOf(pre.at, pre.id) }); body = "head" in body ? { ...body, head } : { ...body, text: withHead(head, lg.text) }; }
+  }
+  const unpre = () => pre ? c.env.DB.prepare("DELETE FROM board_log WHERE id = ? AND owner = ?").bind(pre.id, me).run().catch(e => console.error("노드 채팅 줄 지우기", e)) : Promise.resolve();
   const h = new Headers({ "content-type": "application/json", "x-hb": "1", cookie: c.req.header("cookie") || "" });
   const sf = c.req.header("sec-fetch-site"); if (sf) h.set("sec-fetch-site", sf);
-  const r = await app.fetch(new Request(new URL(hop.path, url), { method: "POST", headers: h, body: JSON.stringify({ ...(hop.body as object), ...(rid ? { rid } : {}) }) }), c.env, c.executionCtx);   // rid 도 넘김(안쪽 쓰기가 한 번만)
+  const r = await app.fetch(new Request(new URL(hop.path, url), { method: "POST", headers: h, body: JSON.stringify({ ...body, ...(rid ? { rid } : {}) }) }), c.env, c.executionCtx);   // rid 도 넘김(안쪽 쓰기가 한 번만) — 던지면 줄은 남김(들어갔을 수 있음)
   const j = await r.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
-  if (!r.ok || j.ok === false) return c.json({ ok: false, rid, error: typeof j.error === "string" ? j.error : "일시적인 오류가 발생했어요" }, (r.ok ? 400 : r.status) as 400, r.headers.get("x-retry-safe") === "1" ? { "x-retry-safe": "1" } : {});
-  if (hop.log && !j.already) await queue.ridBatch(c.env.DB, qrid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), hop.log.thread ?? null, Date.now(), Array.isArray(j.cmds) && j.cmds[0] ? `cmd:${j.cmds[0]}` : null)]).catch(e => console.error("노드 채팅 줄", e));
-  return c.json({ ...j, ok: true, rid, state: "ok", channel: "primary" });
+  if (!r.ok || j.ok === false) {
+    if (r.status < 500 && j.error !== "엔진 답 없음") await unpre();
+    return c.json({ ok: false, rid, error: typeof j.error === "string" ? j.error : "일시적인 오류가 발생했어요" }, (r.ok ? 400 : r.status) as 400, r.headers.get("x-retry-safe") === "1" ? { "x-retry-safe": "1" } : {});
+  }
+  const wid = Array.isArray(j.cmds) && j.cmds[0] ? `cmd:${j.cmds[0]}` : null;
+  if (hop.log && pre) {
+    if (j.already && !pre.again) await unpre();   // 안쪽이 「이미 됨」 = 앞 요청의 줄이 따로 있음 — 방금 넣은 줄만 지움
+    else if (!j.already) {
+      const upd = () => c.env.DB.prepare("UPDATE board_log SET wid = ? WHERE id = ? AND owner = ?").bind(wid, pre!.id, me);
+      const won = await queue.ridBatch(c.env.DB, qrid, [upd()]).catch(e => { console.error("노드 채팅 줄", e); return true; });
+      if (!won) await upd().run().catch(e => console.error("노드 채팅 줄", e));
+    }
+  } else if (hop.log && !j.already) await queue.ridBatch(c.env.DB, qrid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), hop.log.thread ?? null, Date.now(), wid)]).catch(e => console.error("노드 채팅 줄", e));
+  return c.json({ ...j, ok: true, rid, state: "ok", channel: "primary", ...(pre ? { ts: memberBoard.tsOf(pre.at, pre.id) } : {}) });
 }
 async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false, ea: boolean | "personal" = false) {
   // 큰 껍데기 css · js 는 /bxs 주소로(bxs.ts — 같은 차례, 고전 스크립트). 해시를 못 만들면 예전처럼 인라인

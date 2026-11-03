@@ -580,7 +580,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
   return null;
 }
 
-export type Hop = { path: string; body: unknown; log?: { win: string; text: string; thread?: string } } | { error: string; status: number } | { ok: R };
+export type Hop = { path: string; body: unknown; log?: { win: string; text: string; ch?: string; thread?: string } } | { error: string; status: number } | { ok: R };
 export async function post(db: D1Database, me: string, path: string, b: R): Promise<Hop> {
   if (path === "/api/sess/send") {
     const pane = String(b.pane || ""), text = String(b.text || "").trim();
@@ -642,12 +642,12 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
         // 에이전트마다 채널은 일 창이 여럿 — 주 창이 닫혔으면 아무 일 창에나 넣지 않음
         const w = L.agentUnit ? n.windows.find(x => x.key === L.mains.get(n.id)) : n.windows[0];
         if (!w) return { error: "이 노드엔 글을 넣을 창이 없어요", status: 404 };
-        const log = { win: String(w.win || n.name), text, ...(thread ? { thread } : {}) };
+        const log = { win: String(w.win || n.name), text, ch: chName, ...(thread ? { thread } : {}) };   // ch = 머리 줄 채널(맨 위 글은 index.ts 가 내 글 줄을 먼저 남기고 그 글 id 를 머리에 실음)
         return { path: "/api/me/nodes/cmd", body: { verb: w.state === "parked" ? "reopen" : "send", item: w.key, text: withHead(head, text) }, log };
       }
       const ew = ew0;
       if (!ew) return { error: "없는 노드", status: 404 };
-      return { path: `/api/me/windows/${ew.id}/say`, body: { text, head }, log: { win: String(ew.name), text, ...(thread ? { thread } : {}) } };
+      return { path: `/api/me/windows/${ew.id}/say`, body: { text, head }, log: { win: String(ew.name), text, ch: chName, ...(thread ? { thread } : {}) } };
     }
     if (b.channel && b.channel !== "primary") return { error: "아직 안 돼요", status: 400 };
     if (b.thread && await primaryRoot(db, me, String(b.thread))) return { path: "/api/me/chat", body: { text, thread: String(b.thread) } };

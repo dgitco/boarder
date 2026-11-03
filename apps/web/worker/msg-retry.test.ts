@@ -287,10 +287,53 @@ test("보드 글 머리 줄: Primary 채팅 · 카드 답 · 카드 스레드 �
   assert.match(sent.at(-1)!.text, /^\[보드 · 일 창 · 카드 1793300000\.000001\] \[Boarder\] The person replied in the thread/);
   const { paneOfId } = await import("./member-board.ts");
   assert.equal((await post("/api/chat", { pane: paneOfId("ew_role1"), text: "진행 어때?", rid: "rtest-head-0004" })).status, 200);
-  assert.equal(sent.at(-1)!.text, "[보드 · 일 창] [Boarder chat] 진행 어때?");
+  const tops = db.prepare("SELECT id, at, thread, wid FROM board_log WHERE text = '진행 어때?'").all() as { id: number; at: number; thread: string | null; wid: string | null }[];
+  assert.equal(tops.length, 1); assert.equal(tops[0].thread, null);
+  const tts = `${Math.floor(tops[0].at / 1000)}.${String(tops[0].id % 1_000_000).padStart(6, "0")}`;
+  assert.equal(sent.at(-1)!.text, `[보드 · 일 창 · 스레드 ${tts}] [Boarder chat] 진행 어때?`);
+  const nSent = sent.length;   // 같은 rid 로 또 보내면(화면 다시 보내기) 창에 안 넣고 줄도 안 늘어남
+  assert.equal((await post("/api/chat", { pane: paneOfId("ew_role1"), text: "진행 어때?", rid: "rtest-head-0004" })).status, 200);
+  assert.equal(sent.length, nSent); assert.equal((db.prepare("SELECT count(*) AS n FROM board_log WHERE text = '진행 어때?'").get() as { n: number }).n, 1);
   const at = Date.now() - 5000, id = Number(db.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").run(MEMBER, "일 창", "progress", "PR 올림", at).lastInsertRowid);
   const root = `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;
   assert.equal((await post("/api/chat", { pane: paneOfId("ew_role1"), thread: root, text: "다시 봐 줘", rid: "rtest-head-0005" })).status, 200);
   assert.equal(sent.at(-1)!.text, `[보드 · 일 창 · 스레드 ${root}] [Boarder chat] 다시 봐 줘`);
   assert.deepEqual({ ...db.prepare("SELECT kind, thread FROM board_log WHERE text = '다시 봐 줘'").get() as object }, { kind: "me", thread: root });
+});
+
+test("노드 채널 맨 위 글: 들여온 창에 넣는 글 머리에 그 글 id(스레드) · 내 글 줄 wid = 그 명령, 넘기기 실패면 줄이 안 남음", async () => {
+  const { db, post, env } = setup(), T = Date.now();
+  db.prepare("INSERT INTO mnode(owner, id, name, state, created_at, updated_at) VALUES (?,?,?,?,?,?)").run(MEMBER, "n_top01", "일 노드", "working", T, T);
+  db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?,?)").run(MEMBER, "window:wt1", "devMember01", "window", "tmux", "일 창", "idle", "wt1", T);
+  db.prepare("INSERT INTO mnode_item(owner, item, node) VALUES (?,?,?)").run(MEMBER, "window:wt1", "n_top01");
+  const { paneOfId } = await import("./member-board.ts");
+  const res = await post("/api/chat", { channel: "primary", pane: paneOfId("n_top01"), text: "맨 위에 쓴 글", rid: "rtest-top-0001" });
+  assert.equal(res.status, 200);
+  const row = db.prepare("SELECT id, at, thread, wid FROM board_log WHERE owner = ? AND kind = 'me' AND text = ?").get(MEMBER, "맨 위에 쓴 글") as { id: number; at: number; thread: string | null; wid: string };
+  const ts = `${Math.floor(row.at / 1000)}.${String(row.id % 1_000_000).padStart(6, "0")}`;
+  const cmd = db.prepare("SELECT id, args FROM engine_cmd WHERE owner = ? AND verb = 'send'").get(MEMBER) as { id: string; args: string };
+  assert.equal(JSON.parse(cmd.args).text, `[보드 · 일 노드 · 스레드 ${ts}] 맨 위에 쓴 글`);
+  assert.equal(row.thread, null); assert.equal(row.wid, `cmd:${cmd.id}`);
+  assert.equal(((await res.json()) as { ts?: string }).ts, ts);
+  // 엔진이 받지 못하면(창에 안 들어감) 그 글 줄을 지움 — 안 넘어간 글이 채널에 남지 않게
+  (env as { ENGINE: unknown }).ENGINE = { idFromName: (n: string) => n, get: () => ({ deliver: async () => { throw new Error("엔진 꺼짐"); }, drainCmds: async () => null }) };
+  const bad = await post("/api/chat", { channel: "primary", pane: paneOfId("ew_role1"), text: "안 넘어갈 글", rid: "rtest-top-0002" });
+  assert.notEqual(bad.status, 200);
+  assert.equal((db.prepare("SELECT count(*) AS n FROM board_log WHERE text = '안 넘어갈 글'").get() as { n: number }).n, 0);
+});
+
+test("노드 채널 맨 위 글: 엔진 답 없음(들어갔을 수 있음)이면 줄을 남기고, 같은 rid 로 다시 보내면 그 줄을 다시 씀 — 줄 하나 · 머리 id 같음", async () => {
+  const { db, sent, post, env } = setup();
+  const { paneOfId } = await import("./member-board.ts");
+  const real = (env as { ENGINE: unknown }).ENGINE;
+  (env as { ENGINE: unknown }).ENGINE = { idFromName: (n: string) => n, get: () => ({ deliver: async () => { throw new Error("엔진 답 없음"); }, drainCmds: async () => null }) };
+  const body = { channel: "primary", pane: paneOfId("ew_role1"), text: "답 없는 동안 쓴 글", rid: "rtest-top-0003" };
+  assert.notEqual((await post("/api/chat", body)).status, 200);
+  const rows = () => db.prepare("SELECT id, at FROM board_log WHERE text = '답 없는 동안 쓴 글'").all() as { id: number; at: number }[];
+  assert.equal(rows().length, 1, "들어갔을 수 있는 실패는 줄을 남김(창 답이 붙을 뿌리)");
+  const ts = `${Math.floor(rows()[0].at / 1000)}.${String(rows()[0].id % 1_000_000).padStart(6, "0")}`;
+  (env as { ENGINE: unknown }).ENGINE = real; (env as { SNAP: unknown }).SNAP = snapNs();
+  assert.equal((await post("/api/chat", body)).status, 200);   // 화면이 같은 rid 로 다시 보냄
+  assert.equal(rows().length, 1, "다시 보내도 줄 하나");
+  assert.equal(sent.at(-1)!.text, `[보드 · 일 창 · 스레드 ${ts}] [Boarder chat] 답 없는 동안 쓴 글`);
 });

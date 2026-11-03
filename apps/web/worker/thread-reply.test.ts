@@ -51,11 +51,10 @@ test("노드 글 스레드에 쓴 사람 글 → 창에 넘기는 글 맨 앞에
   const hop = await MB.post(D1, A, "/api/chat", { pane: p, thread: root, text: "이거 다시 봐 줘" }) as any;
   assert.equal(hop.path, "/api/me/nodes/cmd");
   assert.equal(hop.body.text, `[보드 · ${NODE} · 스레드 ${root}] 이거 다시 봐 줘`);
-  assert.deepEqual(hop.log, { win: WIN, text: "이거 다시 봐 줘", thread: root });
-  // 스레드가 아닌 노드 글 = 채널 머리 줄만(답은 예전처럼 그 채널)
+  assert.deepEqual(hop.log, { win: WIN, text: "이거 다시 봐 줘", ch: NODE, thread: root });
   const top = await MB.post(D1, A, "/api/chat", { pane: p, text: "오늘 할 일?" }) as any;
   assert.equal(top.body.text, `[보드 · ${NODE}] 오늘 할 일?`);
-  assert.equal(top.log.thread, undefined);
+  assert.equal(top.log.thread, undefined); assert.equal(top.log.ch, NODE);
 });
 
 test("노드 스레드: 남의 · Primary · 없는 뿌리는 「없는 스레드」 — 다른 채널 밖으로 새지 않음", async () => {
