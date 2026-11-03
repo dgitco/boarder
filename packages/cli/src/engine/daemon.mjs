@@ -8,6 +8,7 @@ import * as E from './index.mjs';
 import { markTurn, hasMark, FRESH } from '../turn.mjs';
 import * as Q from './queue.mjs';
 import * as V from './voice.mjs';
+import { remoteVerb, REMOTE_VERBS } from './remote.mjs';
 
 const BIN = fileURLToPath(new URL('../../bin/boarder.mjs', import.meta.url));
 const VERSION = readJson(fileURLToPath(new URL('../../package.json', import.meta.url)))?.version;
@@ -109,6 +110,7 @@ export async function tickQueues(listed, { stateOf = id => E.run('state', { id }
 export async function handle(msg) {
   const { verb, args = {} } = msg;
   if (/^rtc_/.test(verb)) return V.handle(verb, args, voiceDeps);
+  if (REMOTE_VERBS.includes(verb)) return remoteVerb(verb, args);   // 보더 웹 설정 › 엔진: 계정 목록 · 로그인 주소 · 엔진 고르기
   if (verb === 'send' && args.text && !args.test && args.id) return boardSend(args);
   if (verb === 'list') return { windows: await E.listAll() };
   if (verb === 'close') { const w = (await E.listAll()).find(x => x.id === args.id); if (w) await saveSession({ ...w, cwd: w.spec?.cwd ? w.spec.cwd.replace(/^~(?=$|\/)/, os.homedir()) : w.cwd }); }
@@ -224,6 +226,38 @@ const realHome = () => { try { return path.resolve(os.homedir()) === path.resolv
 const envKeep = () => Object.fromEntries(['HOME', 'PATH', 'BOARDER_HOME', 'BOARDER_URL', 'CLAUDE_CONFIG_DIR', 'BOARDER_TMUX_SOCKET', 'LANG'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
 const run = async (cmd, args) => { const { execFileSync } = await import('node:child_process'); return execFileSync(cmd, args, { stdio: 'ignore', timeout: 20000 }); };
 
+// 윈도우: 작업 스케줄러(로그온 때 시작). 작업은 dir()/engine-run.cmd 를 부르고, 그 파일이 환경 · 다시 띄우기(끝 코드 3 = 폐기면 멈춤)를 맡음
+const TASK = 'BoarderEngine';
+const winCmdPath = () => path.join(dir(), 'engine-run.cmd');
+const cmdq = v => { if (/[\r\n"%]/.test(String(v))) throw new Error('a path or setting has a character the Windows launcher cannot hold'); return String(v); };
+export function winLauncher(node, bin, env) {
+  const sets = Object.entries(env).filter(([k]) => ['BOARDER_HOME', 'BOARDER_URL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME'].includes(k)).map(([k, v]) => `set "${k}=${cmdq(v)}"`);
+  return ['@echo off', ...sets, ':loop', `"${cmdq(node)}" "${cmdq(bin)}" engine run`, 'if %errorlevel%==3 exit /b 3', 'ping -n 6 127.0.0.1 >nul', 'goto loop', ''].join('\r\n');
+}
+export const winTaskArgs = () => ['/create', '/tn', TASK, '/sc', 'onlogon', '/tr', `"${winCmdPath()}"`, '/rl', 'limited', '/f'];
+
+const startupPath = () => path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', `${TASK}.cmd`);
+/** 윈도우 깔기: 작업 스케줄러가 되면 그것, 로그인된 실사용자가 아니면(SYSTEM 등) 시작 폴더의 .cmd 로. 어느 길인지 how 에 */
+export async function installWindows(node, env, { runCmd = run, startNow = defaultStartNow } = {}) {
+  const { mkdirSync } = await import('node:fs');
+  mkdirSync(dir(), { recursive: true });
+  writeFileSync(winCmdPath(), winLauncher(node, BIN, env));
+  try {
+    await runCmd('schtasks', winTaskArgs());
+    try { await runCmd('schtasks', ['/run', '/tn', TASK]); } catch {}
+    return { ok: true, how: `Task Scheduler task ${TASK} (starts at every logon, restarts by itself)` };
+  } catch (e) {
+    const why = String(e.message || e).split('\n')[0];
+    try {
+      mkdirSync(path.dirname(startupPath()), { recursive: true });
+      writeFileSync(startupPath(), `@echo off\r\nstart "" /min cmd /c "${cmdq(winCmdPath())}"\r\n`);
+      try { startNow(); } catch {}
+      return { ok: true, how: `Startup folder ${startupPath()} (Task Scheduler refused: ${why}; starts at your next logon, restarts by itself)` };
+    } catch (e2) { return { ok: false, why: `Task Scheduler refused (${why}) and the Startup folder failed (${e2.message}) - run \`boarder engine run\` yourself` }; }
+  }
+}
+function defaultStartNow() { const ch = spawn('cmd.exe', ['/d', '/c', winCmdPath()], { detached: true, stdio: 'ignore', windowsHide: true }); ch.on('error', () => {}); ch.unref(); }
+
 export async function installService() {
   const env = envKeep(), node = process.execPath;
   const { mkdirSync } = await import('node:fs');
@@ -247,6 +281,7 @@ export async function installService() {
       await run('launchctl', ['bootstrap', `gui/${uid}`, p]);
       return { ok: true, how: `launchd ${LABEL} (restarts by itself; stops while the Mac sleeps)` };
     }
+    if (process.platform === 'win32') return installWindows(node, env);
     return { ok: false, why: `no service manager for ${process.platform} — run \`boarder engine run\` yourself` };
   } catch (e) { return { ok: false, why: `could not start the service (${String(e.message).split('\n')[0]}) — run \`boarder engine run\` yourself` }; }
 }
@@ -255,6 +290,11 @@ export async function removeService() {
   try { const { execFileSync } = await import('node:child_process'); const c = E.loadCfg(); execFileSync(c.tmux || 'tmux', ['-L', process.env.BOARDER_TMUX_SOCKET || 'boarder', 'kill-server'], { stdio: 'ignore', timeout: 10000 }); done.push('tmux -L boarder (Boarder windows)'); } catch {}
   if (existsSync(unitPath())) { if (realHome()) { try { await run('systemctl', ['--user', 'disable', '--now', `${UNIT}.service`]); } catch {} } rmSync(unitPath(), { force: true }); done.push(unitPath()); if (realHome()) { try { await run('systemctl', ['--user', 'daemon-reload']); } catch {} } }
   if (existsSync(plistPath())) { if (realHome()) { try { await run('launchctl', ['bootout', `gui/${process.getuid?.() ?? ''}/${LABEL}`]); } catch {} } rmSync(plistPath(), { force: true }); done.push(plistPath()); }
+  if (process.platform === 'win32' || existsSync(winCmdPath()) || existsSync(startupPath())) {
+    if (process.platform === 'win32' && realHome()) { try { await run('schtasks', ['/end', '/tn', TASK]); } catch {} try { await run('schtasks', ['/delete', '/tn', TASK, '/f']); done.push(`Task Scheduler task ${TASK}`); } catch {} }
+    if (existsSync(startupPath())) { rmSync(startupPath(), { force: true }); done.push(startupPath()); }
+    if (existsSync(winCmdPath())) { rmSync(winCmdPath(), { force: true }); done.push(winCmdPath()); }
+  }
   return done;
 }
 export const writeEvent = o => appendFileSync(eventsPath(), JSON.stringify({ ...o, at: Date.now() }) + '\n', { mode: 0o600 });

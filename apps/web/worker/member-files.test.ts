@@ -119,3 +119,17 @@ test("하루 상한 셈: 동시에 와도 상한을 넘지 않음 · 셈을 못 
   const s2 = setup(); (s2.env as any).DB = broken;
   assert.equal((await s2.call("POST", "/api/upload", { "x-test-user": A, "x-file-name": "x.txt" }, "내용")).status, 503);
 });
+
+test("PDF: 맨 앞이 %PDF- 면 화면 안 보기(inline · application/pdf · sandbox 없이 frame-ancestors), 가짜 PDF 는 내려받기 + sandbox, ?dl 은 내려받기 · 한글 이름 RFC5987", async () => {
+  const s = setup(), a = await up(s, A, "분기 보고서 (최종).pdf", "application/pdf", "%PDF-1.7\n본문"), f = await up(s, A, "가짜.pdf", "application/pdf", "<script>1</script>");
+  const r = await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A }), cd = r.h.get("content-disposition") || "";
+  assert.equal(r.status, 200); assert.equal(r.h.get("content-type"), "application/pdf"); assert.match(cd, /^inline; filename="/);
+  assert.ok(cd.includes(`filename*=UTF-8''${encodeURIComponent("분기 보고서 ")}%28%EC%B5%9C%EC%A2%85%29.pdf`), cd);
+  assert.equal(r.h.get("content-security-policy"), "frame-ancestors 'self'"); assert.equal(r.h.get("x-content-type-options"), "nosniff"); assert.ok(r.t.startsWith("%PDF-"));
+  const d = await s.call("GET", `/api/file/${a.id}?dl`, { "x-test-user": A });
+  assert.match(d.h.get("content-disposition") || "", /^attachment; filename=/); assert.equal(d.h.get("content-security-policy"), "sandbox");
+  const x = await s.call("GET", `/api/file/${f.id}`, { "x-test-user": A });
+  assert.match(x.h.get("content-disposition") || "", /^attachment/); assert.equal(x.h.get("content-security-policy"), "sandbox");
+  assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": B })).status, 404);
+  assert.equal((await s.call("GET", `/api/file/${a.id}?dl`, { "x-test-user": B })).status, 404);
+});

@@ -90,7 +90,7 @@ export async function disable(what, { log = console.log, only, skip } = {}) {
     const { removeService } = await import('./engine/daemon.mjs');
     // engine.json 은 남김(그 사람이 붙인 커스텀 엔진 · 할 일 목록이 거기 있음) — 켰다는 표시(tmux 경로)만 뺌
     const d = await removeService(), E = await engineMod();
-    if (E?.loadCfg) { const c = E.loadCfg(); delete c.tmux; delete c.claude; if (c.caps) delete c.caps.tmux; E.saveCfg(c); }
+    if (E?.loadCfg) { const c = E.loadCfg(); delete c.tmux; delete c.claude; delete c.sdk; if (c.caps) { delete c.caps.tmux; delete c.caps.sdk; } if (c.default === 'sdk') delete c.default; E.saveCfg(c); }
     for (const p of d) log(`removed ${p}`);
     return { ok: true, removed: d.length };
   }

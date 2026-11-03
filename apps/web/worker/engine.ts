@@ -160,6 +160,14 @@ export class Engine extends DurableObject<EngEnv> {
     catch (e) { return { ok: false, code: Number((e as EngineError)?.code) || 1, error: String((e as Error)?.message || e).slice(0, 300) }; }
   }
 
+  /** 보더 웹 설정 › 엔진(BYOS): 기기 동사 셋 — 계정 목록 · 브라우저 로그인 주소 · 엔진 고르기. 그 밖의 동사는 안 보냄. 로그인 값은 오지 않고 이름 · 여부 · 주소만 옴 */
+  async devCmd(verb: string, args: Record<string, unknown>, timeoutMs = 30_000): Promise<{ ok: true; result: any } | { ok: false; code: number; error: string }> {
+    if (!/^(account_list|account_login|engine_choose)$/.test(verb)) return { ok: false, code: 5, error: "없는 동사" };
+    if ((await this.who()).harness) return { ok: false, code: 1, error: "주인 하네스 기기엔 없어요" };
+    try { return { ok: true, result: await this.cmd(verb, args, timeoutMs) }; }
+    catch (e) { return { ok: false, code: Number((e as EngineError)?.code) || 1, error: String((e as Error)?.message || e).slice(0, 300) }; }
+  }
+
   async webSocketMessage(_ws: WebSocket, msg: string | ArrayBuffer) {
     if (typeof msg !== "string" || msg.length > 256_000) return;
     let m: any; try { m = JSON.parse(msg); } catch { return; }

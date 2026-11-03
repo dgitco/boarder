@@ -51,12 +51,31 @@ export async function linkOk(secret: string, id: string, e: string, t: string, n
   const want = await sign(secret, `mfile|${id}|${e}`); let d = 0; for (let i = 0; i < 32; i++) d |= want.charCodeAt(i) ^ t.charCodeAt(i); return d === 0;
 }
 // 받을 때 머리: 화면에 띄우면 위험한 꼴(HTML · SVG · XML · 스크립트)은 내려받기로 + sandbox
-function headers(o: R2ObjectBody, dl: boolean) {
+// PDF 만 예외로 브라우저 내장 보기에 띄움(sandbox 는 크롬 PDF 보기를 막음): 맨 앞이 %PDF- 인 것만, 형식은 application/pdf 로 못박고 nosniff · frame-ancestors 'self'
+const rfc5987 = (s: string) => encodeURIComponent(s).replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+/** Content-Disposition: ASCII 대체 이름 + filename*=UTF-8''(RFC 5987) — 한글 이름도 그대로 내려받음 */
+export function disposition(kind: "inline" | "attachment", name: string) {
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\%]/g, "_") || "file";
+  return `${kind}; filename="${ascii}"; filename*=UTF-8''${rfc5987(name)}`;
+}
+const isPdf = (type: string, name: string, buf: Uint8Array) =>
+  buf.length >= 5 && String.fromCharCode(...buf.subarray(0, 5)) === "%PDF-" && (/^application\/pdf\b/i.test(type) || (/octet-stream/i.test(type) && /\.pdf$/i.test(name)));
+async function headers(o: R2ObjectBody, dl: boolean): Promise<{ h: Headers; body: BodyInit }> {
   const h = new Headers({ "cache-control": "private, max-age=300", "x-content-type-options": "nosniff", "content-security-policy": "sandbox" }); o.writeHttpMetadata(h);
-  const risky = RISKY.test(h.get("content-type") || "");
+  const name = o.customMetadata?.name || "file", type = h.get("content-type") || "";
+  let body: BodyInit = o.body;
+  if (!dl && (/^application\/pdf\b/i.test(type) || (/octet-stream/i.test(type) && /\.pdf$/i.test(name)))) {
+    const buf = new Uint8Array(await new Response(o.body).arrayBuffer());   // 최대 20MB — 맨 앞 다섯 글자 확인용으로 PDF 만 통째로 읽음
+    body = buf;
+    if (isPdf(type, name, buf)) {
+      h.set("content-type", "application/pdf"); h.set("content-disposition", disposition("inline", name));
+      h.set("content-security-policy", "frame-ancestors 'self'"); return { h, body };
+    }
+  }
+  const risky = RISKY.test(type);
   if (risky) h.set("content-type", "application/octet-stream");
-  if (dl || risky) h.set("content-disposition", (h.get("content-disposition") || "").replace(/^inline/, "attachment") || "attachment");
-  return h;
+  h.set("content-disposition", disposition(dl || risky || /^application\/pdf\b/i.test(type) ? "attachment" : "inline", name));
+  return { h, body };
 }
 
 /** POST /api/upload — 틀은 몸통에 파일 그대로 + X-File-Name(URI 인코딩). 답 { ok, id, name, size, mime } */
@@ -69,7 +88,7 @@ export async function upload(c: C, me: string) {
   let name = "file"; try { name = decodeURIComponent(c.req.header("x-file-name") || "file"); } catch {}
   name = name.replace(/[\x00-\x1f\x7f"\\/]/g, "_").trim().slice(0, 120) || "file";
   const type = (c.req.header("content-type") || "application/octet-stream").slice(0, 100), id = crypto.randomUUID().replace(/-/g, "");
-  await c.env.RESULTS.put(`mfiles/${id}`, buf, { httpMetadata: { contentType: type, contentDisposition: `inline; filename*=UTF-8''${encodeURIComponent(name)}` }, customMetadata: { owner: me, name } });
+  await c.env.RESULTS.put(`mfiles/${id}`, buf, { httpMetadata: { contentType: type, contentDisposition: disposition("inline", name) }, customMetadata: { owner: me, name } });
   return c.json({ ok: true, id, name, size: buf.byteLength, mime: type });
 }
 /** GET /api/file/:id — 올린 사람만(남의 것은 없는 것과 같게 404). ?dl = 내려받기 */
@@ -77,12 +96,12 @@ export async function fileGet(c: C, me: string, id: string, dl: boolean) {
   if (!FID.test(id)) return c.json({ error: "없는 파일" }, 404);
   const o = await c.env.RESULTS.get(`mfiles/${id}`);
   if (!o || o.customMetadata?.owner !== me) return c.json({ error: "없는 파일" }, 404);
-  return new Response(o.body, { headers: headers(o, dl) });
+  const r = await headers(o, dl); return new Response(r.body, { headers: r.h });
 }
 export async function signedGet(c: C, id: string) {
   if (!(await linkOk(c.env.BETTER_AUTH_SECRET, id, c.req.query("e") || "", c.req.query("t") || ""))) return c.text("link expired or invalid\n", 403);
   const o = await c.env.RESULTS.get(`mfiles/${id}`); if (!o) return c.text("not found\n", 404);
-  return new Response(o.body, { headers: headers(o, false) });
+  const r = await headers(o, false); return new Response(r.body, { headers: r.h });
 }
 /** 글에 붙은 파일 id → 창이 받아 갈 「📎 이름: 서명 링크」 줄. 내 파일만, 모르는 · 남의 id 는 빼고 셈 */
 export async function fileLines(env: Env, me: string, base: string, ids: unknown[]) {

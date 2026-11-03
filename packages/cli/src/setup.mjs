@@ -302,26 +302,34 @@ export async function writeReport({ srv = (loadDevice()?.server || DEFAULT_SERVE
   return { tools: [...new Set(list.filter(t => reportState(t).state === 'on').map(t => t.tool))], targets: list.map(t => ({ id: t.id, state: reportState(t).state })) };
 }
 
+export const ENGINE_CHOICE = `\nPick how Boarder runs your AI windows here:
+  1) Your own subscription through the SDKs (no terminal needed; Claude Agent SDK and Codex SDK, several accounts each):
+       boarder enable engine           (Windows: this is the default when there is no tmux)
+       boarder engine setup --sdk      (macOS / Linux: choose the SDK engine on purpose)
+  2) The Codex or Claude Code you already use (tmux windows) - install Claude Code or Codex first, then:
+       boarder enable engine`;
+
 export async function setup(opts) {
   const srv = (opts.server || process.env.BOARDER_URL || loadDevice()?.server || DEFAULT_SERVER).replace(/\/+$/, '');
   console.log('Boarder setup');
   const pre = missingDirs(dir());
   const sel = pick(targets(), opts.only, opts.skip), tools = [...new Set(sel.map(t => t.tool))];
-  if (!tools.length) { console.error('No AI tools found. Install Claude Code, Codex, Cursor or Gemini CLI, then run this again.'); process.exit(1); }
-  console.log(`Tools: ${tools.map(t => TOOLS[t].label).join(', ')}`);
+  // AI 도구가 하나도 없어도(윈도우 새 PC) 로그인까지는 감 — 끝에 엔진 고르기 안내(① 내 구독 SDK · ② 쓰던 Codex / Claude Code = tmux)
+  console.log(tools.length ? `Tools: ${tools.map(t => TOOLS[t].label).join(', ')}` : 'Tools: none found on this machine (no Claude Code, Codex, Cursor or Gemini CLI) — signing in anyway');
   const who = (await signedIn(srv)) || await login(srv, tools, { browser: !opts.noBrowser, deviceAuth: !!opts.deviceAuth, email: opts.email || process.env.BOARDER_EMAIL || undefined }), email = who.email;
   noteMade(pre);
   console.log(`Signed in as ${email}${who.scope === 'watch' ? ' (watch only)' : ''}`);
   if (who.scope === 'watch') { await watcher(opts); return console.log('\nThis device only reports memory · CPU · disk · agents · Claude limits to Settings › Devices. Your AI tools were not changed.'); }
   if (sel.length > 1) console.log(`Folders: ${sel.map(t => t.where).join(', ')}`);
-  if (opts.report) await writeReport({ srv, only: opts.only, skip: opts.skip, yes: !!opts.yes });
-  else console.log(`\nView mode: Boarder reads your AI windows, sessions and to-dos and shows them as nodes on your board. Nothing in ${tools.map(t => TOOLS[t].label).join(', ')} (CLAUDE.md, AGENTS.md, hooks, settings, MCP, skills), your harness (Herdr, tmux) or your shell files was changed.`);
+  if (opts.report && tools.length) await writeReport({ srv, only: opts.only, skip: opts.skip, yes: !!opts.yes });
+  else if (tools.length) console.log(`\nView mode: Boarder reads your AI windows, sessions and to-dos and shows them as nodes on your board. Nothing in ${tools.map(t => TOOLS[t].label).join(', ')} (CLAUDE.md, AGENTS.md, hooks, settings, MCP, skills), your harness (Herdr, tmux) or your shell files was changed.`);
   if (!opts.noWatch) { const f = installFollow(); console.log(`\nReader: ${f.ok ? f.how : f.why}`); }
-  if (opts.engine && !opts.noEngine && tools.includes('claude')) {
+  if (opts.engine && !opts.noEngine && (tools.includes('claude') || !tools.length)) {
     console.log('\nEngine (lets Boarder open and manage Claude Code windows here):');
     try { await ensureEngine({ log: l => console.log('  ' + l) }); }
     catch (e) { console.log(`  engine not set up: ${e.message} — Boarder still works for reports; try \`boarder engine setup\` later`); }
   }
+  if (!tools.length) console.log(ENGINE_CHOICE);
   console.log(`\nTurn more on only if you want it (each can be turned off again):\n  boarder enable report    your agents report to Boarder themselves (adds Boarder to your AI tools, backed up first)\n  boarder enable engine    Boarder opens, wakes, parks and closes AI windows here\n  boarder uninstall        remove Boarder from this machine`);
   console.log(`\nNext:\n  boarder status                          check this machine\n  boarder import --setup                  bring your current work in as nodes (${srv})\n\nDone.${opts.report ? ` Restart ${tools.map(t => TOOLS[t].label).join(', ')} (and open sessions) to load Boarder.` : ''}`);
 }

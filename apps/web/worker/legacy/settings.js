@@ -809,6 +809,61 @@
         + ['report', 'engine'].map(k => row(FT[k][0], FT[k][1], pend.some(x => x.device_id === d.id && x.args?.what === k) ? '<span class="bxs-mut">바꾸는 중</span>' : sw(on[k], `data-feat="${k}" data-dev="${esc(d.id)}" data-on="${on[k] ? 0 : 1}"`, FT[k][0]))).join('') + '</div>'; }).join('') : '')
       + (perm == null ? '' : `<div class="bxs-sech">엔진 창</div><div class="bxs-card">${row('묻지 않고 일하기', '허용하면 보더가 여는 창의 Claude Code 가 파일 고치기 · 명령 실행을 하나하나 묻지 않고 해요. 다음에 여는 창부터.', sw(perm === 'bypass', 'data-perm', '묻지 않고 일하기'))}</div>`);   // 상태를 못 읽으면 칸을 숨김(허용된 것을 「꺼짐」으로 보이지 않게)
   };
+  const ENGP = [['claude', 'Claude'], ['codex', 'ChatGPT (Codex)']];
+  const engSecs = N => {
+    const ds = (N?.devices || []).filter(d => d.features?.engine);
+    return ds.length ? `<div class="bxs-sech">엔진</div>` + ds.map(d => `<div class="bxs-card" data-eng="${esc(d.id)}"><div class="bxs-row"><b>${esc(d.name || '기기')}</b></div><p class="bxs-mut" style="margin:0">읽어 오는 곳이에요</p></div>`).join('') : '';
+  };
+  const engDraw = (box, st) => {
+    const id = box.dataset.eng, name = box.querySelector('b')?.textContent || '기기';
+    if (st.err) { box.innerHTML = `<div class="bxs-row"><b>${esc(name)}</b></div><p class="bxs-mut" style="margin:0">${esc(st.err)}</p>`; return; }
+    const cur = st.engine === 'sdk' ? 'sdk' : 'tmux', opt = (v, t) => `<button type="button" role="radio" aria-checked="${cur === v}" data-eng-pick="${v}" ${st.busy ? 'disabled' : ''}>${t}</button>`;
+    const prov = ENGP.map(([k, label]) => {
+      const rows = (st.accounts?.[k] || []).map(a => `<div class="bxs-li"><div><b>${esc(a.name)}</b><span>${a.logged_in ? '로그인됨' : '로그인이 필요해요'}</span></div>`
+        + (a.logged_in ? '<span class="bxs-badge"><i class="ok"></i>로그인됨</span>' : btn('로그인', `data-eng-login="${k}" data-name="${esc(a.name)}" ${st.busy ? 'disabled' : ''}`, 'sm')) + '</div>').join('');
+      return `<div class="bxs-sech" style="margin:6px 0 0">${label} 계정</div><div class="bxs-list">${rows || '<div class="bxs-li"><div><b>아직 없어요</b><span>아래에서 이름을 적고 계정을 추가해요</span></div></div>'}`
+        + `<div class="bxs-li"><div class="bxs-row" style="width:100%"><input class="bxs-in sm" data-eng-name="${k}" maxlength="40" placeholder="계정 이름 (영문 · 숫자)" aria-label="${label} 계정 이름">${btn('계정 추가', `data-eng-login="${k}" data-new="1" ${st.busy ? 'disabled' : ''}`, 'sm')}</div></div></div>`;
+    }).join('');
+    const link = st.url ? `<p style="margin:0"><a href="${esc(st.url)}" target="_blank" rel="noopener noreferrer">그 기기의 브라우저에서 이 주소를 열어 로그인</a> <span class="bxs-mut">— 끝나면 아래 목록이 바뀌어요</span></p><p class="bxs-mut" style="margin:0">다른 기기의 브라우저에서 열면 로그인이 끝나지 않아요(로그인이 끝나면 그 기기 localhost 로 돌아오기 때문이에요)</p>` : st.wait ? '<p class="bxs-mut" style="margin:0">그 기기에서 브라우저가 열렸어요. 로그인을 마치면 아래 목록이 바뀌어요</p>' : '';
+    box.innerHTML = `<div class="bxs-row between"><b>${esc(name)}</b><span class="bxs-badge">${cur === 'sdk' ? '내 구독' : '쓰던 Codex · Claude Code'}</span></div>`
+      + `<p class="bxs-mut" style="margin:0">창을 여는 방법을 골라요. 둘 다 같은 보더 화면이고, 다음에 여는 창부터 바뀌어요.</p>`
+      + `<div class="bxs-seg" role="radiogroup" aria-label="엔진">${opt('sdk', '내 구독으로')}${opt('tmux', '쓰던 Codex · Claude Code 로')}</div>`
+      + (st.msg ? `<p class="bxs-mut" style="margin:0">${esc(st.msg)}</p>` : '') + link + prov;
+  };
+  const engLoad = async (box, st = {}) => {
+    const id = box.dataset.eng; box._st = st;
+    try { const r = await api('GET', 'api/me/engine/device/' + encodeURIComponent(id)); Object.assign(st, r, {err: ''}); }
+    catch (e) { st.err = e.message || '일시적인 오류가 발생했어요'; }
+    if (box.isConnected) engDraw(box, st);
+    return st;
+  };
+  const engWatch = (box, prov, name) => {   // 로그인이 끝날 때까지 4초마다 목록을 다시 읽음(최대 3분)
+    const st = box._st; let n = 0; clearInterval(st.t);
+    st.t = setInterval(async () => {
+      if (!box.isConnected || ++n > 45) return clearInterval(st.t);
+      try { const r = await api('GET', 'api/me/engine/device/' + encodeURIComponent(box.dataset.eng)); st.accounts = r.accounts;
+        if ((r.accounts?.[prov] || []).some(a => a.name === name && a.logged_in)) { clearInterval(st.t); st.url = ''; st.wait = false; st.msg = `${name} 계정이 로그인됐어요`; } box.isConnected && engDraw(box, st); } catch {}
+    }, 4000);
+  };
+  const engClick = async e => {
+    const box = e.target.closest('[data-eng]'); if (!box || !box._st) return false;
+    const st = box._st, id = box.dataset.eng, pick = e.target.closest('[data-eng-pick]'), lg = e.target.closest('[data-eng-login]');
+    if (pick && pick.dataset.engPick !== (st.engine === 'sdk' ? 'sdk' : 'tmux')) {
+      st.busy = true; st.msg = '기기에 보냈어요 — 처음 켜는 길이면 몇 분 걸릴 수 있어요'; engDraw(box, st);
+      try { await api('POST', 'api/me/engine/device/' + encodeURIComponent(id) + '/choose', {engine: pick.dataset.engPick}); st.engine = pick.dataset.engPick; st.msg = '바꿨어요 — 다음에 여는 창부터'; }
+      catch (err) { st.msg = err.message || '일시적인 오류가 발생했어요'; }
+      st.busy = false; engDraw(box, st); return true;
+    }
+    if (lg) {
+      const prov = lg.dataset.engLogin, name = lg.dataset.new ? (box.querySelector(`[data-eng-name="${prov}"]`)?.value || '').trim() : lg.dataset.name;
+      if (!/^\w[\w.-]{0,39}$/.test(name)) { st.msg = '계정 이름은 영문 · 숫자 · . _ - 만 쓸 수 있어요'; engDraw(box, st); return true; }
+      st.busy = true; st.msg = ''; st.url = ''; engDraw(box, st);
+      try { const r = await api('POST', 'api/me/engine/device/' + encodeURIComponent(id) + '/login', {provider: prov, name}); st.url = r.url || ''; st.wait = !r.url; st.accounts ||= {}; if (!(st.accounts[prov] || []).some(a => a.name === name)) (st.accounts[prov] ||= []).push({name, logged_in: false}); engWatch(box, prov, name); }
+      catch (err) { st.msg = err.message || '일시적인 오류가 발생했어요'; }
+      st.busy = false; engDraw(box, st); return true;
+    }
+    return false;
+  };
   PAGES.devices = async (el, id, live) => {
     const [{devices}, prompt, N, B] = await Promise.all([api('GET', 'api/me/devices'), fetch('api/install/prompt', {credentials: 'include'}).then(r => r.ok ? r.text() : '').catch(() => ''),
       OWNER ? null : api('GET', 'api/me/nodes').catch(() => null), OWNER ? null : api('GET', 'api/me/board').catch(() => null)]); if (!live()) return;
@@ -816,8 +871,8 @@
     const copyBtn = btn('프롬프트 복사', 'data-ip', 'pri sm');
     el.innerHTML = header('기기', 'boarder setup 한 기기가 5분마다 메모리 · CPU · 디스크 · 도는 에이전트 · Claude 한도를 보내요. 토큰 · 키는 안 와요.')
       + (devices.length ? `<div class="bxs-sech bxs-row between"><span>기기 ${devices.length}대</span>${copyBtn}</div>${devices.map(deviceCard).join('')}` : empty({ic: 'devices', t: '기기가 아직 없어요', p: '설치 프롬프트를 그 컴퓨터의 AI 도구에 붙여 넣으면 여기 떠요.', act: copyBtn}, `<div class="bxs-empty"><b>아직 없어요</b><p>설치 프롬프트를 그 컴퓨터의 AI 도구에 붙여 넣으면 여기 떠요.</p>${copyBtn}</div>`))
-      + (OWNER || !N ? '' : featCards(N, perm));
-    el.onclick = async e => {
+      + (OWNER || !N ? '' : featCards(N, perm) + engSecs(N));
+    const prevClick = async e => {
       const ft = e.target.closest('[data-feat]');
       if (ft){ ft.disabled = true; try { await api('POST', 'api/me/devices/' + encodeURIComponent(ft.dataset.dev) + '/feature', {what: ft.dataset.feat, on: ft.dataset.on === '1'}); toast('기기에 보냈어요 — 곧 바뀌어요'); } catch (err) { toast(err.message); } return render(); }
       if (e.target.closest('[data-perm]')){
@@ -839,6 +894,8 @@
         try { await api('POST', 'api/me/devices/' + encodeURIComponent(d.id) + '/revoke'); toast('폐기했어요'); render(); } catch (err) { toast(err.message); }
       };
     };
+    el.onclick = async e => { if (await engClick(e)) return; return prevClick(e); };
+    el.querySelectorAll('[data-eng]').forEach(b => engLoad(b));
   };
   PAGES.start = async (el, id, live) => {
     const o = await api('GET', 'api/me/onboarding'); if (!live()) return;

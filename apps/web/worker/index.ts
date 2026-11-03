@@ -1163,6 +1163,42 @@ app.post("/api/me/engine/perm", async c => {
   await sysLine(c.env.DB, me, mode === "bypass" ? "묻지 않고 일하기를 허용했어요 — 다음에 여는 창부터" : "묻지 않고 일하기를 껐어요 — 다음에 여는 창부터 하나하나 물어요");
   return c.json({ ok: true, mode });
 });
+// BYOS 설정 › 엔진: 그 기기의 지금 엔진 · 공급자별 계정, 브라우저 로그인 주소, 엔진 고르기 — 내 기기(owner = 나 · full · 폐기 안 됨)만.
+//   쓰기(login · choose)는 같은 사이트 + 회원 세션. 서버는 기기 동사만 내리고 로그인 값은 받지 않음(이름 · 여부 · 주소만)
+type DevCmd = { devCmd(verb: string, args: Record<string, unknown>, ms?: number): Promise<{ ok: boolean; result?: any; code?: number; error?: string }> };
+const myEngineDevice = async (c: Context<{ Bindings: Env }>, me: string) => c.env.DB.prepare("SELECT id, engine, engine_at FROM device WHERE id = ? AND owner = ? AND revoked_at IS NULL AND scope = 'full'").bind(c.req.param("id") || "", me).first<{ id: string; engine: string | null; engine_at: number | null }>();
+async function engineDevCmd(c: Context<{ Bindings: Env }>, verb: string, args: Record<string, unknown>, ms: number) {
+  const me = await memberOnly(c); if (!me) return { err: c.json({ error: "no" }, 403) as Response };
+  const d = await myEngineDevice(c, me); if (!d) return { err: c.json({ ok: false, error: "없는 기기" }, 404) as Response };
+  if (Date.now() - (d.engine_at || 0) > 120_000) return { err: c.json({ ok: false, error: "기기가 꺼져 있어요" }, 409) as Response };
+  const r = await (engineOf(c.env, d.id) as unknown as DevCmd).devCmd(verb, args, ms);
+  if (!r.ok) return { err: c.json({ ok: false, error: /^[가-힣]/.test(r.error || "") ? r.error : "기기가 답하지 않아요" }, r.code === 5 ? 409 : 502) as Response };
+  return { me, d, result: r.result };
+}
+app.get("/api/me/engine/device/:id", async c => {
+  const x = await engineDevCmd(c, "account_list", {}, 30_000); if ("err" in x) return x.err;
+  const r = x.result || {}, accounts: Record<string, { name: string; logged_in: boolean }[]> = {};
+  for (const p of ["claude", "codex"]) accounts[p] = (Array.isArray(r.accounts?.[p]) ? r.accounts[p] : []).slice(0, 20).map((a: any) => ({ name: String(a?.name || "").slice(0, 40), logged_in: a?.logged_in === true }));
+  return c.json({ ok: true, engine: typeof r.engine === "string" ? r.engine.slice(0, 30) : null, engines: Array.isArray(r.engines) ? r.engines.filter((e: unknown) => typeof e === "string").slice(0, 8) : [], accounts }, 200, { "cache-control": "no-store" });
+});
+app.post("/api/me/engine/device/:id/login", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ provider?: string; name?: string }>().catch(() => ({} as { provider?: string; name?: string }));
+  if (!["claude", "codex"].includes(b.provider || "") || !/^\w[\w.-]{0,39}$/.test(b.name || "")) return c.json({ ok: false, error: "공급자나 계정 이름이 맞지 않아요" }, 400);
+  const x = await engineDevCmd(c, "account_login", { provider: b.provider, name: b.name }, 40_000); if ("err" in x) return x.err;
+  const u = typeof x.result?.url === "string" && /^https:\/\/[^\s]{1,2000}$/.test(x.result.url) ? x.result.url : null;   // 주소는 https 만 화면에 링크로
+  return c.json({ ok: true, url: u, started: x.result?.started !== false });
+});
+app.post("/api/me/engine/device/:id/choose", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ engine?: string }>().catch(() => ({} as { engine?: string }));
+  if (b.engine !== "sdk" && b.engine !== "tmux") return c.json({ ok: false, error: "엔진은 sdk 나 tmux 예요" }, 400);
+  const x = await engineDevCmd(c, "engine_choose", { engine: b.engine }, 170_000); if ("err" in x) return x.err;
+  const cur = (() => { try { return x.d.engine ? JSON.parse(x.d.engine) : {}; } catch { return {}; } })();   // 기기가 다음에 붙을 때 알려 줄 값을 미리 맞춤
+  await c.env.DB.prepare("UPDATE device SET engine = ? WHERE id = ? AND owner = ?").bind(JSON.stringify({ ...cur, default: b.engine }), x.d.id, x.me).run();
+  await sysLine(c.env.DB, x.me, b.engine === "sdk" ? "엔진을 내 구독으로 바꿨어요 — 다음에 여는 창부터" : "엔진을 쓰던 Codex · Claude Code 로 바꿨어요 — 다음에 여는 창부터");
+  return c.json({ ok: true, engine: b.engine });
+});
 app.post("/api/me/session/new", async c => {
   const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ folder?: string; text?: string }>().catch(() => ({} as { folder?: string; text?: string }));

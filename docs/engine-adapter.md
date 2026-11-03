@@ -81,6 +81,14 @@ Boarder works around what an engine can't do:
 
 Herdr (official adapter, `packages/cli/src/engine/herdr.mjs`, tested with Herdr 0.9.5): used when a Herdr server is running on the machine. One Boarder window is one Herdr workspace labelled with the window id. Closing the last pane of a Herdr workspace deletes the workspace, so parking closes the workspace and reopening creates a new one with the same conversation.
 
+## SDK engine (bring your own subscription)
+
+`packages/cli/src/engine/sdk.mjs`: no terminal, no tmux. Each window is one SDK session inside the daemon, on the person's own subscription, with the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) or the Codex SDK (`@openai/codex-sdk`) (`provider` in `open`, default `claude`). `park` returns the SDK session id in the handle and `reopen` resumes that conversation. Both SDKs are optional dependencies, loaded when a window opens; a missing one gives an install hint.
+
+Several accounts per provider: an account is a settings folder (`CLAUDE_CONFIG_DIR` for Claude, `CODEX_HOME` for Codex). `open` takes `account` (a name; folder `~/.config/boarder/sdk-accounts/<provider>/<name>` unless `boarder engine account <provider> <name> [<folder>]` points elsewhere). Logins stay in those folders on the machine; the server only ever sees the account name. Sign in with `boarder engine account login <claude|codex> <name>` (opens the browser through the provider CLI that comes with the SDK, `--device-auth` for Codex without a browser); `boarder engine account list` shows who is logged in.
+
+On Windows `boarder enable engine` uses this engine when there is no tmux build (elsewhere: `boarder engine setup --sdk`), and the daemon runs from Task Scheduler (`schtasks /create /sc onlogon`, task `BoarderEngine`), removed by `boarder uninstall` / `boarder engine stop`.
+
 ## What adapters never do
 
 They don't read Claude credential files or the keychain, and they don't pick or switch accounts. The agent runs as the person who is signed in on that machine.

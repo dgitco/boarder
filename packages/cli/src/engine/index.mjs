@@ -6,6 +6,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSyn
 import { dir, ensureDir, loadDevice, readJson } from '../config.mjs';
 import * as tmux from './tmux.mjs';
 import * as herdr from './herdr.mjs';
+import * as sdk from './sdk.mjs';
 import { EngineError } from './tmux.mjs';
 
 export { EngineError };
@@ -65,9 +66,12 @@ let herdrSeen = { at: 0, ok: false };   // Herdr 서버가 도는지(1분 캐시
 const herdrUp = cfg => { if (Date.now() - herdrSeen.at > 60000) herdrSeen = { at: Date.now(), ok: !!(cfg.herdr || which('herdr')) && herdr.running(cfg) }; return herdrSeen.ok; };
 const TMUX = { key: tmux.key, open: tmux.open, send: tmux.send, state: (c, id) => tmux.state(c, id), park: tmux.park, reopen: tmux.reopen, close: tmux.close, list: c => tmux.list(c) };
 
+const SDK = { open: sdk.open, send: sdk.send, state: sdk.state, park: sdk.park, reopen: sdk.reopen, close: sdk.close, list: c => sdk.list(c) };   // BYOS: 터미널 · tmux 없이 Agent SDK · Codex SDK(cfg.sdk 가 있을 때만)
+
 export function adapters(cfg = loadCfg()) {
   const out = {};
   if (cfg.tmux || which('tmux')) out.tmux = TMUX;
+  if (cfg.sdk) out.sdk = SDK;   // `boarder enable engine` 이 tmux 를 못 구하는 기기(윈도우)에서 켬 · `engine setup --sdk`
   if (herdrUp(cfg)) out.herdr = HERDR;   // 공식 Herdr — 사람이 띄운 Herdr 서버가 있을 때만
   for (const [n, d] of Object.entries(cfg.custom || {})) out[n] = custom(d);
   return out;
