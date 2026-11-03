@@ -796,28 +796,39 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     }
     return f0.apply(this, arguments);
   };
-  let tick = now(), wakeAt = 0;
+  let tick = now(), wakeAt = 0, wakeWhy = '', hidAt = document.hidden ? now() : 0;
+  // 깨면 「30초 넘게 못 받음」(보더 연결 안 됨)도 깬 때부터 셈 — 잠들기 전 마지막 확인으로 바로 띄우지 않게, 다시 이어 본 뒤에도 안 되면 그때
+  const wake = why => { wakeAt = now(); wakeWhy = why; note('wake', why); const L = cur; if (L && !L.closed) { L.okAt = Math.max(L.okAt, now()); if (L.down) { L.down = false; stamp(); } if (!L.wsUp) { L.back = 500; L.connect(); } L.get().catch(() => {}); } };
   const woke = () => {
     const t = now(), gap = t - tick; tick = t;
-    if (gap < 30000 || document.hidden) return;
-    wakeAt = t; note('wake', Math.round(gap / 1000));
+    if (gap < 15000 || document.hidden) return;
+    wake('clock ' + Math.round(gap / 1000));
     try { document.dispatchEvent(new Event('visibilitychange')); } catch (e) {}
-    const L = cur; if (L && !L.closed) L.get().catch(() => {});
   };
   setInterval(woke, 5000);
-  document.addEventListener('visibilitychange', () => { tick = now(); });
-  // 「갱신 멈춤」 기록에 화면 연결 상태를 붙임 — 다시 나면 얼음 · 끊김 · 서버 멈춤을 가를 수 있게
+  document.addEventListener('visibilitychange', () => { tick = now(); if (document.hidden) hidAt = hidAt || now(); else if (hidAt) { hidAt = 0; wake('vis'); } });
+  addEventListener('pageshow', e => { if (e.persisted) wake('pageshow'); });
+  document.addEventListener('resume', () => wake('resume'));
+  addEventListener('hb-wake', e => { tick = now(); if (now() - wakeAt > 1000) wake(String(e.detail || 'board')); });   // 보드가 먼저 알아본 깸(시계 · online 등) — 같은 깸을 두 번 안 셈
+  // 실시간 데이터가 필요 없는 화면(설정 · 없는 주소)은 「보더 연결 안 됨」도 안 띄움(기록 · 다시 잇기는 뒤에서 그대로) — 보드 quietView 와 같은 규칙(옛 보드여도)
+  const quiet = () => typeof quietView === 'function' ? quietView() : /^#(settings|nf)(\/|$|\?)/.test(window.HBR?.hash?.() ?? location.hash);
+  // 「갱신 멈춤」 기록에 화면 연결 상태를 붙임 — 다시 나면 얼음 · 끊김 · 서버 멈춤 · 오프라인을 가를 수 있게
   const he = window.hbErr;
-  if (typeof he === 'function') window.hbErr = (w, x) => he(w, x && x.kind === 'stale' && cur ? {...x, err: `${x.err || ''} · ws ${cur.wsUp ? '붙음' : '끊김'} · 서버 나이 ${cur.snapAt ? Math.round((now() - cur.snapAt) / 1000) + '초' : '모름'} · 깸 ${wakeAt ? Math.round((now() - wakeAt) / 1000) + '초 전' : '없음'}`} : x);
+  const wk = () => { const b = typeof HB_WAKE === 'number' && HB_WAKE > wakeAt ? [HB_WAKE, HB_WHY] : [wakeAt, wakeWhy]; return b[0] ? `${Math.round((now() - b[0]) / 1000)}초 전(${b[1]})` : '없음'; };
+  if (typeof he === 'function') window.hbErr = (w, x) => he(w, x && x.kind === 'stale' && cur ? {...x, err: `${x.err || ''} · ws ${cur.wsUp ? '붙음' : '끊김'} · 서버 나이 ${cur.snapAt ? Math.round((now() - cur.snapAt) / 1000) + '초' : '모름'} · 깸 ${wk()} · 온라인 ${navigator.onLine === false ? '아니오' : '예'}`} : x);
   const so = window.stampOnly;
   const stamp = () => { try { window.stampOnly?.(); } catch (e) {} };
   if (typeof so === 'function') window.stampOnly = function (){
     woke();   // 깨어난 뒤 첫 판정이 타이머보다 먼저 와도 얼기 전 시각으로 경보하지 않게
     so.apply(this, arguments);
     const s = document.getElementById('stamp'), L = cur;
-    if (s && L && L.down && !L.closed && !document.hidden) { s.textContent = `보더 연결 안 됨 · ${kst(L.okAt).slice(11)} 부터`; s.hidden = false; }
+    if (s && L && L.down && !L.closed && !document.hidden && !quiet()) {
+      const off = navigator.onLine === false;   // 오프라인 = 이 기기가 쉬는 중 — 오류가 아니라 「다시 잇는 중」
+      s.textContent = off ? '다시 잇는 중' : `보더 연결 안 됨 · ${kst(L.okAt).slice(11)} 부터`; s.classList.toggle('stale', !off); s.hidden = false;
+    }
   };
-  window.addEventListener('online', () => { const L = cur; if (L && !L.closed && !L.wsUp) { L.back = 500; L.connect(); L.poll(true); } });
+  window.addEventListener('online', () => { wake('online'); const L = cur; if (L && !L.closed && !L.wsUp) { L.back = 500; L.connect(); L.poll(true); } });
+  window.addEventListener('offline', stamp);
   window.EventSource = LiveES;
   window.BX_LIVE = () => cur && {ws: cur.wsUp, ready: cur.readyState, down: cur.down, srv: cur.srv, ev: EV.slice()};   // 시험 · 확인용
   evClose(); evOpen();   // 보드가 이미 연 옛 SSE(503)를 이 길로 바꿔 엶

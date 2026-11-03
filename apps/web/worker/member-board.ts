@@ -693,7 +693,7 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
   if (path === "/api/split/move") return splitMove(db, me, String(b.post || ""), String(b.pane || ""));   // 갈래 칩 끌어 옮기기(주인 split_move_post 와 같은 몸통 · 답 { ok, splits }) — 내 몫 글 · 내 노드만, 아니면 404
   if (path === "/api/clientlog") {
     const f = (k: string, n = 160) => b[k] == null ? null : String(b[k]).slice(0, n);
-    console.log(JSON.stringify({ ev: "client_error", member: true, where: f("where", 120), path: f("path", 100), method: f("method", 10), status: f("status", 10), rid: f("rid", 64), kind: f("kind", 10), page: f("page", 80), err: f("err"), client_at: Number(b.at) || null, late: !!(b.late || b.queued) }));
+    console.log(JSON.stringify({ ev: "client_error", member: true, where: f("where", 120), path: f("path", 100), method: f("method", 10), status: f("status", 10), rid: f("rid", 64), kind: f("kind", 10), page: f("page", 80), err: f("err"), client_at: Number(b.at) || null, late: !!(b.late || b.queued), late_s: Number(b.delay) >= 60000 ? Math.round(Number(b.delay) / 1000) : null, mark: Number(b.delay) > 1800000 ? "늦게 보냄" : null, quiet: !!b.quiet }));
     return { ok: { ok: true } };
   }
   if (path === "/api/todo") {   // 할 일 끝냄(틀 { area, id }) = 그 할 일 카드에 「했어요」로 답(카드를 낸 창에 넘어감 · 에이전트 wait 가 받음). drop: true 면 「없앴어요」로
