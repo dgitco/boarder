@@ -51,9 +51,9 @@
     + `<div class="bx-ea-sc"><div class="bx-ea-pins" role="list" aria-label="고정된 대화" hidden></div><div class="bx-ea-rows" role="list"></div></div>`;
   const sc = list.querySelector('.bx-ea-sc'), rowsEl = list.querySelector('.bx-ea-rows'), pinsEl = list.querySelector('.bx-ea-pins'), bar = list.querySelector('.bx-ea-bar');
   const head = mk('div', 'bx-ea-h'); head.hidden = true;
-  head.innerHTML = `<button type="button" class="bx-ea-back" aria-label="목록으로">${lu('chevron-left', 26)}</button>`
+  head.innerHTML = `<button type="button" class="bx-ea-back" aria-label="목록으로">${lu('chevron-left', 24)}<i class="bx-ea-bdot" aria-hidden="true" hidden></i></button>`
     + `<div class="bx-ea-who"><span class="bx-ea-av"></span><b></b><span class="bx-ea-chev" aria-hidden="true">›</span></div>`
-    + `<span class="bx-ea-act"><button type="button" class="bx-ea-ib" data-ea="menu" aria-label="전화 또는 미팅" aria-haspopup="menu" aria-expanded="false" aria-controls="bx-ea-call-menu">${VID(22)}</button><span class="bx-ea-call-menu" id="bx-ea-call-menu" role="menu" aria-label="전화 또는 미팅" hidden><button type="button" role="menuitem" tabindex="-1" data-ea="call">${lu('phone', 18)}전화</button><button type="button" role="menuitem" tabindex="-1" data-ea="meet">${VID(18)}미팅</button></span></span>`;
+    + `<span class="bx-ea-act"><button type="button" class="bx-ea-ib" data-ea="menu" aria-label="전화 또는 미팅" aria-haspopup="menu" aria-expanded="false" aria-controls="bx-ea-call-menu">${lu('phone', 20)}</button><span class="bx-ea-call-menu" id="bx-ea-call-menu" role="menu" aria-label="전화 또는 미팅" hidden><button type="button" role="menuitem" tabindex="-1" data-ea="call">${lu('phone', 18)}전화</button><button type="button" role="menuitem" tabindex="-1" data-ea="meet">${VID(18)}미팅</button></span></span>`;
   const empty = mk('div', 'bx-ea-empty', '<span>대화를 고르세요</span>');
   document.body.append(list, empty, head);
 
@@ -129,8 +129,11 @@
     const bot = BOTS.find(b => b.k === k);
     const name = bot ? bot.name() : ck ? pinName(ck) : p ? nm(p) : AN()[c?.chan] || c?.chan || '';
     const avn = bot ? bot.av() : ck ? pinAv(ck) : name;
-    const ta = document.getElementById('cnew'); if (ta && name && ta.placeholder !== name + '에게 묻기') ta.placeholder = name + '에게 묻기';   // Grok 「Ask SLMob」 꼴
-    if (head.dataset.k !== k + '|' + name){ head.dataset.k = k + '|' + name; head.querySelector('.bx-ea-av').innerHTML = av(avn, 28); head.querySelector('.bx-ea-who b').textContent = name; }
+    const ph = `내 ${name}에게 메시지`, ta = document.getElementById('cnew'); if (ta && name && ta.placeholder !== ph) ta.placeholder = ph;   // dot 꼴 「내 Primary 에게 메시지」
+    if (head.dataset.k !== k + '|' + name){ head.dataset.k = k + '|' + name; head.querySelector('.bx-ea-av').innerHTML = av(avn, 76); head.querySelector('.bx-ea-who b').textContent = name; }
+    // 뒤로 원의 파란 점 = 지금 연 대화 말고 읽지 않음 · 차례가 있는 비서(목록 줄 점과 같은 판정)
+    const ud = BOTS.some(b => b.k !== k && (b.n() > 0 || unread(b.k.slice(2)))), back = head.querySelector('.bx-ea-back');
+    head.querySelector('.bx-ea-bdot').hidden = !ud; back.setAttribute('aria-label', ud ? '목록으로 · 읽지 않음 있음' : '목록으로');
     for (const r of rowsEl.querySelectorAll('.bx-ea-row')) r.toggleAttribute('aria-current', r.dataset.k === k);
     for (const r of pinsEl.querySelectorAll('.bx-ea-pin')) r.toggleAttribute('aria-current', 'c:' + r.dataset.k === k);
   }
@@ -299,6 +302,13 @@
   });
 
   let sepBusy = false;
+  const WD = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+  function sepLab(d){
+    const n = new Date(), y = new Date(n); y.setDate(n.getDate() - 1);
+    const tm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    const day = d.toDateString() === n.toDateString() ? '오늘' : d.toDateString() === y.toDateString() ? '어제' : n - d < 6 * 864e5 && d < n ? WD[d.getDay()] : `${d.getMonth() + 1}월 ${d.getDate()}일`;
+    return [day, tm];
+  }
   function seps(){
     const feed = ans.querySelector && ans.querySelector('#cfeed'); if (!feed || sepBusy) return;
     sepBusy = true;
@@ -309,9 +319,9 @@
       for (const m of ms){ const t = +m.dataset.mts; if (!isFinite(t)) continue; if (!prev || t - prev > 900) want.push([m, t]); prev = t; }
       const have = new Map([...feed.querySelectorAll('.bx-ea-tsep')].map(e => [e.nextElementSibling, e]));
       for (const e of have.values()) if (!want.some(([m]) => m === e.nextElementSibling)) e.remove();
-      for (const [m, t] of want){ const d = new Date(t * 1000), lab = (d.toDateString() === new Date().toDateString() ? '오늘 ' : `${d.getMonth() + 1}월 ${d.getDate()}일 `) + hm(d);
-        const e = have.get(m); if (e){ if (e.textContent !== lab) e.textContent = lab; continue; }
-        const x = document.createElement('div'); x.className = 'bx-ea-tsep'; x.textContent = lab; m.parentNode.insertBefore(x, m); added.push(x); }
+      for (const [m, t] of want){ const [day, tm] = sepLab(new Date(t * 1000)), lab = day + ' ' + tm, html = `<b>${E(day)}</b> ${E(tm)}`;
+        const e = have.get(m); if (e){ if (e.textContent !== lab) e.innerHTML = html; continue; }
+        const x = document.createElement('div'); x.className = 'bx-ea-tsep'; x.innerHTML = html; m.parentNode.insertBefore(x, m); added.push(x); }
       if (added.length){
         if (bottom) feed.scrollTop = feed.scrollHeight;
         else { let dy = 0; for (const x of added) if (x.offsetTop < top0) dy += x.offsetHeight + 24; if (dy) feed.scrollTop = top0 + dy; }   // 보던 글 그대로(위에 들어간 줄 높이 + 위아래 여백 24)

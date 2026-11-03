@@ -10,6 +10,7 @@ import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } 
 import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, type Bot } from "./install";
 import { BUNDLE_KEYS } from "./harness-bundles";
 import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
+import { cleanSide, readSide, saveSide } from "./side-order";
 import { canBePrimary, primaryPick, PARK_H_LIM, type Item } from "./importer/group";
 import { landingPage } from "./landing";
 import { localTools } from "./local";
@@ -30,6 +31,8 @@ import blobJs from "./legacy/blobatar.js?raw";
 import botPickJs from "./legacy/botpick.js?raw";
 import eaJs from "./legacy/ea.js?raw";
 import eaCss from "./legacy/ea.css?raw";
+import xJs from "./legacy/x.js?raw";
+import xCss from "./legacy/x.css?raw";
 import eaSecretJs from "./legacy/ea-secret.js?raw";
 import { snippet, capture, phId, type PH } from "./posthog";
 import { mcp } from "./mcp/server";
@@ -1042,6 +1045,18 @@ app.post("/api/me/avatar", async c => {
   if (!(await photoOk(c.env, f.photo || ""))) return c.json({ error: "그림을 먼저 올려요" }, 400);
   return c.json({ avatar: await memberBoard.setMyAvatar(c.env.DB, me, f) });
 });
+app.get("/api/me/side", async c => {
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  return c.json({ side: await readSide(c.env.DB, s.user.email.toLowerCase()) }, 200, { "cache-control": "no-store" });
+});
+app.post("/api/me/side", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  const side = cleanSide((Object(await c.req.json().catch(() => ({}))) as { side?: unknown }).side);
+  if (!side) return c.json({ ok: false, error: "값" }, 400);
+  await saveSide(c.env.DB, s.user.email.toLowerCase(), side);
+  return c.json({ ok: true, side });
+});
 app.get("/api/me/nodes/avatar", async c => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   const me = s.user.email.toLowerCase();
@@ -1791,15 +1806,16 @@ async function tplHtml(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, 
   return bxTpl.html;
 }
 // 껍데기(Worker 묶음) 덩어리 태그: isolate 마다 처음 한 번 해시. 못 만들면 null(인라인)
-let bxShell: { head: string; body: string; eaHead: string; eaBody: string; shas: string[] } | null = null;
+let bxShell: { head: string; body: string; eaHead: string; eaBody: string; xHead: string; xBody: string; shas: string[] } | null = null;
 async function shellTags(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
   if (!bxShell) {
     const shas: string[] = [], put = (sha: string, b: bxs.Block) => { shas.push(sha); bxPut(sha, b); }, esc = (s: string) => s.replace(/<\//g, "<\\/");
     const t = await Promise.all([bxs.pack([{ kind: "css", body: shellCss, id: "hbx-css" }, { kind: "css", body: settingsCss, id: "hbx-set-css" }], put),
       bxs.pack([{ kind: "js", body: esc(shellJs) }, { kind: "js", body: esc(botPickJs) }, { kind: "js", body: esc(settingsJs) }], put),
-      bxs.pack([{ kind: "css", body: eaCss, id: "hbx-ea-css" }], put), bxs.pack([{ kind: "js", body: esc(eaJs) }, { kind: "js", body: esc(eaSecretJs) }], put)]).catch(() => null);   // 비서(/es) 덩어리는 따로 — / 몸통 바이트 그대로
+      bxs.pack([{ kind: "css", body: eaCss, id: "hbx-ea-css" }], put), bxs.pack([{ kind: "js", body: esc(eaJs) }, { kind: "js", body: esc(eaSecretJs) }], put),
+      bxs.pack([{ kind: "css", body: xCss, id: "hbx-x-css" }], put), bxs.pack([{ kind: "js", body: esc(xJs) }], put)]).catch(() => null);   // 비서(/es) 덩어리는 따로 — / 몸통 바이트 그대로
     if (!t) return null;
-    bxShell = { head: t[0], body: t[1], eaHead: t[2], eaBody: t[3], shas };
+    bxShell = { head: t[0], body: t[1], eaHead: t[2], eaBody: t[3], xHead: t[4], xBody: t[5], shas };
   }
   bxSave(env, ctx, bxShell.shas);
   return bxShell;
@@ -1825,7 +1841,7 @@ async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) 
     .replace("__BX_DATA__", () => dt.body.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(dt.etag));
   return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } as Record<string, string>, body: new TextEncoder().encode(html) };
 }
-async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea = false) {
+async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea: boolean | "x" = false) {
   const pg = await snap(c.env).get("page"); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
   await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
   const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot)), tag = await memberBoard.etag(d);
@@ -1891,7 +1907,7 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   } else if (hop.log && !j.already) await queue.ridBatch(c.env.DB, qrid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), hop.log.thread ?? null, Date.now(), wid)]).catch(e => console.error("노드 채팅 줄", e));
   return c.json({ ...j, ok: true, rid, state: "ok", channel: "primary", ...(pre ? { ts: memberBoard.tsOf(pre.at, pre.id) } : {}) });
 }
-async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false, ea: boolean | "personal" = false) {
+async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false, ea: boolean | "personal" | "x" = false) {
   // 큰 껍데기 css · js 는 /bxs 주소로(bxs.ts — 같은 차례, 고전 스크립트). 해시를 못 만들면 예전처럼 인라인
   const bx = await shellTags(c.env, c.executionCtx).catch(() => null);
   const emb = new URL(c.req.url).searchParams.has("embed");
@@ -1900,9 +1916,10 @@ async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: s
       .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (!/^#(chat|art\\/|arts|node\\/|tree|w\\/|inbox|unread|saved|drafts|timeline|nf|settings|t=|board)/.test(location.hash) && location.pathname && location.pathname !== '/') { var hp = location.pathname, hq = new URLSearchParams(location.search), hm; if (hp === '/nodes') HB_HASH0 = '#tree'; else if (hm = /^\\/nodes\\/([^/]+)$/.exec(hp)) HB_HASH0 = '#node/' + hm[1]; else if (hm = /^\\/canvas\\/([A-Za-z0-9]{16,40})$/.exec(hp)) HB_HASH0 = '#art/' + hm[1]; else if (hp === '/canvas') HB_HASH0 = '#arts'; else if (hm = /^\\/chat\\/([^/]+)(?:\\/([^/]+))?$/.exec(hp)) HB_HASH0 = '#chat/' + hm[1] + (hm[2] ? (hq.get('thread') ? '/' + hq.get('thread') + '/' + hm[2] : '/' + hm[2]) : ''); else if (hm = /^\\/(inbox|unread|saved|drafts|timeline|nf|w\\/.+|settings(?:\\/.*)?)$/.exec(hp)) HB_HASH0 = '#' + hm[1]; } if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|settings)/.test(location.hash)) history.replaceState(history.state, '', '#tree'); document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000); if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|unread$|saved$|drafts$)/.test(window.HB_HASH0)) { document.documentElement.classList.add('bx-route'); setTimeout(function(){ document.documentElement.classList.remove('bx-route') }, 35000) }</script>", { html: true });
         e.prepend(`<script>window.HBR=window.HBR||{hash:function(){return location.hash},same:function(a,b){return a===b},go:function(h){location.hash=h},toHash:function(){return ''},toPath:function(){return null},isApp:function(){return false},url:function(h){return location.origin+'/'+h}}</script>`, { html: true });
         if (!ea && !emb) e.prepend(`<base href="/"><script>window.HB_PATHS=1</script>`, { html: true });
-        if (ea) e.prepend(`<script>window.BX_EA=1${ea === "personal" ? ';window.BX_EA_MODE="personal"' : ""}</script>`, { html: true });
-        e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>`) + (ea ? (bx ? bx.eaHead : `<style id="hbx-ea-css">${eaCss}</style>`) : "") + snippet(c.env, await phId(c.env, email)), { html: true }); } })
-      .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script>`) + (ea ? (bx ? bx.eaBody : `<script>${eaJs.replace(/<\//g, "<\\/")}</script><script>${eaSecretJs.replace(/<\//g, "<\\/")}</script>`) : "") + `<script>document.documentElement.classList.remove('bx-boot')</script>`, { html: true }); } })
+        if (ea === "x") e.prepend(`<script>window.BX_X=1</script>`, { html: true });   // /x = 피드 화면(x.js 가 같은 몸통 위에 피드 · 유리 막대를 얹음)
+        else if (ea) e.prepend(`<script>window.BX_EA=1${ea === "personal" ? ';window.BX_EA_MODE="personal"' : ""}</script>`, { html: true });
+        e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>`) + (ea === "x" ? (bx ? bx.xHead : `<style id="hbx-x-css">${xCss}</style>`) : ea ? (bx ? bx.eaHead : `<style id="hbx-ea-css">${eaCss}</style>`) : "") + snippet(c.env, await phId(c.env, email)), { html: true }); } })
+      .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script>`) + (ea === "x" ? (bx ? bx.xBody : `<script>${xJs.replace(/<\//g, "<\\/")}</script>`) : ea ? (bx ? bx.eaBody : `<script>${eaJs.replace(/<\//g, "<\\/")}</script><script>${eaSecretJs.replace(/<\//g, "<\\/")}</script>`) : "") + `<script>document.documentElement.classList.remove('bx-boot')</script>`, { html: true }); } })
     .transform(res);
 }
 app.all("*", async c => {
@@ -1962,7 +1979,7 @@ app.all("*", async c => {
     } catch { return c.json({ error: "일시적인 오류가 발생했어요" }, 503); }
   }
   // 비서(/es): 보드 스크립트가 상대 주소(api/… · art/…)를 써서 /ea/ 면 깨짐 — 끝 「/」 없는 주소로
-  if ((url.pathname === "/es/" || url.pathname === "/ea/") && (c.req.method === "GET" || c.req.method === "HEAD")) return c.redirect(url.pathname.slice(0, 3) + url.search, 301);
+  if ((url.pathname === "/es/" || url.pathname === "/ea/" || url.pathname === "/x/") && (c.req.method === "GET" || c.req.method === "HEAD")) return c.redirect(url.pathname.slice(0, -1) + url.search, 301);
   const s = await signedIn(c);
   if (!s) {
     if (url.pathname.startsWith("/api/")) return c.json({ error: "로그인" }, 401);
@@ -1980,10 +1997,10 @@ app.all("*", async c => {
   if (!isOwner(c.env, s.user.email)) {
     if (/^\/(assets|icons)\//.test(url.pathname)) return c.env.ASSETS.fetch(c.req.raw);
     if (url.pathname === "/ea" && c.req.method === "GET") return c.redirect("/es" + url.search, 302);
-    if ((url.pathname === "/" || url.pathname === "/es") && c.req.method === "GET") {
+    if ((url.pathname === "/" || url.pathname === "/es" || url.pathname === "/x") && c.req.method === "GET") {
       const bot = await memberBot(c.env, s.user.email.toLowerCase()), js = { blob: blobJs, pick: botPickJs };
       if (!bot) return c.html(memberOnboard(s.user.email, js), 200, { ...NOFRAME, "cache-control": "no-store" });
-      const pg = await memberPage(c, s.user.email.toLowerCase(), (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>().catch(() => null))?.name, bot, url.pathname === "/es");
+      const pg = await memberPage(c, s.user.email.toLowerCase(), (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>().catch(() => null))?.name, bot, url.pathname === "/x" ? "x" : url.pathname === "/es");
       return pg ?? c.html("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><p style='font:15px system-ui;padding:40px'>일시적인 오류가 발생했어요</p>", 503, { ...NOFRAME, "cache-control": "no-store", "retry-after": "5" });
     }
     {
@@ -2039,7 +2056,7 @@ app.all("*", async c => {
     return c.json({ error: "no" }, 403);
   }
   // 비서(/es, 주인): / 와 같은 길(첫 화면 · 틀 · 캐시 지우기)로 — 받는 path 만 「/」, 틀에 BX_EA 를 더 얹음
-  const ea = (url.pathname === "/es" || url.pathname === "/ea") && (c.req.method === "GET" || c.req.method === "HEAD") ? (url.pathname === "/ea" ? "personal" as const : true) : false;   // /ea = 퍼스널 비서
+  const ea = (url.pathname === "/es" || url.pathname === "/ea" || url.pathname === "/x") && (c.req.method === "GET" || c.req.method === "HEAD") ? (url.pathname === "/ea" ? "personal" as const : url.pathname === "/x" ? "x" as const : true) : false;   // /x = 피드 화면   // /ea = 퍼스널 비서
   if (ea) url.pathname = "/";
   if (url.pathname === "/api/events" || url.pathname === "/api/push/stream") return c.json({ error: "다리 밖" }, 503);
   if (chOf(c) === "owner" && (url.pathname.startsWith("/api/push/") || url.pathname === "/sw.js") && await ledger.f7On(c.env.DB, "write_push")) return pushRoute(c, url);

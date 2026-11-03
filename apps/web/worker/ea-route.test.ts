@@ -200,3 +200,34 @@ test("보더 화면 경로: /nodes · /chat/<채널>/<스레드> · /canvas/<id>
     assert.ok(html.includes("window.HBR=window.HBR||"), p + " → 기본 HBR 은 있음(틀이 부름)");
   }
 });
+
+test("주인 /x(피드 화면): / 와 같은 몸통에 BX_X · x.css · x.js(틀 뒤), BX_EA · ea 덩어리 · 경로 모드 없음, / 에는 BX_X 없음", async () => {
+  const { paths, get } = setup();
+  const r = await get("/x");
+  assert.equal(r.status, 200);
+  assert.deepEqual(paths, ["/"], "다리에 / 로");
+  const html = await r.text();
+  assert.match(html, /<head[^>]*><script>window\.BX_X=1<\/script>/, "BX_X 가 head 맨 앞");
+  assert.ok(!html.includes("BX_EA") && !html.includes("hbx-ea-css"), "비서 배치 아님");
+  assert.ok(!html.includes("HB_PATHS=1"), "경로 모드 아님(주소 /x 를 지킴)");
+  const root = await (await get("/")).text();
+  assert.ok(!root.includes("BX_X") && !root.includes("hbx-x-css"));
+  const css = (h: string) => [...h.matchAll(/\/bxs\/([0-9a-f]{32})\.css/g)].map(m => m[1]), js = (h: string) => [...h.matchAll(/\/bxs\/([0-9a-f]{32})\.js/g)].map(m => m[1]);
+  assert.deepEqual(css(html).slice(0, css(root).length), css(root)); assert.equal(css(html).length, css(root).length + 1);
+  assert.deepEqual(js(html).slice(0, js(root).length), js(root)); assert.equal(js(html).length, js(root).length + 1);
+  assert.ok((await (await get(`/bxs/${js(html).at(-1)}.js`)).text()).includes("window.BX_X"), "마지막 스크립트 = x.js");
+  assert.ok((await (await get(`/bxs/${css(html).at(-1)}.css`)).text()).includes("html.bx-x"), "마지막 css = x.css");
+});
+
+test("/x/ → 301 /x, 회원 /x → 자기 화면(다리에 안 감), 로그인 안 함 → 로그인 화면", async () => {
+  const { paths, get } = setup();
+  const r = await get("/x/?a=1", null);
+  assert.equal(r.status, 301);
+  assert.equal(r.headers.get("location"), "/x?a=1");
+  const m = await get("/x", MEMBER);
+  assert.equal(m.status, 200);
+  assert.ok((await m.text()).includes("메인 봇 만들기"), "첫 회원은 온보딩");
+  const n = await get("/x", null);
+  assert.ok((await n.text()).includes("로그인 화면"));
+  assert.deepEqual(paths, []);
+});

@@ -2,6 +2,9 @@
    PC(861px+): 왼쪽 340px 대화 목록 + 오른쪽 대화(보드 #ans) · 폰: 목록 화면 가득 → 대화 화면 가득 + 왼쪽 위 ‹.
    틀의 아이콘 레일 · 사이드바 · 트리/타임라인 머리 · 서랍 · Primary 판은 숨김(보드가 쓰는 요소라 지우지 않고 가리기만). */
 html.bx-ea{--ea-w:340px;--ea-h:52px;--ea-b:0px}   /* --ea-b = 비밀값 띠 높이(ea-secret.js, 대화가 열렸고 띠가 있을 때만) */
+html.bx-ea{--ea-bub:#f2f2f4;--ea-me:#111113;--ea-me-ink:#ffffff;--ea-glass:rgba(118,118,128,.14);--ea-blue:#0a84ff}
+@media (prefers-color-scheme:dark){html.bx-ea:not([data-theme="light"]){--ea-bub:#232326;--ea-me:#3a3a40;--ea-me-ink:#f5f5f7;--ea-glass:rgba(118,118,128,.3)}}
+html.bx-ea[data-theme="dark"]{--ea-bub:#232326;--ea-me:#3a3a40;--ea-me-ink:#f5f5f7;--ea-glass:rgba(118,118,128,.3)}
 html.bx-ea,html.bx-ea body{height:100%;overflow:hidden;background:var(--surface)}
 html.bx-ea body{margin:0}
 html.bx-ea .bx-sb,html.bx-ea .bx-exp,html.bx-ea .bx-menu,html.bx-ea .bx-seg,html.bx-ea .bx-cap,html.bx-ea .bx-chatmenu,html.bx-ea .bx-dr,html.bx-ea .bx-scrim,html.bx-ea .bx-dock,html.bx-ea #scrim{display:none!important}
@@ -224,28 +227,31 @@ html.bx-ea .bx-ea-l1 > svg:last-child{display:none}   /* › 없음 */
 html.bx-ea .bx-ea-pv{font-size:15px;line-height:1.35;min-height:0;-webkit-line-clamp:1}
 html.bx-ea .bx-ea-status{height:22px;line-height:22px;padding:0 7px;border-radius:7px;font-size:14px;background:color-mix(in srgb,var(--ink) 7%,transparent)}
 html.bx-ea .bx-ea-dot{left:6px;width:8px;height:8px;margin-top:-4px}
-/* 대화 머리 */
-html.bx-ea .bx-ea-h{height:64px;grid-template-columns:44px minmax(0,1fr) 44px;gap:8px;padding:0 18px;border-bottom:0;background:linear-gradient(var(--surface) 70%,transparent)}
-html.bx-ea .bx-ea-back,html.bx-ea .bx-ea-h .bx-ea-ib{width:44px;height:44px;border-radius:50%;background:var(--surface);box-shadow:0 2px 12px var(--shadow)}
-html.bx-ea .bx-ea-who{justify-self:start;height:44px;padding:0 16px 0 8px;border-radius:22px;background:var(--surface);box-shadow:0 2px 12px var(--shadow);gap:8px}
-html.bx-ea .bx-ea-who b{font-size:17px;font-weight:500}
+html.bx-ea{--ea-h:116px}
+html.bx-ea .bx-ea-h{height:var(--ea-h);grid-template-columns:46px minmax(0,1fr) 46px;align-items:start;gap:8px;padding:10px 14px 0;border-bottom:0}
+html.bx-ea .bx-ea-back,html.bx-ea .bx-ea-h .bx-ea-ib{position:relative;width:46px;height:46px;border-radius:50%;box-shadow:none;color:var(--ink)}
+html.bx-ea .bx-ea-bdot{position:absolute;top:2px;right:2px;width:10px;height:10px;border-radius:50%;background:var(--ea-blue);box-shadow:0 0 0 2px var(--surface)}
+html.bx-ea .bx-ea-bdot[hidden]{display:none}
+html.bx-ea .bx-ea-who{justify-self:center;flex-direction:column;align-items:center;gap:0;height:auto;max-width:100%;padding:0;border-radius:0;background:none!important;box-shadow:none;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+html.bx-ea .bx-ea-av{width:76px;height:76px;border-radius:28px;overflow:hidden;box-shadow:0 0 0 1px color-mix(in srgb,var(--ink) 6%,transparent)}
+html.bx-ea .bx-ea-av > *,html.bx-ea .bx-ea-av svg,html.bx-ea .bx-ea-av img{width:76px!important;height:76px!important;display:block;border-radius:28px}
+html.bx-ea .bx-ea-who b{position:relative;z-index:1;max-width:100%;box-sizing:border-box;margin-top:-14px;padding:6px 14px;border-radius:16px;background:var(--ea-glass);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);color:var(--ink);font-size:15px;line-height:20px;font-weight:700}
 html.bx-ea .bx-ea-chev{display:none}
-html.bx-ea{--ea-h:64px}
 /* 대화 = 말풍선(보드 채팅 글 그대로, 모양만) */
 html.bx.bx-ea #ans > .ah{display:none!important}   /* 보드 머리(이름 · 세션 · ⋯) — /es 는 위 알약 머리 하나 */
 html.bx-ea #ans .msg{display:block;padding:3px 18px;background:none!important}
 html.bx-ea #ans .msg > .av,html.bx-ea #ans .msg .mh{display:none!important}
 html.bx-ea #ans .msg .mbody{display:flex;flex-direction:column;align-items:flex-start}
-html.bx-ea #ans .msg .bd{max-width:min(78%,560px);box-sizing:border-box;padding:10px 14px;border-radius:20px;background:color-mix(in srgb,var(--ink) 6%,var(--surface));color:var(--ink);font-size:17px;line-height:1.35}
+html.bx-ea #ans .msg .bd{max-width:min(88%,640px);box-sizing:border-box;margin-top:0;padding:15px 18px;border-radius:26px;background:var(--ea-bub);color:var(--ink);font-size:16px;line-height:24px}
 html.bx-ea #ans .msg.me .mbody{align-items:flex-end}
-html.bx-ea #ans .msg.me .bd{background:var(--ink);color:var(--surface)}
+html.bx-ea #ans .msg.me .bd{padding:11px 16px;border-radius:22px;background:var(--ea-me);color:var(--ea-me-ink)}
+html.bx-ea #ans .msg.me .bd code{background:color-mix(in srgb,var(--ea-me-ink) 16%,transparent);border-color:transparent;color:inherit}
 html.bx-ea #ans .msg.me .bd a{color:inherit}
 html.bx-ea #ans .msg .btns{margin-top:6px}
 html.bx-ea .bx-ea-top .bx-ea-compose{display:grid!important}
 html.bx-ea .bx-ea-row .bx-ea-dot{display:none}   /* Grok 줄엔 점이 없음 — 수는 미리보기 글로 */
-html.bx-ea #ans .bx-ea-tsep{margin:16px 0 8px;text-align:center;font-size:13px;color:var(--muted)}
-html.bx-ea #ans .ccomp .box{position:relative;margin-left:56px;border-radius:22px}
-html.bx-ea #ans .ccomp .crow .plus{position:absolute;left:-56px;bottom:0;width:44px;height:44px;border-radius:50%;background:var(--surface);box-shadow:0 2px 12px var(--shadow);display:grid;place-items:center}
+html.bx-ea #ans .bx-ea-tsep{margin:18px 0 6px;text-align:center;font-size:12.5px;line-height:18px;color:var(--muted)}   /* dot 꼴 날짜 구분: 굵은 요일 + 시각 */
+html.bx-ea #ans .bx-ea-tsep b{font-weight:700}
 html.bx-ea #ans .ccomp .cvoice{display:none}   /* 보이스 모드 = 머리 영상 원 → 전화 */
 html.bx-ea #ans .msg .btns{display:flex;flex-direction:column;align-items:stretch;gap:0;width:min(78%,560px);border-radius:14px;background:var(--surface);box-shadow:0 0 0 1px var(--line);overflow:hidden}
 html.bx-ea #ans .msg .btns > button{display:block;width:100%;margin:0;padding:11px 14px;border:0;border-top:1px solid var(--line);border-radius:0;background:none;color:var(--ink);font-size:16px;text-align:left}
@@ -280,33 +286,27 @@ html.bx-ea #ans .ibfeed .inbr{box-sizing:border-box;width:max-content;max-width:
 html.bx-ea #ans .ibfeed .inbr:hover{background:color-mix(in srgb,var(--ink) 10%,var(--surface))}
 html.bx-ea #ans .ibfeed .inbr.on{background:color-mix(in srgb,var(--accent) 16%,var(--surface))}
 html.bx-ea #ans .ibfeed .inbr > .av,html.bx-ea #ans .ibfeed .inbr > .dav{display:none}
-html.bx-ea .bx-ea-h{background:linear-gradient(color-mix(in srgb,var(--surface) 88%,transparent) 0%,color-mix(in srgb,var(--surface) 55%,transparent) 62%,transparent 100%);pointer-events:none}
+html.bx-ea .bx-ea-h{background:linear-gradient(var(--surface) 0%,color-mix(in srgb,var(--surface) 92%,transparent) 55%,color-mix(in srgb,var(--surface) 60%,transparent) 80%,transparent 100%);pointer-events:none}   /* 머리 아래 = 바탕색으로 흐려짐(위 글이 비치며 사라짐) */
 html.bx-ea .bx-ea-h > *{pointer-events:auto}
-html.bx-ea .bx-ea-back,html.bx-ea .bx-ea-h .bx-ea-ib,html.bx-ea .bx-ea-who{background:color-mix(in srgb,var(--surface) 82%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+html.bx-ea .bx-ea-back,html.bx-ea .bx-ea-h .bx-ea-ib{background:var(--ea-glass);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4)}
 @media (min-width:861px){html.bx.bx-ea #ans.ans{top:var(--ea-b)!important;height:calc(100dvh - var(--ea-b))!important}}
 @media (min-width:861px){html.bx.bx-ea:has(#ans .cth) #ans.ans{top:calc(var(--ea-h) + var(--ea-b))!important;height:calc(100dvh - var(--ea-h) - var(--ea-b))!important}}   /* PC 스레드 판(#ans 안 top:0)이 머리 · 띠 밑에 깔리지 않게 예전 자리로 */
 @media (max-width:860px){html.bx.bx-ea #ans.ans{top:calc(var(--vvt,0px) + var(--ea-b))!important;height:calc(var(--vvh,100dvh) - var(--ea-b))!important}}
 html.bx-ea #ans .cfeed{padding-top:calc(var(--ea-h) + 8px)}
 @media (max-width:860px){html.bx-ea #ans .cfeed{padding-top:calc(var(--ea-h) + env(safe-area-inset-top,0px) + 8px)}}
 html.bx-ea:has(#ans .cth) #ans .cfeed{padding-top:8px}
-html.bx-ea #ans .msg{padding:8px 16px}
-html.bx-ea #ans .msg .bd,html.bx-ea #ans .msg .btns,html.bx-ea #ans .msg .rep{max-width:min(86%,560px)}
-html.bx-ea #ans .msg .btns{width:min(86%,560px)}
-html.bx-ea #ans .ccomp{padding:16px 18px calc(12px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,var(--surface) 42%)}
-html.bx-ea #ans .ccomp .box:not(.ibpx .box){margin-left:52px;min-height:44px;padding:0!important;border-radius:22px!important;background:var(--surface)!important;box-shadow:0 2px 12px var(--shadow)!important}
-html.bx-ea #ans .ccomp .crow{min-height:44px;padding:0 6px 0 0;align-items:center}
-html.bx-ea #ans .ccomp .crow .plus{left:-52px;bottom:0}
-html.bx-ea #ans .ccomp textarea{min-height:36px;padding:6px 0 6px 16px;font-size:17px;line-height:24px}   /* 높이 36 은 보드 JS 가 줄 수만큼 늘림 — 한 줄 = 24 + 위아래 6 */
+html.bx-ea #ans .msg{padding:5px 16px}
+html.bx-ea #ans .msg .bd,html.bx-ea #ans .msg .btns,html.bx-ea #ans .msg .rep{max-width:min(88%,640px)}
+html.bx-ea #ans .msg .btns{width:min(88%,640px)}
+html.bx-ea #ans .ccomp{padding:14px 14px calc(12px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,var(--surface) 46%)}
+html.bx-ea #ans .ccomp .box:not(.ibpx .box){max-width:var(--col);margin:0 auto;min-height:54px;box-sizing:border-box;padding:6px!important;border:0!important;border-radius:27px!important;background:var(--ea-bub)!important;box-shadow:none!important}
+html.bx-ea #ans .ccomp .box:not(.ibpx .box) .crow{grid-template-columns:auto minmax(0,1fr) auto auto;grid-template-areas:"plus ta mic act";row-gap:0;min-height:42px;padding:0;align-items:end}
+html.bx-ea #ans .ccomp .box:not(.ibpx .box) .crow > .plus{position:static;width:42px;height:42px;border-radius:50%;background:none!important;box-shadow:none;color:var(--ink)}
+html.bx-ea #ans .ccomp .box:not(.ibpx .box) textarea{min-height:0;padding:9px 6px;font-size:16px;line-height:24px}   /* 한 줄 = 24 + 위아래 9 = 42 — 보드 grow 가 줄 수만큼 늘림 */
 html.bx-ea #ans .ccomp textarea::placeholder{color:var(--muted)}
-html.bx-ea #ans .ccomp .crow > .vmemo,html.bx-ea #ans .ccomp .crow > .send{flex:none;width:32px!important;height:32px!important;border-radius:50%}
-html.bx-ea #ans .ccomp .crow:has(textarea:not(:placeholder-shown)) > .vmemo{display:none}   /* 글이 있으면 마이크 대신 보내기 하나(Grok · 메시지)*/
-html.bx-ea #ans .ccomp .crow > .vmemo{background:color-mix(in srgb,var(--ink) 7%,transparent);color:var(--muted)}
-html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box){margin-left:0;min-height:0;padding:8px!important;border-radius:28px!important;box-shadow:0 0 0 1px var(--line)!important}
-html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) .crow{min-height:0;padding:0;align-items:end}
-html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) .crow .plus{position:static;left:auto;width:36px;height:36px;background:none!important;box-shadow:none}
-html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) textarea{min-height:0;padding:7px 10px}
-html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) .crow > .vmemo,html.bx-ea:not(.cmp1) #ans .ccomp .box:not(.ibpx .box) .crow > .send{width:36px!important;height:36px!important}
-/* 다크: 흰 알약 대신 한 단 밝은 회색(Grok 다크 꼴) — 바탕(--surface)과 같으면 알약이 묻힘 */
-@media (prefers-color-scheme:dark){html.bx-ea:not([data-theme="light"]) #ans .ccomp .box:not(.ibpx .box),html.bx-ea:not([data-theme="light"]) .bx-ea-h :is(.bx-ea-back,.bx-ea-ib,.bx-ea-who),html.bx-ea:not([data-theme="light"]) #ans .ccomp .crow .plus{background:var(--bubble)!important}}
-html.bx-ea[data-theme="dark"] #ans .ccomp .box:not(.ibpx .box),html.bx-ea[data-theme="dark"] .bx-ea-h :is(.bx-ea-back,.bx-ea-ib,.bx-ea-who),html.bx-ea[data-theme="dark"] #ans .ccomp .crow .plus{background:var(--bubble)!important}
+html.bx-ea #ans .ccomp .box:not(.ibpx .box) .crow > :is(.vmemo,.send){flex:none;width:42px!important;height:42px!important;border-radius:50%}
+html.bx-ea #ans .ccomp .box:not(.ibpx .box) .crow > .send{margin-left:0}
+html.bx-ea #ans .ccomp .box:not(.ibpx .box) .crow > .vmemo:not(.on){background:none;color:var(--ink)}   /* 녹음 중(.on) 빨간 꼴은 voice.css 그대로 */
+html.bx-ea #ans .ccomp .crow:has(textarea:not(:placeholder-shown)) > .vmemo{display:none}   /* 글이 있으면 마이크 대신 보내기 하나 */
+html.bx-ea #ans .ccomp .box:not(.ibpx .box):not(.has):not(.vrecon) .crow > .send{display:none}   /* 빈 칸 = 마이크만 */
 html.bx-ea .bx-ea-rows{padding-top:6px}   /* Grok 목록: 위 줄 아래 첫 줄 가운데까지 51(전 46) */

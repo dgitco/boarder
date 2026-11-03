@@ -96,6 +96,34 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const chats = () => Array.isArray(window.HB_CHATS) ? window.HB_CHATS : [];
   const recent = () => Object.entries(ARTS || {}).map(([id, x]) => ({id, ...x})).sort((a, b) => (b.at || '').localeCompare(a.at || '')).slice(0, 5);
   const sec = (k, name, body) => `<button type="button" class="bx-sec bx-fh" data-fold="${k}" aria-expanded="${!SB.fold[k]}">${name}${I.fold}</button><div class="bx-sbody" data-sec="${k}"${SB.fold[k] ? ' hidden' : ''}>${body}</div>`;
+  const SIDE_DEF = af => ['ib', ...(af ? ['ch', 'nd'] : ['nd', 'ch']), 'rc', 'ss', 'xc'];
+  const sideOrder = af => { const d = SIDE_DEF(af), o = (SB.order || []).filter(k => d.includes(k)); for (const k of d) if (!o.includes(k)) o.splice(Math.min(d.indexOf(k), o.length), 0, k); return o; };
+  const sideSave = o => { SB.order = o; saveSB(); fetch('api/me/side', {method: 'POST', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({side: o})}).catch(() => {}); };
+  fetch('api/me/side', {cache: 'no-store'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.side) && JSON.stringify(j.side) !== JSON.stringify(SB.order || null)){ SB.order = j.side; saveSB(); if (on()) lists(); } }).catch(() => {});   // 다른 기기에서 바꾼 순서
+  // 끌기: 칸 머리(접기 단추)를 누른 채 6px 넘게 움직이면 끌기 — 놓은 자리 위아래로 칸을 옮김. 덜 움직이면 그대로 접기
+  document.addEventListener('pointerdown', e => {
+    const h = e.button === 0 && e.target.closest?.('.bx-sbsc .bx-sec[data-fold]'); if (!h) return;
+    const box = h.closest('.bx-sbsc'), k0 = h.dataset.fold, y0 = e.clientY, x0 = e.clientX; let on = false, mark = null, to = null;
+    const heads = () => [...box.querySelectorAll('.bx-sec[data-fold]')].filter(x => ['ib', 'nd', 'ch', 'rc', 'ss', 'xc'].includes(x.dataset.fold));
+    const move = ev => {
+      if (!on){ if (Math.abs(ev.clientY - y0) + Math.abs(ev.clientX - x0) < 6) return; on = true; h.classList.add('bx-drag'); R.classList.add('bx-sbdrag'); try { h.setPointerCapture(e.pointerId); } catch {} }
+      ev.preventDefault();
+      const hs = heads(); to = hs.length; for (let i = 0; i < hs.length; i++){ const b = hs[i].getBoundingClientRect(); if (ev.clientY < b.top + b.height / 2){ to = i; break; } }
+      mark?.remove(); mark = document.createElement('i'); mark.className = 'bx-dropln';
+      const at = hs[to], sb2 = at ? (at.closest('.bx-sech') || at) : null; if (sb2) sb2.before(mark); else box.append(mark);
+    };
+    const up = () => {
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
+      mark?.remove(); h.classList.remove('bx-drag'); R.classList.remove('bx-sbdrag'); if (!on || to == null) return;
+      const ks = heads().map(x => x.dataset.fold), from = ks.indexOf(k0); if (from < 0) return;
+      const nk = ks.slice(); nk.splice(from, 1); nk.splice(to > from ? to - 1 : to, 0, k0);
+      const af = window.HB_MEMBER?.unit === 'agent', full = sideOrder(af), rest = full.filter(k => !nk.includes(k));   // 비어서 안 보이는 칸은 원래 이웃 뒤에 그대로
+      const out = nk.slice(); for (const k of rest){ const i = full.indexOf(k), prev = full.slice(0, i).reverse().find(x => out.includes(x)); out.splice(prev ? out.indexOf(prev) + 1 : 0, 0, k); }
+      sideSave(out); swallow = true; setTimeout(() => { swallow = false; }, 0); lists();
+    };
+    addEventListener('pointermove', move, {passive: false}); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+  }, true);
+  let swallow = false; document.addEventListener('click', e => { if (swallow && e.target.closest?.('.bx-sec[data-fold]')){ e.stopPropagation(); e.preventDefault(); swallow = false; } }, true);   // 끌고 놓은 누름은 접기가 아님
   function lists(){
     const st = window.HBInbox?.state || {}, c = window.HBInbox?.counts?.() || {};
     const by = k => (st.unread || []).some(x => x.chan === k);
@@ -110,7 +138,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas');
     const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
-    const body = '<div class="bx-sbsc">' + head + sec('ib', '모아 보기', ib) + (agentsFirst ? ags + chs : chs + ags) + (rc ? sec('rc', '최근 캔버스', rc) : '') + ss + '</div>';
+    const part = {ib: sec('ib', '모아 보기', ib), nd: chs, ch: ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
+    const body = '<div class="bx-sbsc">' + head + sideOrder(agentsFirst).map(k => part[k] || '').join('') + '</div>';
     const foot = `<div class="bx-foot"><button type="button" class="bx-me" data-me aria-haspopup="true" aria-expanded="false">${meAv()}<span>${esc(window.HB_MEMBER?.name || ME()?.name || 'Owner')}</span></button></div>`;
     const fb = `<button type="button" class="bx-colb" data-go="find" aria-label="찾기" title="찾기 ⌘K">${I.search}</button>`;
     const keep = [sb, dr].map(x => x.querySelector('.bx-sbsc')?.scrollTop || 0);
