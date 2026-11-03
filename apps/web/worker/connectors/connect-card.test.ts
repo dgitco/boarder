@@ -27,7 +27,7 @@ function fakeEnv() {
 }
 const A = "a@example.com";
 const conn = (f: ReturnType<typeof fakeEnv>, owner = A, pushed: unknown[] = []) => ({ env: f.env, owner, card: (c: unknown) => { pushed.push(c); } });
-const cards = (f: ReturnType<typeof fakeEnv>) => f.db.prepare("SELECT id, owner, win, kind, question, choices, body, state, done FROM board_card ORDER BY id").all() as any[];
+const cards = (f: ReturnType<typeof fakeEnv>) => f.db.prepare("SELECT id, owner, win, kind, question, choices, body, state, done FROM board_card ORDER BY rowid").all() as any[];
 const GONE = new Error("없는 도구: linear__create_issue — 연결이 끊겼거나 꺼졌어요(boarder_search 로 찾아요)");
 
 test("연결이 아예 없으면 카드 한 장 · 알림 한 번 · 같은 서비스 다시 실패해도 새 카드 없음(안내는 계속)", async () => {
