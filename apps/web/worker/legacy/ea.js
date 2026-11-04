@@ -337,7 +337,16 @@
   new MutationObserver(() => { try { draw(); } catch {} }).observe(ans, {attributes: true, attributeFilter: ['hidden', 'class'], childList: true});   // 열린 채로 다른 대화로 바뀜(판을 새로 그림)도
   setInterval(() => { try { draw(); } catch {} }, 3000);
   PC.addEventListener('change', () => draw(true));
-  try { window.HBInbox?.on?.(() => { try { draw(); } catch {} }); } catch {}   // 읽지 않음 바뀜(shell.js lists 와 같은 알림)
+  try { window.HBInbox?.on?.(() => { try { draw(); } catch {} }); } catch {}
+  { const S = (p, fill) => `<svg viewBox="0 0 24 24" width="24" height="24" fill="${fill ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+    const nav = mk('nav', 'bx-ea-nav'); nav.setAttribute('aria-label', '아래 내비');
+    nav.innerHTML = [['/feed', '피드', S('<path d="M3 2h18"/><rect width="18" height="12" x="3" y="6" rx="2"/><path d="M3 22h18"/>')],
+      ['', '에이전트 DM', S('<path d="M4.3 4.9c-.3-.95.7-1.8 1.6-1.35l14.1 7.2c.95.5.95 1.85 0 2.35L5.9 20.3c-.9.45-1.9-.4-1.6-1.35L6.5 12z"/>', 1)],
+      ['/feed?tab=nodes', '노드', S('<rect x="15.6" y="15.6" width="5.6" height="5.6" rx="1.2"/><rect x="2.8" y="15.6" width="5.6" height="5.6" rx="1.2"/><rect x="9.2" y="2.8" width="5.6" height="5.6" rx="1.2"/><path d="M5.6 15.6v-2.4a1.2 1.2 0 0 1 1.2-1.2h10.4a1.2 1.2 0 0 1 1.2 1.2v2.4M12 12V8.4"/>')],
+      ['/feed?tab=save', '저장됨', S('<path d="M7 3.6h10a1.6 1.6 0 0 1 1.6 1.6v15.2l-6.6-4.3-6.6 4.3V5.2A1.6 1.6 0 0 1 7 3.6z"/>')],
+      ['/feed?tab=me', '프로필', S('<circle cx="12" cy="7.9" r="3.7"/><path d="M4.7 20.6c.8-3.9 3.8-6.1 7.3-6.1s6.5 2.2 7.3 6.1"/>')]]
+      .map(([h, l, i]) => h ? `<a href="${h}" aria-label="${l}">${i}</a>` : `<span class="on" aria-current="page" aria-label="${l}">${i}</span>`).join('');
+    document.body.append(nav); }
   addEventListener('bx-ea-lock', () => { try { draw(); } catch {} });
   draw(true);
   // /ea: 퍼스널 채널은 보드가 처음에 안 불러 비서 줄 미리보기 · 시각이 빔 — 한 번 불러 둠(/es 의 Primary 는 보드가 늘 불러 둠)

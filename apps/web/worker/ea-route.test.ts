@@ -207,7 +207,7 @@ test("보더 화면 경로: /nodes · /chat/<채널>/<스레드> · /canvas/<id>
 
 test("주인 /x(피드 화면): / 와 같은 몸통에 BX_X · x.css · x.js(틀 뒤), BX_EA · ea 덩어리 · 경로 모드 없음, / 에는 BX_X 없음", async () => {
   const { paths, get } = setup();
-  const r = await get("/x");
+  const r = await get("/feed");
   assert.equal(r.status, 200);
   assert.deepEqual(paths, ["/"], "다리에 / 로");
   const html = await r.text();
@@ -223,15 +223,16 @@ test("주인 /x(피드 화면): / 와 같은 몸통에 BX_X · x.css · x.js(틀
   assert.ok((await (await get(`/bxs/${css(html).at(-1)}.css`)).text()).includes("html.bx-x"), "마지막 css = x.css");
 });
 
-test("/x/ → 301 /x, 회원 /x → 자기 화면(다리에 안 감), 로그인 안 함 → 로그인 화면", async () => {
+test("/feed/ → 301 /feed, 옛 /x → 301 /feed, 회원 /feed → 자기 화면(다리에 안 감), 로그인 안 함 → 로그인 화면", async () => {
   const { paths, get } = setup();
-  const r = await get("/x/?a=1", null);
+  const r = await get("/feed/?a=1", null);
   assert.equal(r.status, 301);
-  assert.equal(r.headers.get("location"), "/x?a=1");
-  const m = await get("/x", MEMBER);
+  assert.equal(r.headers.get("location"), "/feed?a=1");
+  for (const old of ["/x?a=1", "/x/?a=1"]) { const o = await get(old, null); assert.equal(o.status, 301); assert.equal(o.headers.get("location"), "/feed?a=1"); }
+  const m = await get("/feed", MEMBER);
   assert.equal(m.status, 200);
   assert.ok((await m.text()).includes("메인 봇 만들기"), "첫 회원은 온보딩");
-  const n = await get("/x", null);
+  const n = await get("/feed", null);
   assert.ok((await n.text()).includes("로그인 화면"));
   assert.deepEqual(paths, []);
 });

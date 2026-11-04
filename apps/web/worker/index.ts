@@ -2053,7 +2053,8 @@ app.all("*", async c => {
     } catch { return c.json({ error: "일시적인 오류가 발생했어요" }, 503); }
   }
   // 비서(/es): 보드 스크립트가 상대 주소(api/… · art/…)를 써서 /ea/ 면 깨짐 — 끝 「/」 없는 주소로
-  if ((url.pathname === "/es/" || url.pathname === "/ea/" || url.pathname === "/x/") && (c.req.method === "GET" || c.req.method === "HEAD")) return c.redirect(url.pathname.slice(0, -1) + url.search, 301);
+  if ((url.pathname === "/x" || url.pathname === "/x/") && (c.req.method === "GET" || c.req.method === "HEAD")) return c.redirect("/feed" + url.search, 301);
+  if ((url.pathname === "/es/" || url.pathname === "/ea/" || url.pathname === "/feed/") && (c.req.method === "GET" || c.req.method === "HEAD")) return c.redirect(url.pathname.slice(0, -1) + url.search, 301);
   const s = await signedIn(c);
   if (!s) {
     if (url.pathname.startsWith("/api/")) return c.json({ error: "로그인" }, 401);
@@ -2071,10 +2072,10 @@ app.all("*", async c => {
   if (!isOwner(c.env, s.user.email)) {
     if (/^\/(assets|icons)\//.test(url.pathname)) return c.env.ASSETS.fetch(c.req.raw);
     if (url.pathname === "/ea" && c.req.method === "GET") return c.redirect("/es" + url.search, 302);
-    if ((url.pathname === "/" || url.pathname === "/es" || url.pathname === "/x") && c.req.method === "GET") {
+    if ((url.pathname === "/" || url.pathname === "/es" || url.pathname === "/feed") && c.req.method === "GET") {
       const bot = await memberBot(c.env, s.user.email.toLowerCase()), js = { blob: blobJs, pick: botPickJs };
       if (!bot) return c.html(memberOnboard(s.user.email, js), 200, { ...NOFRAME, "cache-control": "no-store" });
-      const pg = await memberPage(c, s.user.email.toLowerCase(), (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>().catch(() => null))?.name, bot, url.pathname === "/x" ? "x" : url.pathname === "/es");
+      const pg = await memberPage(c, s.user.email.toLowerCase(), (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>().catch(() => null))?.name, bot, url.pathname === "/feed" ? "x" : url.pathname === "/es");
       return pg ?? c.html("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><p style='font:15px system-ui;padding:40px'>일시적인 오류가 발생했어요</p>", 503, { ...NOFRAME, "cache-control": "no-store", "retry-after": "5" });
     }
     {
@@ -2132,7 +2133,7 @@ app.all("*", async c => {
     return c.json({ error: "no" }, 403);
   }
   // 비서(/es, 주인): / 와 같은 길(첫 화면 · 틀 · 캐시 지우기)로 — 받는 path 만 「/」, 틀에 BX_EA 를 더 얹음
-  const ea = (url.pathname === "/es" || url.pathname === "/ea" || url.pathname === "/x") && (c.req.method === "GET" || c.req.method === "HEAD") ? (url.pathname === "/ea" ? "personal" as const : url.pathname === "/x" ? "x" as const : true) : false;   // /x = 피드 화면   // /ea = 퍼스널 비서
+  const ea = (url.pathname === "/es" || url.pathname === "/ea" || url.pathname === "/feed") && (c.req.method === "GET" || c.req.method === "HEAD") ? (url.pathname === "/ea" ? "personal" as const : url.pathname === "/feed" ? "x" as const : true) : false;   // /x = 피드 화면   // /ea = 퍼스널 비서
   if (ea) url.pathname = "/";
   if (url.pathname === "/api/events" || url.pathname === "/api/push/stream") return c.json({ error: "다리 밖" }, 503);
   if (chOf(c) === "owner" && (url.pathname.startsWith("/api/push/") || url.pathname === "/sw.js") && await ledger.f7On(c.env.DB, "write_push")) return pushRoute(c, url);

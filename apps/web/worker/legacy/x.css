@@ -1,8 +1,10 @@
 html.bx-x{--xbg:#fff;--xink:#000;--xname:#000;--xmut:#999;--xico:#424242;--xline:#dadada;--xthr:#e5e5e5;--xsoft:#424242;--xsunk:#f5f5f5;--xpill:#f0f0f0;--xlink:#0095f6;--xdot:#0a84ff;--xred:#ff3040;--xtoast:#1e1e1e;--xf:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Geist","Noto Sans KR",system-ui,sans-serif}
 @media (prefers-color-scheme:dark){html.bx-x:not([data-theme="light"]){--xbg:#101010;--xink:#f3f5f7;--xname:#f3f5f7;--xmut:#777;--xico:#ccc;--xline:#313232;--xthr:#323638;--xsoft:#ccc;--xsunk:#1e1e1e;--xpill:#292929;--xlink:#49a3f8;--xtoast:#2f2f2f}}
 html.bx-x[data-theme="dark"]{--xbg:#101010;--xink:#f3f5f7;--xname:#f3f5f7;--xmut:#777;--xico:#ccc;--xline:#313232;--xthr:#323638;--xsoft:#ccc;--xsunk:#1e1e1e;--xpill:#292929;--xlink:#49a3f8;--xtoast:#2f2f2f}
-html.bx-x body > *:not(#bxx):not(#toast):not(#mview):not(.sscrim){display:none!important}
-html.bx-x body{background:var(--xbg);overflow:hidden}
+html.bx-x:not(.xnodes) body > *:not(#bxx):not(#toast):not(#mview):not(.sscrim):not(.bx-sb):not(.bx-dr):not(.bx-scrim):not(.bx-dd):not(.bx-find):not(.menpop):not(#hbv):not(.vtabnote):not(.bx-mpop):not(#pushp):not(#pushsheet):not(.bx-toast){display:none!important}
+html.bx-x:not(.xnodes) body{background:var(--xbg);overflow:hidden}
+html:not(.bx-x) #bxx{display:none}
+@media (max-width:860px){html.bx-x:not(.xnodes) .bx-sb,html.bx-x:not(.xnodes) .bx-dd{display:none!important}}
 /* 보드 안내 글: 아래 막대를 가리지 않게 위로, 폰에서도 글 길이만큼 가운데 알약(.xtoast 와 같은 꼴) */
 html.bx-x #toast:not(.err){bottom:calc(96px + env(safe-area-inset-bottom,0px))!important;left:0;right:0;width:max-content;max-width:calc(100% - 32px);background:var(--xtoast);color:#fff;border-radius:14px;padding:10px 14px;font-size:13.5px}
 html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!important}
@@ -12,6 +14,12 @@ html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 #bxx .xv[hidden]{display:none}
 #bxx .xhd{position:sticky;top:0;z-index:3;margin:0;box-sizing:border-box;flex-wrap:nowrap;height:calc(52px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 16px 0;display:flex;align-items:center;justify-content:center;gap:10px;background:var(--xbg);border-bottom:.5px solid transparent;transition:border-color .15s}
 #bxx .xv.xs .xhd{border-bottom-color:var(--xline)}   /* 줄은 내렸을 때만 */
+#bxx .xdrb{position:absolute;left:8px;bottom:6px;width:40px;height:40px;display:grid;place-items:center;color:var(--xink);background:none;border:0;padding:0;cursor:pointer}
+#bxx .xfnd{position:absolute;right:8px;bottom:6px;width:40px;height:40px;display:grid;place-items:center;color:var(--xink);background:none;border:0;padding:0;cursor:pointer}
+@media (min-width:861px){#bxx .xdrb{display:none}}
+#bxx .xpri{display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:calc(100% - 112px);background:none;border:0;padding:0;color:var(--xink);font:inherit;cursor:pointer}
+#bxx .xpa{width:30px;height:30px;flex:none;display:block;border-radius:50%;overflow:hidden}#bxx .xpa > *,#bxx .xpa svg,#bxx .xpa img{width:100%!important;height:100%!important;display:block}
+#bxx .xpri b{font-size:17px!important;font-weight:600;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #bxx .xhd b{font-size:19px;font-weight:700;letter-spacing:-.02em}
 #bxx .xhd.xbk{flex-direction:column;gap:0}#bxx .xhd.xbk b{font-size:16px;font-weight:600;letter-spacing:0;line-height:20px}#bxx .xhd.xbk small{font-size:12.5px;line-height:15px;color:var(--xmut)}
 #bxx .xhd.xbig{justify-content:flex-start;height:calc(60px + env(safe-area-inset-top,0px));padding-left:16px}#bxx .xhd.xbig b{font-size:30px;line-height:36px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -24,13 +32,11 @@ html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 #bxx .xme{font-size:15px;font-weight:600;color:var(--xname);flex:none;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #bxx .xsel{display:inline-flex;align-items:baseline;gap:3px;min-width:0;border:0;background:none;color:var(--xname);font:inherit;font-size:15px;font-weight:500;padding:0;cursor:pointer;white-space:nowrap}
 #bxx .xsel::before,#bxx .xtp::before{content:'›';color:var(--xmut);font-weight:400;margin:0 5px 0 4px}
-#bxx .xcmp .xcb{display:none}#bxx .xcmp.open .xcb{display:flex}   /* 도구 줄은 글 칸을 눌렀을 때만 */
-#bxx textarea{width:100%;border:0;outline:0;resize:none;background:none;color:var(--xink);font:inherit;font-size:15px;line-height:22px;padding:1px 0 0;min-height:23px;display:block}
-#bxx textarea::placeholder{color:var(--xmut)}
-#bxx .xcb{display:flex;align-items:center;gap:12px;margin-top:8px;color:var(--xmut)}
-#bxx .xib{display:grid;place-items:center;cursor:pointer;color:var(--xmut)}
-#bxx .xatt{font-size:12.5px}
-#bxx .xsend{margin-left:auto;height:32px;padding:0 14px;border-radius:999px;border:0;background:var(--xink);color:var(--xbg);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+/* 입력칸 = 보드 inputBox 그대로(채팅과 같은 꼴), 색만 이 화면 바탕에 맞춤 */
+#bxx .xc > .ccomp{margin-top:8px}
+#bxx .ccomp .box,#bxx .ccomp .box:focus-within{background:var(--xsunk);border:0;box-shadow:none}
+#bxx .ccomp textarea{color:var(--xink);font-size:15px}
+#bxx .ccomp textarea::placeholder{color:var(--xmut)}
 #bxx .xselpop{position:absolute;left:60px;top:34px;z-index:9;width:min(300px,80vw);background:var(--xbg);border:1px solid var(--xline);border-radius:14px;box-shadow:0 12px 36px rgba(0,0,0,.18);padding:6px 0}
 #bxx .xselpop h5{margin:8px 14px 4px;font-size:12px;color:var(--xmut);font-weight:600}
 #bxx .xselpop button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 14px;border:0;background:none;color:var(--xink);font:inherit;font-size:15px;text-align:left;cursor:pointer}
@@ -48,6 +54,11 @@ html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 #bxx .xp.xr > .xav{width:28px;height:28px}
 #bxx .xp.xr > .xc{display:contents}#bxx .xp.xr > .xc > *{grid-column:1/-1}#bxx .xp.xr > .xc > .xh{grid-column:2;grid-row:1;align-self:center}
 #bxx .xp.xr .xbd{margin-top:4px}
+/* 댓글 둘(물음 + 마지막 답): 줄기가 첫 댓글을 지나 다음 댓글로. 마지막 답은 결론 한 단락, 넘치면 세 줄(나머지는 눌러서 스레드) */
+#bxx .xp.xpend{opacity:.6}   /* 보내는 중 */
+#bxx .xp.xr2::before{content:'';position:absolute;left:29px;top:0;bottom:0;width:2px;background:var(--xthr)}
+#bxx .xbrief{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+#bxx .xbrief p{margin:0}
 /* 스레드 뿌리: 사진 옆에 이름, 글은 왼쪽 끝(12)부터 */
 #bxx .xp.xm{grid-template-columns:42px minmax(0,1fr);gap:0 12px;padding:6px 14px 10px 12px}
 #bxx .xp.xm > .xc{display:contents}#bxx .xp.xm > .xc > *{grid-column:1/-1}#bxx .xp.xm > .xc > .xh{grid-column:2;grid-row:1;align-self:center}
@@ -87,10 +98,7 @@ html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 #bxx .xft{font-size:13px;color:var(--xmut);margin-top:8px}#bxx .xft b{color:var(--xsoft);font-weight:600}
 /* 스레드 답 칸 */
 #bxx .xv[data-v="thread"]{padding-bottom:calc(36px + var(--xrh,48px) + max(env(safe-area-inset-bottom,0px),var(--xkb,0px)))}
-#bxx .xrep{position:fixed;left:0;right:0;margin:0 auto;width:calc(100% - 20px);max-width:620px;box-sizing:border-box;bottom:calc(10px + max(env(safe-area-inset-bottom,0px),var(--xkb,0px)));z-index:6;display:flex;align-items:center;gap:10px;min-height:48px;border-radius:24px;background:var(--xpill);padding:6px 8px 6px 12px}
-#bxx .xrep .xav{width:26px;height:26px}
-#bxx .xrep textarea{flex:1;min-width:0;min-height:22px;max-height:220px;padding:0}
-#bxx .xrep .xsend{display:none}#bxx .xrep.has .xsend{display:block}
+#bxx .xrep{position:fixed;left:0;right:0;margin:0 auto;width:calc(100% - 20px);max-width:620px;box-sizing:border-box;bottom:calc(10px + max(env(safe-area-inset-bottom,0px),var(--xkb,0px)));z-index:6}
 #bxx.xnonav .xglass,#bxx.xnonav .xfab{display:none}   /* 스레드 화면엔 막대 없이 답 칸만 */
 /* 저장됨 · 프로필 */
 #bxx .xrow{display:flex;flex-direction:column;gap:2px;padding:12px 16px;border-bottom:.5px solid var(--xline);cursor:pointer;font-size:14px}
@@ -122,3 +130,17 @@ html.bx-x[data-theme="dark"] #bxx .xt.on{background:rgba(0,0,0,.55)}
 #bxx .xtoast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:7;display:flex;gap:14px;align-items:center;background:var(--xtoast);color:#fff;border-radius:14px;padding:10px 14px;font-size:13.5px;white-space:nowrap}
 #bxx .xtoast[hidden]{display:none}
 #bxx .xtoast button{border:0;background:none;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+html.xnodes #bxx{position:static;background:none}
+html.xnodes #bxx .xv,html.xnodes #bxx .xfab{display:none}
+html.xnodes #bxx .xglass{z-index:40}
+html.xnodes:has(#ans:not([hidden])) #bxx .xglass,html.xnodes:has(#mview:not([hidden])) #bxx .xglass,html.xnodes:has(.bx-dr.open) #bxx .xglass{display:none}
+/* 데스크톱: 왼쪽 사이드바(264) + 본 칸 피드. 탭은 사이드바가 맡으니 아래 막대 · + 단추 없음 */
+@media (min-width:861px){
+  html.bx-x #bxx{left:264px}
+  html.bx-x #bxx .xglass,html.bx-x #bxx .xfab{display:none}
+  html.bx-x #bxx .xv:not([data-v="thread"]){padding-bottom:40px}
+  html.bx-x #bxx .xrep{left:264px}
+  html.bx-x #bxx .xtoast{left:calc(50% + 132px);bottom:32px}
+  html.bx-x.bx-col .bx-sb{display:flex}
+  html.bx-x .bx-sb [data-sbcol],html.bx-x .bx-exp{display:none}
+}

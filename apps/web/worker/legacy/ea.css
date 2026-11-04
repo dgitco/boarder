@@ -182,6 +182,18 @@ html.bx-ea .bx-es-spin{display:block;width:18px;height:18px;box-sizing:border-bo
 @keyframes bx-es-r{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){html.bx-ea .bx-es-spin{animation-duration:2s}}
 
+/* 폰 아래 막대: /x 유리 막대와 같은 치수 · 빛(x.css .xglass). 대화 · 시트가 열리면 내림 */
+.bx-ea-nav{display:none}
+@media (max-width:860px){
+  html.bx-ea .bx-ea-nav{position:fixed;left:0;right:0;margin:0 auto;width:calc(100% - 42px);max-width:440px;box-sizing:border-box;bottom:max(21px,env(safe-area-inset-bottom,0px));z-index:17;height:62px;padding:4px;border-radius:31px;display:grid;grid-template-columns:repeat(5,1fr);align-items:center;isolation:isolate;color:var(--ink);box-shadow:inset 0 .5px 0 rgba(255,255,255,.9),0 0 0 .5px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.12)}
+  html.bx-ea .bx-ea-nav::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1;background:rgba(255,255,255,.66);-webkit-backdrop-filter:blur(9px) saturate(170%);backdrop-filter:blur(9px) saturate(170%)}
+  html.bx-ea .bx-ea-nav > *{height:54px;border-radius:27px;display:grid;place-items:center;color:inherit;text-decoration:none;-webkit-tap-highlight-color:transparent}
+  html.bx-ea .bx-ea-nav > .on{background:rgba(0,0,0,.07)}
+  html.bx-ea.bx-ea-open .bx-ea-nav,html.bx-ea:has(.bx-es-scrim:not([hidden])) .bx-ea-nav{display:none}
+  html.bx-ea .bx-ea-sc{padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))}
+}
+@media (max-width:860px) and (prefers-color-scheme:dark){html.bx-ea:not([data-theme="light"]) .bx-ea-nav{box-shadow:inset 0 .5px 0 rgba(255,255,255,.4),inset 0 0 0 .5px rgba(255,255,255,.1),0 8px 24px rgba(0,0,0,.4)}html.bx-ea:not([data-theme="light"]) .bx-ea-nav::before{background:rgba(60,60,60,.68)}html.bx-ea:not([data-theme="light"]) .bx-ea-nav > .on{background:rgba(0,0,0,.55)}}
+@media (max-width:860px){html.bx-ea[data-theme="dark"] .bx-ea-nav{box-shadow:inset 0 .5px 0 rgba(255,255,255,.4),inset 0 0 0 .5px rgba(255,255,255,.1),0 8px 24px rgba(0,0,0,.4)}html.bx-ea[data-theme="dark"] .bx-ea-nav::before{background:rgba(60,60,60,.68)}html.bx-ea[data-theme="dark"] .bx-ea-nav > .on{background:rgba(0,0,0,.55)}}
 /* 새 대화: 비밀값 시트 틀을 공유한다. */
 html.bx-ea .bx-en-sheet{overflow:hidden;display:flex;flex-direction:column}
 html.bx-ea .bx-en-sheet .bx-es-b{min-height:0;overflow:hidden}

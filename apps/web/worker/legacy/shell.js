@@ -16,6 +16,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     chat: lu('message-square'),
     node: lu('network'),
     hash: lu('hash'),
+    feed: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2h18"/><rect width="18" height="12" x="3" y="6" rx="2"/><path d="M3 22h18"/></svg>`,
     canvas: lu('image'),
     unread: lu('message-square-dot'),
     saved: lu('bookmark'),
@@ -141,7 +142,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       + `<div class="bx-sbody" data-sec="ss"${SB.fold.ss ? ' hidden' : ''}>${chats().map(c => `<button type="button" class="bx-it bx-chat" data-chat="${esc(c.sid)}" title="${esc(c.title)}"${qa === 'q:' + c.sid ? ' aria-current="page"' : ''}><span>${esc(c.title)}</span></button>`).join('')}</div>`;
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const pins = (SB.pins || []).map(p => `<button type="button" class="bx-it" data-sidepin="${esc(p.id)}" title="${esc(p.title || p.id)}">${I.canvas}<span>${esc(p.title || p.id)}</span></button>`).join('');
-    const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas') + pins;
+    const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas') + it('feed', I.feed, '피드', '', top === 'feed') + pins;
     const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
     const part = {ib: sec('ib', '모아 보기', ib), nd: chs, ch: ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
     const body = '<div class="bx-sbsc">' + head + sideOrder(agentsFirst).map(k => part[k] || '').join('') + '</div>';
@@ -199,7 +200,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     }
     if (typeof window.HBOpenCard === 'function') window.HBOpenCard(th, {c: CH.includes(ch) ? ch : 'primary', t: th});
   }, true);
-  const active = () => S.ib || chatMode() ? 'chat' : current === 'arts' ? 'canvas' : 'node';
+  const active = () => R.classList.contains('bx-x') && !R.classList.contains('xnodes') ? 'feed' : S.ib || chatMode() ? 'chat' : current === 'arts' ? 'canvas' : 'node';
+  window.addEventListener('hbside', () => sync());
   function sync(){
     if (!on()) return;
     const act = active();
@@ -249,6 +251,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   // ── 누르기
   function go(g){
     closeDr(); S.ret = null;
+    if (g === 'feed') return window.BXFeed ? window.BXFeed.on() : void (location.href = '/feed');   // 피드 = /feed(폰 · PC 같은 화면)
     if (g === 'find') return findOpen();
     if (g.startsWith('chan:')) return openChan(g.slice(5));
     if (g.startsWith('node:')){ ibClose(); return openAns({p: g.slice(5), page: true}); }   // 내 노드 → 본 칸 노드 화면
