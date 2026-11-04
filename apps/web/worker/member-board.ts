@@ -6,6 +6,7 @@ import { primaryPick, notChat, type Item } from "./importer/group";
 import { prefsOf } from "./node-prefs";
 import { history, topics, promiseRows } from "./member-views";
 import { splitMarks, splitMove } from "./member-split";
+import { seatsFromData } from "./role-seat";
 import { frontDoorNode, readFrontDoor } from "./front-door";
 
 type R = Record<string, any>;
@@ -146,7 +147,8 @@ export async function load(db: D1Database, me: string) {
   const itemOfWin = new Map<string, string>(); for (const i of items.values()) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(i.win, i.key);
   const nodeOfItem = new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)]));
   const engMain = (ew.results as R[]).some(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state));
-  const prefs = prefsOf((ns.results[0] as R | undefined)?.data), fd = prefs.front_door, tcOn = prefs.task_channels;   // 앞단 · 채널 = 태스크는 켠 사람만(node-prefs.ts)
+  const prefs = prefsOf((ns.results[0] as R | undefined)?.data), fd = prefs.front_door, tcOn = prefs.task_channels;
+  const roleNames = seatsFromData((ns.results[0] as R | undefined)?.data).filter(x => !x.primary).map(x => x.name);   // 역할 자리표(role-seat.ts)의 부서장 이름 — 있으면 왼쪽 에이전트는 메인 봇 + 이 역할들만   // 앞단 · 채널 = 태스크는 켠 사람만(node-prefs.ts)
   const pp = primaryPick([...items.values()].filter(i => !i.rv) as unknown as Item[], prefs.primary_item, engMain);
   const primary = pp.primary as unknown as R | null;
   const primKeys = new Set<string>(primary ? [String(primary.key), ...(primary.session ? [String(primary.session)] : [])] : []);
@@ -172,23 +174,26 @@ export async function load(db: D1Database, me: string) {
   const resolveNode = (name: string, id = "") => aliasNode(name, id) || (id ? shown.find(n => n.id === id) : undefined) || shown.find(n => n.name === name || n.pane === name);
   const mains = new Map((nd.results as R[]).map(n => [String(n.id), json<{ main?: string }>(n.counts, {}).main || ""]));
   for (const n of nodes) { const m = mains.get(n.id); if (m) n.windows.sort((a, b) => Number(b.key === m) - Number(a.key === m)); }
-  const nodeOfWin = (win: string) => { if (isOriginalPrimWin(win)) return null; const k = keyOfWin.get(win) || win, item = itemOfWin.get(k) || `win:${k}`; return byId.get(nodeOfItem.get(item) || (tcOn ? nodeOfItem.get(`window:${k}`) : undefined) || "") || aliasNode(win) || frontNodes.find(n => n.name === win) || null; };
+  const pastOf = new Map<string, string>(); for (const r of nd.results as R[]) { const ps = json<{ past?: unknown }>(r.counts, {}).past; for (const w of Array.isArray(ps) ? ps : []) if (typeof w === "string") pastOf.set(w, String(r.id)); }
+  const nodeOfWin = (win: string) => { if (isOriginalPrimWin(win)) return null; const k = keyOfWin.get(win) || win, item = itemOfWin.get(k) || `win:${k}`; return byId.get(nodeOfItem.get(item) || (tcOn ? nodeOfItem.get(`window:${k}`) : undefined) || pastOf.get(k) || pastOf.get(win) || "") || aliasNode(win) || frontNodes.find(n => n.name === win) || null; };
   // 앞단은 한 창이라고 추정하지 않음 — 고른 노드들을 Primary의 별칭으로 읽되 원본/전송 창은 보존.
   const frontWins = new Set<string>();
+  const frontFrom = new Map<string, string>();
   for (const n of frontNodes) {
-    frontWins.add(n.name); for (const w of n.wins) frontWins.add(w);
+    const ws = new Set<string>([n.name, ...n.wins]);
     for (const [key, id] of nodeOfItem) if (id === n.id) {
-      const item = items.get(key); if (item?.win) frontWins.add(String(item.win));
-      else if (/^(?:window|win):/.test(key)) frontWins.add(key.replace(/^(?:window|win):/, ""));
+      const item = items.get(key); if (item?.win) ws.add(String(item.win));
+      else if (/^(?:window|win):/.test(key)) ws.add(key.replace(/^(?:window|win):/, ""));
     }
-    for (const [name, win] of keyOfWin) if (frontWins.has(win)) frontWins.add(name);
+    for (const [name, win] of keyOfWin) if (ws.has(win)) ws.add(name);
+    for (const w of ws) { frontWins.add(w); if (!frontFrom.has(w)) frontFrom.set(w, n.name); }
   }
-  const front = fd && frontNodes.length ? { name: fd.name, pane: PRIMARY, aliases: [fd.name, ...fd.aliases, ...frontNodes.flatMap(n => [n.name, n.pane])], wins: frontWins, nodes: frontNodes } : null;
+  const front = fd && frontNodes.length ? { name: fd.name, pane: PRIMARY, aliases: [fd.name, ...fd.aliases, ...frontNodes.flatMap(n => [n.name, n.pane])], wins: frontWins, nodes: frontNodes, from: (win: string) => frontFrom.has(win) ? "옛 " + frontFrom.get(win) : null } : null;
   const isPrimWin = (win: string) => isOriginalPrimWin(win) || frontWins.has(win) || frontNodes.includes(nodeOfWin(win)!);
   const mainWin = pp.explicit ? null : (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
   const engineNodes = (ew.results as R[]).filter(w => w.kind === "role" && !nodes.some(n => n.name === w.name || n.wins.has(w.name)));
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
-  return { resolveNode, front, frontDoor: fd, taskChannels: tcOn, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
+  return { resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
     parents: parentsOf((ns.results[0] as R | undefined)?.data), faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
@@ -217,6 +222,18 @@ async function withReacts(db: D1Database, me: string, out: R[]) {
 
 const STATE: Record<string, string> = { working: "일하는 중", busy: "일하는 중", starting: "일하는 중", opening: "일하는 중", background: "뒤 작업 중" };
 
+const TASK_KO: Record<string, string> = { working: "진행", blocked: "막힘", waiting: "기다림", done: "완료", cancelled: "취소" };
+export function taskSide(nodes: Pick<Node, "id" | "pane" | "name" | "archived_at" | "state">[], tasks: Map<string, R>, lastAt: Map<string, number>, nowMin: number) {
+  const out = nodes.flatMap(n => {
+    const t = tasks.get(n.id); if (!t || !t.issue) return [];
+    const done = t.state === "done" || t.state === "cancelled" || !!n.archived_at;
+    const at = lastAt.get(n.id) || 0;
+    const no = String(t.issue).replace(/^.*#/, ""), nm = String(n.name), pre = "#" + no;
+    return [{ pane: n.pane, issue: String(t.issue), name: nm.startsWith(pre) ? nm.slice(pre.length).replace(/^\s*[·:-]?\s*/, "") || nm : nm, state: String(t.state), state_ko: TASK_KO[String(t.state)] || "", done, at, ago: Math.max(0, Math.round((nowMin - at) / 60_000)) }];
+  });
+  return out.sort((a, b) => Number(a.done) - Number(b.done) || b.at - a.at || (a.pane < b.pane ? -1 : 1)).map(({ at: _at, ...x }) => x);
+}
+
 const PSTATE: Record<string, string> = { working: "일하는 중", question: "질문" };
 export async function data(db: D1Database, me: string, bot: { name?: string } | null, pre?: Awaited<ReturnType<typeof load>> | null) {
   const L = pre || await load(db, me), now = Date.now(), nowMin = Math.floor(now / 60_000) * 60_000, ago = (ms: number) => Math.max(0, Math.round((nowMin - ms) / 60_000));
@@ -243,8 +260,10 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const tasks = new Map(((await db.prepare("SELECT id, task FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\' AND task IS NOT NULL").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results)
     .map(r => [String(r.id), json<R>(r.task, {})] as [string, R]).filter(([, t]) => TASK_ST.has(String(t.state))));
   const hasKid = new Set(L.nodes.map(n => L.parents[n.id]).filter(Boolean));   // 보이는 노드의 상위만(닫힘 · 보관된 하위만 있으면 담당 없음 그대로)
+  const lastAt = new Map<string, number>();   // 사이드 「태스크」 정렬(최근 글 순)
   for (const n of L.nodes) {
     const rows = logsOf(n), w0 = n.windows[0];
+    lastAt.set(n.id, Math.max(Number(rows[0]?.at || 0), Number(n.updated_at || 0)));
     if (n.archived_at || n.state === "done") { closed.push({ pane: n.pane, win: n.name, ago: ago(n.archived_at || n.updated_at), msg: rows[0] ? cut(rows[0].text, 200) : n.why, area: "primary" }); continue; }
     if (n.state === "parked") { parked.push({ id: "c" + n.pane.slice(1), name: n.name, area: "primary", msg: n.why || "주차", owner: false, ago: ago(n.updated_at), stale: null, wait: n.why || "주차", topics: [], pri: priOf(L.pri, n.name), pane: n.pane, short: n.why || "주차", watch: "" }); continue; }
     const pn: R = pane({ pane: n.pane, win: n.name, kind: "lead", state: STATE[n.state] || (n.state === "turn" ? "질문" : "쉼"), cwd: w0?.cwd, branch: w0?.branch, rows });
@@ -377,7 +396,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const { promises, to_check } = await promiseRows(db, me, promPane, nowMin);
   return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 60_000) * 60, open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
-    cards: [], cardlist, cardsdone, attn: null, relinks: {}, ...nodeAliases(L.nodes), ...(L.taskChannels ? { task_channels: true } : {}), ...(L.front ? { front_door: { name: L.front.name, pane: L.front.pane, aliases: L.front.aliases } } : {}), todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
+    cards: [], cardlist, cardsdone, attn: null, relinks: {}, ...nodeAliases(L.nodes), ...(L.taskChannels ? { task_channels: true, task_side: taskSide(L.nodes, tasks, lastAt, nowMin) } : {}), ...(L.roleNames.length ? { role_seats: L.roleNames } : {}), ...(L.front ? { front_door: { name: L.front.name, pane: L.front.pane, aliases: L.front.aliases } } : {}), todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
 }
 
 // 업무 노드의 옛 채널 별칭 → 그 업무 판(채널 = 태스크를 켠 사람만 생김). 없으면 칸도 안 넣음(꺼진 사람의 판이 예전과 같게)
@@ -660,13 +679,14 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
       return j({ channel: "primary", root: m[2], owner: null, messages: rows.results.map(r => msg(r, my, mainName)) });
     }
     const L = fd ? await load(db, me) : null, rows = await primaryRows(db, me, url.searchParams.get("before") || undefined, L), page = rows.slice(0, 100);
-    const th = await primaryReplies(db, me, page.filter(r => r.win === ME).map(r => tsOf(r.at, r.id)));   // 내 글마다 스레드 답 수 · 마지막 답
-    const msgs = page.map(r => r.thread === "primary" ? withPrimaryThread(msg(r, my, mainName), th.get(tsOf(r.at, r.id)), mainName, my) : withThread(msg(r, my, mainName), threadReplies(L?.logs || [], tsOf(r.at, r.id)), my)).reverse();
+    const th = await primaryReplies(db, me, page.filter(r => r.win === ME).map(r => tsOf(r.at, r.id)));
+    const tagOf = (win: unknown) => { const t = L?.front?.from(String(win)); return t ? { tag: t } : {}; };
+    const msgs = page.map(r => r.thread === "primary" ? withPrimaryThread(msg(r, my, mainName), th.get(tsOf(r.at, r.id)), mainName, my) : { ...withThread(msg(r, my, mainName), threadReplies(L?.logs || [], tsOf(r.at, r.id)), my), ...tagOf(r.win) }).reverse();
     if (!url.searchParams.get("before") && L?.front) {
-      for (const n of L.front.nodes) { const fold = convoFold(n, mainName, my); if (fold) msgs.unshift(fold.root); }
+      for (const n of L.front.nodes) { const fold = convoFold(n, mainName, my); if (fold) msgs.unshift({ ...fold.root, tag: "옛 " + n.name }); }
       // 닫힌 카드도 옛 노드 채팅처럼 계속 보임. Primary 카드 스레드의 답/승인은 기존 길.
       const cards = (await db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results;
-      msgs.push(...cards.filter(c => CARD_TS.test(String(c.id)) && L.isPrimWin(String(c.win))).map(c => ({ ...cardMsg(c, L.logs.filter(r => r.thread === c.id), my), ch: "primary" })));
+      msgs.push(...cards.filter(c => CARD_TS.test(String(c.id)) && L.isPrimWin(String(c.win))).map(c => ({ ...cardMsg(c, L.logs.filter(r => r.thread === c.id), my), ch: "primary", ...tagOf(c.win) })));
     }
     if (L?.front) msgs.sort((a, b) => a.ts.localeCompare(b.ts));
     await withReacts(db, me, msgs);

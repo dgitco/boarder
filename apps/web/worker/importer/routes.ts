@@ -4,7 +4,9 @@ import { deviceFeatures } from "./device-engine";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { group, pickUnit, notChat, type Item, type Unit } from "./group";
-import { prefsOf, parkHOf } from "../node-prefs";
+import { prefsOf, parkHOf, savePrefs } from "../node-prefs";
+import { frontDoorOf } from "../front-door";
+import { seatsFromData, seatsOf, seatPlan } from "../role-seat";
 import { importedWindow, queueToImported } from "../member-imported";
 import { engineOf, widPane } from "../engine";
 import { paneOfId } from "../member-board";
@@ -95,6 +97,26 @@ export async function regroup(env: Env, owner: string) {
   const cards = (cd.results as { win: string }[]).filter(c => !own(c.win)).map(c => ({ ...c, win: keyOf(c.win) }));
   const raw = (ns.results[0] as { data?: string } | undefined)?.data;
   const set = json<{ archive_h?: number; unit?: Unit }>(raw, {}), archiveH = set.archive_h ?? 6, pref = prefsOf(raw);
+  const seats = seatsFromData(raw);
+  if (seats.length) {
+    const plan = seatPlan({ seats, items: items as never, tasks: tk.results as never, map: mp.results as never });
+    const sst: D1PreparedStatement[] = [];
+    const maps = mp.results as { item: string; node: string; how: string }[], tkRows = tk.results as { id: string; counts: string }[];
+    for (const p of plan.pins) {
+      sst.push(env.DB.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?, 'pin') ON CONFLICT(owner, item) DO UPDATE SET node = excluded.node, how = 'pin'").bind(owner, p.item, p.node));
+      const m = maps.find(x => x.item === p.item); if (m) { m.node = p.node; m.how = "pin"; } else maps.push({ item: p.item, node: p.node, how: "pin" });
+    }
+    for (const id of plan.unmain) { const r = tkRows.find(x => x.id === id); if (!r) continue; const c = json<Record<string, unknown>>(r.counts, {}); delete c.main; r.counts = JSON.stringify(c); sst.push(env.DB.prepare("UPDATE mnode SET counts = ? WHERE owner = ? AND id = ?").bind(r.counts, owner, id)); }
+    for (const m of plan.mains) {
+      const r = tkRows.find(x => x.id === m.node); if (!r) continue;
+      const c = json<Record<string, unknown>>(r.counts, {}), past = (Array.isArray(c.past) ? c.past : []).filter((x): x is string => typeof x === "string" && x !== m.past);
+      c.main = m.main; if (m.past) c.past = [...past, m.past].slice(-20);
+      r.counts = JSON.stringify(c);
+      sst.push(env.DB.prepare("UPDATE mnode SET counts = ?, updated_at = ? WHERE owner = ? AND id = ?").bind(r.counts, t, owner, m.node));
+    }
+    if (plan.primary && pref.primary_item !== plan.primary) { sst.push(env.DB.prepare("UPDATE node_setting SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.primary_item', ?), updated_at = ? WHERE owner = ?").bind(plan.primary, t, owner)); pref.primary_item = plan.primary; }
+    if (sst.length) await env.DB.batch(sst);
+  }
   const taskRows = (pref.task_channels ? tk.results : []) as { id: string; name: string; pinned_name: string | null; task: string; counts: string; archived_at: number | null }[];
   const tasks = taskRows.map(n => ({ id: n.id, name: n.pinned_name || n.name, issue: taskIssueFor(pref.task_repo, json<{ issue?: string }>(n.task, {}).issue || ""), archived_at: n.archived_at }));
   const r = await group({ items, logs: logs as never, cards: cards as never, prev: mp.results as never, prevNodes: nd.results as never, winNames, now: t, archiveH, unit: set.unit, engineMain: em.results.length > 0, agents: (rl.results as { name: string }[]).map(x => x.name),
@@ -136,6 +158,17 @@ export async function regroup(env: Env, owner: string) {
   st.push(env.DB.prepare("DELETE FROM imp_audit WHERE owner = ? AND at < ?").bind(owner, t - 48 * 3600_000));
   for (let i = 0; i < st.length; i += 90) await env.DB.batch(st.slice(i, i + 90));   // D1 batch 한 번에 너무 많지 않게
   return r;
+}
+
+/** 자리마다 지금 판정(묶기 뒤 값으로 — 이미 붙었으면 「붙음」) */
+async function seatState(DB: D1Database, me: string, seats: ReturnType<typeof seatsFromData>) {
+  if (!seats.length) return [];
+  const [it, tk, mp] = await DB.batch([
+    DB.prepare("SELECT key, kind, win, session, engine, gone_at, state, state_at, seen_at, (SELECT d.revoked_at IS NOT NULL FROM device d WHERE d.id = imp_item.device_id) rv FROM imp_item WHERE owner = ? AND kind IN ('window','session')").bind(me),
+    DB.prepare("SELECT id, name, pinned_name, archived_at, counts FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(me),
+    DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(me),
+  ]);
+  return seatPlan({ seats, items: it.results as never, tasks: tk.results as never, map: mp.results as never }).seats;
 }
 
 function paneOf(rows: { pane: string; win: string }[]) {
@@ -293,6 +326,29 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     if (!pins) return c.json({ error: "캔버스 주소가 틀렸거나 12개를 넘었어요" }, 400);
     await savePins(env(c).DB, me, pins);
     return c.json({ ok: true, pins });
+  });
+  app.post("/api/device/roles", async c => {
+    const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);
+    const b = await c.req.json<{ roles?: unknown }>().catch(() => ({} as { roles?: unknown }));
+    const seats = seatsOf(b.roles);
+    if (!seats) return c.json({ error: "roles: [{ name, win, node?, primary? }] — 32개까지, 역할 · 노드는 한 번씩, primary 는 하나" }, 400);
+    const DB = env(c).DB;
+    await DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('roles', json(?2)), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.roles', json(?2)), updated_at = ?3").bind(me, JSON.stringify(seats), now()).run();
+    const ps = seats.find(s => s.primary && s.fold?.length);
+    let front: { name: string; folded: string[]; missing: string[] } | null = null;
+    if (ps) {
+      const rows = (await DB.prepare("SELECT id, COALESCE(NULLIF(pinned_name, ''), name) nm FROM mnode WHERE owner = ? AND id NOT LIKE 'tk\\_%' ESCAPE '\\' AND id NOT LIKE 'sl\\_%' ESCAPE '\\' AND COALESCE(NULLIF(pinned_name, ''), name) IN (SELECT value FROM json_each(?)) ORDER BY archived_at IS NOT NULL, updated_at DESC LIMIT 8").bind(me, JSON.stringify(ps.fold)).all<{ id: string; nm: string }>()).results;
+      const fd = frontDoorOf({ name: ps.name.slice(0, 40), pairs: rows.map(r => ({ pane: paneOfId(r.id), name: r.nm })), aliases: ps.fold });
+      if (fd) await savePrefs(DB, me, { front_door: fd });
+      front = { name: ps.name, folded: [...new Set(rows.map(r => r.nm))], missing: ps.fold!.filter(f => !rows.some(r => r.nm === f)) };
+    }
+    await regroup(env(c), me);
+    return c.json({ ok: true, seats: await seatState(DB, me, seats), ...(front ? { front } : {}) });
+  });
+  app.get("/api/device/roles", async c => {
+    const me = await closer(c, false); if (!me) return c.json({ error: "기기 토큰" }, 401);
+    const DB = env(c).DB, seats = seatsFromData((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data);
+    return c.json({ ok: true, seats: await seatState(DB, me, seats) });
   });
   app.post("/api/device/tasks", async c => {
     const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);

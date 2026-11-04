@@ -104,7 +104,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   fetch('api/me/side', {cache: 'no-store'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.side) && JSON.stringify(j.side) !== JSON.stringify(SB.order || null)){ SB.order = j.side; saveSB(); if (on()) lists(); } if (j && Array.isArray(j.pins) && JSON.stringify(j.pins) !== JSON.stringify(SB.pins || [])){ SB.pins = j.pins; saveSB(); if (on()) lists(); } }).catch(() => {});   // 다른 기기에서 바꾼 순서
   // 끌기: 칸 머리(접기 단추)를 누른 채 6px 넘게 움직이면 끌기 — 놓은 자리 위아래로 칸을 옮김. 덜 움직이면 그대로 접기
   document.addEventListener('pointerdown', e => {
-    const h = e.button === 0 && e.target.closest?.('.bx-sbsc .bx-sec[data-fold]'); if (!h) return;
+    const h = e.button === 0 && e.target.closest?.('.bx-sbsc .bx-sec[data-fold]:not(.bx-sub)'); if (!h) return;
     const box = h.closest('.bx-sbsc'), k0 = h.dataset.fold, y0 = e.clientY, x0 = e.clientX; let on = false, mark = null, to = null;
     const heads = () => [...box.querySelectorAll('.bx-sec[data-fold]')].filter(x => ['ib', 'nd', 'ch', 'rc', 'ss', 'xc'].includes(x.dataset.fold));
     const move = ev => {
@@ -132,18 +132,26 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const act = active(), top = S.ib || ibChat() ? null : act, chan = chatMode() && !cur.page && cur.chan;
     const tn = typeof attnCount === 'function' ? attnCount() : 0;
     const ib = it('turn', I.flag, '결정 · 할 일', cnt(tn, true), ibChat() === 'turn') + IBK.map(k => it(k, I[k], IBN[k], cnt(c[k], k === 'unread'), S.ib === k || ibChat() === k)).join('');
-    const MA = window.HB_CH ? ((typeof D === 'object' && D?.areas) || []).filter(a => a && a.key !== 'primary' && a.lead && typeof byPane !== 'undefined' && byPane[a.lead] && (!byPane[a.lead].tk || byPane[a.lead].tkdept)) : [];
+    const MA = window.HB_CH ? ((typeof D === 'object' && D?.areas) || []).filter(a => a && a.key !== 'primary' && a.lead && typeof byPane !== 'undefined' && byPane[a.lead] && (!byPane[a.lead].tk || byPane[a.lead].tkdept)) : []
+    const RS = (typeof D === 'object' && Array.isArray(D?.role_seats)) ? D.role_seats : null;
+    const MA2 = RS ? MA.filter(a => byPane[a.lead]?.tkdept && RS.includes(AREA_NAME[a.key] || a.lead_name || a.name)) : MA;
     const pg = !ans.hidden && !!cur?.page && cur.p;
     const ch = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('')
-      + MA.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('');
+      + MA2.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('');
     const rp = rowPanes();
     const nd = myNodes().map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), rp.has(p.pane) ? `<i class="ud" aria-label="${window.HB_MEMBER ? '내 차례' : '내 차례'}"></i>` : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
+    // 사이드 「태스크」(채널 = 태스크를 켠 회원, 서버 member-board taskSide): 채널 대신 #번호 · 제목 · 상태. 진행 중 · 최근 글 순, 끝난 것은 접힌 「끝난 태스크」 안. 누르면 그 태스크 대화(노드 화면)
+    const TS = (typeof D === 'object' && Array.isArray(D?.task_side)) ? D.task_side : null;
+    const tkIt = t => `<button type="button" class="bx-it bx-task" data-go="node:${esc(t.pane)}" title="${esc(t.issue + ' ' + t.name)}"${!ans.hidden && !!cur?.page && cur.p === t.pane ? ' aria-current="page"' : ''}><b class="bx-tkno">${esc(t.issue.replace(/^.*#/, '#'))}</b><span>${esc(t.name)}</span>${rp.has(t.pane) ? `<i class="ud" aria-label="내 차례"></i>` : ''}<em class="bx-tkst" data-st="${esc(t.state)}">${esc(t.state_ko || '')}</em></button>`;
+    const tkOpen = TS ? TS.filter(t => !t.done) : [], tkDone = TS ? TS.filter(t => t.done) : [];
+    if (TS && SB.fold.tkd === undefined) SB.fold.tkd = true;   // 끝난 태스크는 처음엔 접힘(태스크 칸이 있는 사람만 — 없는 사람의 저장값은 main 그대로)
+    const tks = TS ? tkOpen.map(tkIt).join('') + (tkDone.length ? `<button type="button" class="bx-sec bx-fh bx-sub" data-fold="tkd" aria-expanded="${!SB.fold.tkd}">끝난 태스크 ${tkDone.length}${I.fold}</button><div class="bx-sbody" data-sec="tkd"${SB.fold.tkd ? ' hidden' : ''}>${tkDone.map(tkIt).join('')}</div>` : '') : '';
     const qa = !ans.hidden && cur?.chan, ss = typeof openGpt !== 'function' ? '' : `<div class="bx-sech"><button type="button" class="bx-sec bx-fh" data-fold="ss" aria-expanded="${!SB.fold.ss}">세션${I.fold}</button><button type="button" class="bx-secadd" data-chatnew aria-label="새 세션" title="새 세션"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>`
       + `<div class="bx-sbody" data-sec="ss"${SB.fold.ss ? ' hidden' : ''}>${chats().map(c => `<button type="button" class="bx-it bx-chat" data-chat="${esc(c.sid)}" title="${esc(c.title)}"${qa === 'q:' + c.sid ? ' aria-current="page"' : ''}><span>${esc(c.title)}</span></button>`).join('')}</div>`;
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const pins = (SB.pins || []).map(p => `<button type="button" class="bx-it" data-sidepin="${esc(p.id)}" title="${esc(p.title || p.id)}">${I.canvas}<span>${esc(p.title || p.id)}</span></button>`).join('');
     const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas') + it('feed', I.feed, '피드', '', top === 'feed') + pins;
-    const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
+    const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = TS ? (tks ? sec('nd', '태스크', tks) : '') : nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
     const part = {ib: sec('ib', '모아 보기', ib), nd: chs, ch: ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
     const body = '<div class="bx-sbsc">' + head + sideOrder(agentsFirst).map(k => part[k] || '').join('') + '</div>';
     const foot = `<div class="bx-foot"><button type="button" class="bx-me" data-me aria-haspopup="true" aria-expanded="false">${meAv()}<span>${esc(window.HB_MEMBER?.name || ME()?.name || 'Owner')}</span></button></div>`;
@@ -177,6 +185,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   function rowPanes(){ try { return new Set((attnRows() || []).map(rowPane)); } catch { return new Set(myNodes().filter(p => nodeRows(p.pane).length).map(p => p.pane)); } }   // 함수 선언 — 위의 lists() 가 먼저 불려도 됨
   const rcSig = () => recent().map(r => r.id + (r.title || '')).join('|') + '#' + (typeof attnCount === 'function' ? attnCount() : 0)
     + '#' + (rp => myNodes().map(p => p.pane + nameOf(p) + (rp.has(p.pane) ? '*' : '')).join('|'))(rowPanes()) + (cur?.page ? '@' + cur.p : '') + '#' + chats().map(c => c.sid + c.title).join('|') + (!ans.hidden && cur?.chan?.startsWith('q:') ? '@' + cur.chan : '')
+    + ((typeof D === 'object' && Array.isArray(D?.task_side)) ? '#' + D.task_side.map(t => t.pane + t.issue + t.name + t.state + (t.done ? 'd' : '')).join('|') : '') + ((typeof D === 'object' && Array.isArray(D?.role_seats)) ? '#' + D.role_seats.join('|') : '')
     + (window.HB_CH ? '#' + ((typeof D === 'object' && D?.areas) || []).map(a => a.key + ':' + a.lead + ':' + (AREA_NAME[a.key] || a.lead_name || '')).join('|') : '');
   const loadChats = () => { fetch('api/chats', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.chats)){ window.HB_CHATS = j.chats; if (on()) lists(); } }).catch(() => {}); };
   loadChats(); setInterval(loadChats, 20000); window.addEventListener('hb-chats', () => { if (on()) lists(); setTimeout(loadChats, 1500); });

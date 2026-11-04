@@ -110,9 +110,9 @@ test("노드 상태 한 줄(watch): 창의 가장 새 줄이 status(boarder stat
 
 test("맨 위 표지(parent = top): 이름이 머리 이름이 아니어도(「회사」 · 「베타랩」) 열 머리, 그 밑 상위 노드도 그 열", async () => {
   const { db, d1 } = fakeD1();
-  add(db, A, "n_neo", "회사", "acme"); add(db, A, "n_m", "머지 담당", "acme", "working"); add(db, A, "n_cs", "CS 담당", "acme");
+  add(db, A, "n_co", "회사", "acme"); add(db, A, "n_m", "머지 담당", "acme", "working"); add(db, A, "n_cs", "CS 담당", "acme");
   add(db, A, "n_hc", "베타랩", "hbeta"); add(db, A, "n_pa", "개인 비서", ".team-hq"); add(db, A, "n_p", "personal", "personal", "working");
-  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_neo: "top", n_hc: "top", n_pa: "top", n_m: "n_neo", n_cs: "n_neo", n_p: "n_pa" } }), T);
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_co: "top", n_hc: "top", n_pa: "top", n_m: "n_co", n_cs: "n_co", n_p: "n_pa" } }), T);
   const d = await data(d1, A, null) as any;
   assert.deepEqual(d.areas.slice(1).map((a: any) => a.lead_name).sort(), ["개인 비서", "회사", "베타랩"].sort());
   const col = (name: string) => d.areas.find((a: any) => a.lead_name === name).key, areaOf = (w: string) => d.panes.find((p: any) => p.win === w).area;

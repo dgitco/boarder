@@ -348,3 +348,11 @@ html.bx .bx-sech .bx-sec{flex:1;min-width:0}
 html.bx .bx-secadd{flex:none;display:grid;place-items:center;width:28px;height:28px;margin:12px 4px 0 0;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer}
 html.bx .bx-secadd:hover{background:var(--sunk);color:var(--ink)}
 html.bx .bx-it.bx-chat span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 사이드 「태스크」(member-board taskSide · shell.js tkIt): #번호 · 제목 · 상태 — 제목만 줄어듦, 끝난 태스크는 접힌 작은 머리 아래 */
+html.bx .bx-it.bx-task{gap:8px}
+html.bx .bx-it.bx-task>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+html.bx .bx-it.bx-task .bx-tkno{flex:none;font-size:12px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+html.bx .bx-it.bx-task .bx-tkst{flex:none;font-style:normal;font-size:11px;color:var(--muted)}
+html.bx .bx-it.bx-task .bx-tkst[data-st="blocked"]{color:var(--accent)}
+html.bx .bx-it.bx-task .ud{margin-left:0}
+html.bx .bx-sec.bx-sub{padding:8px 10px 4px;font-size:12px}
