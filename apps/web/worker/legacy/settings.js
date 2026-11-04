@@ -580,11 +580,23 @@
     const cell = (name, p, r) => { if (p == null) return `<div class="bxs-q"><div class="bxs-row between"><span>${name}</span><span>?</span></div></div>`; const left = Math.round(100 - p), c = left <= 10 ? 'bad' : left <= 25 ? 'warn' : 'ok';
       return `<div class="bxs-q"><div class="bxs-row between"><span>${name}</span><b class="${c}">${left}% 남음</b></div>${bar(left, c)}<span>리셋 ${esc(kst(r))}</span></div>`; };
     const st = {ok: '', token_stale: '<span class="bxs-badge warn">토큰 지남 · 마지막 값</span>', logged_out: '<span class="bxs-badge bad">로그아웃</span>', error: '<span class="bxs-badge warn">못 읽음</span>', unknown: '<span class="bxs-badge">모름</span>'}[a.status] || '';
-    return `<div class="bxs-acct"><div class="em"><b>${esc(a.email || '메일 모름')}</b>${st}</div>${cell('5시간', a.p5, a.r5)}${cell('주간', a.p7, a.r7)}</div>`;
+    const out = a.out_at && (!a.r7 || Date.parse(a.out_at) < Date.parse(a.r7)) && Date.parse(a.out_at) > Date.now() ? `바닥 예상 ${kst(a.out_at)}` : '';
+    const cr = a.credits && a.credits.limit != null ? `클라우드 크레딧 $${Math.round(a.credits.left ?? 0)} / $${Math.round(a.credits.limit)}${a.credits.expires ? ` · ${kst(a.credits.expires)} 만료` : ''}` : '';
+    const sub = [a.rate != null && Math.round(a.rate * 24) > 0 ? `주간 하루 +${Math.round(a.rate * 24)}%` : '', out, cr, a.acct ? a.email || '' : ''].filter(Boolean).map(esc).join(' · ');
+    const name = a.acct ? `${a.acct} · ${a.name || ''}` : (a.email || '메일 모름');
+    return `<div class="bxs-acct"><div class="bxs-q"><div class="em"><b>${esc(name)}</b>${st}</div>${sub ? `<span>${sub}</span>` : ''}</div>${cell('5시간', a.p5, a.r5)}${cell('주간', a.p7, a.r7)}</div>`;
   };
+  const qcell = (name, p, r) => { if (p == null) return '<div class="bxs-q"></div>'; const left = Math.round(100 - p), c = left <= 10 ? 'bad' : left <= 25 ? 'warn' : 'ok';
+    return `<div class="bxs-q"><div class="bxs-row between"><span>${name}</span><b class="${c}">${left}% 남음</b></div>${bar(left, c)}<span>리셋 ${esc(kst(r))}</span></div>`; };
+  const codexRow = x => { const sub = [x.balance != null ? `크레딧 잔액 ${Math.round(x.balance).toLocaleString('ko-KR')}` : '', x.at ? `기록 ${kst(x.at)}` : ''].filter(Boolean).map(esc).join(' · ');
+    return `<div class="bxs-acct"><div class="bxs-q"><div class="em"><b>Codex${x.plan ? ' · ' + esc(x.plan) : ''}</b></div>${sub ? `<span>${sub}</span>` : ''}</div>${qcell('5시간', x.p5, x.r5)}${qcell('주간', x.p7, x.r7)}</div>`; };
   const deviceCard = d => {
     const m = d.metrics || {}, mem = m.mem || {}, cpu = m.cpu || {}, disk = m.disk || {}, ag = m.agents || {}, host = m.host || {};
     const quiet = !d.metrics_at || Date.now() - d.metrics_at > 15 * 60000;
+    if (d.scope === 'harness'){ const on = d.engine_at && Date.now() - d.engine_at < 5 * 60000;
+      return `<div class="bxs-dev"><div class="bxs-dh"><div class="ic">${IC.devices}</div><div class="t"><div class="bxs-row"><b>${esc(d.name || '하네스')}</b><span class="bxs-badge">엔진</span></div><span>${esc(d.engine_at ? '엔진 ' + ago(d.engine_at) : '엔진이 붙은 적 없음')}</span></div>`
+        + `<span class="bxs-badge"><i class="${on ? 'ok' : ''}"></i>${on ? '연결됨' : '끊김'}</span><button type="button" class="bxs-more" data-dm="${esc(d.id)}" aria-label="${esc(d.name || '기기')} 메뉴" aria-haspopup="menu">${IC.more}</button></div>`
+        + `<p class="bxs-mut pad">보더가 이 서버의 창을 열고 넣는 길이에요. 메모리 · CPU · 계정 한도는 같은 서버의 감시 기기가 보내요.</p></div>`; }
     const n = Object.values(ag).reduce((a, b) => a + b, 0), agTxt = Object.entries(ag).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ') || '없음';
     const memPct = mem.total_mb ? mem.avail_mb / mem.total_mb * 100 : 0, low = mem.avail_mb != null && mem.min_mb != null && mem.avail_mb < mem.min_mb;
     const os = {linux: 'Linux', darwin: 'macOS', win32: 'Windows'}[host.os] || host.os || '';
@@ -596,9 +608,10 @@
       + tile('CPU', cpu.pct != null ? Math.round(cpu.pct) + '%' : '?', `load ${cpu.load1 ?? '?'}${cpu.cores ? ' · ' + cpu.cores + '코어' : ''}`, bar(cpu.pct))
       + tile('디스크 /', disk.pct != null ? disk.pct + '%' : '?', `${disk.free_gb ?? '?'} GB 남음${m.tmp?.pct != null ? ' · /tmp ' + m.tmp.pct + '%' : ''}`, bar(disk.pct, disk.pct >= 90 ? 'bad' : '', 90))
       + tile('도는 에이전트', String(n), esc(agTxt));
-    const accts = (m.accounts || []);
+    const accts = (m.accounts || []).slice().sort((x, y) => String(x.acct || '~').localeCompare(String(y.acct || '~')));
     return `<div class="bxs-dev">${head}<div class="bxs-tiles">${tiles}</div>${spark(d.history || [], mem.min_mb || 6144)}`
-      + (accts.length ? `<div class="bxs-acs"><div class="h">Claude 계정 ${accts.length}</div>${accts.map(acct).join('')}</div>` : '') + '</div>';
+      + (accts.length ? `<div class="bxs-acs"><div class="h">Claude 계정 ${accts.length}</div>${accts.map(acct).join('')}</div>` : '')
+      + (m.codex ? `<div class="bxs-acs"><div class="h">Codex</div>${codexRow(m.codex)}</div>` : '') + '</div>';
   };
   const NRULES = [['check_min', '점검 주기', '이 간격마다 노드 대화 · 일감을 다시 봐요', '분'], ['split_at', '나누기 기준', '열린 일감이 이만큼이면 나누기 · 보내기 · 합치기', '개 이상'],
     ['move_h', '옮기기 간격', '한 노드에서 나누기 · 합치기는 이 간격에 한 번', '시간'], ['rename_h', '이름 바꾸기 간격', '한 노드 이름은 이 간격에 한 번', '시간']];

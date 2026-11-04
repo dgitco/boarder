@@ -151,7 +151,7 @@ a.bxs-li:hover{background:var(--hover)}
 .bxs-acct{display:grid;grid-template-columns:minmax(0,1fr) 170px 170px;align-items:center;gap:18px;padding:8px 16px}
 .bxs-acct + .bxs-acct{border-top:1px solid var(--line)}
 .bxs-acct .em{display:flex;align-items:center;gap:8px;min-width:0}
-.bxs-acct .em b{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bxs-acct .em b{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
 .bxs-q{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted)}
 .bxs-q b{font-weight:650}.bxs-q b.ok{color:#15803d}.bxs-q b.warn{color:#b45309}.bxs-q b.bad{color:#dc2626}
 .bxs-q > span{font-size:11.5px}
@@ -159,7 +159,7 @@ a.bxs-li:hover{background:var(--hover)}
   .bxs-tiles{grid-template-columns:repeat(2,minmax(0,1fr));padding:12px}
   .bxs-trend{display:none}
   .bxs-acct{grid-template-columns:1fr 1fr;gap:8px 14px;padding:10px 12px}
-  .bxs-acct .em{grid-column:1 / -1}
+  .bxs-acct .em,.bxs-acct > .bxs-q:first-child{grid-column:1 / -1}
   .bxs-dh{padding:12px}
 }
 

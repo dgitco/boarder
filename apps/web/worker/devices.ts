@@ -43,8 +43,13 @@ export function cleanMetrics(raw: unknown) {
       p5: num(x.p5, 0, 100), r5: time(x.r5),
       p7: num(x.p7, 0, 100), r7: time(x.r7),       // 주간
       src: (["api", "cache"] as const).find(s => s === x.src),
+      acct: typeof x.acct === "string" && /^[a-z]$/.test(x.acct) ? x.acct : undefined, name: str(x.name, 20),
+      rate: num(x.rate, 0, 100), out_at: time(x.out_at),
+      credits: (c => Object.keys(c).length ? c : undefined)(drop({ limit: num(obj(x.credits).limit, 0, 1e6), used: num(obj(x.credits).used, 0, 1e6), left: num(obj(x.credits).left, 0, 1e6), expires: time(obj(x.credits).expires) })),
     });
   });
+  const cx = obj(b.codex);
+  const codex = Object.keys(cx).length ? drop({ plan: str(cx.plan, 20), p5: num(cx.p5, 0, 100), r5: time(cx.r5), p7: num(cx.p7, 0, 100), r7: time(cx.r7), balance: num(cx.balance, 0, 1e9), at: time(cx.at) }) : undefined;
   return {
     v: 1,
     host: drop({ name: str(host.name, 80), os: str(host.os, 20), arch: str(host.arch, 20), uptime_s: int(host.uptime_s, 0, 1e9), cli: str(host.cli, 20) }),
@@ -56,6 +61,7 @@ export function cleanMetrics(raw: unknown) {
     tmp: drop({ pct: int(tmp.pct, 0, 100) }),
     agents: Object.fromEntries(AGENTS.map(k => [k, int(ag[k], 0, 10_000) ?? 0])) as Record<typeof AGENTS[number], number>,
     accounts,
+    ...(codex && Object.keys(codex).length ? { codex } : {}),
   };
 }
 
@@ -75,16 +81,17 @@ export async function putMetrics(db: DB, dev: { id: string; owner: string }, raw
   return { ok: true, at: now, kept: hist };
 }
 
-export async function listDevices(db: DB, me: string, now = Date.now()) {
+export async function listDevices(db: DB, me: string | string[], now = Date.now()) {
+  const ms = (Array.isArray(me) ? me : [me]).slice(0, 8), q = ms.map(() => "?").join(",");
   const [dv, mt, hs] = await db.batch([
-    db.prepare("SELECT id, name, tools, scope, created_at, last_at FROM device WHERE owner = ? AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 50").bind(me),
-    db.prepare("SELECT m.device_id, m.at, m.data FROM device_metric m JOIN device d ON d.id = m.device_id WHERE d.owner = ? AND d.revoked_at IS NULL").bind(me),
-    db.prepare("SELECT h.device_id, h.at, h.mem_avail_mb, h.cpu_pct, h.disk_pct, h.agents FROM device_metric_hist h JOIN device d ON d.id = h.device_id WHERE d.owner = ? AND d.revoked_at IS NULL AND h.at > ? ORDER BY h.at").bind(me, now - 24 * 3600_000),
+    db.prepare(`SELECT id, name, tools, scope, created_at, last_at, engine_at FROM device WHERE owner IN (${q}) AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 50`).bind(...ms),
+    db.prepare(`SELECT m.device_id, m.at, m.data FROM device_metric m JOIN device d ON d.id = m.device_id WHERE d.owner IN (${q}) AND d.revoked_at IS NULL`).bind(...ms),
+    db.prepare(`SELECT h.device_id, h.at, h.mem_avail_mb, h.cpu_pct, h.disk_pct, h.agents FROM device_metric_hist h JOIN device d ON d.id = h.device_id WHERE d.owner IN (${q}) AND d.revoked_at IS NULL AND h.at > ? ORDER BY h.at`).bind(...ms, now - 24 * 3600_000),
   ]);
   const met = new Map((mt.results as { device_id: string; at: number; data: string }[]).map(r => [r.device_id, r]));
   const hist = new Map<string, unknown[]>();
   for (const r of hs.results as { device_id: string }[]) { const { device_id, ...p } = r; (hist.get(device_id) || hist.set(device_id, []).get(device_id)!).push(p); }
-  return (dv.results as { id: string; name: string; tools: string; scope: string; created_at: number; last_at: number }[]).map(d => {
+  return (dv.results as { id: string; name: string; tools: string; scope: string; created_at: number; last_at: number; engine_at: number | null }[]).map(d => {
     const m = met.get(d.id);
     let metrics = null; try { metrics = m ? JSON.parse(m.data) : null; } catch {}
     return { ...d, metrics_at: m?.at ?? null, metrics, history: hist.get(d.id) || [] };

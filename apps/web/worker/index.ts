@@ -935,9 +935,10 @@ app.post("/api/me/nodereopen", async c => {
   const b = await c.req.json<{ name?: string }>().catch(() => ({} as { name?: string }));
   return toBoard(c, "POST", "/api/nodereopen", { name: String(b.name || "").slice(0, 80) });
 });
+const ownerMails = (env: Env, email: string) => { const me = email.toLowerCase(); return isOwner(env, me) ? env.ALLOW_EMAILS.split(",").map(x => x.trim().toLowerCase()).filter(Boolean) : [me]; };
 app.get("/api/me/devices", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  return c.json({ devices: await listDevices(c.env.DB, s.user.email.toLowerCase()) }, 200, { "cache-control": "no-store" });
+  return c.json({ devices: await listDevices(c.env.DB, ownerMails(c.env, s.user.email)) }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/cards/:id/answer", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
@@ -1158,7 +1159,8 @@ app.post("/api/me/devices/:id/revoke", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const id = c.req.param("id"), now = Date.now();
-  const u = await c.env.DB.prepare("UPDATE device SET revoked_at = ? WHERE id = ? AND owner = ? AND revoked_at IS NULL").bind(now, id, s.user.email.toLowerCase()).run();
+  const ms = ownerMails(c.env, s.user.email);
+  const u = await c.env.DB.prepare(`UPDATE device SET revoked_at = ? WHERE id = ? AND owner IN (${ms.map(() => "?").join(",")}) AND revoked_at IS NULL`).bind(now, id, ...ms).run();
   if (!u.meta.changes) return c.json({ error: "없는 기기" }, 404);
   await c.env.DB.prepare("UPDATE agent_token SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL").bind(now, id).run();
   tokCache.clear();

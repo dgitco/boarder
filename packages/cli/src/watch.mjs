@@ -83,7 +83,7 @@ function accountEmail(d) {
 async function usage(d, interactive, own) {
   const r = { email: accountEmail(d) };
   if (!own || !ownerMod) return { ...r, status: 'unknown' };
-  return ownerMod.ownerUsage(d, interactive, r);
+  return { ...(await ownerMod.ownerUsage(d, interactive, r)), ...(ownerMod.ownerExtra?.(d) || {}) };
 }
 
 export async function collect({ interactive = false, own = false } = {}) {
@@ -92,6 +92,7 @@ export async function collect({ interactive = false, own = false } = {}) {
     host: { name: os.hostname().split('.')[0], os: process.platform, arch: process.arch, uptime_s: Math.round(os.uptime()), cli: VERSION },
     mem: memory(), cpu: c, disk: df('/'), tmp: process.platform === 'linux' ? { pct: df('/tmp').pct } : {}, agents: agents(),
     accounts: accounts.map(a => Object.fromEntries(Object.entries(a).filter(([, v]) => v !== undefined && v !== null))),
+    ...(own && ownerMod?.ownerCodex ? (cx => cx ? { codex: cx } : {})(ownerMod.ownerCodex()) : {}),   // 주인 기기만 Codex 한도 · 크레딧
   };
 }
 
