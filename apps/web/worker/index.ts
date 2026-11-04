@@ -2169,8 +2169,12 @@ app.all("*", async c => {
   let r; const t0 = Date.now();
   try { r = own ?? fr ?? await boardCall(c.env, chOf(c), { method: c.req.method === "HEAD" ? "GET" : c.req.method, path: url.pathname + url.search, headers, ...(body !== undefined ? { body } : {}) }); }
   catch (e) {
-    capture(c.env, c.executionCtx, "$exception", s.user.email, { $exception_list: [{ type: "BridgeError", value: String(e).slice(0, 120), mechanism: { handled: true } }], path: normPath(url.pathname), method: c.req.method });
-    return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, /릴레이 없음/.test(String(e)) ? { "x-retry-safe": "1" } : {});   // 보내지도 못한 요청 — 화면이 쓰기도 조용히 다시
+    const reqId = (c.req.header("x-request-id") || "").slice(0, 40);   // 화면 오류 기록(boarder_error)의 rid 와 같은 값 — 위 api_error 로그와 같음
+    let rid = ""; if (body && body.byteLength <= 64 * 1024) try { rid = String((JSON.parse(new TextDecoder().decode(body)) as { rid?: unknown }).rid || "").slice(0, 64); } catch {}   // 글 rid(chatPost errLog) — 큰 업로드는 안 읽음
+    const safe = /릴레이 없음/.test(String(e));
+    capture(c.env, c.executionCtx, "$exception", s.user.email, { $exception_list: [{ type: "BridgeError", value: String(e).slice(0, 120), mechanism: { handled: true } }], path: normPath(url.pathname), method: c.req.method, req_id: reqId || null, rid: rid || null, retry_safe: safe });
+    console.error("다리 503", JSON.stringify({ req_id: reqId, rid, path: normPath(url.pathname), method: c.req.method, safe, err: String(e).slice(0, 120) }));   // Workers 로그(tail)에도
+    return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, safe ? { "x-retry-safe": "1" } : {});   // 보내지도 못한 요청 — 화면이 쓰기도 조용히 다시
   }
   if (c.req.method === "POST" && r.status < 400) REC.get(c.req.raw)?.cookies.push("bx_w=1; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=20");   // 방금 씀 — 20초 스냅숏 건너뜀
   if (shadowRd && rd && !fr && !own) {   // 그림자: 304 대신 몸통을 받아 대조하고, 화면에는 보드처럼 같은 ETag 면 빈 304
