@@ -53,6 +53,15 @@ function setup(primary: null | { title: string; state?: string; handle?: object;
   return { db, env, eng, mains, cmds, drained };
 }
 
+test("폐기된 기기에 남은 옛 메인 창은 건너뛰고 지금 기기에서 새로 띄우려 함", async () => {
+  const s = setup(null);
+  s.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at, revoked_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run("olddev0000001", MEMBER, "old pc", "", "h2", T, T, "full", T, T);
+  s.db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, state_at, created_at) VALUES (?,?,?,?,?,?,?,?)").run("ew_oldmain00001", MEMBER, "olddev0000001", "main", "Primary", "idle", T, T - 1000);
+  const id = await s.eng.ensureMain(MEMBER, DEV);
+  assert.notEqual(id, "ew_oldmain00001", "죽은 기기의 창으로 안 감");
+  assert.ok(s.mains().some(m => m.id !== "ew_oldmain00001"), "지금 기기에 새 메인 창 줄이 생김");
+});
+
 test("들여온 primary 창이 없으면 예전처럼 새 메인 창을 띄우려 함", async () => {
   const s = setup(null);
   assert.equal(await importedPrimary(s.env.DB, MEMBER), null);

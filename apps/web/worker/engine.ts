@@ -336,7 +336,7 @@ export class Engine extends DurableObject<EngEnv> {
   }
   async ensureMain(owner: string, device: string) {
     const db = this.env.DB;
-    const main = await db.prepare("SELECT id, state, device_id FROM engine_window WHERE owner = ? AND kind = 'main' AND state NOT IN ('closed','failed') ORDER BY created_at DESC LIMIT 1").bind(owner).first<{ id: string; state: string; device_id: string }>();
+    const main = await db.prepare("SELECT w.id, w.state, w.device_id FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed') AND d.revoked_at IS NULL ORDER BY w.created_at DESC LIMIT 1").bind(owner).first<{ id: string; state: string; device_id: string }>();
     if (main) return main.id;
     if (await importedPrimary(db, owner)) return null;
     const bot = await db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(owner).first<{ name: string }>().catch(() => null);
