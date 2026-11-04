@@ -74,7 +74,7 @@ test("화면 설정: 쓴 값을 다른 기기(같은 계정)에서 받음 · 남
 
 test("화면 설정: 정해 둔 키 · 꼴만, 다른 사이트 글 · 로그인 없음은 막음", async () => {
   const { req, db } = setup();
-  for (const [k, v] of [["theme", "pink"], ["accent", "red"], ["accent", "#12AB3"], ["still", "yes"], ["favblink", "off"], ["tapthread", "true"], ["primary_win", "window:x"], ["", ""]]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k, v })).status, 400, `${k}=${v}`);
+  for (const [k, v] of [["theme", "pink"], ["accent", "red"], ["accent", "#12AB3"], ["still", "yes"], ["favblink", "off"], ["tapthread", "true"], ["primary_win", "window:x"], ["", ""], ["toString", "x".repeat(5000)], ["constructor", "1"], ["__proto__", "1"], ["hasOwnProperty", "1"]]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k, v })).status, 400, `${k}=${v}`);
   assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "theme", v: "dark" }, { "sec-fetch-site": "cross-site", "x-hb": "1" })).status, 403, "다른 사이트");
   assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "theme", v: "dark" }, {})).status, 403, "x-hb 없음");
   assert.equal((await req("POST", "/api/me/ui", null, { k: "theme", v: "dark" })).status, 401);
@@ -82,4 +82,6 @@ test("화면 설정: 정해 둔 키 · 꼴만, 다른 사이트 글 · 로그인
   assert.equal(db.prepare("SELECT COUNT(*) n FROM user_pref").get()!.n, 0, "막힌 글은 아무것도 안 씀");
   db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").run(MEMBER, "ui:theme", "<script>", Date.now());
   assert.deepEqual((await req("GET", "/api/me/ui", MEMBER)).j, {}, "꼴이 아닌 저장 값은 안 내보냄");
+  db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").run(MEMBER, "ui:toString", "x", Date.now());
+  assert.deepEqual((await req("GET", "/api/me/ui", MEMBER)).j, {}, "객체 원형 이름 저장 값도 안 내보냄");
 });

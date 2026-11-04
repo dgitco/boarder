@@ -1295,7 +1295,7 @@ const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|
 app.get("/api/me/ui", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const rs = (await c.env.DB.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(s.user.email.toLowerCase()).all<{ k: string; v: string }>()).results || [];
-  const out: Record<string, string> = {}; for (const r of rs) { const k = r.k.slice(3); if (UI_PREF[k]?.(r.v)) out[k] = r.v; }
+  const out: Record<string, string> = {}; for (const r of rs) { const k = r.k.slice(3); if (Object.hasOwn(UI_PREF, k) && UI_PREF[k](r.v)) out[k] = r.v; }
   return c.json(out, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/ui", async c => {   // { k: "theme" | "accent" | "still" | "favblink" | "tapthread", v }
@@ -1303,7 +1303,7 @@ app.post("/api/me/ui", async c => {   // { k: "theme" | "accent" | "still" | "fa
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const { k, v } = await c.req.json<{ k?: string; v?: string }>().catch(() => ({} as { k?: string; v?: string }));
   const key = String(k || ""), val = String(v ?? "");
-  if (!UI_PREF[key] || !UI_PREF[key](val)) return c.json({ ok: false, error: "모르는 값" }, 400);
+  if (!Object.hasOwn(UI_PREF, key) || !UI_PREF[key](val)) return c.json({ ok: false, error: "모르는 값" }, 400);   // 객체 원형 이름(toString 등)이 검사를 지나 아무 값이나 저장되던 것
   await c.env.DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(s.user.email.toLowerCase(), "ui:" + key, val, Date.now()).run();
   return c.json({ ok: true });
 });
