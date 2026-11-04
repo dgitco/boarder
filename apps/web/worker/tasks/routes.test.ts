@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 registerHooks({ resolve(spec, ctx, next) { try { return next(spec, ctx); } catch (e) { if (spec.startsWith(".")) return next(spec + ".ts", ctx); throw e; } } });
 const { mountTasks } = await import("./routes.ts");
-const { DEFAULT_VIEW, checkView, roots, isMine, visibleIds } = await import("./rules.ts");
+const { DEFAULT_VIEW, checkView, roots, isMine, visibleIds, doneOf } = await import("./rules.ts");
 
 function setup() {
   const db = new DatabaseSync(":memory:");
@@ -91,4 +91,16 @@ test("트리: 없는 상위 · 고리는 맨 위로 — 어느 업무도 사라�
   assert.deepEqual([...visibleIds([t("a", null), t("b", "a"), t("c", null)], ["b"])].sort(), ["a", "b"]);
   assert.deepEqual([...visibleIds([t("x", "y"), t("y", "x")], ["x"])].sort(), ["x", "y"]);
   assert.equal(visibleIds([t("x", "y"), t("y", "x")], []).size, 0);
+});
+test("완료 기준 뽑기: 목록 · 같은 줄 · 없으면 빈 목록(만들어 내지 않음)", () => {
+  assert.deepEqual(doneOf("**목표**: x\n\n**완료 기준**:\n- 덱 최종판이 맞음\n- [ ] 서명 끝\n\n## 다음"), ["덱 최종판이 맞음", "서명 끝"]);
+  assert.deepEqual(doneOf("- 완료 기준: 팀장님이 링크로 봄"), []);   // 목록 줄 안의 말은 제목이 아님
+  assert.deepEqual(doneOf("완료 기준: 팀장님이 링크로 봄\n다음"), ["팀장님이 링크로 봄"]);
+  assert.deepEqual(doneOf("설명뿐"), []);
+});
+test("끝난 지 하루가 지난 업무는 chat_off(대화 길이 그 노드를 모름) · 하루 안 · 열린 업무는 아님", async () => {
+  const { call, node } = setup();
+  node(A, "tk_1", {}); node(A, "tk_2", {}, { archived: Date.now() - 3600_000 }); node(A, "tk_3", {}, { archived: Date.now() - 2 * 86400_000 });
+  const j = await (await call(A, "GET", "/api/me/tasks")).json() as any, off = (id: string) => j.tasks.find((t: any) => t.id === id).chat_off;
+  assert.deepEqual([off("tk_1"), off("tk_2"), off("tk_3")], [false, false, true]);
 });

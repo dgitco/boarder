@@ -16,10 +16,11 @@ export type View = {
   mainFields: string[];           // 가운데 업무 화면에 보일 칸(순서 그대로)
   sideFields: string[];           // 오른쪽 칸에 보일 칸(순서 그대로)
   showBody: boolean;              // 업무 설명
+  showLine: boolean;
 };
 export const DEFAULT_VIEW: View = {
   group: "tree", sort: "status", states: ["working", "blocked", "waiting"], mine: [], mineFields: ["막힌 것"],
-  rowFields: [], mainFields: ["종류", "우선", "마지막 진전"], sideFields: ["맡은 창", "다음 할 일", "막힌 것"], showBody: true,
+  rowFields: [], mainFields: ["종류", "우선", "마지막 진전"], sideFields: ["맡은 창", "다음 할 일", "막힌 것"], showBody: true, showLine: true,
 };
 
 const words = (v: unknown, max: number, len: number) => Array.isArray(v) && v.length <= max && v.every(x => typeof x === "string" && x.trim() && x.length <= len) ? [...new Set(v.map(x => String(x).trim()))] : null;
@@ -27,18 +28,18 @@ const words = (v: unknown, max: number, len: number) => Array.isArray(v) && v.le
 export function checkView(v: unknown): View | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>, d = DEFAULT_VIEW;
-  const group = o.group ?? d.group, sort = o.sort ?? d.sort, showBody = o.showBody ?? d.showBody;
-  if (!GROUPS.includes(group as never) || !SORTS.includes(sort as never) || typeof showBody !== "boolean") return null;
+  const group = o.group ?? d.group, sort = o.sort ?? d.sort, showBody = o.showBody ?? d.showBody, showLine = o.showLine ?? d.showLine;
+  if (!GROUPS.includes(group as never) || !SORTS.includes(sort as never) || typeof showBody !== "boolean" || typeof showLine !== "boolean") return null;
   const states = o.states ?? d.states;
   if (!Array.isArray(states) || !states.every(s => STATUSES.includes(s as never))) return null;
   const mine = words(o.mine ?? d.mine, 10, 40), mineFields = words(o.mineFields ?? d.mineFields, 20, 40), rowFields = words(o.rowFields ?? d.rowFields, 20, 40), mainFields = words(o.mainFields ?? d.mainFields, 20, 40), sideFields = words(o.sideFields ?? d.sideFields, 20, 40);
   if (!mine || !mineFields || !rowFields || !mainFields || !sideFields) return null;
-  return { group: group as View["group"], sort: sort as View["sort"], states: [...new Set(states as Status[])], mine, mineFields, rowFields, mainFields, sideFields, showBody };
+  return { group: group as View["group"], sort: sort as View["sort"], states: [...new Set(states as Status[])], mine, mineFields, rowFields, mainFields, sideFields, showBody, showLine };
 }
 /** 저장된 값 읽기 — 옛 꼴 · 망가진 값이면 기본값(화면이 깨지지 않게). */
 export const readView = (v: unknown): View => checkView(v ?? {}) || DEFAULT_VIEW;
 
-export type TaskRow = { id: string; pane: string; name: string; status: Status; line: string; body: string; issue: string; fields: Record<string, string>; parent: string | null; main: string | null; updated_at: number; closed: boolean; confirm: boolean };
+export type TaskRow = { id: string; pane: string; name: string; status: Status; line: string; body: string; issue: string; fields: Record<string, string>; parent: string | null; main: string | null; updated_at: number; closed: boolean; chat_off?: boolean; confirm: boolean };
 /** 내 차례: 끝나지 않았고, 확인 대기로 표시됐거나(노드는 사람마다라 그 사람 몫) 고른 칸에 내 낱말이 있는 업무 */
 export const isMine = (t: TaskRow, v: Pick<View, "mine" | "mineFields">) => !t.closed && (t.confirm || v.mine.some(w => v.mineFields.some(f => (t.fields[f] || "").includes(w))));
 const ORDER: Record<Status, number> = { blocked: 0, waiting: 1, working: 2, done: 3, cancelled: 4 };
@@ -61,3 +62,10 @@ export function visibleIds(ts: TaskRow[], shown: Iterable<string>) {
   return out;
 }
 export const kidsOf = (ts: TaskRow[], id: string, rootIds: Set<string>) => ts.filter(t => t.parent === id && !rootIds.has(t.id));
+/** 업무 설명에서 완료 기준 줄 뽑기 — 「완료 기준」 제목 아래 목록이나 같은 줄 글. 없으면 빈 목록(만들어 내지 않음). */
+export function doneOf(body: string) {
+  const m = /(?:^|\n)[#* \t]*완료[ \t]*기준[* \t]*[:：]?[* \t]*([^\n]*)\n?((?:[ \t]*(?:[-*]|\d+[.)])[ \t]+[^\n]*\n?)*)/.exec(String(body || ""));
+  if (!m) return [] as string[];
+  const items = m[2].split("\n").map(l => l.replace(/^[ \t]*(?:[-*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]*)?/, "").replace(/\*\*/g, "").trim()).filter(Boolean);
+  return items.length ? items.slice(0, 12) : m[1].trim() ? [m[1].replace(/\*\*/g, "").trim()] : [];
+}

@@ -184,3 +184,19 @@ test("업무 칸(fields): 묶음째 저장 · 안 주면 그대로 · 칸 21개�
   assert.equal(((await (await post([{ key: "f1", fields: { "막힌 것": "팀장님 — 답", "다음 할 일": "x" } }])).json()) as any).changed, 0);
   assert.equal((await post([{ key: "f1", fields: Object.fromEntries(Array.from({ length: 21 }, (_, i) => ["k" + i, "v"])) }])).status, 400);
 });
+
+test("같은 이름 업무: 이미 쓰는 쪽은 이름을 안 바꾸고 새로 원하는 쪽만 뒤에 key — 다시 올려도 · 함께 올려도 · 상대가 개명해도 안 흔들림", async () => {
+  const { db, D1 } = d1(), up = app(D1);
+  const send = (...tasks: [string, string][]) => up("POST", "/api/device/tasks", { tasks: tasks.map(([key, name]) => ({ key, name, parent: "top" })) });
+  assert.equal((await send(["20", "같은 일"], ["10", "같은 일"])).status, 200);
+  assert.deepEqual([row(db, "tk_20").name, row(db, "tk_10").name], ["같은 일", "같은 일 · 10"], "먼저 온 쪽이 가짐");
+  assert.equal((await (await send(["10", "같은 일"], ["20", "같은 일"])).json() as any).changed, 0, "순서를 바꿔 다시 올려도 그대로");
+  await send(["99", "다른 일"]); await send(["100", "다른 일"], ["99", "다른 일"]);
+  assert.deepEqual([row(db, "tk_99").name, row(db, "tk_100").name], ["다른 일", "다른 일 · 100"], "번호가 더 작게 정렬돼도 이미 쓰는 99 가 그대로");
+  await send(["20", "새 이름"], ["10", "같은 일"]);
+  assert.equal(row(db, "tk_10").name, "같은 일 · 10", "상대가 개명해도 안 돌아감 — 그 이름으로 쓴 글이 사라지지 않게");
+  await send(["30", "다른 일"]);
+  assert.equal(row(db, "tk_30").name, "다른 일 · 30", "이번 묶음 밖에 이미 있는 이름");
+  await app(D1, { device: B })("POST", "/api/device/tasks", { tasks: [{ key: "40", name: "다른 일", parent: "top" }] });
+  assert.equal(row(db, "tk_40", B).name, "다른 일", "남의 노드 이름은 안 봄");
+});

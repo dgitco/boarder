@@ -442,9 +442,9 @@ export function convoFold(n: Node, mainName: string, my = ME) {
   const root = { ...msg({ id: 0, win: "보더", kind: "chat", text, at: at0 }, my, mainName), ts, lid: 0, ch: "primary", replies: replies.length, latest: replies.at(-1)!.ts, rnames: [], fold: { sessions, threads } };
   return { root, replies };
 }
-async function nodeThread(db: D1Database, me: string, raw: string, ts: string, my = ME) {
+async function nodeThread(db: D1Database, me: string, raw: string, ts: string, my = ME, nodeId = "") {   // nodeId = 노드 번호(업무 화면 — 같은 이름 노드가 있어도 그 노드로). 내 노드 안에서만 찾음
   const t = raw.replace(/^\d+\s+/, "").trim(), L = await load(db, me);
-  const n = L.nodes.find(x => x.name === raw) || L.nodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
+  const n = (nodeId ? L.nodes.find(x => x.id === nodeId) : undefined) || L.nodes.find(x => x.name === raw) || L.nodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
   if (!n && !ew) return null;
   const home = n ? n.name : String(ew!.name), ch = "n:" + raw;
   const mineWin = (win: string, kind?: string) => n ? L.nodeOfWin(win) === n || (kind === "me" && win === n.name) : win === ew!.name;
@@ -593,8 +593,8 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
   if (/^\/api\/permalink\//.test(p)) return j({ error: "회원 글엔 바깥 주소가 없어요" }, 404);
   if (/^\/api\/answer\/[\w-]{1,64}$/.test(p)) return j({ ok: true, state: "ok" });   // 회원 쓰기는 바로 끝나서 기다릴 일 없음
   if (p === "/emoji.json") { const e = await emoji(); return e ? new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag } }) : j({ cats: [], e: {} }); }
-  const nm = /^\/api\/chat\/n:([^/]{1,120})\/(\d{10}\.\d{6})$/.exec(dp);
-  if (nm) return j(await nodeThread(db, me, nm[1], nm[2], my) ?? { channel: "n:" + nm[1], root: nm[2], owner: null, messages: [] });
+  const nm = /^\/api\/chat\/n:(.{1,200})\/(\d{10}\.\d{6})$/.exec(dp);
+  if (nm) return j(await nodeThread(db, me, nm[1], nm[2], my, String(url.searchParams.get("id") || "")) ?? { channel: "n:" + nm[1], root: nm[2], owner: null, messages: [] });
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?$/.exec(p);
   if (m) {
     if (m[1] !== "primary") return j({ channel: m[1], messages: [], more: false, cursor: null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
@@ -627,7 +627,8 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
   if (p === "/api/nodechat") {
     const raw = String(url.searchParams.get("w") || "").trim(), t = raw.replace(/^\d+\s+/, "").trim();
     if (!t) return j({ error: "노드 이름" }, 400);
-    const L = await load(db, me), n = L.nodes.find(x => x.name === raw) || L.nodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
+    const byId = String(url.searchParams.get("id") || "");   // 업무 화면: 같은 이름 노드가 있어도 그 노드로(내 노드 안에서만)
+    const L = await load(db, me), n = (byId ? L.nodes.find(x => x.id === byId) : undefined) || L.nodes.find(x => x.name === raw) || L.nodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
     const inCard = (r: R) => CARD_TS.test(String(r.thread || ""));
     const stuck = new Map(((await db.prepare("SELECT id, state, at FROM engine_cmd WHERE owner = ? AND verb IN ('send','reopen','assign') AND state IN ('queued','taken','sending','failed','waiting')").bind(me).all<R>()).results).filter(c => c.state === "failed" || c.state === "waiting" || Date.now() - Number(c.at) > 60_000).map(c => ["cmd:" + c.id, c.state === "waiting"]));
     const rows = L.logs.filter(r => !inPrim(r) && !inCard(r) && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n || (r.kind === "me" && r.win === n.name) : ew ? r.win === ew.name : false)).slice(0, 300).reverse();

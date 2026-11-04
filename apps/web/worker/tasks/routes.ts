@@ -18,12 +18,13 @@ export function mountTasks(host: Hono<any>, who: Who, paneOf: (id: string) => st
       DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>(),
     ]);
     const data = json<{ parent?: Record<string, string>; taskview?: unknown } | null>(set?.data, {}) ?? {};   // 저장값이 null 이어도 500 이 나지 않게
+    const chatSince = Date.now() - 24 * 3600_000;   // 대화 길(member-board load)은 끝난 지 하루까지만 노드를 앎 — 그 뒤엔 화면이 입력 칸을 닫음
     const tasks: TaskRow[] = rows.results.map(r => {
       const t = json<{ state?: string; line?: string; body?: string; issue?: string; fields?: Record<string, string>; confirm?: boolean }>(r.task, {}) ?? {};
       const up = data.parent?.[r.id];
       return {
         id: r.id, pane: paneOf(r.id), name: r.pinned_name || r.name, status: (STATUSES.includes(t.state as Status) ? t.state : "working") as Status, line: t.line || "", body: t.body || "", issue: t.issue || "",
-        fields: t.fields && typeof t.fields === "object" ? t.fields : {}, parent: up && up !== "top" ? up : null, main: json<{ main?: string } | null>(r.counts, {})?.main || null, updated_at: r.updated_at, closed: !!r.archived_at, confirm: !!t.confirm,
+        fields: t.fields && typeof t.fields === "object" ? t.fields : {}, parent: up && up !== "top" ? up : null, main: json<{ main?: string } | null>(r.counts, {})?.main || null, updated_at: r.updated_at, closed: !!r.archived_at, chat_off: !!r.archived_at && Number(r.archived_at) <= chatSince, confirm: !!t.confirm,
       };
     });
     return c.json({ ok: true, tasks, view: readView(data.taskview) }, 200, { "cache-control": "no-store" });

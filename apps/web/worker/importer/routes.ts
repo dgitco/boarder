@@ -288,13 +288,22 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     for (const [k, v] of Object.entries(patch)) if (v === null) delete cur[k]; else cur[k] = v;
     // 고리 막기: 바꾼 노드마다 위로 따라가 제가 다시 나오면 안 됨(이미 있는 사슬과 이번 묶음을 합친 것으로 — 저를 상위로 둔 것도 여기서 걸림)
     for (const id of Object.keys(patch)) for (let x: string | undefined = cur[id], i = 0; x && x !== TOP && i < 60; i++, x = cur[x]) if (x === id) return c.json({ error: "서로 상위가 될 수 없어요" }, 400);
+    const wanted = [...new Set(tasks.flatMap(t => t.name ? [t.name] : []))], holders = new Map<string, Set<string>>();
+    for (const r of (await DB.prepare("SELECT id, name FROM mnode WHERE owner = ? AND name IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(wanted)).all()).results as { id: string; name: string }[]) holders.set(r.name, (holders.get(r.name) || new Set()).add(r.id));
+    const uniq = (want: string, id: string, key: string) => {
+      const on = have.get(id)?.name, tagged = `${want} · ${key}`, h = holders.get(want) || new Set<string>(), others = [...h].filter(x => x !== id);
+      if (on === tagged) return tagged;
+      if (on === want ? others.some(x => x < id) : others.length) return tagged;
+      holders.set(want, h.add(id));
+      return want;
+    };
     const st: D1PreparedStatement[] = [];
     let freed = false;
     const out = tasks.map((t, i) => {
       const id = ids[i], o = have.get(id), was = json<Task>(o?.task, { state: "working", line: "", body: "", issue: "" });
       const issue = t.issue === undefined ? was.issue : t.issue === null ? "" : typeof t.issue === "number" || /^\d+$/.test(t.issue) ? "#" + t.issue : t.issue;
       const fields = t.fields ?? was.fields, task: Task = { state: t.state ?? was.state, line: t.line ?? was.line, body: t.body ?? was.body, issue, ...((t.confirm ?? was.confirm) ? { confirm: true as const } : {}), ...(fields ? { fields } : {}) };
-      const name = t.name || o?.name || "업무", pinned = t.name ? null : o?.pinned_name ?? null, area = t.area ?? o?.area ?? "", state = TASK_NODE_STATE[task.state], why = task.line.slice(0, 80), tj = JSON.stringify(task);
+      const name = t.name ? uniq(t.name, id, t.key) : o?.name || "업무", pinned = t.name ? null : o?.pinned_name ?? null, area = t.area ?? o?.area ?? "", state = TASK_NODE_STATE[task.state], why = task.line.slice(0, 80), tj = JSON.stringify(task);
       const done = task.state === "done" || task.state === "cancelled", arch = done ? o?.archived_at ?? t0 : null;
       if (o && o.name === name && (o.pinned_name ?? null) === pinned && o.area === area && o.state === state && o.why === why && o.task === tj && (o.archived_at ?? null) === arch) return { key: t.key, id, created: false, changed: false };
       if (done && o && !o.archived_at) { freed = true; st.push(DB.prepare("DELETE FROM mnode_item WHERE owner = ? AND node = ? AND how = 'pin'").bind(me, id), DB.prepare("UPDATE mnode SET counts = json_remove(CASE WHEN json_valid(counts) THEN counts ELSE '{}' END, '$.main') WHERE owner = ? AND id = ?").bind(me, id)); }
