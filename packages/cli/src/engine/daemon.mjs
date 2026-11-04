@@ -208,7 +208,7 @@ export async function runDaemon() {
         const meta = w.meta && typeof w.meta === 'object' ? w.meta : undefined;
         const key = `${st.state}|${st.dialog || ''}|${st.limit || ''}|${w.name || ''}|${meta ? JSON.stringify(meta) : ''}`;
         try { await drainWindow(w, st); } catch (e) { log(`queue ${w.id}: ${e.message}`); }
-        if (full || last.get(w.id) !== key) { changed.push({ id: w.id, engine: w.engine, name: w.name, ...(meta ? { meta } : {}), state: st.state, since: st.since, dialog: st.dialog, limit: st.limit, session_id: st.session_id || w.session_id }); last.set(w.id, key); }
+        if (full || last.get(w.id) !== key) { changed.push({ id: w.id, engine: w.engine, name: w.name, ...(meta ? { meta } : {}), state: st.state, since: st.since, dialog: st.dialog, limit: st.limit, ...(st.error ? { error: String(st.error).slice(0, 200) } : {}), session_id: st.session_id || w.session_id }); last.set(w.id, key); }
       }
       try { await tickQueues(listed); } catch (e) { log(`queue: ${e.message}`); }
       if (full) { send({ type: 'state', full: true, windows: changed }); lastFull = now; }

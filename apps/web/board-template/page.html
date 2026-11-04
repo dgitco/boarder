@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "cdd7aa413546";
+window.HB_VER = "2954a3dd8deb";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -257,7 +257,10 @@ header h1{font-size:15px;font-weight:600;margin:0}
 
 body.hbm #v-tree .tree .node{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 body.ndrag{cursor:grabbing}
-body.ndrag #v-tree .tree .node:not(.dropon){opacity:.55}
+body.ndrag #v-tree .tree .node:not(.dropon):not(.dropbefore):not(.dropafter){opacity:.55}
+#v-tree .node.dropbefore{box-shadow:0 -3px 0 var(--accent)}#v-tree .node.dropafter{box-shadow:0 3px 0 var(--accent)}   
+#v-tree .node.dropbefore.droph{box-shadow:-3px 0 0 var(--accent)}#v-tree .node.dropafter.droph{box-shadow:3px 0 0 var(--accent)}
+.mgrp .node.grp{color:var(--soft)}
 .node.dropon{border-color:var(--ink);box-shadow:0 0 0 3px color-mix(in srgb,var(--ink) 14%,transparent);opacity:1}
 .node.nghost{position:fixed;left:0;top:0;z-index:60;pointer-events:none;transform-origin:0 0;box-shadow:0 14px 30px rgba(0,0,0,.18);opacity:.95;rotate:-2deg}
 .npick{position:fixed;inset:0;z-index:70}
@@ -359,6 +362,12 @@ body.ndrag #v-tree .tree .node:not(.dropon){opacity:.55}
 .queue{display:flex;flex-direction:column;gap:8px;margin-top:36px;padding-left:22px}
 .queue .more{align-self:flex-start}
 .mprim{width:300px;max-width:100%;margin:0 auto;display:flex;flex-direction:column}   
+.xcols{margin-top:22px;display:flex;flex-direction:column;align-items:center;gap:14px}   
+.lfold.xfold{width:auto;margin:0;text-align:center;padding:6px 14px}
+.xareas{display:grid;gap:14px;align-items:start}
+.xareas .col::before,.xareas .col::after{display:none}
+.xhead{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);font-size:12px}
+.xhead b{color:var(--ink);font-size:13px;font-weight:600}
 
 
 .board{display:grid;grid-template-columns:repeat(5,minmax(230px,1fr));gap:14px;overflow-x:auto;padding-bottom:8px;align-items:start}
@@ -2965,7 +2974,16 @@ const ICON = {
   phone: '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><path d="M6.6 3.2 4.9 3.5c-.8.2-1.4.9-1.3 1.7.5 5.6 5 10.1 10.6 10.6.8.1 1.5-.5 1.7-1.3l.3-1.7c.1-.6-.2-1.1-.7-1.4l-2-.9c-.5-.2-1.1-.1-1.4.3l-.7.8c-1.7-.8-3.1-2.2-3.9-3.9l.8-.7c.4-.4.5-.9.3-1.4l-.9-2c-.3-.5-.8-.8-1.4-.7z" fill="currentColor"/></svg>'
 };
 const vcallBtn = (pane, name) => LIVE ? `<button class="vcall" data-vcall="${pane}" aria-label="${esc(jo(name, "와/과"))} 음성 통화" title="음성 통화">${ICON.phone}</button>` : "";
-const asPrimary = (t) => String(t ?? "").replace(/Primary/g, "Primary");
+const BOTN = String(window.HB_MEMBER?.bot || "").trim() || "Primary";
+const asPrimary = (t) => String(t ?? "").replace(/Primary/g, BOTN);
+if (window.HB_MEMBER) {
+  const hc = document.getElementById("h-call");
+  if (hc) {
+    const t = window.jo(BOTN, "와/과") + " 통화";
+    hc.setAttribute("aria-label", t);
+    hc.title = t + "(아무것도 안 열려 있어도)";
+  }
+}
 const relinkU = (u) => bxRelink(String(u)).replace(/(claude\.ai\/(?:code\/)?artifact\/)([\w-]{10,})/g, (m, a, id) => a + ((D.relinks || {})[id] || id));
 const linky = (s) => esc(asPrimary(s)).replace(/https?:\/\/[^\s<>"'`)\]]+[^\s<>"'`)\].,;:!?]/g, (u0) => {
   const u = relinkU(u0);
@@ -2979,7 +2997,7 @@ const avatar = (name, txt) => (seedOf(name) === "Owner" || window.HB_MEMBER && S
 const FLAG = '<svg class="flag" width="14" height="14" viewBox="0 0 16 16" aria-label="' + (window.HB_MEMBER ? "내 차례" : "내 차례") + '"><path fill="currentColor" d="M3 1.75a.75.75 0 0 1 .75.75v.3c1.9-.9 3.6-.4 5 .1 1.3.5 2.4.9 3.9.2a.6.6 0 0 1 .85.55v6.6a.6.6 0 0 1-.35.55c-2 .9-3.5.4-4.9-.1-1.3-.5-2.6-.9-4.5 0v4.8a.75.75 0 0 1-1.5 0V2.5A.75.75 0 0 1 3 1.75z"/></svg>';
 const CLOCK = '<svg class="clock" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.5V8l2.3 1.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 const ME_NAME = window.HB_MEMBER?.name || "Owner", TURN = window.HB_MEMBER ? "내 차례" : "내 차례";
-const AREA_NAME = { primary: window.HB_MEMBER?.bot || "Primary", company: "회사 리드", personal: "퍼스널 리드", dgit: "DGit 리드", shop: "가게 리드" };
+const AREA_NAME = { primary: BOTN, company: "회사 리드", personal: "퍼스널 리드", dgit: "DGit 리드", shop: "가게 리드" };
 const AGENT_CH = window.HB_CH ? [] : (Array.isArray(D.agents) ? D.agents : []).filter((a) => /^[a-z][a-z0-9_]{1,30}$/.test(a?.key || "") && !(a.key in AREA_NAME) && a.name);
 for (const a of AGENT_CH) AREA_NAME[a.key] = String(a.name);
 const WORD_KO = {
@@ -3043,7 +3061,7 @@ const WORD_KO = {
   flags: "플래그"
 };
 const human = (t) => /[가-힣]/.test(t) && !/[a-z]{3,}-[a-z]/i.test(t) ? t : String(t).split(/[-_\s]+/).filter(Boolean).map((w) => WORD_KO[w.toLowerCase()] || w).join(" ");
-const AREA_KO = { primary: "프라이머리 창", company: "회사", personal: "퍼스널", dgit: "DGit", shop: "가게" };
+const AREA_KO = { primary: window.HB_MEMBER ? BOTN : "프라이머리 창", unsorted: "분류 안 됨", company: "회사", personal: "퍼스널", dgit: "DGit", shop: "가게" };
 let MHEAD = /* @__PURE__ */ new Set();
 let AREAS = window.HB_CH ? window.HB_CH.filter((k) => k !== "primary") : ["company", "personal", "dgit", "shop"];
 const leadPane = (k) => D.areas.find((a) => a.key === k)?.lead ?? [...Array.isArray(D.agents) ? D.agents : [], ...AGENT_CH].find((a) => a?.key === k)?.lead ?? void 0;
@@ -3284,7 +3302,7 @@ const blockersOf = (pane) => {
 };
 const stallPanes = () => panes.filter((p) => p.stall && !need(p)).sort((a, b) => (b.last?.ago || 0) - (a.last?.ago || 0)).map((p) => p.pane);
 const KIND_KO = { choice: "결정", question: "질문", decision: "창 결정", draft: "채널톡 초안", todo: "할 일" }, KIND_ORDER = Object.keys(KIND_KO);
-const CARD_AREA = { primary: "Primary", company: "회사", dgit: "DGit", shop: "가게", personal: "퍼스널" }, AREA_ORDER = Object.keys(CARD_AREA);
+const CARD_AREA = { primary: BOTN, company: "회사", dgit: "DGit", shop: "가게", personal: "퍼스널" }, AREA_ORDER = Object.keys(CARD_AREA);
 const cardArea = (a) => a === "shopco" ? "shop" : CARD_AREA[a] ? a : "primary";
 const bigItem = (w) => ({ id: w.id, to: w.to, q: w.title, why: w.s, body: w.body, area: w.area, ref: w.ref, bth: w.bth, opts: ["창 열어 시작", "처리함", "(나중에)"], labels: { "(나중에)": "내일 아침에 다시" }, big: true });
 function cardItem(c) {
@@ -3377,7 +3395,17 @@ const nested = (p) => {
   return true;
 };
 const winOf = (l) => ({ lead: l, kids: panes.filter((h) => h.kind === "helper" && h.win === l.win) });
-const winSort = (a, b) => priRank(a.lead.pri) - priRank(b.lead.pri) || need(b.lead) - need(a.lead);
+const winSort = (a, b) => (a.lead.ord ?? 1e9) - (b.lead.ord ?? 1e9) || priRank(a.lead.pri) - priRank(b.lead.pri) || need(b.lead) - need(a.lead);
+const seatKeys = () => new Set((D.areas || []).filter((a) => a.seat).map((a) => a.key));
+const sibsOf = (pane) => {
+  const p = byPane[pane];
+  if (!p || p.kind !== "lead") return null;
+  if (MHEAD.has(pane)) {
+    const sk = seatKeys(), tidy2 = !!D.tree_tidy, mine = sk.has(p.area);
+    return AREAS.filter((k) => !tidy2 || sk.has(k) === mine).map((k) => leadPane(k)).filter((x) => x && byPane[x]);
+  }
+  return (nested(p) ? subsOf(p.up) : windowsOf(p.area)).map((w) => w.lead.pane);
+};
 const windowsOf = (area) => panes.filter((p) => p.area === area && p.kind === "lead" && !MHEAD.has(p.pane) && !nested(p)).map(winOf).sort(winSort);
 const subsOf = (pane) => panes.filter((p) => p.up === pane && !MHEAD.has(p.pane) && nested(p)).map(winOf).sort(winSort);
 const deepOf = (area) => {
@@ -3444,7 +3472,14 @@ document.addEventListener("click", (e) => {
   let st = null, auto = null;
   const PRIM = () => leadPane("primary");
   const hitOf = (el) => el?.closest?.("#v-tree .tree .node")?.querySelector(':scope > .hit[data-p^="%"]') || null;
-  const clear = () => document.querySelectorAll("#v-tree .node.dropon").forEach((n) => n.classList.remove("dropon"));
+  const clear = () => document.querySelectorAll("#v-tree .node.dropon, #v-tree .node.dropbefore, #v-tree .node.dropafter").forEach((n) => n.classList.remove("dropon", "dropbefore", "dropafter", "droph"));
+  const mark = (t) => {
+    if (!t) return;
+    if (t.reorder) {
+      t.node.classList.add(t.after ? "dropafter" : "dropbefore");
+      if (t.h) t.node.classList.add("droph");
+    } else t.node.classList.add("dropon");
+  };
   const stopAuto = () => {
     clearInterval(auto);
     auto = null;
@@ -3466,6 +3501,32 @@ document.addEventListener("click", (e) => {
     document.body.classList.remove("ndrag");
     st = null;
   };
+  async function reorder(s, list) {
+    try {
+      const r = await fetch("/api/me/nodes/order", { method: "POST", credentials: "include", headers: { "content-type": "application/json", "x-hb": "1" }, body: JSON.stringify({ panes: list }) });
+      if (!r.ok) return toast(r.status === 404 ? "이 노드는 순서를 못 바꿔요" : r.status === 409 ? "순서를 저장할 노드가 너무 많아요" : "일시적인 오류가 발생했어요", 5e3, true, { where: "node-order", status: r.status });
+      toast(`순서를 바꿨어요 · ${s.name}`);
+      dataTag = "";
+      refresh();
+    } catch (err) {
+      toast("일시적인 오류가 발생했어요", 5e3, true, { where: "node-order", err: String(err?.message || err).slice(0, 80) });
+    }
+  }
+  const placed = (s, t) => {
+    const list = (sibsOf(s.p) || []).filter((x) => x !== s.p);
+    let i = list.indexOf(t.p);
+    if (i < 0) return null;
+    if (t.after) i++;
+    list.splice(i, 0, s.p);
+    return list;
+  };
+  const shifted = (s, d) => {
+    const list = (sibsOf(s.p) || []).slice(), i = list.indexOf(s.p), j = i + d;
+    if (i < 0 || j < 0 || j >= list.length) return null;
+    list.splice(i, 1);
+    list.splice(j, 0, s.p);
+    return list;
+  };
   async function move(s, t) {
     const top = t.p === PRIM();
     try {
@@ -3484,12 +3545,18 @@ document.addEventListener("click", (e) => {
     const items = [...document.querySelectorAll('#v-tree .tree .node > .hit[data-p^="%"]')].filter((h) => h.dataset.p !== s.p).map((h) => ({ p: h.dataset.p, name: h.getAttribute("aria-label") || "" }));
     const el = document.createElement("div");
     el.className = "npick";
-    el.innerHTML = `<div class="npk-bg" data-npx></div><div class="npk" role="dialog" aria-label="옮길 곳"><div class="npk-h">${esc(s.name)} — 어디 아래로 옮길까요</div>${items.map((x) => `<button type="button" data-npp="${esc(x.p)}">${x.p === PRIM() ? "맨 위 (메인 봇 바로 밑)" : esc(x.name)}</button>`).join("")}<button type="button" class="npk-x" data-npx>닫기</button></div>`;
+    const ord = [[-1, "앞으로 한 칸"], [1, "뒤로 한 칸"]].filter(([d]) => shifted(s, d));
+    el.innerHTML = `<div class="npk-bg" data-npx></div><div class="npk" role="dialog" aria-label="옮길 곳">${ord.length ? `<div class="npk-h">${esc(s.name)} — 순서</div>${ord.map(([d, t]) => `<button type="button" data-npo="${d}">${t}</button>`).join("")}` : ""}<div class="npk-h">${esc(s.name)} — 어디 아래로 옮길까요</div>${items.map((x) => `<button type="button" data-npp="${esc(x.p)}">${x.p === PRIM() ? "맨 위 (메인 봇 바로 밑)" : esc(x.name)}</button>`).join("")}<button type="button" class="npk-x" data-npx>닫기</button></div>`;
     el.addEventListener("click", (ev) => {
-      const b = ev.target.closest("[data-npp],[data-npx]");
+      const b = ev.target.closest("[data-npp],[data-npx],[data-npo]");
       if (!b) return;
       ev.stopPropagation();
       el.remove();
+      if (b.dataset.npo) {
+        const l = shifted(s, Number(b.dataset.npo));
+        if (l) reorder(s, l);
+        return;
+      }
       if (b.dataset.npp) move(s, items.find((x) => x.p === b.dataset.npp));
     });
     document.body.appendChild(el);
@@ -3508,7 +3575,13 @@ document.addEventListener("click", (e) => {
     if (st.ghost) st.ghost.style.display = "none";
     const h = hitOf(document.elementFromPoint(x, y));
     if (st.ghost) st.ghost.style.display = "";
-    return h && h.dataset.p !== st.p ? { node: h.closest(".node"), p: h.dataset.p, name: h.getAttribute("aria-label") || "" } : null;
+    if (!h || h.dataset.p === st.p) return null;
+    const node2 = h.closest(".node"), p = h.dataset.p, t = { node: node2, p, name: h.getAttribute("aria-label") || "" };
+    if ((sibsOf(st.p) || []).includes(p)) {
+      const r = node2.getBoundingClientRect(), hz = MHEAD.has(p), rel = hz ? (x - r.left) / r.width : (y - r.top) / r.height;
+      if (rel < 0.3 || rel > 0.7) Object.assign(t, { reorder: true, after: rel > 0.5, h: hz });
+    }
+    return t;
   };
   let autoDir = "", lastCol = 0;
   const autoScroll = (x, y) => {
@@ -3532,7 +3605,7 @@ document.addEventListener("click", (e) => {
         if (v) v.scrollTop += dy;
       }
       clear();
-      target(st.lx, st.ly)?.node.classList.add("dropon");
+      mark(target(st.lx, st.ly));
     }, 30);
   };
   document.addEventListener("pointerdown", (e) => {
@@ -3567,8 +3640,7 @@ document.addEventListener("click", (e) => {
     st.ghost.style.transform = `translate(${e.clientX + 8}px, ${e.clientY + 8}px)`;
     autoScroll(e.clientX, e.clientY);
     clear();
-    const t = target(e.clientX, e.clientY);
-    t?.node.classList.add("dropon");
+    mark(target(e.clientX, e.clientY));
   });
   document.addEventListener("contextmenu", (e) => {
     if (st) e.preventDefault();
@@ -3592,10 +3664,13 @@ document.addEventListener("click", (e) => {
     const t = target(e.clientX, e.clientY);
     end();
     eatClick();
-    if (t) move(s, t);
+    if (t?.reorder) {
+      const l = placed(s, t);
+      if (l) reorder(s, l);
+    } else if (t) move(s, t);
   });
 })();
-const noNodes = () => !MHEAD.size && !["primary", ...AREAS].some((k) => windowsOf(k).length || waitList(byPane[leadPane(k)]?.pane).vis.length);
+const noNodes = () => !MHEAD.size && !["primary", ...AREAS, "unsorted"].some((k) => windowsOf(k).length || waitList(byPane[leadPane(k)]?.pane).vis.length);
 function viewTree() {
   const prim = byPane[leadPane("primary")];
   const hang = (pane) => {
@@ -3609,29 +3684,41 @@ function viewTree() {
   const sl = $("#v-tree .areas")?.scrollLeft || viewTree.ax || 0;
   viewTree.ax = 0;
   const peers = undefined || "";
-  const mtree = !!(window.HB_CH && AREAS.length), primCol = `${node(prim)}${tree(windowsOf("primary"))}${hang(prim.pane)}`;
+  const tidy2 = !!(window.HB_CH && D.tree_tidy), seatK = seatKeys();
+  const shownA = tidy2 ? AREAS.filter((k) => seatK.has(k)) : AREAS, xA = tidy2 ? AREAS.filter((k) => !seatK.has(k)) : [];
+  const unQ = tidy2 ? big.filter((b) => b.park && b.area === "unsorted") : [], unN = tidy2 ? deepOf("unsorted").length + unQ.length : 0;
+  const xN = xA.reduce((n, k) => n + 1 + deepOf(k).length + bigOf(leadPane(k)).length, 0) + unN, xOpen = opened.has("xcols");
+  const colOf = (k) => {
+    const l = byPane[leadPane(k)];
+    return `<div class="col">${node(l)}${tree(windowsOf(k))}${hang(l.pane)}</div>`;
+  };
+  const unCol = unN ? `<div class="col"><div class="xhead"><b>분류 안 됨</b><span>어느 부서에도 안 붙은 창</span></div>${tree(windowsOf("unsorted"))}${unQ.length ? `<div class="queue">${unQ.map(waitNode).join("")}</div>` : ""}</div>` : "";
+  const xCols = xN ? `<div class="xcols"><button type="button" class="lfold xfold" data-x="xcols" aria-expanded="${xOpen}">${xOpen ? "그 밖의 창 접기" : `그 밖의 창 ${xN}`}</button>${xOpen ? `<div class="areas xareas">${xA.map(colOf).join("")}${unCol}</div>` : ""}</div>` : "";
+  const grpName = window.HBGroupName?.() || "부서";
+  const grp = tidy2 && shownA.length ? `<div class="mprim mgrp"><div class="node grp" aria-label="${esc(grpName)} · 부서 ${shownA.length}"><span class="n"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3.4l1.6 1.6h6A1.5 1.5 0 0 1 17 8.1v6.4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>${esc(grpName)}</span><span class="s"><span>부서 ${shownA.length}</span></span></div></div><div class="drop"></div>` : "";
+  const mtree = !!(window.HB_CH && (shownA.length || tidy2)), primCol = `${node(prim)}${tree(windowsOf("primary"))}${hang(prim.pane)}`;
   const keepAv = window.HBKeepAv($("#v-tree"));
   $("#v-tree").innerHTML = `<div class="canvas${peers ? " orgs" : ""}${peers && !AREAS.length ? " solo" : ""}"><div class="tree">
     <div class="rootwrap">${meNode()}</div><div class="drop"></div>${mtree ? `
-    <div class="mprim">${primCol}</div><div class="drop"></div>` : ""}
-    <div class="areas">${mtree ? "" : `<div class="col">${primCol}</div>`}${AREAS.map((k) => {
-    const l = byPane[leadPane(k)];
-    return `<div class="col">${node(l)}${tree(windowsOf(k))}${hang(l.pane)}</div>`;
-  }).join("")}</div></div>${peers}${noNodes() && !peers ? emptyHTML({ ic: "node", t: "아직 노드가 없어요", p: "기기에서 AI 창에 일을 맡기면 그 일이 노드로 여기 떠요.", fill: true }) : ""}</div>`;
+    <div class="mprim">${primCol}</div><div class="drop"></div>${grp}` : ""}
+    <div class="areas">${mtree ? "" : `<div class="col">${primCol}</div>`}${shownA.map(colOf).join("")}</div>${xCols}</div>${peers}${noNodes() && !peers ? emptyHTML({ ic: "node", t: "아직 노드가 없어요", p: "기기에서 AI 창에 일을 맡기면 그 일이 노드로 여기 떠요.", fill: true }) : ""}</div>`;
   keepAv();
   const ar = $("#v-tree .areas");
   if (ar && sl) ar.scrollLeft = sl;
-  if (ar && mtree) {
+  const spread = (el, n) => {
+    if (!el || !n) return;
     const ph = matchMedia("(max-width: 760px)").matches;
-    ar.style.setProperty("grid-template-columns", `repeat(${AREAS.length}, ${ph ? "86vw" : "minmax(240px,320px)"})`, "important");
-    ar.style.overflowX = "auto";
-    ar.style.setProperty("justify-content", "start", "important");
+    el.style.setProperty("grid-template-columns", `repeat(${n}, ${ph ? "86vw" : "minmax(240px,320px)"})`, "important");
+    el.style.overflowX = "auto";
+    el.style.setProperty("justify-content", "start", "important");
     if (!ph) {
-      ar.style.width = "max-content";
-      ar.style.maxWidth = "100%";
-      ar.style.margin = "0 auto";
+      el.style.width = "max-content";
+      el.style.maxWidth = "100%";
+      el.style.margin = "0 auto";
     }
-  }
+  };
+  if (ar && mtree) spread(ar, shownA.length);
+  spread($("#v-tree .xareas"), xA.length + (unCol ? 1 : 0));
 }
 function viewBoard() {
   const prim = byPane[leadPane("primary")];
@@ -3694,7 +3781,7 @@ function viewLaneList() {
     const idle = all.filter((x) => x.st.k === "idle");
     body = act.map(row).join("") + (idle.length ? `<button class="lfold" data-x="lidle">${opened.has("lidle") ? "쉬는 창 접기" : `쉬는 창 ${idle.length}개`}</button>${opened.has("lidle") ? idle.map(row).join("") : ""}` : "");
   } else {
-    body = ["primary", ...AREAS].map((k) => `<div class="agrp"><h3>${esc(k === "primary" ? "primary · 프라이머리 창" : AREA_KO[k])}</h3>${all.filter((x) => x.p.area === k).sort((a, b) => order[a.st.k] - order[b.st.k] || b.st.m - a.st.m).map(row).join("")}</div>`).join("");
+    body = ["primary", ...AREAS, ...D.tree_tidy && (D.areas || []).some((a) => a.key === "unsorted") ? ["unsorted"] : []].map((k) => `<div class="agrp"><h3>${esc(k === "primary" ? window.HB_MEMBER ? BOTN : "primary · 프라이머리 창" : AREA_KO[k])}</h3>${all.filter((x) => x.p.area === k).sort((a, b) => order[a.st.k] - order[b.st.k] || b.st.m - a.st.m).map(row).join("")}</div>`).join("");
   }
   const chips = big.map((b) => `<button class="chip" ${parkHit(b)}>${CLOCK}${esc(b.title)} <b>${esc(AREA_KO[b.area] || "")}</b></button>`).join("");
   $("#v-lanes").innerHTML = `<div class="lbar"><span class="seg">${[["wait", "오래 기다린 순"], ["area", "영역별"]].map(([k, t]) => `<button data-lsort="${k}" aria-pressed="${laneSort === k}">${t}</button>`).join("")}</span>
@@ -6538,7 +6625,7 @@ function menList(kind, q) {
   const hit = (n) => !q || String(n).toLowerCase().includes(q);
   if (kind === ":") return emoList(q);
   const L = kind === "@" ? [
-    { a: "bxm:@primary", n: "Primary", s: "Primary", i: blob("Primary", 20) },
+    { a: "bxm:@primary", n: BOTN, s: window.HB_MEMBER ? "메인 봇" : "Primary", i: blob(BOTN, 20) },
     ...CH.filter((k) => k !== "primary").map((k) => ({ a: "bxm:@lead:" + k, n: AREA_NAME[k], s: "영역 리드", i: blob(AREA_NAME[k], 20) })),
     ...menNodes().map((p) => ({ a: "bxm:@pane:" + p.pane, n: nameOf(p), s: "노드 에이전트", i: blob(nameOf(p), 20) }))
   ] : menNodes().map((p) => ({ a: "bxm:#pane:" + p.pane, n: nameOf(p), s: AREA_NAME[p.area] || "", i: `<i class="mh">${ICON.hash}</i>` }));
@@ -7361,7 +7448,7 @@ function thHTML() {
   const thName = tt2 ? tt2.title : on && on !== AREA_NAME[k] ? on : "";
   return `<aside class="cth" aria-label="스레드"><div class="thgrip" data-thgrip role="separator" aria-orientation="vertical" tabindex="0" aria-label="스레드 너비" title="끌어서 너비 바꾸기 · 두 번 누르면 기본"></div><div class="chd"><span class="t">스레드</span>${thName ? `<span class="d">${esc(thName)}</span>` : ""}${huddle({ ch: k, th: CS.th.ts })}${LIVE ? `<button class="thsave" data-msave="${CS.th.ts}" aria-pressed="${sv}" aria-label="${sv ? "스레드 저장 풀기" : "스레드 저장"}" title="${sv ? "저장 풀기" : "스레드 저장"}">${sv ? ICON.saved : ICON.save}</button>` : ""}<button class="xbtn" data-cclose aria-label="닫기">${ICON.x}</button></div>
     ${fwrap("cthfeed", "", `${root ? `<div class="croot">${msgHTML(root, k, true)}</div>` : t.loading ? LOADING : t.err ? readErr("th:" + ts) : emptyHTML({ ic: "search", t: "없는 스레드예요", p: "지워졌거나 주소가 바뀌었어요.", sk: "", sm: true })}${rest.length ? `<div class="cnt">답글 ${rest.length}개</div>` : ""}${rest.map((m) => (m.ts === fnew ? '<div class="thnew" role="separator" aria-label="여기부터 새 답"><span>새 답</span></div>' : "") + msgHTML(m, k, true)).join("")}${t.err ? readErr(t.err) : ""}${pendFor("t" + ts)}`)}
-    ${comp("cth", "스레드에 답하기", `Enter 보내기 · ${owner ? esc(ownerName(owner)) + " 입력으로" : "Primary 입력으로"} 들어가요 · Slack 스레드에도`)}</aside>`;
+    ${comp("cth", "스레드에 답하기", `Enter 보내기 · ${owner ? esc(ownerName(owner)) + " 입력으로" : esc(BOTN) + " 입력으로"} 들어가요 · Slack 스레드에도`)}</aside>`;
 }
 const THW = "hb-thw";
 const thwSet = (w) => w ? document.documentElement.style.setProperty("--thw", w + "px") : document.documentElement.style.removeProperty("--thw");
@@ -9909,7 +9996,7 @@ window.HBV_onScreen = (cmd) => {
   }
   if (a === "open_channel" || a === "open_thread") {
     const c = isCh(cmd.channel) ? cmd.channel : "primary";
-    if (cmd.channel && !isCh(cmd.channel)) toast("그 채널을 못 찾아 Primary 로 열어요");
+    if (cmd.channel && !isCh(cmd.channel)) toast(window.HB_MEMBER ? `그 채널을 못 찾아 ${BOTN} 채팅을 열어요` : "그 채널을 못 찾아 Primary 로 열어요");
     scrLeaveCanvas();
     return a === "open_thread" && SCR_TS.test(cmd.thread || "") ? goLink({ c, t: cmd.thread, m: "" }) : openChan(c);
   }

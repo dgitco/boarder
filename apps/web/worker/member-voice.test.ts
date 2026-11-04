@@ -332,3 +332,16 @@ test("진짜 Engine.rtc: rtc_* 만 · 주인 하네스 기기 DO 는 거절 · �
   await m.e.webSocketMessage(null, JSON.stringify({ id: m.sent[1].id, ok: false, code: 2, error: "이 기기에선 통화를 동시에 3개까지 열어요" }));
   assert.deepEqual(await p, { ok: false, code: 2, error: "이 기기에선 통화를 동시에 3개까지 열어요" });
 });
+
+test("통화 넘기기: 고른 메인 봇 창에 줄만 선 글은 「보내는 중」 · 전문 그대로 · post", async () => {
+  const s = await setup(), dv = s.device(TOK.A), KEY = "window:mbp:tmux-own:p7", T = Date.now();
+  s.db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, cwd, state, state_at, win, session, handle, seen_at, gone_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(A, KEY, "devAaaaaaaaa", "window", "tmux-own", "비서실장", "/x", "idle", T, "mbp:p7", "", JSON.stringify({ engine: "tmux-own", pane: "p7" }), T, null);
+  s.db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ primary_item: KEY }), T);
+  const r = await s.call("POST", "/api/device/voice", { cid: "rid0123456789", pane: PANE, op: "handoff", to: "primary", text: "주간 보고서 정리", said: "보고서 부탁해", n: 0 }, dv);
+  assert.equal(r.j.handoff.state, "sending", r.text);
+  assert.match(r.j.text, /보내는 중/);
+  const row = s.db.prepare("SELECT verb, args FROM engine_cmd WHERE owner = ? AND json_extract(args, '$.item') = ?").get(A, KEY) as any, a = JSON.parse(row.args);
+  assert.equal(row.verb, "send"); assert.equal(a.post, true);
+  assert.match(a.text, /\nThis is|\n\(This is/, "답하는 길 한 줄이 줄바꿈 뒤에");
+});

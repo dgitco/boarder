@@ -650,13 +650,14 @@
     const RULE_KO = {one_goal: ['창 하나 = 목표 하나', '같은 목표의 다른 요청은 새 창이 아니라 그 창 안에서'], report: ['보드에 보고', '시작 · 일하는 동안(30분에 한 번 이상) · 막힘 · 끝'],
       park: ['끝나면 저장하고 주차', '끝났거나 남의 답만 기다리면 대화를 저장하고 창을 닫아요 — 조건이 차면 다시 열어요'], ask: ['묻는 글 꼴', '첫 줄에 정할 것, 그다음 고를 것(추천 먼저), 쉬운 말로'], outside: ['바깥에 보내기 전 허락', '메일 · 메시지처럼 바깥에 가는 글은 초안을 보이고 허락 뒤에만']};
     const PARK_HS = [1, 2, 3, 6, 12, 24, 48, 72, 168];
-    const primLabel = k => k === 'auto' ? '자동 — 이름이 primary · main · 메인인 창(보더 메인 봇이 떠 있으면 그것)' : k === 'none' ? '보더 메인 봇' : (() => { const w = (j.windows || []).find(x => x.key === k); return w ? `${w.title} · ${w.device || '기기'} · ${w.engine === 'herdr-own' ? 'Herdr' : 'tmux'}` : '고른 창(지금 닫힘 — 보더 메인 봇이 받아요)'; })();
+    const primLabel = k => k === 'auto' ? '자동 — 이름이 primary · main · 메인인 창(보더 메인 봇이 떠 있으면 그것)' : k === 'none' ? '보더 메인 봇' : (() => { const w = (j.windows || []).find(x => x.key === k); return w ? `${w.title} · ${w.device || '기기'} · ${w.engine === 'herdr-own' ? 'Herdr' : 'tmux'}` : '고른 창(이 목록 밖 — 살아 있으면 그 창이 받고, 닫혔으면 보더 메인 봇이 받아요)'; })();
     const prefSec = () => { if (OWNER || !j.prefs) return ''; const P = j.prefs, wins = j.windows || [], now = j.primary_now ? (wins.find(w => w.key === j.primary_now)?.title || '들여온 창') : '보더 메인 봇';
       const opts = ['auto', 'none', ...wins.map(w => w.key)]; if (!opts.includes(P.primary_item)) opts.push(P.primary_item);
-      return `<div class="bxs-sech">메인 봇</div><div class="bxs-list"><div class="bxs-li"><div><b>메인 봇 창</b><span>Primary 채팅 · 보더 알림이 가는 창이에요. 내 tmux · Herdr 창 중에서 고르거나 보더 메인 봇을 써요 · 지금: ${esc(now)}</span></div>`
+      return `<div class="bxs-sech">메인 봇</div><div class="bxs-list"><div class="bxs-li"><div><b>메인 봇 창</b><span>메인 봇 채팅 · 보더 알림이 가는 창이에요. 내 tmux · Herdr 창 중에서 고르거나 보더 메인 봇을 써요 · 지금: ${esc(now)}</span></div>`
         + `<select class="bxs-in sm bxs-sel" data-npr aria-label="메인 봇 창">${opts.map(k => `<option value="${esc(k)}"${k === P.primary_item ? ' selected' : ''}>${esc(primLabel(k))}</option>`).join('')}</select></div></div>`
         + `<div class="bxs-sech">업무 노드</div><div class="bxs-list"><div class="bxs-li"><div><b>업무 상태 다섯 꼴</b><span>업무 노드 점을 진행 · 막힘 · 기다림 · 완료 · 취소 다섯 꼴로 그려요. 끄면 지금 점 그대로예요. 주차 · 담당 없음 · 확인 대기 표지는 늘 붙어요</span></div>${sw(!!P.task_dots, 'data-ntd', '업무 상태 다섯 꼴')}</div>`
         + `<div class="bxs-li"><div><b>채널 = 태스크</b><span>장부의 업무(#번호)를 채널로 써요 — 그 업무의 창 · 세션 · 보고가 업무 채널에 모이고, 열린 업무가 왼쪽 채널에 떠요. 끄면 예전 묶기 그대로예요${P.task_repo ? ' · 번호만 있는 업무의 리포: ' + esc(P.task_repo) : ''}</span></div>${sw(!!P.task_channels, 'data-ntc', '채널 = 태스크')}</div>`
+        + (j.role_seats ? `<div class="bxs-li"><div><b>트리 정리</b><span>노드 트리에서 메인 봇 아래에는 역할 자리표의 부서만 보여요. 부서에 안 붙은 작업자 · 옛 창 · 주차한 노드는 접힌 「그 밖의 창」 안에 모이고(지우지 않아요), 창이 다 닫힌 노드는 바로 빠져요</span></div>${sw(P.tree_tidy !== false, 'data-ntt', '트리 정리')}</div>` : '')
         + (P.front_door ? `<div class="bxs-li"><div><b>앞단 하나</b><span>${esc(P.front_door.name)} — 고른 노드 ${(P.front_door.pairs || []).length}개를 메인 봇 채팅 한 칸으로 읽어요(설정 API 로 바꿔요)</span></div><span class="bxs-mut">켬</span></div>` : '') + `</div>`
         + `<div class="bxs-sech">주차</div><div class="bxs-list"><div class="bxs-li"><div><b>조용한 노드 주차</b><span>창 · 세션 · 보고 줄이 이만큼 조용하면 노드를 주차로 보여요(창은 안 닫음 — 다시 일하면 바로 살아나요)</span></div>`
         + `<div class="bxs-row" style="flex-wrap:nowrap">${P.park_on ? `<select class="bxs-in sm bxs-sel" data-nph aria-label="주차까지 조용한 시간">${[...new Set([...PARK_HS, P.park_h])].sort((x, y) => x - y).map(h => `<option value="${h}"${h === P.park_h ? ' selected' : ''}>${hrs(h)} 조용하면</option>`).join('')}</select>` : '<span class="bxs-mut">끔</span>'}${sw(P.park_on, 'data-npo', '조용한 노드 주차')}</div></div></div>`
@@ -718,6 +719,7 @@
       if (e.target.closest('[data-nmore]')) { more = true; return draw(); }
       const cp = e.target.closest('[data-cp]'); if (cp) return copy(cp.dataset.cp, '명령을');
       if (e.target.closest('[data-ntd]')) { const was = !!j.prefs.task_dots; j.prefs.task_dots = !was; draw(); return savePref({task_dots: !was}, () => { j.prefs.task_dots = was; }); }
+      if (e.target.closest('[data-ntt]')) { const was = j.prefs.tree_tidy; j.prefs.tree_tidy = was === false; draw(); return savePref({tree_tidy: was === false}, () => { j.prefs.tree_tidy = was; }); }   // 값 없음(null) = 켬 — 누르면 끔
       if (e.target.closest('[data-ntc]')) { const was = !!j.prefs.task_channels; j.prefs.task_channels = !was; draw(); return savePref({task_channels: !was}, () => { j.prefs.task_channels = was; }); }
       if (e.target.closest('[data-npo]')) { const was = j.prefs.park_on; j.prefs.park_on = !was; draw(); return savePref({park_on: !was}, () => { j.prefs.park_on = was; }); }
       const bn = e.target.closest('[data-nbn]');

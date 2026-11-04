@@ -26,13 +26,13 @@ export async function importedWindow(db: D1Database, owner: string, card: { wid:
   return w.state === "gone" || w.state === "parked" ? { ...w, state: "parked" } : w;
 }
 
-export async function queueToImported(db: D1Database, owner: string, w: Item, text: string, card?: string, post = false) {
-  const line = text.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 2000);
+export async function queueToImported(db: D1Database, owner: string, w: Item, text: string, card?: string, post = false, whole = false) {
+  const line = whole ? text : text.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 2000);
   if (w.state === "parked") {
     const q = await db.prepare("SELECT id, args FROM engine_cmd WHERE owner = ? AND device_id = ? AND verb = 'reopen' AND state = 'queued' AND json_extract(args, '$.item') = ? ORDER BY at DESC LIMIT 1").bind(owner, w.device_id, w.key).first<{ id: string; args: string }>();
     if (q) {
       const a = json<Record<string, unknown>>(q.args, {});
-      a.text = `${String(a.text || "")} / ${line}`.slice(0, 4000);
+      a.text = whole ? `${String(a.text || "")}\n\n${line}` : `${String(a.text || "")} / ${line}`.slice(0, 4000);
       const u = await db.prepare("UPDATE engine_cmd SET args = ? WHERE id = ? AND state = 'queued'").bind(JSON.stringify(a), q.id).run();
       if (Number(u.meta?.changes ?? 1) > 0) return q.id;
     }

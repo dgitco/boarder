@@ -135,10 +135,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const ib = it('turn', I.flag, '결정 · 할 일', cnt(tn, true), ibChat() === 'turn') + IBK.map(k => it(k, I[k], IBN[k], cnt(c[k], k === 'unread'), S.ib === k || ibChat() === k)).join('');
     const MA = window.HB_CH ? ((typeof D === 'object' && D?.areas) || []).filter(a => a && a.key !== 'primary' && a.lead && typeof byPane !== 'undefined' && byPane[a.lead] && (!byPane[a.lead].tk || byPane[a.lead].tkdept)) : []
     const RS = (typeof D === 'object' && Array.isArray(D?.role_seats)) ? D.role_seats : null;
-    const MA2 = RS ? MA.filter(a => byPane[a.lead]?.tkdept && RS.includes(AREA_NAME[a.key] || a.lead_name || a.name)) : MA;
+    const MA2 = RS ? MA.filter(a => byPane[a.lead]?.tkdept && RS.includes(a.seat_name || AREA_NAME[a.key] || a.lead_name || a.name)) : MA;
     const pg = !ans.hidden && !!cur?.page && cur.p;
-    const ch = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('')
-      + MA2.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('');
+    const chP = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('');
+    const ch = chP + MA2.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('');
     const rp = rowPanes();
     const nd = myNodes().map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), rp.has(p.pane) ? `<i class="ud" aria-label="${window.HB_MEMBER ? '내 차례' : '내 차례'}"></i>` : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
     // 사이드 「태스크」(채널 = 태스크를 켠 회원, 서버 member-board taskSide): 채널 대신 #번호 · 제목 · 상태. 진행 중 · 최근 글 순, 끝난 것은 접힌 「끝난 태스크」 안. 누르면 그 태스크 대화(노드 화면)
@@ -147,6 +147,20 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const tkOpen = TS ? TS.filter(t => !t.done) : [], tkDone = TS ? TS.filter(t => t.done) : [];
     if (TS && SB.fold.tkd === undefined) SB.fold.tkd = true;   // 끝난 태스크는 처음엔 접힘(태스크 칸이 있는 사람만 — 없는 사람의 저장값은 main 그대로)
     const tks = TS ? tkOpen.map(tkIt).join('') + (tkDone.length ? `<button type="button" class="bx-sec bx-fh bx-sub" data-fold="tkd" aria-expanded="${!SB.fold.tkd}">끝난 태스크 ${tkDone.length}${I.fold}</button><div class="bx-sbody" data-sec="tkd"${SB.fold.tkd ? ' hidden' : ''}>${tkDone.map(tkIt).join('')}</div>` : '') : '';
+    const unreadOf = (keys, pane) => (st.unread || []).filter(x => keys.includes(x.chan) || (pane && x.pane === pane)).length;
+    const dgKey = n => 'dg:' + String(n).replace(/["\\\]\[]/g, '');
+    const dgroup = (n, head, list) => { const k = dgKey(n); if (SB.fold[k] === undefined) SB.fold[k] = true;
+      const badge = list.reduce((a, t) => a + (rp.has(t.pane) ? 1 : 0) + unreadOf([t.chan || 'n:' + t.name, 'node:' + t.pane], t.pane), 0) + (head ? (rowPanes().has(head.lead) ? 1 : 0) + unreadOf([head.key, 'n:' + n], head.lead) : 0);
+      const hb = head ? it('chan:' + head.key, blob(n, 20), esc(n), '', pg === head.lead) : `<span class="bx-it bx-dgn0"><span>${esc(n)}</span></span>`;
+      return `<div class="bx-dg">${hb}${badge ? `<span class="bx-dgc" aria-label="새 글 · 내 차례 ${badge}">${badge > 99 ? '99+' : badge}</span>` : ''}<button type="button" class="bx-dgf" data-fold="${esc(k)}" aria-expanded="${!SB.fold[k]}" aria-label="${esc(n)} 태스크 ${SB.fold[k] ? '펴기' : '접기'}">${I.fold}</button></div>`
+        + `<div class="bx-sbody bx-dgb" data-sec="${esc(k)}"${SB.fold[k] ? ' hidden' : ''}>${list.map(tkIt).join('') || '<div class="bx-dge">태스크 없음</div>'}</div>`; };
+    const DG = RS && TS && window.HB_MEMBER ? (() => {   // 태스크 묶음이라 채널 = 태스크를 켠 사람만(TS) — 꺼진 회원은 main 과 같은 「채널」 칸 · 에이전트 칸
+      const by2 = new Map(RS.map(n => [n, []])), none = [];
+      for (const t of tkOpen) (by2.get(t.dept || '') || none).push(t);
+      const headOf = n => MA.find(a => byPane[a.lead]?.tkdept && (a.seat_name || AREA_NAME[a.key] || a.lead_name || a.name) === n);
+      return chP + RS.map(n => dgroup(n, headOf(n), by2.get(n))).join('') + (none.length ? dgroup('부서 없음', null, none) : '')
+        + (tkDone.length ? `<button type="button" class="bx-sec bx-fh bx-sub" data-fold="tkd" aria-expanded="${!SB.fold.tkd}">끝난 태스크 ${tkDone.length}${I.fold}</button><div class="bx-sbody" data-sec="tkd"${SB.fold.tkd ? ' hidden' : ''}>${tkDone.map(tkIt).join('')}</div>` : '');
+    })() : null;
     const qa = !ans.hidden && cur?.chan, ss = typeof openGpt !== 'function' ? '' : `<div class="bx-sech"><button type="button" class="bx-sec bx-fh" data-fold="ss" aria-expanded="${!SB.fold.ss}">세션${I.fold}</button><button type="button" class="bx-secadd" data-chatnew aria-label="새 세션" title="새 세션"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>`
       + `<div class="bx-sbody" data-sec="ss"${SB.fold.ss ? ' hidden' : ''}>${chats().map(c => `<button type="button" class="bx-it bx-chat" data-chat="${esc(c.sid)}" title="${esc(c.title)}"${qa === 'q:' + c.sid ? ' aria-current="page"' : ''}><span>${esc(c.title)}</span></button>`).join('')}</div>`;
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
@@ -154,7 +168,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const hid = new Set(Array.isArray(SB.hide) ? SB.hide : []), top1 = (k, icon, label) => hid.has(k) ? '' : it(k, icon, label, '', top === k);
     const head = top1('node', I.node, '노드') + top1('canvas', I.canvas, '캔버스') + top1('feed', I.feed, '피드') + (window.BXStatus?.side?.(it, top) || '') + pins;
     const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = TS ? (tks ? sec('nd', '태스크', tks) : '') : nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
-    const part = {ib: sec('ib', '모아 보기', ib), nd: chs, ch: ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
+    const part = {ib: sec('ib', '모아 보기', ib), nd: DG !== null ? '' : chs, ch: DG !== null ? `<div class="bx-dgs">${DG}</div>` : ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
     const body = '<div class="bx-sbsc">' + head + sideOrder(agentsFirst).map(k => part[k] || '').join('') + '</div>';
     const foot = `<div class="bx-foot"><button type="button" class="bx-me" data-me aria-haspopup="true" aria-expanded="false">${meAv()}<span>${esc(window.HB_MEMBER?.name || ME()?.name || 'Owner')}</span></button></div>`;
     const fb = `<button type="button" class="bx-colb" data-go="find" aria-label="찾기" title="찾기 ⌘K">${I.search}</button>`;
@@ -187,7 +201,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   function rowPanes(){ try { return new Set((attnRows() || []).map(rowPane)); } catch { return new Set(myNodes().filter(p => nodeRows(p.pane).length).map(p => p.pane)); } }   // 함수 선언 — 위의 lists() 가 먼저 불려도 됨
   const rcSig = () => recent().map(r => r.id + (r.title || '')).join('|') + '#' + (typeof attnCount === 'function' ? attnCount() : 0)
     + '#' + (rp => myNodes().map(p => p.pane + nameOf(p) + (rp.has(p.pane) ? '*' : '')).join('|'))(rowPanes()) + (cur?.page ? '@' + cur.p : '') + '#' + chats().map(c => c.sid + c.title).join('|') + (!ans.hidden && cur?.chan?.startsWith('q:') ? '@' + cur.chan : '')
-    + '#' + (window.BXStatus?.sig?.() || '') + ((typeof D === 'object' && Array.isArray(D?.task_side)) ? '#' + D.task_side.map(t => t.pane + t.issue + t.name + t.state + (t.done ? 'd' : '')).join('|') : '') + ((typeof D === 'object' && Array.isArray(D?.role_seats)) ? '#' + D.role_seats.join('|') : '')
+    + '#' + (window.BXStatus?.sig?.() || '') + ((typeof D === 'object' && Array.isArray(D?.task_side)) ? '#' + D.task_side.map(t => t.pane + t.issue + t.name + t.state + (t.done ? 'd' : '') + (t.dept || '')).join('|') : '') + ((typeof D === 'object' && Array.isArray(D?.role_seats)) ? '#' + D.role_seats.join('|') : '')
     + (window.HB_CH ? '#' + ((typeof D === 'object' && D?.areas) || []).map(a => a.key + ':' + a.lead + ':' + (AREA_NAME[a.key] || a.lead_name || '')).join('|') : '');
   const loadChats = () => { fetch('api/chats', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.chats)){ window.HB_CHATS = j.chats; if (on()) lists(); } }).catch(() => {}); };
   loadChats(); setInterval(loadChats, 20000); window.addEventListener('hb-chats', () => { if (on()) lists(); setTimeout(loadChats, 1500); });
@@ -306,7 +320,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const DK = 'bx-dock';
     let dock = null, dockK = '';
     const db = mk('button', 'bx-dockb', I.chat);
-    db.type = 'button'; db.title = 'Primary 채팅 — 오른쪽 판'; db.setAttribute('aria-label', 'Primary 채팅 판'); db.setAttribute('aria-pressed', 'false');
+    db.type = 'button'; const botn = String(window.HB_MEMBER?.bot || '').trim() || 'Primary'; db.title = `${botn} 채팅 — 오른쪽 판`; db.setAttribute('aria-label', `${botn} 채팅 판`); db.setAttribute('aria-pressed', 'false');
     const dockOn = () => { try { return localStorage.getItem(DK) === '1'; } catch { return false; } };
     function dockSet(v, k = 'primary'){
       if (k === 'primary') try { localStorage.setItem(DK, v ? '1' : ''); } catch {}

@@ -3,15 +3,17 @@ import { regroup } from "./importer/routes";
 import { parseConnectKind, titleOf, readsOf, oauthApi, CONNECT_TTL } from "./connectors/connect-card";
 import { boardHead, withHead } from "./board-head";
 import { primaryPick, notChat, type Item } from "./importer/group";
-import { prefsOf } from "./node-prefs";
+import { prefsOf, tidyOn } from "./node-prefs";
 import { history, topics, promiseRows } from "./member-views";
 import { splitMarks, splitMove } from "./member-split";
 import { seatsFromData } from "./role-seat";
+import { orderFromData, rankOf, deptOf } from "./node-order";
 import { frontDoorNode, readFrontDoor } from "./front-door";
 
 type R = Record<string, any>;
 const FREQ = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];   // owner-read FREQ_DEFAULT
 const PRIMARY = "%1";
+export const UNSORTED = "unsorted";   // 트리 정리의 「분류 안 됨」 열 키(머리 없음)
 export const ME = "나";        // 회원이 Primary 채팅에 쓴 줄의 win(/api/me/chat)
 export const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;
 const NODE_PRI = ["급함", "높음", "보통", "낮음"];
@@ -32,7 +34,7 @@ export function paneOfId(id: string) {
 export const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;
 const kst = (ms: number) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(ms);
 
-type Node = { id: string; pane: string; name: string; area: string; state: string; why: string; updated_at: number; archived_at: number | null; wins: Set<string>; windows: R[]; convos: R[]; aliases?: { id: string; name: string }[] };
+type Node = { id: string; pane: string; name: string; area: string; state: string; why: string; updated_at: number; archived_at: number | null; wins: Set<string>; windows: R[]; convos: R[]; aliases?: { id: string; name: string }[]; goneWins?: number };
 
 export type Face = { seed: string; hue: number; photo?: string };
 const FACE_SEEDS = ["mochi", "pebble", "nova", "tofu", "echo", "kiwi", "company lead", "DGit lead", "personal lead", "shop lead", "luma", "bean"];   // botpick.js SEEDS
@@ -149,7 +151,7 @@ export async function load(db: D1Database, me: string) {
   const nodeOfItem = new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)]));
   const engMain = (ew.results as R[]).some(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state));
   const prefs = prefsOf((ns.results[0] as R | undefined)?.data), fd = prefs.front_door, tcOn = prefs.task_channels;
-  const roleNames = seatsFromData((ns.results[0] as R | undefined)?.data).filter(x => !x.primary).map(x => x.name);   // 역할 자리표(role-seat.ts)의 부서장 이름 — 있으면 왼쪽 에이전트는 메인 봇 + 이 역할들만   // 앞단 · 채널 = 태스크는 켠 사람만(node-prefs.ts)
+  const seatRows = seatsFromData((ns.results[0] as R | undefined)?.data).filter(x => !x.primary), roleNames = seatRows.map(x => x.name);   // 역할 자리표(role-seat.ts)의 부서장 이름 — 있으면 왼쪽 에이전트는 메인 봇 + 이 역할들만   // 앞단 · 채널 = 태스크는 켠 사람만(node-prefs.ts)
   const pp = primaryPick([...items.values()].filter(i => !i.rv) as unknown as Item[], prefs.primary_item, engMain);
   const primary = pp.primary as unknown as R | null;
   const primKeys = new Set<string>(primary ? [String(primary.key), ...(primary.session ? [String(primary.session)] : [])] : []);
@@ -162,6 +164,7 @@ export async function load(db: D1Database, me: string) {
     const n = byId.get(node); if (!n || primKeys.has(item)) continue;
     const i = items.get(item);
     if (i?.kind === "window" && !i.gone_at) n.windows.push(i);
+    else if (i?.kind === "window") n.goneWins = (n.goneWins || 0) + 1;   // 닫힌 창(하루 안) — 트리 정리(tidy)가 「창이 다 닫힌 노드」를 바로 뺌
     if (i && (i.kind === "session" || i.kind === "thread") && i.title) n.convos.push(i);   // 들여온 대화 — 노드 채팅에 글로(convoMsg)
     const w = i ? i.win : item.startsWith("win:") ? item.slice(4) : null; if (w) n.wins.add(w);
   }
@@ -204,7 +207,10 @@ export async function load(db: D1Database, me: string) {
   const mainWin = pp.explicit ? null : (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
   const engineNodes = (ew.results as R[]).filter(w => w.kind === "role" && !nodes.some(n => n.name === w.name || n.wins.has(w.name)));
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
-  return { resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
+  const tidy = tidyOn(prefs, roleNames.length), seatRole = new Map<string, string>();
+  for (const n of nodes) { if (n.archived_at) continue; const x = seatRows.find(x => x.node ? x.node === n.id : n.id.startsWith("tk_") && n.name === x.name); if (x) seatRole.set(n.id, x.name); }
+  const seatIds = new Set(seatRole.keys());
+  return { tidy, seatIds, seatRole, order: orderFromData((ns.results[0] as R | undefined)?.data), resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
     parents: parentsOf((ns.results[0] as R | undefined)?.data), faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
@@ -234,13 +240,13 @@ async function withReacts(db: D1Database, me: string, out: R[]) {
 const STATE: Record<string, string> = { working: "일하는 중", busy: "일하는 중", starting: "일하는 중", opening: "일하는 중", background: "뒤 작업 중" };
 
 const TASK_KO: Record<string, string> = { working: "진행", blocked: "막힘", waiting: "기다림", done: "완료", cancelled: "취소" };
-export function taskSide(nodes: Pick<Node, "id" | "pane" | "name" | "archived_at" | "state">[], tasks: Map<string, R>, lastAt: Map<string, number>, nowMin: number) {
+export function taskSide(nodes: Pick<Node, "id" | "pane" | "name" | "archived_at" | "state">[], tasks: Map<string, R>, lastAt: Map<string, number>, nowMin: number, dept?: (id: string) => string) {   // dept = 자리표 있는 사람만(부서 그룹) — chan = 그 태스크 채널 키(안 읽음 줄 · 번호까지 든 노드 이름)
   const out = nodes.flatMap(n => {
     const t = tasks.get(n.id); if (!t || !t.issue) return [];
     const done = t.state === "done" || t.state === "cancelled" || !!n.archived_at;
     const at = lastAt.get(n.id) || 0;
     const no = String(t.issue).replace(/^.*#/, ""), nm = String(n.name), pre = "#" + no;
-    return [{ pane: n.pane, issue: String(t.issue), name: nm.startsWith(pre) ? nm.slice(pre.length).replace(/^\s*[·:-]?\s*/, "") || nm : nm, state: String(t.state), state_ko: TASK_KO[String(t.state)] || "", done, at, ago: Math.max(0, Math.round((nowMin - at) / 60_000)) }];
+    return [{ pane: n.pane, ...(dept ? { dept: dept(n.id), chan: "n:" + nm } : {}), issue: String(t.issue), name: nm.startsWith(pre) ? nm.slice(pre.length).replace(/^\s*[·:-]?\s*/, "") || nm : nm, state: String(t.state), state_ko: TASK_KO[String(t.state)] || "", done, at, ago: Math.max(0, Math.round((nowMin - at) / 60_000)) }];
   });
   return out.sort((a, b) => Number(a.done) - Number(b.done) || b.at - a.at || (a.pane < b.pane ? -1 : 1)).map(({ at: _at, ...x }) => x);
 }
@@ -271,11 +277,13 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const tasks = new Map(((await db.prepare("SELECT id, task FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\' AND task IS NOT NULL").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results)
     .map(r => [String(r.id), json<R>(r.task, {})] as [string, R]).filter(([, t]) => TASK_ST.has(String(t.state))));
   const hasKid = new Set(L.nodes.map(n => L.parents[n.id]).filter(Boolean));   // 보이는 노드의 상위만(닫힘 · 보관된 하위만 있으면 담당 없음 그대로)
+  const cardNodes = new Set(L.tidy ? L.cards.filter(c => c.state === "open").map(c => L.nodeOfWin(c.win)?.id).filter(Boolean) : []);
   const lastAt = new Map<string, number>();   // 사이드 「태스크」 정렬(최근 글 순)
   for (const n of L.nodes) {
     const rows = logsOf(n), w0 = n.windows[0];
     lastAt.set(n.id, Math.max(Number(rows[0]?.at || 0), Number(n.updated_at || 0)));
     if (n.archived_at || n.state === "done") { closed.push({ pane: n.pane, win: n.name, ago: ago(n.archived_at || n.updated_at), msg: rows[0] ? cut(rows[0].text, 200) : n.why, area: "primary" }); continue; }
+    if (L.tidy && n.goneWins && !n.windows.length && (n.state === "idle" || n.state === "parked") && !cardNodes.has(n.id) && !tasks.has(n.id) && !hasKid.has(n.id) && !L.seatIds.has(n.id)) { closed.push({ pane: n.pane, win: n.name, ago: ago(n.updated_at), msg: rows[0] ? cut(rows[0].text, 200) : n.why, area: "primary" }); continue; }
     if (n.state === "parked") { parked.push({ id: "c" + n.pane.slice(1), name: n.name, area: "primary", msg: n.why || "주차", owner: false, ago: ago(n.updated_at), stale: null, wait: n.why || "주차", topics: [], pri: priOf(L.pri, n.name), pane: n.pane, short: n.why || "주차", watch: "" }); continue; }
     const pn: R = pane({ pane: n.pane, win: n.name, kind: "lead", state: STATE[n.state] || (n.state === "turn" ? "질문" : "쉼"), cwd: w0?.cwd, branch: w0?.branch, rows });
     const tk = tasks.get(n.id);
@@ -361,6 +369,22 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
       for (const q of parked) { const n = L.nodes.find(x => x.pane === q.pane), k = n ? colOf(n.id) : undefined; if (k) q.area = k; }
     }
   }
+  if (L.tidy) {
+    for (const a of areas) if (a.key !== "primary") a.seat = L.seatIds.has(nodeOfPane.get(a.lead) || "");
+    let n = 0;
+    for (const p of panes) if (p.kind === "lead" && p.pane !== PRIMARY && p.area === "primary") { p.area = UNSORTED; n++; }
+    for (const q of parked) if (q.area === "primary") { q.area = UNSORTED; n++; }
+    if (n) areas.push({ key: UNSORTED, name: "분류 안 됨", lead: "", seat: false });
+  }
+  // 열 머리가 자리표 부서인데 노드 이름이 역할 이름과 다르면 역할 이름도(사이드바가 부서 머리를 role_seats 이름으로 찾음)
+  for (const a of areas) { const role = a.key !== "primary" ? L.seatRole.get(nodeOfPane.get(a.lead) || "") : undefined; if (role && role !== a.name) a.seat_name = role; }
+  const rank = rankOf(L.order);
+  if (L.order.length) {
+    const mid = areas.filter(a => a.key !== "primary" && a.key !== UNSORTED), ra = (a: R) => rank(nodeOfPane.get(a.lead) || "");
+    const sorted = mid.map((a, i) => ({ a, i })).sort((x, y) => ra(x.a) - ra(y.a) || x.i - y.i).map(x => x.a);
+    areas.splice(0, areas.length, ...areas.filter(a => a.key === "primary"), ...sorted, ...areas.filter(a => a.key === UNSORTED));
+    for (const p of panes) { const r = rank(nodeOfPane.get(p.pane) || ""); if (Number.isFinite(r)) p.ord = r; }
+  }
   {
     const paneOf = new Map([...nodeOfPane].map(([pn, id]) => [id, pn])), heads = new Set(areas.map(x => x.lead)), byPane = new Map(panes.map(x => [x.pane, x]));
     for (const p of panes) {
@@ -372,7 +396,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     for (const p of panes) for (let x = p.up ? byPane.get(p.up) : undefined, i = 0; x && i < 60; i++, x = x.up ? byPane.get(x.up) : undefined) if (x === p) { delete p.up; break; }
   }
   {
-    const dfl = areas.filter(a => a.key !== "primary" && !a.avatar_custom), hf = headFaces(dfl.map(a => String(a.name)));
+    const dfl = areas.filter(a => a.key !== "primary" && a.lead && !a.avatar_custom), hf = headFaces(dfl.map(a => String(a.name)));
     for (const a of dfl) { const f = hf.get(String(a.name))!; a.avatar = f; const hp = panes.find(p => p.pane === a.lead); if (hp) hp.avatar = f; }
   }
   const known = new Set(panes.map(p => p.pane)), dp = L.defaultNode?.pane || (/^ew_/.test(L.primaryWin) ? paneOfId(L.primaryWin) : ""), dflt = dp && known.has(dp) ? dp : PRIMARY,
@@ -405,9 +429,13 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   // 약속(member_promise, 0047): 열린 것 = 주인 D.promises 꼴, 기한이 지난 것은 to_check(「지켰는지 확인」) — 표가 아직 없으면(이주 전) 빈 꼴
   const promPane = (w: string) => { const ew = L.engineNodes.find(x => x.name === w), p = ew ? paneOfId(ew.id) : ""; return p && known.has(p) ? p : toPane(w); };
   const { promises, to_check } = await promiseRows(db, me, promPane, nowMin);
+  const seatName = new Map(L.nodes.filter(n => L.seatIds.has(n.id)).map(n => [n.id, L.seatRole.get(n.id)!]));
+  const seatId = new Map([...seatName].map(([id, nm]) => [nm, id]));
+  const seatOrder = L.roleNames.map((nm, i) => ({ nm, i })).sort((a, b) => rank(seatId.get(a.nm) || "") - rank(seatId.get(b.nm) || "") || a.i - b.i).map(x => x.nm);
+  const dept = (id: string) => deptOf(id, { parents: L.parents, seatName, fields: tasks.get(id)?.fields, seats: L.roleNames });
   return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 60_000) * 60, open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
-    cards: [], cardlist, cardsdone, attn: null, relinks: {}, ...nodeAliases(L.nodes), ...(L.taskChannels ? { task_channels: true, task_side: taskSide(L.nodes, tasks, lastAt, nowMin) } : {}), ...(L.roleNames.length ? { role_seats: L.roleNames } : {}), ...(L.front ? { front_door: { name: L.front.name, pane: L.front.pane, aliases: L.front.aliases } } : {}), todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
+    cards: [], cardlist, cardsdone, attn: null, relinks: {}, ...nodeAliases(L.nodes), ...(L.taskChannels ? { task_channels: true, task_side: taskSide(L.nodes, tasks, lastAt, nowMin, L.roleNames.length ? dept : undefined) } : {}), ...(L.roleNames.length ? { role_seats: seatOrder } : {}), ...(L.tidy ? { tree_tidy: true } : {}), ...(L.front ? { front_door: { name: L.front.name, pane: L.front.pane, aliases: L.front.aliases } } : {}), todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
 }
 
 // 업무 노드의 옛 채널 별칭 → 그 업무 판(채널 = 태스크를 켠 사람만 생김). 없으면 칸도 안 넣음(꺼진 사람의 판이 예전과 같게)

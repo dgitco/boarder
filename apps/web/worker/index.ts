@@ -77,6 +77,9 @@ import * as memberInbox from "./member-inbox";
 import * as nodeTodo from "./node-todo";
 import * as memberFiles from "./member-files";
 import { importedWindow, queueToImported } from "./member-imported";
+import { ownWindow, primarySend, LOST_LINE } from "./primary-send";
+import { seatsFromData } from "./role-seat";
+import { orderFromData, placeWithin, panesOk, saveOrder } from "./node-order";
 import { claimEndpoint, linePushOpen, releaseEndpoint, routeCard, routeLine, setWideRow, type PushCard, type PushLine } from "./member-push";
 import * as emoji from "./emoji";
 import * as memberSearch from "./member-search";
@@ -787,7 +790,7 @@ app.post("/api/device/voice", async c => {
   if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ error: "json" }, 400);
   if (!(await memberVoice.voiceBudgetOk(c.env.DB, d.id, String(b.op || "")))) return c.json({ ok: false, text: memberVoice.VOICE_TOO_MANY }, 429, { "retry-after": "60" });
   const me = d.owner.toLowerCase(), mainName = (await memberBot(c.env, me).catch(() => null))?.name || "Primary";
-  const primary = async (who: string, text: string) => await primaryWinSend(c.env, who, text) ?? await chatToMain(c.env, who, text);
+  const primary = async (who: string, text: string) => await primarySend(c.env, who, text);
   try { const [st, o] = await memberVoice.deviceOp(c.env as never, me, b, { primary }, mainName); return c.json(o, st as 200); }
   catch (e) { console.error("통화 기기 op", e); return c.json({ ok: false, text: "일시적인 오류가 발생했어요" }, 503); }
 });
@@ -903,7 +906,8 @@ app.get("/api/me/nodeset", async c => {
   });
   return c.json({ values: await memberNodeVals(c.env, me), defaults: NODE_DEF, limits: NODE_LIM, archive, unit,
     prefs, pref_defaults: PREF_DEF, park_limits: PARK_H_LIM, rule_keys: RULE_KEYS, bundle_keys: BUNDLE_KEYS,
-    windows: wins.map(w => ({ key: w.key, title: w.title || w.win || w.key, engine: w.engine, device: w.device, state: w.state || "" })), primary_now: cur?.key ?? null, engines }, 200, { "cache-control": "no-store" });
+    windows: wins.map(w => ({ key: w.key, title: w.title || w.win || w.key, engine: w.engine, device: w.device, state: w.state || "" })), primary_now: cur?.key ?? null, engines,
+    role_seats: seatsFromData(data).filter(x => !x.primary).length }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/nodeset", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
@@ -1292,23 +1296,9 @@ app.post("/api/me/chat", async c => {
   catch (e) { if (rid) return queue.retrySafe(c); throw e; }
   // 머리 줄: 스레드 글 = 그 뿌리, 새 글 = 방금 쓴 그 글(창이 boarder chat --thread <ts> 로 그 글 아래에 답) — 못 찾으면 예전 「[보드 · Primary]」
   const head = boardHead({ thread: root ?? await memberBoard.myPrimaryTs(c.env.DB, me, t).catch(() => null) });
-  try { const r = await primaryWinSend(c.env, me, t, head) ?? await chatToMain(c.env, me, t, head); if (rid) c.executionCtx.waitUntil(queue.markSent(c.env.DB, rid).catch(() => {})); if ((r as { offline?: boolean })?.offline) await sysLine(c.env.DB, me, "엔진이 켜진 기기가 없어 메인 봇에게 아직 못 전했어요 — 기기에서 boarder engine setup 을 돌려요"); return c.json({ ok: true, ...(r as object || {}) }); }
-  catch (e) { return engErr(c, e); }
+  try { const r = await primarySend(c.env, me, t, head); if (rid) c.executionCtx.waitUntil(queue.markSent(c.env.DB, rid).catch(() => {})); if ((r as { offline?: boolean })?.offline) await sysLine(c.env.DB, me, "엔진이 켜진 기기가 없어 메인 봇에게 아직 못 전했어요 — 기기에서 boarder engine setup 을 돌려요"); return c.json({ ok: true, ...(r as object || {}) }); }
+  catch (e) { await sysLine(c.env.DB, me, LOST_LINE).catch(() => null); return engErr(c, e); }   // 넣다 깨져도 채팅에 표시(글 줄은 이미 남음)
 });
-const LIVE_DEV = "AND device_id IN (SELECT id FROM device WHERE owner = ? AND revoked_at IS NULL)";
-async function ownWindow(db: D1Database, me: string, target: string) {
-  if (/^window:/.test(target)) return !!(await db.prepare(`SELECT 1 FROM imp_item WHERE owner = ? AND key = ? AND kind = 'window' AND gone_at IS NULL AND device_id != '' ${LIVE_DEV}`).bind(me, target, me).first());
-  if (/^ew_[a-z0-9]{3,40}$/i.test(target)) return !!(await db.prepare(`SELECT 1 FROM engine_window WHERE owner = ? AND id = ? AND state NOT IN ('closed','failed','gone') ${LIVE_DEV}`).bind(me, target, me).first());
-  return false;
-}
-async function primaryWinSend(env: Env, me: string, text: string, head = boardHead({})) {
-  const v = (await env.DB.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me).first<{ v: string }>().catch(() => null))?.v || "";
-  if (!v || !(await ownWindow(env.DB, me, v))) return null;
-  const msg = `${head} [Boarder chat] ${text}`;   // 머리 줄 「[보드 · Primary( · 스레드 <ts>)]」 — 기본 창(팀장 창)도 답을 Primary 채팅으로(boarder chat · 스레드면 --thread)
-  if (v.startsWith("ew_")) return deliverTo(env, me, v, msg).catch(e => { if (/없는 창/.test(String((e as Error)?.message || e))) return null; throw e; });   // 확인 뒤 사이에 사라진 창도 메인 봇으로
-  const w = await env.DB.prepare("SELECT key, device_id, engine, handle, title, state FROM imp_item WHERE owner = ? AND key = ?").bind(me, v).first<{ key: string; device_id: string; engine: string; handle: string | null; title: string; state: string }>();
-  return w ? { cmd: await queueToImported(env.DB, me, w, msg) } : null;
-}
 // 회원 온보딩 점검표(member-onboarding.ts, 온보딩 4층): 설정 › 시작하기 — 그 회원 것만, 읽기만
 app.get("/api/me/onboarding", async c => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
@@ -1329,6 +1319,21 @@ app.post("/api/me/ui", async c => {   // { k: "theme" | "accent" | "still" | "fa
   if (!Object.hasOwn(UI_PREF, key) || !UI_PREF[key](val)) return c.json({ ok: false, error: "모르는 값" }, 400);   // 객체 원형 이름(toString 등)이 검사를 지나 아무 값이나 저장되던 것
   await c.env.DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(s.user.email.toLowerCase(), "ui:" + key, val, Date.now()).run();
   return c.json({ ok: true });
+});
+app.post("/api/me/nodes/order", async c => {
+  const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ panes?: unknown } | null>().catch(() => null);
+  const panes = panesOk(b?.panes); if (!panes) return c.json({ ok: false, error: "판 번호 2~60개" }, 400);
+  const [nd, ns] = await c.env.DB.batch([
+    c.env.DB.prepare("SELECT id FROM mnode WHERE owner = ?1 UNION ALL SELECT id FROM engine_window WHERE owner = ?1 AND kind = 'role'").bind(me),
+    c.env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
+  ]);
+  const live = (nd.results as { id: string }[]).map(r => r.id), byPane = new Map(live.map(id => [memberBoard.paneOfId(id), id]));
+  const ids = panes.map(p => byPane.get(p)); if (ids.some(x => !x)) return c.json({ ok: false, error: "없는 노드" }, 404);
+  const order = placeWithin(orderFromData((ns.results[0] as { data?: string } | undefined)?.data), ids as string[], live);
+  if (!order) return c.json({ ok: false, error: "순서를 저장할 노드가 너무 많아요" }, 409);   // 조용히 잘라 ok 를 주면 새 순서가 사라짐
+  await saveOrder(c.env.DB, me, order);
+  return c.json({ ok: true, n: ids.length });
 });
 app.get("/api/me/primary-window", async c => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);

@@ -80,7 +80,10 @@ export const sysLine = (db: D1Database, owner: string, text: string, wid?: strin
   db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(owner, "보더", "sys", text, "primary", Date.now(), wid ?? null).run();
 
 // deliver 와 reopen 이 서로 부르니 답 꼴을 적어 둠(추론이 돌아 TS7023)
-type Delivered = { sent?: boolean; reopened?: boolean; queued?: boolean; device?: boolean };   // device: 기기 자기 줄에 섬(서버 줄 아님 — 서버는 다시 안 보냄)
+type Delivered = { sent?: boolean; reopened?: boolean; queued?: boolean; device?: boolean };
+export const LOST_LINE = "방금 글이 창에 안 들어갔어요 — 메인 봇 창을 열지 못했어요. 설정 › 노드 「메인 봇 창」을 확인하고 다시 보내 주세요";
+const REOPEN_ASK_MS = 3 * 60_000, REOPEN_GIVEUP_MS = 10 * 60_000, REOPEN_DROP_MS = 60 * 60_000;
+const reopenLostLine = (name: string) => `「${name}」 창이 다시 뜨지 않아 방금 글이 안 들어갔어요 — 다시 보내 주세요. 또 그러면 그 기기에서 boarder engine 상태를 확인해 주세요`;
 const lostAnswer = (e: unknown) => (e as Error)?.message === "엔진 답 없음";   // cmd 가 보낸 뒤 답을 못 받음 — 기기는 했을 수 있음
 export class Engine extends DurableObject<EngEnv> {
   wait = new Map<string, Wait>();
@@ -105,7 +108,7 @@ export class Engine extends DurableObject<EngEnv> {
   /** 기기 폐기 · 초대 빠짐: 데몬에 4401(데몬은 끝내고 다시 안 뜸), 규칙 알람 멈춤 */
   async revoke() {
     for (const w of this.ctx.getWebSockets()) try { w.close(4401, "revoked"); } catch {}
-    await this.ctx.storage.deleteAlarm(); await this.ctx.storage.delete("pending"); await this.ctx.storage.delete("hpending");
+    await this.ctx.storage.deleteAlarm(); await this.ctx.storage.delete("pending"); await this.ctx.storage.delete("hpending"); await this.ctx.storage.delete("reopens");
     return { ok: true };
   }
   async pend(p: Pend) { const q = (await this.q<Pend>("pending")) || []; q.push({ ...p, k: p.k || crypto.randomUUID() }); await this.qput("pending", q.slice(-50)); return { queued: true }; }
@@ -202,7 +205,7 @@ export class Engine extends DurableObject<EngEnv> {
       // 기기에 없는 창(재부팅 · tmux 꺼짐)은 gone — 손잡이가 있으니 채팅 · 카드 답이 오면 다시 열림
       const have = new Set((Array.isArray(m.windows) ? m.windows : []).map((w: any) => String(w.id)));
       const rows = (await db.prepare(`SELECT id FROM engine_window WHERE device_id = ? AND state IN (${LIVE.map(() => "?").join(",")})`).bind(device, ...LIVE).all<{ id: string }>()).results;
-      for (const r of rows) if (!have.has(r.id) && r.id) await db.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ?").bind(now, r.id).run();
+      for (const r of rows) if (!have.has(r.id) && r.id) { await db.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ?").bind(now, r.id).run(); if (!m.partial) await this.reopenSettled(r.id, true); }   // partial = 목록을 못 읽은 엔진이 있음 — 없는지 모르니 감시 판정은 미룸(알람이 물어봄)
       // 서버가 이미 닫은 창(다른 기기로 옮긴 메인 봇 · 못 연 창)이 기기에 아직 있으면 닫음
       const dead = new Set((await db.prepare("SELECT id FROM engine_window WHERE device_id = ? AND state IN ('closed','failed')").bind(device).all<{ id: string }>()).results.map(r => r.id));
       for (const id of have) if (dead.has(id as string)) this.ctx.waitUntil(this.cmd("close", { id }, 90_000).catch(() => null));
@@ -224,6 +227,8 @@ export class Engine extends DurableObject<EngEnv> {
         const next = st === "none" ? "gone" : st;
         await db.prepare("UPDATE engine_window SET state = ?, state_at = CASE WHEN state = ? THEN state_at ELSE ? END, dialog = ?, note = COALESCE(?, note) WHERE id = ? AND device_id = ? AND state NOT IN ('parked','closed','failed')")
           .bind(next, next, now, w.dialog ? String(w.dialog).slice(0, 20) : null, w.limit ? String(w.limit).slice(0, 200) : null, String(w.id), device).run();
+        if (st === "none" || w.error) await this.reopenSettled(String(w.id), true);   // 없어짐 · 첫 턴 오류(SDK 창)
+        else if (st !== "starting" && !w.dialog) await this.reopenSettled(String(w.id), false);   // 창이 떠서 일하거나 쉼 — 첫 메시지를 받은 것(확인창이 떠 있으면 아직 아님)
       }
       await db.prepare("UPDATE device SET engine_at = ? WHERE id = ?").bind(now, device).run();
       if (list.some((w: any) => w.state === "idle")) await this.flush();   // 쉬게 된 창에 밀린 글
@@ -336,7 +341,7 @@ export class Engine extends DurableObject<EngEnv> {
           ORDER BY at LIMIT 20`).bind(device).all<{ id: string; args: string }>()).results;
         const held = new Set<string>();
         for (const r of rows) {
-          const a = JSON.parse(r.args) as { engine: string; handle: { id: string }; text?: string }, id = a.handle.id;
+          const a = JSON.parse(r.args) as { engine: string; handle: { id: string }; text?: string; primary?: boolean }, id = a.handle.id;
           if (!a.text || held.has(id)) continue;
           const w = await this.row(id).catch(() => null);
           if (w && (w.state === "opening" || w.state === "starting")) { held.add(id); continue; }
@@ -351,10 +356,23 @@ export class Engine extends DurableObject<EngEnv> {
             await db.prepare("UPDATE engine_cmd SET state = ?, result = ?, done_at = ? WHERE id = ?").bind(busy || off ? "queued" : "failed", String(err.message || err).slice(0, 300), busy || off ? null : Date.now(), r.id).run();
             if (off) return;
             if (busy) held.add(id);
+            else if (a.primary) await this.primaryDrainFailed(r.id, id, a.text, err);
           }
         }
       } while (this.drainAgain);
     } finally { this.draining = false; }
+  }
+  /** 메인 봇 창에 소켓으로 넣다 실패한 글: 응답은 이미 「줄 섬」이라 여기서 끝내면 표시 없이 사라짐. 창이 기기에 없으면(4) 다시 열며 넣고(감시를 탐), 못 하면 시스템 줄 */
+  private async primaryDrainFailed(cmd: string, id: string, text: string, err: EngineError) {
+    const db = this.env.DB;
+    if (err.code === 4) try {
+      await db.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ? AND state NOT IN ('closed','failed','parked')").bind(Date.now(), id).run();
+      await this.reopen(id, text);
+      await db.prepare("UPDATE engine_cmd SET state = 'done', result = '창이 없어 다시 열며 넣음', done_at = ? WHERE id = ?").bind(Date.now(), cmd).run();
+      return;
+    } catch { }
+    const line = lostAnswer(err) ? "방금 글이 창에 들어갔는지 확인하지 못했어요 — 답이 없으면 다시 보내 주세요" : LOST_LINE;   // 답을 잃은 send 는 들어갔을 수 있어 다시 넣지 않음
+    await sysLine(db, (await this.who()).owner, line, id).catch(() => null);
   }
   flushing = false; flushAgain = false;
   async flush() {
@@ -413,11 +431,39 @@ export class Engine extends DurableObject<EngEnv> {
       if (/^(busy|idle|waiting|background|starting)$/.test(s)) {
         await this.env.DB.prepare("UPDATE engine_window SET state = ?, state_at = ? WHERE id = ? AND state = 'starting'").bind(s, Date.now(), id).run();
         // 이번 답이 없었으면 이 글이 그 창의 첫 메시지로 들어갔을 수 있음 — 다시 안 넣음. 기기가 「이미 떠 있음」으로 거절했으면 이 글은 안 들어감 — 넣음
-        return (e as Error).message === "엔진 답 없음" || !text ? { reopened: true } : this.deliver(id, text, false, k);
+        if (!text) return { reopened: true };
+        if ((e as Error).message === "엔진 답 없음") {   // 들어갔을 수 있어 다시 넣지 않음 — 대신 표시(flush 의 lost 와 같은 글)
+          await sysLine(this.env.DB, w.owner, `「${w.name}」 창에 글이 들어갔는지 확인하지 못했어요: ${stripHead(text).replace(/^\[Boarder( chat)?\] /, "").slice(0, 120)}`, id).catch(() => null);
+          return { reopened: true };
+        }
+        return this.deliver(id, text, false, k);
       }
       await this.env.DB.prepare("UPDATE engine_window SET state = ?, state_at = ?, note = ? WHERE id = ?").bind(w.state, Date.now(), String((e as Error).message).slice(0, 200), id).run(); throw e;
     }
+    if (text && !(await this.who()).harness) { const m = (await this.ctx.storage.get<Record<string, number>>("reopens")) || {}; m[id] = Date.now(); await this.ctx.storage.put("reopens", m); }
     return { reopened: true };
+  }
+  private async reopenSettled(id: string, lost: boolean | "unknown") {
+    const m = await this.ctx.storage.get<Record<string, number>>("reopens"); if (!m || !(id in m)) return;
+    delete m[id]; await this.ctx.storage.put("reopens", m);
+    if (!lost) return;
+    const w = await this.row(id); if (!w || !["starting", "gone", "opening", "idle", "busy", "background", "waiting"].includes(w.state)) return;
+    await sysLine(this.env.DB, w.owner, lost === "unknown" ? `「${w.name}」 창에 방금 글이 들어갔는지 확인하지 못했어요 — 답이 없으면 다시 보내 주세요` : reopenLostLine(w.name), id).catch(() => null);
+  }
+  async checkReopens(now = Date.now()) {
+    const m = await this.ctx.storage.get<Record<string, number>>("reopens"); if (!m) return;
+    for (const [id, at] of Object.entries(m)) {
+      if (now - at < REOPEN_ASK_MS) continue;
+      const st = await this.cmd("state", { id }).catch((e: unknown) => (e as EngineError).code === 5 ? { cannot: true } : null), s = String(st?.state || "");
+      if (!st) { if (now - at >= REOPEN_DROP_MS) await this.reopenSettled(id, "unknown"); continue; }   // 답을 못 받음 — 모르는 것으로 「안 들어갔어요」 줄을 남기지 않음
+      if (st.cannot) { await this.reopenSettled(id, false); continue; }   // 상태 동사가 없는 커스텀 엔진 — 알 길이 없어 거짓 줄을 안 남김
+      if (/^(busy|idle|background|waiting)$/.test(s) && (!st?.dialog || st.dialog === "question") && !st?.error) { await this.reopenSettled(id, false); continue; }
+      if (s !== "none" && !st?.error && now - at < REOPEN_GIVEUP_MS) continue;
+      // 닫기 답을 못 받으면 창이 기기에 남아 있을 수 있음 — gone 으로 맞추면 다시 보낸 글이 그 창에 들어가 둘 다 들어감. 다음 알람에 다시 봄
+      if (s === "starting" && !st.error && !(await this.cmd("close", { id }, 90_000).then(() => true).catch(() => false))) { if (now - at >= REOPEN_DROP_MS) await this.reopenSettled(id, "unknown"); continue; }
+      if (!st.error && (s === "none" || s === "starting")) await this.env.DB.prepare("UPDATE engine_window SET state = 'gone', state_at = ? WHERE id = ? AND state NOT IN ('closed','failed','parked')").bind(Date.now(), id).run();
+      await this.reopenSettled(id, true);
+    }
   }
   async close(id: string) {
     const w = await this.row(id); if (!w) return { ok: false };
@@ -524,6 +570,7 @@ export class Engine extends DurableObject<EngEnv> {
     if ((await this.who()).harness) { await this.hflush(); await this.ctx.storage.setAlarm(Date.now() + ((await this.q<HPend>("hpending"))?.length ? 10_000 : 60_000)); return; }
     try { await this.rules(device, owner); } catch {}
     try { await this.flush(); } catch {}
+    try { await this.checkReopens(); } catch {}
     await this.ctx.storage.setAlarm(Date.now() + 60_000);
   }
   async rules(device: string, owner: string, now = Date.now()) {
@@ -572,10 +619,10 @@ export async function importedPrimary(db: D1Database, owner: string): Promise<Im
   return primaryPick(rows, pick, false).primary;
 }
 export const PRIMARY_HINT = `(This is the person's Boarder Primary chat; this window is their main bot. They don't see this terminal — answer with \`boarder chat "<text>"\` — if the head above says 「스레드 <id>」, answer under that message with \`boarder chat --thread <id> "<text>"\` — short, in their language. An ask that belongs to another node or role window: hand it there with \`boarder split <id> --why "<one line>" --part "<node>: <their words>"\`; if you can't tell which one, ask them in one line under their message instead of guessing.)`;
-async function toImported(env: EngEnv, owner: string, w: Imp, text: string) {
+export async function toImported(env: EngEnv, owner: string, w: Pick<Imp, "key" | "device_id" | "engine" | "handle" | "title" | "state">, text: string, extra?: { primary: true }) {
   const id = crypto.randomUUID().replace(/-/g, "").slice(0, 20), handle = (() => { try { return w.handle ? JSON.parse(w.handle) : null; } catch { return null; } })();
   await env.DB.prepare("INSERT INTO engine_cmd(id, owner, device_id, verb, args, at) VALUES (?,?,?,?,?,?)")
-    .bind(id, owner, w.device_id, w.state === "parked" ? "reopen" : "send", JSON.stringify({ item: w.key, engine: w.engine, handle, title: w.title, text, post: true }), Date.now()).run();
+    .bind(id, owner, w.device_id, w.state === "parked" ? "reopen" : "send", JSON.stringify({ item: w.key, engine: w.engine, handle, title: w.title, text, post: true, ...extra }), Date.now()).run();
   try { await (engineOf(env, w.device_id) as unknown as { drainCmds(): Promise<unknown> }).drainCmds(); } catch {}   // 엔진 소켓이 붙어 있으면 바로, 아니면 boarder import --follow 가 가져감
   return { queued: true, primary: w.key };
 }

@@ -356,3 +356,15 @@ html.bx .bx-it.bx-task .bx-tkst{flex:none;font-style:normal;font-size:11px;color
 html.bx .bx-it.bx-task .bx-tkst[data-st="blocked"]{color:var(--accent)}
 html.bx .bx-it.bx-task .ud{margin-left:0}
 html.bx .bx-sec.bx-sub{padding:8px 10px 4px;font-size:12px}
+html.bx .bx-dgs{padding-top:8px}
+html.bx .bx-dg{display:flex;align-items:center;gap:2px;margin-top:2px}
+html.bx .bx-dg>.bx-it{flex:1;min-width:0}
+html.bx .bx-dg>.bx-dgn0{color:var(--muted);cursor:default}
+html.bx .bx-dgc{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:11px;font-weight:600;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}
+html.bx .bx-dg:has(>.bx-dgf[aria-expanded="true"])>.bx-dgc{display:none}
+html.bx .bx-dgf{flex:none;width:32px;height:32px;display:grid;place-items:center;border:0;background:none;border-radius:8px;color:var(--muted);cursor:pointer}
+html.bx .bx-dgf:hover{background:color-mix(in srgb,var(--ink) 6%,transparent)}
+html.bx .bx-dgf svg{transition:transform .15s}
+html.bx .bx-dgf[aria-expanded="false"] svg{transform:rotate(-90deg)}
+html.bx .bx-dgb{padding-left:16px}
+html.bx .bx-dge{padding:6px 10px;font-size:12px;color:var(--muted)}
