@@ -1,3 +1,4 @@
+import { redact } from "../session/redact";
 import { z } from "zod";
 import type { Tool } from "./codemode";
 import { shape, type View } from "./registry";
@@ -214,12 +215,16 @@ async function listCards(ctx: Ctx, query: string | undefined, limit: number) {
   return { total: hit.length, cards: hit.slice(-limit).reverse().map(c => ({ card_id: c.ts, state: c.state, kind: c.kind, area: c.area, title: c.title, thread: c.thread })) };
 }
 
+const WRITES = new Set(["inbox_ask", "inbox_log", "inbox_close", "inbox_say", "inbox_status", "chat_say", "chat_split", "role_draft", "promise_add", "promise_done", "feedback_send"]);
+const NO_MASK = new Set(["cwd", "node", "thread", "thread_id", "card_id", "replaced_by", "promise_id"]);
+const maskDeep = (v: unknown): unknown => typeof v === "string" ? redact(v) : Array.isArray(v) ? v.map(maskDeep) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, NO_MASK.has(k) ? x : maskDeep(x)])) : v;
+export const maskWrites = <T extends Record<string, any>>(name: string, a: T): T => (WRITES.has(name) ? maskDeep(a) as T : a);
 export async function run(ctx: Ctx, name: string, raw: Record<string, unknown>): Promise<unknown> {
   const schema = schemaOf(name); if (!schema) throw new Error(`없는 도구: ${name}`);
   const no = ctx.view.why(name); if (no) throw new Error(no);
   const r = schema.safeParse(raw ?? {});
   if (!r.success) throw new Error(`입력이 맞지 않음: ${r.error.issues.map(i => `${i.path.join(".")} ${i.message}`).join("; ")}`);
-  const a = r.data as Record<string, any>;
+  const a = maskWrites(name, r.data as Record<string, any>);
   return shape(name, await raw_(ctx, name, a), ctx.view.mask(name));
 }
 async function raw_(ctx: Ctx, name: string, a: Record<string, any>): Promise<unknown> {
