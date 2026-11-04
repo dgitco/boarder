@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "2954a3dd8deb";
+window.HB_VER = "03e97fed2db7";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1894,6 +1894,18 @@ p.mdi{padding-left:1em;text-indent:-1em}
 .ibtip b{display:block;font-size:15px;font-weight:600;margin-bottom:3px}.ibtip p{margin:0;color:#b8b8bf;font-size:13.5px;line-height:19px}
 .ibtip button{display:block;margin:10px 0 0 auto;height:30px;padding:0 13px;border:0;border-radius:999px;background:#f3f5f7;color:#17171a;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}
 .inbr.ibdn{opacity:.55}.inbr.ibdn .ud,.inbr.ibdn .un{display:none}
+
+
+html.hb-unkeep .inbr.ibdn{opacity:1}html.hb-unkeep .inbr.ibdn > :not(.ibun){opacity:.55}
+html.hb-unkeep .ibi{position:relative}
+html.hb-unkeep .ibi.done > .msg, html.hb-unkeep .ibi.done > .ibth{opacity:.6}
+.ibun{flex:none;align-self:center;margin-left:8px;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:3px 10px;font:inherit;font-size:12px;line-height:1.4;cursor:pointer;white-space:nowrap}
+.ibi > .ibun{position:absolute;top:8px;right:12px;z-index:2;margin:0}
+.ibun .ibun-a{display:none}
+.ibun:hover,.ibun:focus-visible{color:var(--ink);border-color:var(--muted)}
+.ibun:hover .ibun-r,.ibun:focus-visible .ibun-r{display:none}
+.ibun:hover .ibun-a,.ibun:focus-visible .ibun-a{display:inline}
+@media (hover:none){.ibun .ibun-r{display:none}.ibun .ibun-a{display:inline}}
 </style></head><body>
 
 <div class="wrap">
@@ -10941,6 +10953,38 @@ setInterval(() => {
     }
   });
   const leaving = () => !!window.HB_LEAVING && Date.now() - window.HB_LEAVING < 5e3;
+  const lsGet = (k, d) => {
+    try {
+      return localStorage.getItem(k) ?? d;
+    } catch (e) {
+      return d;
+    }
+  }, lsSet = (k, v) => {
+    try {
+      localStorage.setItem(k, v);
+    } catch (e) {
+    }
+  };
+  const keepOn = () => lsGet("hb-unreadkeep", "0") === "1";
+  const KEEPK = "hb-ib-keep:" + (window.HB_MEMBER?.email || "owner"), KEEP_MAX = 50, KEEP_MS = 7 * 864e5;
+  const keepGet = () => {
+    try {
+      const a = JSON.parse(lsGet(KEEPK, "[]"));
+      return Array.isArray(a) ? a.filter((x) => x && /^\d{10}\.\d{6}$/.test(x.ts) && (x.thread == null || /^\d{10}\.\d{6}$/.test(x.thread)) && typeof x.chan === "string" && Date.now() - (+x.kept_at || 0) < KEEP_MS) : [];
+    } catch (e) {
+      return [];
+    }
+  };
+  const keepPut = (a) => lsSet(KEEPK, JSON.stringify(a.slice(-KEEP_MAX)));
+  const keepDrop = (pick) => {
+    const a = keepGet(), b = a.filter((x) => !pick(x));
+    if (b.length !== a.length) keepPut(b);
+  };
+  const keepMerge = () => {
+    if (!keepOn()) return;
+    const cs = cardSet();
+    for (const x of keepGet()) if (keep(x.chan) && notCard(cs)(x) && !S.unread.some((y) => (y.thread || y.ts) === (x.thread || x.ts))) S.unread.push({ ...x, kept: true });
+  };
   function load() {
     if (S.busy) {
       S.again = true;
@@ -10954,6 +10998,7 @@ setInterval(() => {
       S.retryVis = false;
       saved = new Set(j.saved_ids || S.saved.map((x) => x.ts));
       if (typeof optFix === "function") optFix("inbox", S, typeof GETMETA !== "undefined" ? GETMETA.get(j) : null);
+      keepMerge();
       if (typeof DR === "object") S.drafts = S.drafts.filter((x) => !(DR[x.key] && !DR[x.key].text && DR[x.key].at > x.at * 1e3));
     }, (e) => {
       S.err = !S.ok;
@@ -11000,6 +11045,7 @@ setInterval(() => {
     };
   };
   function read(items, all) {
+    keepDrop(all ? (x) => keep(x.chan) : (x) => items.some((y) => thOf(y) === thOf(x)));
     const ids = new Set(items.map((x) => x.ts)), key = "ibread:" + (all ? "*" : [...ids].join()), pick = all ? () => true : (x) => ids.has(x.ts);
     let g;
     return optDo({
@@ -11017,9 +11063,15 @@ setInterval(() => {
   }
   function readLocal(root) {
     const pick = (x) => (x.thread || x.ts) === root || x.ts === root, key = "ibseen:" + root;
+    keepDrop(pick);
+    const fu = FD.unread, mk = keepOn() && fu && fu.cur === cur && fu.keys.has(root) && !fu.done.has(root);
+    if (mk) fu.done.add(root);
     if (!S.unread.some(pick)) return () => {
     };
-    const g = gone(pick, key), undo = g.undo;
+    const g = gone(pick, key), undo0 = g.undo, undo = () => {
+      if (mk) fu.done.delete(root);
+      return undo0();
+    };
     OPT.set(key, { hold: g.hold, okAt: 0, at: Date.now(), more: 2 });
     undo.ok = (w) => {
       const x = OPT.get(key);
@@ -11312,18 +11364,6 @@ setInterval(() => {
   const FD = {}, FQ = { list: [], busy: 0, want: /* @__PURE__ */ new Set(), at: /* @__PURE__ */ new Map(), ch: /* @__PURE__ */ new Map(), n: /* @__PURE__ */ new Map() }, VIS = /* @__PURE__ */ new Map();
   const CHEV = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5l3 3 3-3"/></svg>';
   const VK = "hb-ib-view", MK = "hb-ib-merge", TIPK = "hb-ib-tip";
-  const lsGet = (k, d) => {
-    try {
-      return localStorage.getItem(k) ?? d;
-    } catch (e) {
-      return d;
-    }
-  }, lsSet = (k, v) => {
-    try {
-      localStorage.setItem(k, v);
-    } catch (e) {
-    }
-  };
   const VIEW = (() => {
     try {
       return { turn: "list", unread: "open", ...JSON.parse(lsGet(VK, "{}")) };
@@ -11349,11 +11389,43 @@ setInterval(() => {
   const fk = (ch) => ch === "i:saved" ? "saved" : ch === "i:drafts" ? "drafts" : ch === "i:turn" ? "turn" : "unread";
   const thOf = (x) => x.thread || x.ts;
   const idOf = (k, x) => k === "saved" || k === "turn" ? x.ts : k === "drafts" ? x.key : thOf(x);
+  let POPAT = 0, keepWired = false;
+  function keepWire() {
+    if (keepWired) return;
+    keepWired = true;
+    addEventListener("popstate", () => {
+      POPAT = Date.now();
+    }, true);
+    document.addEventListener("scroll", (e) => {
+      const fe = e.target;
+      if (fe?.id !== "cfeed" || !(typeof chatOn === "function" && chatOn() && isIbCh(CS.at)) || !keepOn()) return;
+      const f = FD[fk(CS.at)];
+      if (f && f.cur === cur) f.anc = typeof feedAnchor === "function" && feedAnchor(fe) || { y: fe.scrollTop };
+    }, true);
+    for (const ev of ["wheel", "touchstart", "keydown"]) document.addEventListener(ev, (e) => {
+      if (e.target?.closest?.("#cfeed")) {
+        const f = FD[fk(CS.at)];
+        if (f) f.restore = null;
+      }
+    }, { capture: true, passive: true });
+  }
+  const keepSync = () => {
+    const on2 = keepOn();
+    document.documentElement.classList.toggle("hb-unkeep", on2);
+    if (on2) keepWire();
+    return on2;
+  };
   function fstate(ch) {
-    const k = fk(ch), f = FD[k];
+    const k = fk(ch), f = FD[k], on2 = keepSync();
     if (f && f.cur === cur) return f;
+    if (on2 && f && k === "unread" && f.only === only && Date.now() - POPAT < 4e3) {
+      f.cur = cur;
+      f.restore = f.anc || null;
+      f.restoreAt = Date.now();
+      return f;
+    }
     if (k === "turn") S.doneOn = false;
-    return FD[k] = { k, cur, t0: Date.now(), items: [], keys: /* @__PURE__ */ new Map(), done: /* @__PURE__ */ new Set(), open: /* @__PURE__ */ new Set(), fold: /* @__PURE__ */ new Set(), long: /* @__PURE__ */ new Set(), lopen: /* @__PURE__ */ new Set() };
+    return FD[k] = { k, cur, only, t0: Date.now(), items: [], keys: /* @__PURE__ */ new Map(), done: /* @__PURE__ */ new Set(), open: /* @__PURE__ */ new Set(), fold: /* @__PURE__ */ new Set(), long: /* @__PURE__ */ new Set(), lopen: /* @__PURE__ */ new Set() };
   }
   function fsync(f) {
     if (f.k === "turn") {
@@ -11462,12 +11534,14 @@ setInterval(() => {
     const at = x.index + 6, btn = `<button class="iblong" data-iblong="${esc(m.ts)}">${open ? "접기" : "더 보기"}</button>`;
     return html.slice(0, at).replace('class="msg', `class="msg ${open ? "lopen" : "lclip"}`) + btn + html.slice(at);
   }
+  const ubOf = (f, x) => f.k === "unread" && x.cstate === void 0 && keepOn() ? unBtn(idOf(f.k, x)) : "";
+  const unBtn = (id) => `<button class="ibun" data-ibun="${esc(id)}"><span class="ibun-r">읽음</span><span class="ibun-a">읽지 않음으로</span></button>`;
   function itemHTML(f, x) {
     const ch = x.chan, th = thOf(x), t = CS.thr[th], ms = t?.messages || [], id = idOf(f.k, x);
-    const done = f.done.has(id) ? " done" : "", stale = ms.length && !ready(f, x) ? " wait" : "";
-    if (!ms.length) return `<div class="ibi wait${done}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${msgHTML(stub(x, f.k === "saved" || !x.thread ? x.text : x.root || x.text, f.k === "saved" ? x.ts : ""), ch, false)}${t?.err ? `<div class="iberr">${ERR}</div>` : ""}</div>`;
+    const done = f.done.has(id) ? " done" : "", ub = done ? ubOf(f, x) : "", stale = ms.length && !ready(f, x) ? " wait" : "";
+    if (!ms.length) return `<div class="ibi wait${done}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${ub}${msgHTML(stub(x, f.k === "saved" || !x.thread ? x.text : x.root || x.text, f.k === "saved" ? x.ts : ""), ch, false)}${t?.err ? `<div class="iberr">${ERR}</div>` : ""}</div>`;
     const [root, ...rest] = ms, real = rest.filter((m) => !m.ledger);
-    const wrap = (inner) => `<div class="ibi${done}${stale}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${inner}</div>`;
+    const wrap = (inner) => `<div class="ibi${done}${stale}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${ub}${inner}</div>`;
     const one = "";
     const R = (m, inTh2) => lng(f, m, msgHTML(m, ch, inTh2));
     if ((f.k === "saved" || f.k === "turn") && x.thread) {
@@ -11494,7 +11568,7 @@ setInterval(() => {
     const by = f.k === "saved" || f.k === "turn" ? (x) => +x.saved_at || +x.at || 0 : (x) => +x.at || 0;
     const xs = f.k === "turn" && !S.doneOn || f.k === "unread" ? algo(f.items) : [...f.items].sort((a, b) => by(b) - by(a));
     return `<div class="inbl ibrows">${xs.map((x) => {
-      const i = f.items.indexOf(x), h0 = row(f.k, x, i), h = f.done.has(idOf(f.k, x)) ? h0.replace('<div class="inbr', '<div class="inbr ibdn') : h0;
+      const i = f.items.indexOf(x), h0 = row(f.k, x, i), h = f.done.has(idOf(f.k, x)) ? h0.replace('<div class="inbr', '<div class="inbr ibdn').replace(/<\/div>$/, () => ubOf(f, x) + "</div>") : h0;
       const hv = HOVROW === idOf(f.k, x) ? h.replace('<div class="inbr', '<div class="inbr hov') : h;
       return f.sel === idOf(f.k, x) ? hv.replace('<div class="inbr', '<div aria-current="true" class="inbr on') : hv;
     }).join("")}</div>`;
@@ -11615,6 +11689,10 @@ setInterval(() => {
   function feedAfter(fe) {
     const f = FD[fk(CS.at)];
     if (!f) return;
+    if (f.restore && typeof feedRestore === "function") {
+      if (Date.now() - f.restoreAt < 3e3) feedRestore(fe, f.restore);
+      else f.restore = null;
+    }
     MIO?.disconnect();
     const mo = expanded(f) && fe.querySelector("[data-ibnext]");
     if (mo) {
@@ -11687,10 +11765,27 @@ setInterval(() => {
     else emit();
     redraw();
   }
+  function unread(f, id) {
+    const x = f.keys.get(id);
+    if (!x || !keepOn()) return;
+    f.done.delete(id);
+    const y = { ...x, kept_at: Date.now() };
+    delete y.kept;
+    keepPut([...keepGet().filter((z) => (z.thread || z.ts) !== (x.thread || x.ts)), y]);
+    if (!S.unread.some((z) => (z.thread || z.ts) === (x.thread || x.ts))) S.unread = [...S.unread, { ...y, kept: true }];
+    emit();
+  }
   document.addEventListener("click", (e) => {
     if (!(typeof chatOn === "function" && chatOn() && isIbCh(CS.at))) return;
     const t = e.target, f = FD[fk(CS.at)];
     if (!f) return;
+    const unb = t.closest("[data-ibun]");
+    if (unb) {
+      e.stopPropagation();
+      e.preventDefault();
+      unread(f, unb.dataset.ibun);
+      return viewChat(true);
+    }
     const stop = () => {
       e.stopPropagation();
       e.preventDefault();
@@ -11969,6 +12064,12 @@ setInterval(() => {
     }
     emit();
   }
+  const keepApply = () => {
+    if (keepSync()) keepMerge();
+    else if (S.unread.some((x) => x.kept)) S.unread = S.unread.filter((x) => !x.kept);
+    emit();
+    redraw();
+  };
   const setOnly = (fn) => {
     only = typeof fn === "function" ? fn : null;
     turnSig = "";
@@ -12001,8 +12102,10 @@ setInterval(() => {
     feedHead,
     feedAfter,
     openFeed,
+    keepApply,
     chanOf: (th) => FQ.ch.get(th)
   };
+  keepSync();
   load();
   setInterval(() => {
     if (document.visibilityState === "visible" && !(typeof evLive === "function" && evLive())) load();

@@ -40,7 +40,7 @@
   }
   applyAccent();
   if (!window.HB_BLOB) document.addEventListener('DOMContentLoaded', applyAccent);
-  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '0'], ['sbw', 'hb-sbw', '0']];
+  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '0'], ['unreadkeep', 'hb-unreadkeep', '0'], ['sbw', 'hb-sbw', '0']];
   const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
   const uiSave = (k, v) => fetch('api/me/ui', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({k, v})}).catch(() => {});
   window.bxUiSave = uiSave;   // 보드 위 테마 단추(board.html)도 같은 길
@@ -49,6 +49,7 @@
     if (typeof theme !== 'undefined' && typeof applyTheme === 'function'){ theme = t; applyTheme(); } else if (t === 'system') R.removeAttribute('data-theme'); else R.setAttribute('data-theme', t);
     R.classList.toggle('bx-still', lsGet('hb-still') === '1');
     R.classList.toggle('hb-tapth', lsGet('hb-tapthread') === '1');   // 보드 글 줄을 누를 수 있는 것으로(board.html CSS)
+    window.HBInbox?.keepApply?.();   // 읽지 않음 켬 · 끔을 받은 목록 · 수에 바로(inbox.js)
     applyAccent();
     window.BXSideW?.(+(lsGet('hb-sbw') || 0));   // 사이드바 폭(계정 값을 받아 바뀌었을 때)
   };
@@ -834,6 +835,7 @@
     const still = () => { try { return localStorage.getItem('hb-still') === '1'; } catch { return false; } };
     const favb = () => { try { return localStorage.getItem('hb-favblink') !== '0'; } catch { return true; } };   // 파비콘 눈 깜빡(기본 켜짐)
     const tapt = () => { try { return localStorage.getItem('hb-tapthread') === '1'; } catch { return false; } };   // 폰에서 글을 누르면 스레드(기본 꺼짐)
+    const unk = () => { try { return localStorage.getItem('hb-unreadkeep') === '1'; } catch { return false; } };   // 읽지 않음 뒤로 가기 되살림 · 「읽지 않음으로」(기본 꺼짐)
     let draw = () => {
       el.innerHTML = header('모양', '내 계정에 저장돼 다른 기기에서도 같아요.')
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>테마</b><p class="bxs-mut">시스템은 기기 설정(라이트 · 다크)을 따라요</p></div><div class="bxs-seg" role="radiogroup" aria-label="테마">${TH.map(([k, v]) => `<button type="button" role="radio" aria-checked="${cur() === k}" data-th="${k}">${v}</button>`).join('')}</div></div></div>`
@@ -842,7 +844,8 @@
         + '<div class="bxs-card" data-pins></div>'
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>움직임 줄이기</b><p class="bxs-mut">블롭 · 파비콘 깜빡임 · 화면 전환 움직임을 멈춰요(기기의 움직임 줄이기도 따라요)</p></div>${sw(still(), `data-st="${still() ? 0 : 1}"`, '움직임 줄이기')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>파비콘 눈 깜빡</b><p class="bxs-mut">브라우저 탭 아이콘이 5초마다 눈을 깜빡여요. 끄면 탭 아이콘만 멈추고 다른 움직임은 그대로예요</p></div>${sw(favb(), `data-fb="${favb() ? 0 : 1}"`, '파비콘 눈 깜빡')}</div></div>`
-        + `<div class="bxs-card"><div class="bxs-row between"><div><b>폰에서 글을 누르면 스레드 열기</b><p class="bxs-mut">휴대폰에서 채널 글을 짧게 누르면 그 글 스레드가 열려요. 끄면 길게 눌러 메뉴에서 회신해요. 컴퓨터(마우스)는 그대로예요</p></div>${sw(tapt(), `data-tt="${tapt() ? 0 : 1}"`, '폰에서 글을 누르면 스레드 열기')}</div></div>`;
+        + `<div class="bxs-card"><div class="bxs-row between"><div><b>폰에서 글을 누르면 스레드 열기</b><p class="bxs-mut">휴대폰에서 채널 글을 짧게 누르면 그 글 스레드가 열려요. 끄면 길게 눌러 메뉴에서 회신해요. 컴퓨터(마우스)는 그대로예요</p></div>${sw(tapt(), `data-tt="${tapt() ? 0 : 1}"`, '폰에서 글을 누르면 스레드 열기')}</div></div>`
+        + `<div class="bxs-card"><div class="bxs-row between"><div><b>읽지 않음에서 읽은 글 남기기</b><p class="bxs-mut">뒤로 가기로 돌아오면 아까 목록과 보던 자리가 그대로이고, 읽은 글은 「읽음」으로 남아 「읽지 않음으로」 되돌릴 수 있어요. 되돌린 글은 이 기기에만 남아요</p></div>${sw(unk(), `data-uk="${unk() ? 0 : 1}"`, '읽지 않음에서 읽은 글 남기기')}</div></div>`;
       hideDraw(el); pinsDraw(el);
     };
     const setAcc = (v, redraw = true) => {
@@ -862,6 +865,8 @@
       if (fb){ try { localStorage.setItem('hb-favblink', fb.dataset.fb); } catch {} uiSave('favblink', fb.dataset.fb); return draw(); }
       const tt = e.target.closest('[data-tt]');
       if (tt){ try { localStorage.setItem('hb-tapthread', tt.dataset.tt); } catch {} uiSave('tapthread', tt.dataset.tt); R.classList.toggle('hb-tapth', tt.dataset.tt === '1'); return draw(); }
+      const uk = e.target.closest('[data-uk]');
+      if (uk){ try { localStorage.setItem('hb-unreadkeep', uk.dataset.uk); } catch {} uiSave('unreadkeep', uk.dataset.uk); window.HBInbox?.keepApply?.(); return draw(); }
       const m = e.target.closest('[data-st]');
       if (m){ try { localStorage.setItem('hb-still', m.dataset.st); } catch {} uiSave('still', m.dataset.st); R.classList.toggle('bx-still', m.dataset.st === '1'); return draw(); }
     };
