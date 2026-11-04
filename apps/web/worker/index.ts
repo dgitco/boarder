@@ -12,6 +12,7 @@ import { BUNDLE_KEYS } from "./harness-bundles";
 import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
 import { cleanSide, readSide, saveSide } from "./side-order";
 import * as artView from "./art-view";
+import * as agentFace from "./agent-face";
 import { canBePrimary, primaryPick, PARK_H_LIM, type Item } from "./importer/group";
 import { landingPage } from "./landing";
 import { localTools } from "./local";
@@ -1118,6 +1119,22 @@ app.post("/api/me/nodes/avatar", async c => {
   if (f && !(await photoOk(c.env, f.photo || ""))) return c.json({ error: "그림을 먼저 올려요" }, 400);
   const r = await memberBoard.setNodeFace(c.env.DB, me, id, f);
   return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
+});
+app.get("/api/me/agent-faces", async c => {
+  const s = await signedIn(c); if (!s || !isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  return c.json({ faces: await agentFace.all(c.env.DB, todoOwner(c.env, s.user.email)) }, 200, { "cache-control": "no-store" });
+});
+// { key: 에이전트 키, seed?, hue?, photo? } — seed · photo 둘 다 없으면 기본 얼굴로 되돌림
+app.post("/api/me/agent-faces", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s || !isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  const b = Object(await c.req.json().catch(() => ({}))) as Record<string, unknown>, key = String(b.key ?? "");
+  if (!agentFace.KEY.test(key)) return c.json({ error: "없는 에이전트예요" }, 404);
+  const reset = !b.seed && !b.photo, f = reset ? null : memberBoard.cleanFace({ seed: b.seed || "mochi", hue: b.hue ?? 180, photo: b.photo || "" });
+  if (!reset && !f) return c.json({ error: "모양 · 색" }, 400);
+  if (f && !(await photoOk(c.env, f.photo || ""))) return c.json({ error: "그림을 먼저 올려요" }, 400);
+  await agentFace.set(c.env.DB, todoOwner(c.env, s.user.email), key, f);
+  return c.json({ ok: true, key, avatar: f });
 });
 const flagOwner = (c: Context<{ Bindings: Env }>) => (text: string) => c.executionCtx.waitUntil((boardTool(c.env, chOf(c), "flag", { text }, "boarder@worker") as Promise<unknown>).catch(() => {}));
 app.post("/api/me/feedback", async c => {

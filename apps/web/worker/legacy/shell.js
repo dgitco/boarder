@@ -44,15 +44,15 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   }
   function logoEl(which){
     const st = logoState(), c = LG[which];
-    if (c && c.key === st.key){ c.el.title = c.el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : window.HB_MEMBER ? '내 차례' : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`; return c.el; }
+    const bf = window.HB_MEMBER && typeof D !== 'undefined' ? (D?.areas || []).find(a => a.key === 'primary')?.avatar : (typeof AGENT_CUSTOM === 'object' && AGENT_CUSTOM?.primary) || null, fk = bf ? `${bf.seed}|${bf.hue}|${bf.photo || ''}` : '';
+    if (c && c.key === st.key && c.fk === fk){ c.el.title = c.el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : window.HB_MEMBER ? '내 차례' : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`; return c.el; }
     const el = mk('button', 'lg lgb mood-' + st.key); el.type = 'button'; el.dataset.go = 'chan:primary';
     const ex = window.HB_EXPR || {};
-    const bf = window.HB_MEMBER && typeof D !== 'undefined' ? (D?.areas || []).find(a => a.key === 'primary')?.avatar : null;
     el.innerHTML = bf?.photo && window.BXBot?.live ? window.BXBot.live(bf, 34)
       : window.HB_BLOB_ANIM ? window.HB_BLOB_ANIM(bf?.seed || 'primary', {size: 34, background: false, animate: 'always', ...(bf ? {hue: bf.hue} : {}), ...(st.key === 'sad' ? {expression: ex.sad} : st.key === 'think' ? {expression: ex.thinking} : {})})
       : window.HB_BLOB ? window.HB_BLOB(bf?.seed || 'primary', {size: 34, background: false, ...(bf ? {hue: bf.hue} : {})}) : '<img src="icons/icon-192.png" alt="" width="32" height="32">';
     el.title = el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : window.HB_MEMBER ? '내 차례' : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`;
-    LG[which] = {key: st.key, el}; return el;
+    LG[which] = {key: st.key, fk, el}; return el;
   }
   const placeLogo = () => { for (const [w, box] of [['sb', sb], ['dr', dr]]){ const slot = box.querySelector('.lgslot') || box.querySelector('.top > .lgb'), el = slot && logoEl(w); if (el && el !== slot) slot.replaceWith(el); } };
   setInterval(() => { if (on()) { const k = logoState().key; if (LG.sb && LG.sb.key !== k) lists(); } }, 8000);

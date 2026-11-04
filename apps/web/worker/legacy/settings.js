@@ -606,9 +606,10 @@
   const hrs = h => h % 24 ? `${h}시간` : `${h / 24}일`;
   PAGES.nodes = async (el, id, live) => {
     let j = await api('GET', 'api/me/nodeset'), more = false; if (!live()) return;
-    let faces = OWNER || !window.BXBot ? null : await api('GET', 'api/me/nodes/avatar').then(r => r.nodes).catch(() => null), openFace = null, openName = null; if (!live()) return;
+    const AF = () => window.HBAgentFaces || window.parent?.HBAgentFaces, AFS = (k, f) => (window.HBAgentFaceSet || window.parent?.HBAgentFaceSet)?.(k, f);
+    let faces = !window.BXBot ? null : OWNER ? (AF()?.() || null) : await api('GET', 'api/me/nodes/avatar').then(r => r.nodes).catch(() => null), openFace = null, openName = null; if (!live()) return;
     const faceSm = f => !f ? '' : f.photo ? `<img src="/_blob/${esc(f.photo)}.png" alt="">` : BXBot.svg(f.seed, f.hue, 32, true);
-    const faceRow = x => `<div class="bxs-li"><div class="bxs-row" style="flex-wrap:nowrap;gap:12px"><i class="bxs-face" aria-hidden="true">${faceSm(x.avatar)}</i><div><b>${esc(x.name)}</b><span>${x.head ? `「${esc(x.column)}」 열 머리` : '노드'} · ${x.custom ? '고른 얼굴' : '기본 얼굴'}</span></div></div>`
+    const faceRow = x => `<div class="bxs-li"><div class="bxs-row" style="flex-wrap:nowrap;gap:12px"><i class="bxs-face" aria-hidden="true">${faceSm(x.avatar)}</i><div><b>${esc(x.name)}</b><span>${x.head ? `${esc(x.column)} 열 머리` : OWNER ? '에이전트' : '노드'} · ${x.custom ? '고른 얼굴' : '기본 얼굴'}</span></div></div>`
       + `<div class="bxs-row" style="flex-wrap:nowrap">${x.node && !String(x.node).startsWith('ew_') ? btn(openName === x.pane ? '취소' : '이름', `data-nno="${esc(x.pane)}" aria-expanded="${openName === x.pane}"`, 'sm ghost') : ''}${x.custom ? btn('기본으로', `data-nfr="${esc(x.pane)}"`, 'sm ghost') : ''}${btn(openFace === x.pane ? '닫기' : '바꾸기', `data-nfo="${esc(x.pane)}" aria-expanded="${openFace === x.pane}"`, 'sm ghost')}</div></div>`
       + (openName === x.pane ? `<div class="bxs-li"><div class="bxs-row" style="flex-wrap:nowrap;gap:8px;width:100%"><input class="bxs-in" data-nnm="${esc(x.pane)}" maxlength="60" value="${esc(x.name)}" aria-label="채널 이름" style="flex:1;min-width:0">${btn('저장', `data-nns="${esc(x.pane)}"`, 'sm')}</div></div>` : '')
       + (openFace === x.pane ? `<div class="bxs-li col"><div data-nfp="${esc(x.pane)}"></div></div>` : '');
@@ -616,12 +617,12 @@
       : empty({ic: 'node', sm: true, t: '얼굴을 고를 노드가 없어요', p: '노드가 생기면 트리 열 머리 · 노드마다 얼굴을 고를 수 있어요.'}, '<p class="bxs-mut">얼굴을 고를 노드가 없어요</p>'));
     const facePick = () => {   // 연 노드의 고르기 판: 고르는 순간 저장(프로필과 같은 규칙), 실패면 되돌리고 한 줄 오류
       const box = openFace && el.querySelector(`[data-nfp="${CSS.escape(openFace)}"]`), x = box && faces.find(f => f.pane === openFace); if (!x) return;
-      const P = BXBot.mount(box, {...x.avatar, name: x.name, photoId: x.avatar.photo}, {caption: x.head ? '트리 열 머리 얼굴이 이 그림이 돼요' : '이 노드 얼굴이 이 그림이 돼요', noName: true});
+      const P = BXBot.mount(box, {...x.avatar, name: x.name, photoId: x.avatar.photo}, {caption: x.head ? '트리 열 머리 얼굴이 이 그림이 돼요' : OWNER ? '이 에이전트 얼굴이 사이드바 · 글 옆 · 트리에서 이 그림이 돼요' : '이 노드 얼굴이 이 그림이 돼요', noName: true});
       let busy = false, again = false;
       box.addEventListener('bxb-pick', async e => {
         if (busy){ again = true; return; } busy = true;
         do { again = false; const v = P.get();
-          try { const r = await BXBot.saveFace(v, '/api/me/nodes/avatar', {node: x.pane}); x.avatar = r.avatar; x.custom = true;
+          try { const r = OWNER ? await BXBot.saveFace(v, '/api/me/agent-faces', {key: x.pane}) : await BXBot.saveFace(v, '/api/me/nodes/avatar', {node: x.pane}); x.avatar = r.avatar; x.custom = true; if (OWNER) AFS(x.pane, r.avatar);
             if (r.avatar.photo && P.get().photo === v.photo) P.set({photo: `/_blob/${r.avatar.photo}.png`, photoId: r.avatar.photo}); P.ok(e.detail);
             const row = box.closest('.bxs-li')?.previousElementSibling; if (row) row.outerHTML = faceRow(x).split('<div class="bxs-li col">')[0];
           } catch { P.set({...x.avatar, photo: x.avatar.photo ? `/_blob/${x.avatar.photo}.png` : '', photoId: x.avatar.photo || ''}); toast('일시적인 오류가 발생했어요'); again = false; }
@@ -716,7 +717,7 @@
       }
       const fr = e.target.closest('[data-nfr]'), fx = fr && faces?.find(f => f.pane === fr.dataset.nfr);
       if (fx) {   // 기본 얼굴로: 서버가 지우고, 목록을 다시 받아 기본 얼굴(열 이름 얼굴)을 그림
-        try { await api('POST', 'api/me/nodes/avatar', {node: fx.pane}); faces = (await api('GET', 'api/me/nodes/avatar')).nodes; toast('기본 얼굴로 되돌렸어요'); } catch { toast('일시적인 오류가 발생했어요'); }
+        try { if (OWNER){ await api('POST', 'api/me/agent-faces', {key: fx.pane}); AFS(fx.pane, null); faces = AF()?.() || faces; } else { await api('POST', 'api/me/nodes/avatar', {node: fx.pane}); faces = (await api('GET', 'api/me/nodes/avatar')).nodes; } toast('기본 얼굴로 되돌렸어요'); } catch { toast('일시적인 오류가 발생했어요'); }
         if (live()) draw(); return;
       }
       if (e.target.closest('[data-ndef]') && await confirmBox(OWNER ? '정리 기준 · 보관 시간을 기본값으로 되돌릴까요?' : '정리 기준 · 보관 시간을 처음 값으로 되돌릴까요?', '되돌리기')) return save({...j.defaults});

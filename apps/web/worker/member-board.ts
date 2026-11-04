@@ -37,6 +37,17 @@ const FACE_SEEDS = ["mochi", "pebble", "nova", "tofu", "echo", "kiwi", "company 
 const FACE_HUES = [18, 45, 140, 180, 215, 265, 320, 0];   // botpick.js HUES
 const FACE_SEED = /^[A-Za-z0-9 _-]{1,40}$/, BLOB_ID = /^[0-9a-f]{32}$/;
 export const meKey = (me: string) => "@me:" + String(me).toLowerCase();
+const AGENT_FACES: [string, number][] = [["mochi", 265], ["pebble", 215], ["nova", 185], ["tofu", 320], ["echo", 18], ["kiwi", 48], ["plum", 345], ["moss", 75], ["wave", 240], ["dune", 290]];
+export const agentFaceAt = (i: number): Face => { const [seed, hue] = AGENT_FACES[i % AGENT_FACES.length]; return { seed, hue }; };
+export function headFaces(names: string[]): Map<string, Face> {
+  const out = new Map<string, Face>(), used = new Set<number>(), N = AGENT_FACES.length - 1;
+  for (const n of [...new Set(names)].sort()) {
+    let h = 2166136261; for (const ch of n.trim()) { h ^= ch.codePointAt(0)!; h = Math.imul(h, 16777619) >>> 0; }
+    let k = h % N; for (let j = 0; j < N && used.has(k); j++) k = (k + 1) % N;
+    used.add(k); if (used.size >= N) used.clear(); out.set(n, agentFaceAt(k + 1));
+  }
+  return out;
+}
 export function faceOf(name: string): Face {
   let h = 2166136261; for (const ch of String(name || "").trim()) { h ^= ch.codePointAt(0)!; h = Math.imul(h, 16777619) >>> 0; }
   return { seed: FACE_SEEDS[h % FACE_SEEDS.length], hue: FACE_HUES[(h >>> 8) % FACE_HUES.length] };
@@ -239,17 +250,23 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
         const head = heads.get(a)!;
         for (const p of ps) p.area = key;
         // 열 머리 얼굴 = 머리 노드에 고른 얼굴, 없으면 열 이름에서 정한 얼굴(같은 이름 → 같은 얼굴) — 머리 판에도 같은 값
-        const avatar = L.faces[nodeOfPane.get(head.pane) || ""] || faceOf(a || "기타");
-        head.avatar = avatar;
-        areas.push({ key, name: a || "기타", lead: head.pane, lead_name: head.win, avatar });
+        const mine = L.faces[nodeOfPane.get(head.pane) || ""], avatar = mine || faceOf(a || "기타");   // 기본은 아래 headFaces 가 이름으로 다시 정함
+        head.avatar = avatar; head.avatar_custom = !!mine;
+        areas.push({ key, name: a || "기타", lead: head.pane, lead_name: head.win, avatar, avatar_custom: !!mine });
         keyOfArea.set(a, key);
       });
-      // 상위가 정해진 노드는 상위 노드가 있는 열로(열 머리는 제 열을 지키므로 옮기지 않음). 상위가 안 보이면(닫힘 · 보관) 그대로
-      const paneOfNode = new Map([...nodeOfPane].map(([pn, id]) => [id, pn])), headPanes = new Set(areas.map(x => x.lead));
-      for (const p of panes) {
-        const up = L.parents[nodeOfPane.get(p.pane) || ""], upPane = up ? paneOfNode.get(up) : undefined, target = upPane ? panes.find(x => x.pane === upPane) : undefined;
-        if (p.kind === "lead" && target && !headPanes.has(p.pane)) p.area = target.area;
-      }
+      const paneOfNode = new Map([...nodeOfPane].map(([pn, id]) => [id, pn])), headPanes = new Set(areas.map(x => x.lead)), byPane = new Map(panes.map(x => [x.pane, x]));
+      const colMemo = new Map<string, string>();
+      const colFor = (p: R, depth = 0): string => {
+        const m = colMemo.get(p.pane); if (m !== undefined) return m;
+        let a = p.area;
+        if (p.kind === "lead" && !headPanes.has(p.pane) && depth < 30) {   // 30 = 고리(서로 상위)일 때 멈춤
+          const up = L.parents[nodeOfPane.get(p.pane) || ""], upPane = up ? paneOfNode.get(up) : undefined, target = upPane ? byPane.get(upPane) : undefined;
+          if (target && target !== p) a = colFor(target, depth + 1);
+        }
+        colMemo.set(p.pane, a); return a;
+      };
+      for (const p of panes) if (p.kind === "lead" && !headPanes.has(p.pane)) p.area = colFor(p);
       const nodeById = new Map(L.nodes.map(n => [n.id, n]));
       for (const q of parked) {
         const n = L.nodes.find(x => x.pane === q.pane); if (!n) continue;
@@ -269,13 +286,27 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     const tops = panes.filter(p => { const id = nodeOfPane.get(p.pane) || "", up = L.parents[id];
       return p.kind === "lead" && p.pane !== PRIMARY && (up === TOP || (hasKid.has(id) && (!up || !shown.has(up)))); });
     const colOfNode = new Map<string, string>();
-    tops.forEach((h, i) => { const key = "t" + i, id = nodeOfPane.get(h.pane) || "", avatar = L.faces[id] || faceOf(String(h.win));
-      h.area = key; h.avatar = avatar; colOfNode.set(id, key); areas.push({ key, name: String(h.win), lead: h.pane, lead_name: h.win, avatar }); });
+    tops.forEach((h, i) => { const key = "t" + i, id = nodeOfPane.get(h.pane) || "", mine = L.faces[id], avatar = mine || faceOf(String(h.win));   // 기본은 아래 headFaces 가 이름으로 다시 정함
+      h.area = key; h.avatar = avatar; h.avatar_custom = !!mine; colOfNode.set(id, key); areas.push({ key, name: String(h.win), lead: h.pane, lead_name: h.win, avatar, avatar_custom: !!mine }); });
     const colOf = (id: string) => { for (let i = 0, x: string | undefined = id; x && i < 20; i++) { if (colOfNode.has(x)) return colOfNode.get(x); x = L.parents[x]; } return undefined; };
     if (tops.length) {
       for (const p of panes) if (p.kind === "lead" && !tops.includes(p)) { const k = colOf(nodeOfPane.get(p.pane) || ""); if (k) p.area = k; }
       for (const q of parked) { const n = L.nodes.find(x => x.pane === q.pane), k = n ? colOf(n.id) : undefined; if (k) q.area = k; }
     }
+  }
+  {
+    const paneOf = new Map([...nodeOfPane].map(([pn, id]) => [id, pn])), heads = new Set(areas.map(x => x.lead)), byPane = new Map(panes.map(x => [x.pane, x]));
+    for (const p of panes) {
+      if (p.kind !== "lead" || heads.has(p.pane)) continue;
+      const up = L.parents[nodeOfPane.get(p.pane) || ""], t = up && up !== TOP ? byPane.get(paneOf.get(up) || "") : undefined;
+      if (t && t !== p && t.kind === "lead" && t.area === p.area && !heads.has(t.pane)) p.up = t.pane;
+    }
+    // 고리(서로 상위 — 상위 정하기가 막지만 옛 값)는 끊음: 위로 따라가 제가 다시 나오면 그 판의 up 을 지움
+    for (const p of panes) for (let x = p.up ? byPane.get(p.up) : undefined, i = 0; x && i < 60; i++, x = x.up ? byPane.get(x.up) : undefined) if (x === p) { delete p.up; break; }
+  }
+  {
+    const dfl = areas.filter(a => a.key !== "primary" && !a.avatar_custom), hf = headFaces(dfl.map(a => String(a.name)));
+    for (const a of dfl) { const f = hf.get(String(a.name))!; a.avatar = f; const hp = panes.find(p => p.pane === a.lead); if (hp) hp.avatar = f; }
   }
   const known = new Set(panes.map(p => p.pane)), dp = L.defaultNode?.pane || (/^ew_/.test(L.primaryWin) ? paneOfId(L.primaryWin) : ""), dflt = dp && known.has(dp) ? dp : PRIMARY,
     toPane = (win: string) => { const n = L.nodeOfWin(win); return n && known.has(n.pane) ? n.pane : dflt; };

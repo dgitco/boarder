@@ -161,3 +161,33 @@ test("막힘 뒤에 상태 줄(boarder status)이 와도 막힘 표시 · 내 �
   const q = ((await data(d1, A, null)) as any).panes.find((x: any) => x.win === "가동 점검");
   assert.equal(q.blocked, null, "더 새 진행 줄이 오면 막힘 풀림"); assert.notEqual(q.last.kind, "막힘");
 });
+
+test("여러 층: 부서(열 머리) → 업무 → 하위 업무 → 그 밑 — 다 부서 열에, up 은 바로 위 판, 사슬 순서가 뒤섞여 읽혀도", async () => {
+  const { db, d1 } = fakeD1();
+  const at = (id: string, name: string, area: string, ago: number) => db.prepare("INSERT INTO mnode(owner, id, name, area, state, why, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)").run(A, id, name, area, "idle", "", T, Date.now() - ago);
+  at("n_sales", "Sales", "Sales", 50_000); at("n_lead", "팀장", "acme", 50_000);
+  // 묶기 순서 = updated_at 최근 먼저 — 가장 깊은 노드가 먼저 읽히게(위 노드가 아직 제 열로 안 옮겨졌을 때)
+  at("n_deep", "하위의 하위", "", 1_000); at("n_sub", "단계 정의", "", 2_000); at("n_task", "세일즈 덱 확정", "", 3_000); at("n_t2", "영업 CRM", "", 4_000);
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_sales: "top", n_task: "n_sales", n_t2: "n_sales", n_sub: "n_task", n_deep: "n_sub" } }), T);
+  const d = await data(d1, A, null) as any;
+  const p = (w: string) => d.panes.find((x: any) => x.win === w), col = d.areas.find((a: any) => a.lead_name === "Sales").key;
+  assert.deepEqual(["세일즈 덱 확정", "영업 CRM", "단계 정의", "하위의 하위"].map(w => p(w).area), [col, col, col, col], "사슬 끝까지 부서 열");
+  assert.equal(p("세일즈 덱 확정").up, undefined, "열 머리 바로 밑은 up 없음(예전 그대로 한 층)");
+  assert.equal(p("영업 CRM").up, undefined);
+  assert.equal(p("단계 정의").up, p("세일즈 덱 확정").pane);
+  assert.equal(p("하위의 하위").up, p("단계 정의").pane);
+  assert.equal(p("Sales").up, undefined, "열 머리는 up 없음");
+});
+
+test("여러 층: 영역 열이 없는 회원도 같은 들여 쓰기 · 상위가 닫힌 노드는 그 열 맨 위(up 없음) · 상위 고리가 있어도 멈추지 않음", async () => {
+  const { db, d1 } = fakeD1();
+  add(db, A, "n_d", "개발 리드", ""); add(db, A, "n_ui", "화면 고치기", ""); add(db, A, "n_fx", "글자 고치기", ""); add(db, A, "n_gone", "닫은 노드", ""); add(db, A, "n_orph", "닫은 노드 밑", "");
+  add(db, A, "n_a", "고리 가", ""); add(db, A, "n_b", "고리 나", "");
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_d: "top", n_ui: "n_d", n_fx: "n_ui", n_gone: "n_d", n_orph: "n_gone", n_a: "n_b", n_b: "n_a" }, closed: ["n_gone"] }), T);
+  const d = await data(d1, A, null) as any;
+  const p = (w: string) => d.panes.find((x: any) => x.win === w), col = d.areas.find((a: any) => a.lead_name === "개발 리드").key;
+  assert.equal(p("글자 고치기").area, col); assert.equal(p("글자 고치기").up, p("화면 고치기").pane);
+  assert.equal(p("화면 고치기").up, undefined);
+  assert.equal(p("닫은 노드 밑").up, undefined, "닫힌 상위 밑은 들여 쓰지 않음");
+  assert.ok(!p("고리 가").up || !p("고리 나").up, "서로 up 인 고리는 안 만듦");
+});

@@ -22,19 +22,28 @@ function setup() {
 }
 const col = (d: any, name: string) => d.areas.find((a: any) => a.name === name);
 
-test("열 머리 기본 얼굴: 열 이름에서 정함 — 같은 이름은 같은 얼굴(회원이 달라도), 머리 판에도 같은 값", async () => {
+const dflt = (d: any, name: string) => MB.headFaces(d.areas.filter((a: any) => a.key !== "primary" && !a.avatar_custom).map((a: any) => a.name)).get(name);
+test("열 머리 기본 얼굴: 열 차례대로 서로 다른 얼굴(안 B), 다시 읽어도 같음, 머리 판에도 같은 값", async () => {
   const { D1 } = setup();
   const d1 = await MB.data(D1, A, { name: "모찌" }), d2 = await MB.data(D1, A, { name: "모찌" });
   const tax = col(d1, "기획"), dev = col(d1, "개발");
   assert.ok(tax && dev, "열 둘");
-  assert.deepEqual(tax.avatar, MB.faceOf("기획"));
+  assert.deepEqual(tax.avatar, dflt(d1, "기획"));
   assert.deepEqual(col(d2, "기획").avatar, tax.avatar);   // 다시 읽어도 같음
-  assert.deepEqual(MB.faceOf("기획"), MB.faceOf(" 기획 "));
   assert.match(tax.avatar.seed, /^[A-Za-z0-9 _-]{1,40}$/); assert.ok(Number.isInteger(tax.avatar.hue));
-  assert.equal(tax.avatar.photo, undefined);
+  assert.equal(tax.avatar.photo, undefined); assert.equal(tax.avatar_custom, false);
   assert.deepEqual(d1.panes.find((p: any) => p.pane === tax.lead).avatar, tax.avatar);
-  // 이름이 다르면 대개 다른 얼굴(여럿 중 하나라도 다름)
-  assert.ok(["기획", "개발", "영업", "회계", "디자인"].map(n => JSON.stringify(MB.faceOf(n))).some(x => x !== JSON.stringify(tax.avatar)));
+  assert.notDeepEqual(tax.avatar, dev.avatar);   // 열 머리끼리 다른 얼굴
+  assert.notEqual(tax.avatar.seed, dev.avatar.seed);
+});
+
+test("열 머리 기본 얼굴 자리는 이름으로: 열 순서 · 머리 수가 바뀌어도 같은 이름은 같은 얼굴, 서로 겹치지 않음", () => {
+  const a = MB.headFaces(["기획", "개발"]), b = MB.headFaces(["개발", "기획", "영업"]);
+  assert.deepEqual(a.get("기획"), MB.headFaces(["개발", "기획"]).get("기획"));   // 순서 무관
+  const nine = ["기획", "개발", "영업", "회계", "디자인", "마케팅", "개인", "기타", "운영"], f = MB.headFaces(nine);
+  assert.equal(new Set(nine.map(n => JSON.stringify(f.get(n)))).size, 9);   // 아홉까지 모두 다름
+  for (const n of nine) assert.notDeepEqual(f.get(n), MB.agentFaceAt(0));   // Primary 자리(0)는 안 씀
+  assert.ok(b.get("기획") && b.get("개발"));
 });
 
 test("노드 얼굴 고르기: 저장 → 열 머리 · 판에 고른 얼굴, 다른 설정 칸 그대로, 판 번호로도, 되돌리면 기본", async () => {
@@ -53,14 +62,14 @@ test("노드 얼굴 고르기: 저장 → 열 머리 · 판에 고른 얼굴, �
   await MB.setNodeFace(D1, A, pane, { seed: "kiwi", hue: 0 });
   d = await MB.data(D1, A, null);
   assert.deepEqual(d.panes.find((p: any) => p.win === "화면 고치기").avatar, { seed: "kiwi", hue: 0 });
-  assert.deepEqual(col(d, "개발").avatar, MB.faceOf("개발"));   // 다른 열 머리는 기본 그대로
+  assert.deepEqual(col(d, "개발").avatar, dflt(d, "개발"));   // 다른 열 머리는 기본 그대로
   const list = await MB.nodeFaceList(D1, A, null);
   assert.deepEqual(list.filter(x => x.head).map(x => x.name).sort(), ["개발 리드", "기획 팀장"]);
   assert.equal(list.find(x => x.name === "기획 팀장")!.custom, true); assert.equal(list.find(x => x.name === "개발 리드")!.custom, false);
   // 되돌리기
   await MB.setNodeFace(D1, A, "n_a1", null);
   d = await MB.data(D1, A, null);
-  assert.deepEqual(col(d, "기획").avatar, MB.faceOf("기획"));
+  assert.deepEqual(col(d, "기획").avatar, dflt(d, "기획"));
   // 설정 줄이 없던 회원도 새로 만듦(얼굴 칸만)
   const { db: db2, D1: D2 } = setup();
   await MB.setNodeFace(D2, B, "n_b1", { seed: "luma", hue: 45 });
@@ -81,7 +90,7 @@ test("남의 노드 · 없는 노드엔 얼굴을 못 정함, 틀린 값은 버�
   assert.equal(MB.cleanFace({ seed: "nova", hue: 10, photo: "../x" }), null);
   // 저장된 틀린 값은 그리지 않고 기본 얼굴
   db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ faces: { n_a1: { seed: "<b>", hue: 1 } } }), 1);
-  assert.deepEqual(col(await MB.data(D1, A, null), "기획").avatar, MB.faceOf("기획"));
+  { const d = await MB.data(D1, A, null); assert.deepEqual(col(d, "기획").avatar, dflt(d, "기획")); }
 });
 
 test("메인 봇 = Primary 얼굴: member_bot 의 고른 얼굴, 없으면 봇 이름 얼굴", async () => {
