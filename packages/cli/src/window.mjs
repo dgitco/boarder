@@ -20,11 +20,15 @@ function parentOf(pid) {
   } catch { return null; }
 }
 
-export function agentProcess() {
+const RUNNER = /(^|\/)-?(node|bun|deno|[a-z]*sh)(\.exe)?$/;
+// 실행 파일 자리만: 첫 낱말, 그것이 node · bun · deno · 셸이면 둘째(옵션 · -c 글은 뺌) — 명령 글(bash -c '… claude …', python3 -c '…')의 낱말은 도구가 아님
+const execWords = words => (RUNNER.test(words[0]) && words[1] && !words[1].startsWith('-') ? [words[0], words[1]] : [words[0]]);
+export function agentProcess({ anyWord = true } = {}) {
   let pid = process.ppid;
   for (let i = 0; i < 12 && pid > 1; i++) {
     const p = parentOf(pid); if (!p) break;
-    for (const [name, re] of AGENTS) if (p.cmd.split(' ').some(w => re.test(w))) return { name, pid };
+    const words = p.cmd.split(' '), look = anyWord ? words : execWords(words);
+    for (const [name, re] of AGENTS) if (look.some(w => re.test(w))) return { name, pid };
     pid = p.ppid;
   }
   return null;
@@ -34,7 +38,10 @@ export function windowKey() {
   const host = os.hostname().split('.')[0].replace(/[^\w.-]/g, '').slice(0, 30) || 'host';
   if (process.env.BOARDER_WINDOW) return { key: `${host}:${process.env.BOARDER_WINDOW.replace(/[^\w@.:/+-]/g, '-')}`.slice(0, 120), name: (process.env.BOARDER_WINDOW_NAME || process.env.BOARDER_WINDOW).slice(0, 60) };   // 엔진 창은 역할 이름(BOARDER_WINDOW_NAME)
   if (/^%\d+$/.test(process.env.TMUX_PANE || '')) return { key: `${host}:tmux:${process.env.TMUX_PANE.slice(1)}`, name: `${path.basename(process.cwd())} tmux ${process.env.TMUX_PANE.slice(1)}` };
-  const a = agentProcess();
+  const cx = String(process.env.CODEX_THREAD_ID || '').replace(/[^\w-]/g, '').slice(0, 64);
+  const a = agentProcess({ anyWord: !cx });
+  if (cx && !a) return { key: `${host}:codex-sandbox:${cx}`, name: `터미널 · ${path.basename(process.cwd())}` };
+  if (cx && a.name === 'codex') return { key: `${host}:codex:${cx}`, name: `codex · ${path.basename(process.cwd())}` };
   if (a) return { key: `${host}:${a.name}:${a.pid}`, name: `${a.name} · ${path.basename(process.cwd())}` };
   return { key: `${host}:shell:${process.ppid}`, name: `터미널 · ${path.basename(process.cwd())}` };
 }

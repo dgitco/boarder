@@ -143,7 +143,8 @@ export async function load(db: D1Database, me: string) {
     db.prepare("SELECT id, win, kind, question, at, answered_at FROM board_card WHERE owner = ? AND state = 'closed' ORDER BY at DESC LIMIT 50").bind(me),
   ]);
   const items = new Map((it.results as R[]).map(r => [String(r.key), r]));
-  const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(r.win, r.pane);
+  const keyOfWin = new Map<string, string>(), keysOfWin = new Map<string, string[]>();
+  for (const r of tk.results as R[]) { keyOfWin.set(r.win, r.pane); (keysOfWin.get(r.win) || keysOfWin.set(r.win, []).get(r.win)!).unshift(r.pane); }
   const itemOfWin = new Map<string, string>(); for (const i of items.values()) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(i.win, i.key);
   const nodeOfItem = new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)]));
   const engMain = (ew.results as R[]).some(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state));
@@ -175,7 +176,17 @@ export async function load(db: D1Database, me: string) {
   const mains = new Map((nd.results as R[]).map(n => [String(n.id), json<{ main?: string }>(n.counts, {}).main || ""]));
   for (const n of nodes) { const m = mains.get(n.id); if (m) n.windows.sort((a, b) => Number(b.key === m) - Number(a.key === m)); }
   const pastOf = new Map<string, string>(); for (const r of nd.results as R[]) { const ps = json<{ past?: unknown }>(r.counts, {}).past; for (const w of Array.isArray(ps) ? ps : []) if (typeof w === "string") pastOf.set(w, String(r.id)); }
-  const nodeOfWin = (win: string) => { if (isOriginalPrimWin(win)) return null; const k = keyOfWin.get(win) || win, item = itemOfWin.get(k) || `win:${k}`; return byId.get(nodeOfItem.get(item) || (tcOn ? nodeOfItem.get(`window:${k}`) : undefined) || pastOf.get(k) || pastOf.get(win) || "") || aliasNode(win) || frontNodes.find(n => n.name === win) || null; };
+  const nodeOfKey = (k: string) => byId.get(nodeOfItem.get(itemOfWin.get(k) || `win:${k}`) || (tcOn ? nodeOfItem.get(`window:${k}`) : undefined) || pastOf.get(k) || "");
+  const winNode = new Map<string, Node | null>();
+  const nodeOfWin = (win: string) => {
+    if (isOriginalPrimWin(win)) return null;
+    if (winNode.has(win)) return winNode.get(win)!;
+    const k = keyOfWin.get(win) || win;
+    const item = itemOfWin.get(k) || `win:${k}`;
+    let n = byId.get(nodeOfItem.get(item) || (tcOn ? nodeOfItem.get(`window:${k}`) : undefined) || pastOf.get(k) || pastOf.get(win) || "") || aliasNode(win) || frontNodes.find(n => n.name === win) || null;   // 예전 그대로
+    if (!n) for (const o of keysOfWin.get(win) || []) if (o !== k && (n = nodeOfKey(o) || null)) break;
+    winNode.set(win, n); return n;
+  };
   // 앞단은 한 창이라고 추정하지 않음 — 고른 노드들을 Primary의 별칭으로 읽되 원본/전송 창은 보존.
   const frontWins = new Set<string>();
   const frontFrom = new Map<string, string>();
