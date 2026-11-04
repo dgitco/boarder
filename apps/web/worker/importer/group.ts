@@ -224,6 +224,12 @@ export async function group(input: {
     const first = bySession.get(sid);
     if (first) d.join(first, i.key, true); else bySession.set(sid, i.key);
   }
+  if (!tc) {
+    const liveBy = new Map<string, string>();
+    const sidOf = (i: Item) => i.session || "";
+    for (const i of items) if (i.kind === "window" && d.w.has(i.key) && sidOf(i) && !liveBy.has(sidOf(i))) liveBy.set(sidOf(i), i.key);
+    for (const i of items) if (i.kind === "window" && !d.w.has(i.key) && sidOf(i) && liveBy.has(sidOf(i))) d.join(liveBy.get(sidOf(i))!, i.key);
+  }
   const byWin = new Map<string, string>();
   for (const i of items) if (i.win) { if (byWin.has(i.win)) d.join(byWin.get(i.win)!, i.key); else byWin.set(i.win, i.key); }
   // 같은 일 번호(같은 리포)

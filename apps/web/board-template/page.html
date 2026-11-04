@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "03e97fed2db7";
+window.HB_VER = "067e0df7919f";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1900,7 +1900,9 @@ html.hb-unkeep .inbr.ibdn{opacity:1}html.hb-unkeep .inbr.ibdn > :not(.ibun){opac
 html.hb-unkeep .ibi{position:relative}
 html.hb-unkeep .ibi.done > .msg, html.hb-unkeep .ibi.done > .ibth{opacity:.6}
 .ibun{flex:none;align-self:center;margin-left:8px;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:3px 10px;font:inherit;font-size:12px;line-height:1.4;cursor:pointer;white-space:nowrap}
+html.hb-unkeep .inbr:first-child:has(> .ibun) .rtools{right:132px}   
 .ibi > .ibun{position:absolute;top:8px;right:12px;z-index:2;margin:0}
+.ibi > .ibun + * .tools{right:132px}   
 .ibun .ibun-a{display:none}
 .ibun:hover,.ibun:focus-visible{color:var(--ink);border-color:var(--muted)}
 .ibun:hover .ibun-r,.ibun:focus-visible .ibun-r{display:none}
@@ -10967,10 +10969,12 @@ setInterval(() => {
   };
   const keepOn = () => lsGet("hb-unreadkeep", "0") === "1";
   const KEEPK = "hb-ib-keep:" + (window.HB_MEMBER?.email || "owner"), KEEP_MAX = 50, KEEP_MS = 7 * 864e5;
+  const tsOk = (v) => typeof v === "string" && /^\d{10}\.\d{6}$/.test(v);
+  const keepOk = (x) => !!x && tsOk(x.ts) && (x.thread == null || tsOk(x.thread)) && typeof x.chan === "string" && !/[<>"]/.test(x.chan) && ["text", "root", "author", "who", "kind", "pane"].every((k) => x[k] == null || typeof x[k] === "string") && ["at", "n"].every((k) => x[k] == null || Number.isFinite(+x[k]));
   const keepGet = () => {
     try {
       const a = JSON.parse(lsGet(KEEPK, "[]"));
-      return Array.isArray(a) ? a.filter((x) => x && /^\d{10}\.\d{6}$/.test(x.ts) && (x.thread == null || /^\d{10}\.\d{6}$/.test(x.thread)) && typeof x.chan === "string" && Date.now() - (+x.kept_at || 0) < KEEP_MS) : [];
+      return Array.isArray(a) ? a.filter((x) => keepOk(x) && Date.now() - (+x.kept_at || 0) < KEEP_MS) : [];
     } catch (e) {
       return [];
     }
@@ -11422,6 +11426,10 @@ setInterval(() => {
       f.cur = cur;
       f.restore = f.anc || null;
       f.restoreAt = Date.now();
+      if (S.ok) {
+        const live = new Set(S.unread.map(thOf));
+        for (const x of f.items) if (x.cstate === void 0 && !live.has(thOf(x))) f.done.add(idOf(k, x));
+      }
       return f;
     }
     if (k === "turn") S.doneOn = false;
@@ -12066,7 +12074,20 @@ setInterval(() => {
   }
   const keepApply = () => {
     if (keepSync()) keepMerge();
-    else if (S.unread.some((x) => x.kept)) S.unread = S.unread.filter((x) => !x.kept);
+    else {
+      S.unread = S.unread.filter((x) => !x.kept);
+      const f = FD.unread;
+      if (f) {
+        const live = new Set(S.unread.map(thOf));
+        f.items = f.items.filter((x) => {
+          if (!x.kept || live.has(thOf(x))) return true;
+          const id = idOf("unread", x);
+          f.keys.delete(id);
+          f.done.delete(id);
+          return false;
+        });
+      }
+    }
     emit();
     redraw();
   };

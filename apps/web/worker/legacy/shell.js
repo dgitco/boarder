@@ -542,10 +542,14 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     return '#' + (S.ib || current);
   }
   let applying = 0, recQ = 0, backing = 0, G = 0;
+  const canvasBackOn = () => { try { return localStorage.getItem('hb-canvasback') === '1'; } catch { return false; } };
   function record(){
     recQ = 0;
     if (applying || backing || !on() || /^#settings(\/|$|\?)/.test(HBR.hash())) return;   // 설정 화면(settings.js)이 주소를 맡음
     if (EMBED || window.BXStatus?.cur?.()) return;   // 상태 페이지(status.js)가 열려 있으면 주소는 그 페이지가 맡음
+    if (S.artBack && !MVv()){ const b = S.artBack; S.artBack = null;
+      // 닫으며 다른 화면을 연 경우에는 그 화면을 유지한다. 설정을 끄면 예전 닫기 동작을 쓴다.
+      if (canvasBackOn() && /^#art\//.test(HBR.hash()) && history.state?.bx && HBR.same(history.state.from, b) && ans.hidden && !S.ib && current === S.artView){ backing = setTimeout(() => { backing = 0; recLater(); }, 1500); return history.back(); } }
     const h = want(); if (HBR.same(h, HBR.hash())) return;
     if (/^#t=/.test(HBR.hash()) || !HBR.hash()) return history.replaceState(history.state, '', h);   // 보드 글 링크(#t=…)로 연 것은 그 자리를 바꿈
     if (history.state?.bx && history.state.from === h){ backing = setTimeout(() => { backing = 0; recLater(); }, 1500); return history.back(); }
@@ -555,7 +559,11 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   new MutationObserver(recLater).observe(ans, {attributes: true, childList: true, subtree: true});
   new MutationObserver(recLater).observe(document.body, {childList: true});
   const art0 = window.openArt;
-  window.openArt = function(id){ const r = art0.apply(this, arguments); S.art = id; S.artEl = MV.el; recLater(); return r; };
+  window.openArt = function(id){
+    const h = HBR.hash();
+    if (!MVv()){ S.artBack = canvasBackOn() && !/^#art\//.test(h) && !/^#settings(\/|$|\?)/.test(h) ? h : null; S.artView = current; }
+    const r = art0.apply(this, arguments); S.art = id; S.artEl = MV.el; recLater(); return r;
+  };
   const th0 = window.openThread;
   if (th0) window.openThread = function(){ const r = th0.apply(this, arguments); Promise.resolve(r).finally(recLater); recLater(); return r; };
   const until = (ok, ms = 10000) => new Promise(res => { const t0 = Date.now(), f = () => ok() || Date.now() - t0 > ms ? res(ok()) : setTimeout(f, 150); f(); });
@@ -581,7 +589,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     applying++;
     try {
       const pre0 = () => { window.HB_ART0?.remove(); window.HB_ART0 = null; };
-      if (k !== 'art'){ if (MVv()) mvClose(); pre0(); }
+      if (k !== 'art'){ S.artBack = null; if (MVv()) mvClose(); pre0(); }
       if (k === 'art'){ const aid = () => ARTS[a] ? a : window.artId?.('#art/' + a);
         if (MVv() !== a){ if (await linkUntil(aid)){ if (gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ if (!ans.hidden) closeAns(); const id = aid(); openArt(id); if (id !== a){ history.replaceState(history.state, '', '#art/' + id); moved = true; } } } else if (gen === G){ pre0(); linkFail(); } } }
       else if (k === 'chat' && CH.includes(a)){

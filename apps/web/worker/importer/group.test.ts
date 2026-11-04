@@ -341,6 +341,19 @@ test("창 하나 = 노드 하나: 닫힌 창은 창으로 세지 않음 — 이�
   }
 });
 
+test("계정을 옮겨 이어 연 창: 세션 행이 없어도 닫힌 옛 창과 산 새 창(같은 세션)은 한 노드 — 옛 창 기록이 칸에서 안 끊김", async () => {
+  const items = [
+    it({ key: "window:lap3:ew_old", kind: "window", engine: "tmux", title: "정산 마무리", win: "lap3:ew_old", session: "session:claude:s9", state: "gone", gone_at: now - 600_000 }),
+    it({ key: "window:mini:ew_new", kind: "window", engine: "tmux", title: "정산 마무리", win: "mini:ew_new", session: "session:claude:s9", state: "idle" }),
+  ];
+  for (const unit of [undefined, "goal", "agent"] as const) {
+    const r = await group({ items, logs: [], cards: [], prev: [], prevNodes: [], now, ...(unit ? { unit } : {}) });
+    const nodeOf = (k: string) => r.nodes.find(n => n.items.includes(k))?.id;
+    assert.ok(nodeOf("window:mini:ew_new"), `${unit}: 산 창은 노드`);
+    assert.equal(nodeOf("window:lap3:ew_old"), nodeOf("window:mini:ew_new"), `${unit}: 옛 창과 이어 연 창은 한 노드`);
+  }
+});
+
 test("primary 창 알아보기: 들여오기 표시 > 창 이름 > 폴더, 우리 엔진 · 보고 창 · 닫힌 창 · tmux 세션 이름은 아님", () => {
   const w = (o: Partial<Item> & { key: string }) => it({ kind: "window", engine: "herdr-own", ...o });
   assert.equal(primaryScore(w({ key: "a", title: "아무거나", handle: JSON.stringify({ primary: true }) })), 3);
