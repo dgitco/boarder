@@ -1,5 +1,5 @@
 // node --test apps/web/worker/member-search.test.ts (Node 22.18+ 타입 지우기 · node:sqlite)
-// 회원 찾기(boarder-internal#4) 경계: 회원 A 는 자기 글만 · 회원 B 글은 0건 · 주인 줄 · 주인 색인(SEARCH DO)은 안 탐
+// 회원 찾기 경계: 회원 A 는 자기 글만 · 회원 B 글은 0건 · 주인 줄 · 주인 색인(SEARCH DO)은 안 탐
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";

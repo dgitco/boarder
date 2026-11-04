@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "b5c3db81a50c";
+window.HB_VER = "5781fff23658";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -867,6 +867,11 @@ html.bx-boot #mview[data-pre],html.bx-route #mview[data-pre]{visibility:visible}
 
 
 #mview.full .mvbg{display:none}
+
+#mview.fill .mvbg{display:none}
+#mview.fill .mvbox,#mview.fill.sheet .mvbox{left:0;right:0;top:0;bottom:0;width:100vw;height:100vh;height:100dvh;border-radius:0;transform:none!important;animation:none;padding-bottom:0}
+#mview.fill .grab{display:none}
+#mview.fill .mvhd{padding-top:max(10px,env(safe-area-inset-top,0px))}
 #mview.full .mvbox{left:0;top:0;width:100vw;height:100dvh;border-radius:0}
 #mview.full .mvx{display:none}
 #mview.full.sheet .mvbox{top:0;height:100dvh;border-radius:0;transform:none!important}
@@ -1019,6 +1024,19 @@ body.thw-drag{cursor:col-resize;user-select:none;-webkit-user-select:none}
 
 .attg{display:flex;gap:8px;margin-top:8px;overflow-x:auto;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:none;padding-bottom:2px}
 .attg::-webkit-scrollbar{display:none}
+a.atm,.msg .bd a.atm{flex:none;scroll-snap-align:start;display:flex;flex-direction:column;width:min(520px,100%);box-sizing:border-box;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface);color:var(--ink)}
+a.atm,a.atm *,a.atm:hover,a.atm:hover *{text-decoration:none!important}
+.attg a.atm,.attg a.atm:visited{color:var(--ink)}
+.attg.fade a.atm{width:min(420px,82%)}   
+a.atm:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.atm .atmi{position:relative;display:block;height:200px;background:var(--sunk);border-bottom:1px solid var(--line)}
+.atm .atmi img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top left;display:block;background:#fff}   
+.atm .atmph{position:absolute;inset:0;display:grid;place-items:center;color:var(--soft)}.atm .atmph svg{width:34px;height:34px}
+.atm .atmt{display:flex;align-items:center;gap:7px;padding:9px 12px;min-width:0;font-size:13.5px;line-height:1.3}
+.atm .atmt svg{width:16px;height:16px;flex:none;color:var(--soft)}
+.atm .atmt b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.atm .atmt small{margin-left:auto;flex:none;color:var(--soft);font-size:12px}
+.attg a.atm:hover .atmt{background:var(--hover)}
 .attg.fade{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 40px),transparent)}
 a.atc,.msg .bd a.atc{flex:none;scroll-snap-align:start;display:flex;align-items:center;gap:10px;width:min(300px,78vw);box-sizing:border-box;padding:8px 12px 8px 8px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);text-decoration:none;cursor:pointer;font-family:var(--f)}
 a.atc,a.atc *,a.atc:hover,a.atc:hover *{text-decoration:none!important}   
@@ -5311,8 +5329,18 @@ let MD_ATT = null;
 const attSee = (id) => {
   if (MD_ATT && !MD_ATT.includes(id)) MD_ATT.push(id);
 };
-const attCards = (ids) => ids.length ? `<div class="attg${ids.length > 1 ? " fade" : ""}" role="list">${ids.map((id) => {
+const artMedia = (id, a) => `<a class="atm" role="listitem" href="art/${id}/" data-fill title="${esc(a.title || "")} — 크게 보기"><span class="atmi"><span class="atmph">${ATT_ICON.canvas}</span><img data-thumb alt="" loading="lazy" decoding="async" src="art/${id}/_thumb.jpg?v=${encodeURIComponent(a.at || "")}"></span><span class="atmt">${ATT_ICON.canvas}<b>${esc(a.title || "캔버스")}</b><small>${esc((a.at || "").slice(5, 10).replace("-", "/"))}</small></span></a>`;
+document.addEventListener("error", (e) => {
+  const t = e.target;
+  if (t?.tagName === "IMG" && t.hasAttribute("data-thumb")) t.remove();
+}, true);
+const attOut = (h) => {
+  const m = /<div class="attg[^>]*>[\s\S]*?<\/div>/.exec(h);
+  return m ? [h.slice(0, m.index) + h.slice(m.index + m[0].length), m[0]] : [h, ""];
+};
+const attCards = (ids) => ids.length ? `<div class="attg${ids.length > 1 ? " fade" : ""}${ids.some((id) => ARTS[id]?.kind === "canvas") ? " media" : ""}" role="list">${ids.map((id) => {
   const a = ARTS[id];
+  if (a.kind === "canvas") return artMedia(id, a);
   return `<a class="atc" role="listitem" href="art/${id}/" title="${esc(a.title || "")} — 보드 안에서 열기"><span class="atci">${ATT_ICON[a.kind] || ATT_ICON.page}</span><span class="atcx"><span class="atr"><b>${esc(a.title || "아티팩트")}</b><small>${ATT_KIND[a.kind] || "페이지"}</small></span><span class="atp">${esc([a.folder, (a.at || "").slice(5)].filter(Boolean).join(" · "))}</span></span></a>`;
 }).join("")}</div>` : "";
 document.addEventListener("scroll", (e) => {
@@ -5465,6 +5493,7 @@ function mtok(u, lab) {
     return `<a class="mtok" href="${esc(u)}" data-tlnk="${tl.c}|${tl.t}|${tl.m}"${x ? ` data-ok="1" title="${esc(tkTip(x))}"` : ""}><i>${ICON.reply}</i><span>${esc(x ? tkLab(tl, x) : lab && !/^https?:/.test(lab) ? lab : tkLab(tl, null))}</span></a>`;
   }
   const ai = artId(u), a = ARTS[ai], pg = (/#(?:.*&)?p=([^&\s]+)/.exec(u) || [])[1];
+  if (a.kind === "canvas") attSee(ai);
   return `<a class="mtok" href="art/${ai}/${pg ? "#p=" + esc(pg) : ""}" title="${esc([ATT_KIND[a.kind] || "페이지", a.folder].filter(Boolean).join(" · "))}"><i>${tkIco(a.kind)}</i><span>${esc(a.title || "아티팩트")}</span></a>`;
 }
 async function goLink(l) {
@@ -6206,7 +6235,7 @@ function fwdHTML(m) {
   return `<div class="fwd" data-copen="${esc(f.ts)}" data-cch="${esc(f.chan)}" role="button" tabindex="0" aria-label="${esc(window.Hangul ? Hangul.josa(f.node, "으로/로") : f.node + " 로")} 옮긴 글 열기">
     <div class="fh">${avatar(nm, initials(nm))}<div class="fhl"><div class="fhn"><b>${esc(nm)}</b>${f.who !== "owner" ? '<span class="tag">에이전트</span>' : ""}<span class="tm">${when(f.at)}</span></div>
     <div class="fw">${chip}${f.reply ? "의 스레드" : "에 게시됨"}</div></div></div>
-    ${sp.text ? `<div class="bd fbd">${md(sp.text, f.who !== "owner")}</div>` : ""}${t.length > 160 || t.split("\n").length > 3 ? '<span class="fmore">더 보기 ⌄</span>' : ""}
+    ${sp.text ? (([h, c]) => `<div class="bd fbd">${h}</div>${c}`)(attOut(md(sp.text, f.who !== "owner"))) : ""}${t.length > 160 || t.split("\n").length > 3 ? '<span class="fmore">더 보기 ⌄</span>' : ""}
     ${voiceOf(f.files, f.who === "owner")}${filesHTML(f.files, sp.imgs)}
     ${f.state === "내 차례" ? '<div class="ffoot"><b>내 차례</b></div>' : ""}</div>`;
 }
@@ -9890,7 +9919,7 @@ function artId(href) {
   return hit || null;
 }
 const ART_OUT = '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3M11 4h5v5M16 4l-7 7"/></svg>';
-function openArt(id) {
+function openArt(id, o = {}) {
   let full = false;
   try {
     full = sessionStorage.getItem("hb-art-full") === id;
@@ -9908,8 +9937,9 @@ function openArt(id) {
   MV.items = [];
   MV.i = 0;
   MV.ready = false;
+  const fill = !full && !!o.fill && it.kind === "canvas";
   el.id = "mview";
-  el.className = "art" + (it.kind === "canvas" ? " cv" : "") + (sheet ? " sheet" : "") + (full ? " full" : "");
+  el.className = "art" + (it.kind === "canvas" ? " cv" : "") + (sheet ? " sheet" : "") + (full ? " full" : "") + (fill ? " fill" : "");
   const hd = `<span class="mvn">${esc(it.title || "아티팩트")}</span>
     <a class="mvdl ic" href="art/${id}/" target="_blank" rel="noopener" title="새 창으로" aria-label="새 창으로">${ART_OUT}</a><button type="button" class="mvx" data-mvx aria-label="닫기">${ICON.x}</button>`;
   if (keep) {
@@ -9937,7 +9967,7 @@ function openArt(id) {
       mvClose();
     }
   });
-  if (sheet && !full) mvDrag(el.querySelector(".mvbox"));
+  if (sheet && !full && !fill) mvDrag(el.querySelector(".mvbox"));
   if (!full) el.querySelector(".mvx").focus();
 }
 const VI_PHONE = () => '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5 8 7l-1.6 1.2a8.5 8.5 0 0 0 5.4 5.4L13 12l3.5 1.5V16a1.5 1.5 0 0 1-1.6 1.5A13.5 13.5 0 0 1 2.5 5.1 1.5 1.5 0 0 1 4 3.5Z"/></svg>';
@@ -10054,7 +10084,7 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   e.stopPropagation();
   window.HB_P0 = (/[#&]p=([^&]+)/.exec(a.hash || "") || [])[1] || "";
-  openArt(id);
+  openArt(id, { fill: a.hasAttribute("data-fill") });
 }, true);
 function artMsg(e) {
   const f = MV.el?.classList.contains("art") && MV.el.querySelector("iframe");

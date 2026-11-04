@@ -8,7 +8,7 @@
     toast: () => typeof toast === 'function' ? toast : undefined, CS: () => typeof CS !== 'undefined' ? CS : undefined, D: () => typeof D !== 'undefined' ? D : undefined,
     cardShut: () => typeof cardShut === 'function' ? cardShut : undefined, picked: () => typeof picked !== 'undefined' ? picked : undefined, attnRows: () => typeof attnRows === 'function' ? attnRows : undefined,
     loadTh: () => typeof loadTh === 'function' ? loadTh : undefined, loadCh: () => typeof loadCh === 'function' ? loadCh : undefined, chatPost: () => typeof chatPost === 'function' ? chatPost : undefined,
-    upOne: () => typeof upOne === 'function' ? upOne : undefined, ARTS: () => typeof ARTS !== 'undefined' ? ARTS : undefined, openArt: () => typeof openArt === 'function' ? openArt : undefined, inputBox: () => typeof inputBox === 'function' ? inputBox : undefined, attChips: () => typeof attChips === 'function' ? attChips : undefined,
+    upOne: () => typeof upOne === 'function' ? upOne : undefined, ARTS: () => typeof ARTS !== 'undefined' ? ARTS : undefined, openArt: () => typeof openArt === 'function' ? openArt : undefined, attCards: () => typeof attCards === 'function' ? attCards : undefined, attOut: () => typeof attOut === 'function' ? attOut : undefined, inputBox: () => typeof inputBox === 'function' ? inputBox : undefined, attChips: () => typeof attChips === 'function' ? attChips : undefined,
     addFiles: () => typeof addFiles === 'function' ? addFiles : undefined, filePick: () => typeof filePick !== 'undefined' ? filePick : undefined, enterSends: () => typeof enterSends === 'function' ? enterSends : undefined,
     boardGrow: () => typeof grow === 'function' ? grow : undefined, withLnk: () => typeof withLnk === 'function' ? withLnk : undefined, dropAtt: () => typeof dropAtt === 'function' ? dropAtt : undefined};
   const G = n => { try { return L[n]?.(); } catch { return undefined; } };
@@ -71,21 +71,26 @@
   const qOf = m => (m.buttons || []).some(b => !b.other);
   const qList = (k, m) => [m, ...rest(k, m)].filter(qOf);
   const cardRoots = () => { const s = new Set(); for (const c of openCards()) s.add(upRoot(c.thread || c.ts)); return s; };
+  const deckIds = () => { const A = G('ARTS') || {}, o = new Set(); for (const [id, a] of Object.entries(A)) if (a?.kind === 'canvas' && /싱크 덱/.test(a.title || '')) o.add(id); return o; };
   function items(){
-    const rk = askRank(), un = unreadSet(), cr = cardRoots(), it = [];
+    const rk = askRank(), un = unreadSet(), cr = cardRoots(), it = [], dk = deckIds(), now = Date.now() / 1000; let dx = null;
     for (const {k, m} of roots()){
       const rr = rest(k, m), lastAt = Math.max(+m.ts || 0, +m.latest || 0, rr.length ? +rr[rr.length - 1].ts : 0);
+      if (dk.size) for (const y of [m, ...rr]) if (now - +y.ts < 86400 && !X.done.get(y.ts) && (!dx || +y.ts > +dx.dm.ts) && artIds(y).some(id => dk.has(id))) dx = {k, m, dm: y};
       const dAt = X.done.get(m.ts); if (dAt && lastAt * 1000 <= dAt) continue;   // 완료 뒤 새 답이 오면 다시 뜸
       const ask = cr.has(m.ts) || !!askIn(k, m);
       it.push({k, m, ask, un: un.has(m.ts), at: lastAt, rank: rk.has(m.ts) ? rk.get(m.ts) : 1e6});
     }
+    if (dx && dx.dm === dx.m){ const o = it.find(y => y.m === dx.m); if (o) Object.assign(o, {ask: true, rank: -1}); }   // 덱 글이 뿌리면 그 칸을 맨 위로(두 번 안 나옴)
+    else if (dx) it.push({...dx, deck: true, ask: true, un: false, at: +dx.dm.ts, rank: -1});
     return it.sort((a, b) => (b.ask - a.ask) || (a.ask && b.ask ? a.rank - b.rank : 0) || (b.un - a.un) || (b.at - a.at)).filter((x, i) => i < 80 || x.ask || x.un);   // 내 차례 · 안 읽음은 80칸을 넘어도 안 자름
   }
 
   const head = (m, k, turn) => `<div class="xh"><b>${E(who(m))}</b>${topic(m, k)}<span class="xtm">${ago(m.ts)}</span>${turn ? '<span class="xturn">· 내 차례</span>' : ''}</div>`;
   const topic = (m, k) => { const t = chs().length > 1 ? (NAMES()[k] || AN()[k] || k) : ''; return t && t !== who(m) ? `<span class="xtp">${E(t)}</span>` : ''; };   // 이름 › 채널 — 채널이 하나면 뺌
-  const firstPara = t => { const s = String(t || '').trim(), p = s.split(/\n\s*\n/)[0], one = p.split('\n')[0]; return /^\s*(\*\*|\*)?→/.test(p.split('\n')[1] || '') ? one : p; };   // 결론 한 단락(→ 항목 앞까지)
-  const body = (m, brief) => { const f = files(m), t = brief ? firstPara(f.text) : f.text; return `${t ? `<div class="xbd${brief ? ' xbrief' : ''}">${mdx(t, m.who !== 'owner')}</div>` : ''}${f.html || ''}`; };
+  const firstPara = t => { const s = String(t || '').trim(), p = s.split(/\n\s*\n/)[0], one = p.split('\n')[0]; return /^\s*(\*\*|\*)?→/.test(p.split('\n')[1] || '') ? one : p; };
+  const body = (m, brief) => { const f = files(m), t = brief ? firstPara(f.text) : f.text; const [h, cards] = t ? (G('attOut') || (x => [x, '']))(mdx(t, m.who !== 'owner')) : ['', ''];
+    return `${t ? `<div class="xbd${brief ? ' xbrief' : ''}">${h}</div>` : ''}${cards}${f.html || ''}`; };
   const acts = (k, m, n, done, sts, un) => `<div class="xact"><button type="button" class="xck${done ? ' on' : ''}" data-xdone="${E(m.ts)}" data-k="${E(k)}" aria-label="완료 · 읽음">${CHK()}</button>`
     + `<button type="button" class="xrp" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}" aria-label="${un ? '답글 · 읽지 않음' : '답글'}">${MSG}${n ? `<span>${n}</span>` : ''}${un ? '<i class="xnew"></i>' : ''}</button>`
     + (() => { const rt = sts || m.thread || m.ts, on = isSaved(rt);   // sts = 저장됨 탭에서 그 줄이 저장한 글(답 글 하나만 저장했을 수 있음)
@@ -107,19 +112,19 @@
     return `<div class="xpoll">${rows}<div class="xft">${ft}</div></div>`;
   }
   const nn = s => `<span class="xnn">${s}</span>`;
-  const CVI = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>';
-  const artIds = m => { const o = []; for (const y of String(m.src ?? m.text ?? '').matchAll(/\/(?:canvas|art)\/(hb[1-9A-HJ-NP-Za-km-z]{22})/g)) if (!o.includes(y[1])) o.push(y[1]); return o.slice(0, 2); };
-  const embeds = m => artIds(m).map(id => { const t = G('ARTS')?.[id]?.title || '캔버스'; return `<div class="xemb" data-xart="${id}" role="button" tabindex="0" aria-label="${E(t)} 크게 보기"><div class="xembh">${CVI}<span>${E(t)}</span></div><div class="xembf"><iframe loading="lazy" tabindex="-1" title="${E(t)}" sandbox="allow-scripts" src="art/${id}/"></iframe></div></div>`; }).join('');
-  const openCanvas = id => { const f = G('openArt'); if (f && G('ARTS')?.[id]) return f(id); location.href = '/canvas/' + id; };
+  const artIds = m => { const o = []; for (const y of String(m.src ?? m.text ?? '').matchAll(/\/(?:canvas|art)\/(hb[1-9A-HJ-NP-Za-km-z]{22})/g)) if (!o.includes(y[1])) o.push(y[1]); return o.slice(0, 4); };
+  const embeds = (m, bd) => { const A = G('ARTS'), f = G('attCards'); const ids = artIds(m).filter(id => A?.[id] && !bd.includes(`art/${id}/`)); return ids.length && f ? f(ids) : ''; };
+  const openCanvas = id => { const f = G('openArt'); if (f && G('ARTS')?.[id]) return f(id, {fill: true}); location.href = '/canvas/' + id; };
   function post(k, m, o = {}){
     const q = (m.buttons || []).some(b => !b.other);
     const bd = body(m, o.brief), part = q ? (o.part ? nn(o.part) : o.feed ? nn('1/2') : '') : '';
     const goto = q && o.feed ? `<button type="button" class="xgo" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}">${MSG}<span>${o.more ? `<b>투표</b>에서 고르기 · ${E(o.more)}` : '<b>2/2 투표</b>에서 고르기 · 눌러서 열기'}</span></button>` : '';
     const sz = o.reply || o.ans ? 28 : 42;
     return `<article class="xp${m.pendingX ? ' xpend' : ''}${o.joined ? ' j' : ''}${o.reply ? ' xr' : ''}${o.more2 ? ' xr2' : ''}${o.main ? ' xm' : ''}${o.ans ? ' xa' : ''}${o.ask ? ' ask' : ''}" data-ts="${E(m.ts)}" data-k="${E(k)}" data-root="${E(o.root || m.ts)}">${o.joined ? '<i class="xl"></i>' : ''}${o.reply ? '<i class="xcv"></i>' : ''}`
-      + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${embeds(m)}${goto}${o.pollHere ? '' : ''}${m.pendingX ? '' : acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
+      + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${embeds(m, bd)}${goto}${o.pollHere ? '' : ''}${m.pendingX ? '' : acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
   }
   function unit(x){
+    if (x.deck) return `<div class="xu ask xdeck" data-root="${E(x.dm.ts)}" data-k="${E(x.k)}">${post(x.k, x.dm, {feed: true, ask: true, turn: true, root: x.m.ts, sts: x.sts})}</div>`;   // ✓ 는 덱 글만 내림(스레드 칸 그대로), 글을 누르면 그 스레드
     const {k, m} = x, r = rest(k, m), ask = askIn(k, m), qs = qList(k, m), bundle = qs.length > 1, open = qs.filter(isAsk), n = m.replies || r.length;
     const bq = bundle ? (open[0] || null) : (ask && ask !== m ? ask : null);   // 고를 물음(뿌리 물음은 뿌리 자체에 있음)
     const bo = bundle ? {part: `${qs.indexOf(bq || qs[qs.length - 1]) + 1}/${qs.length}`, more: open.length ? `${qs.length}개 중 ${open.length}개 남음` : `${qs.length}개 모두 접수됨`} : {};

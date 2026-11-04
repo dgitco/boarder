@@ -5,6 +5,7 @@ import { execFileSync, execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { dir, readJson } from '../config.mjs';
 import { EngineError } from './tmux.mjs';
+import { accountFolder, accountNames, findCli, isLoggedIn } from './login.mjs';
 
 export const PROVIDERS = ['claude', 'codex'];
 const PKG = { claude: '@anthropic-ai/claude-agent-sdk', codex: '@openai/codex-sdk' };
@@ -15,7 +16,7 @@ const LIMIT = /(usage limit|limit reached|rate.?limit|quota|resets? (at|in) \d)/
 const expand = p => (p || '').replace(/^~(?=$|[\\/])/, os.homedir());
 
 // ── SDK 불러오기(없으면 어떻게 깔지 알려 줌)
-export const _inject = { claude: null, codex: null };
+export const _inject = { claude: null, codex: null, loggedIn: null };   // loggedIn: 시험이 (공급자, 폴더) → 참/거짓 으로 로그인 여부를 대신함
 export async function loadSdk(provider) {
   if (_inject[provider]) return _inject[provider];
   if (!PKG[provider]) throw new EngineError(1, `unknown provider ${provider} (claude or codex)`);
@@ -76,6 +77,16 @@ export async function available() {
   const out = {};
   for (const p of PROVIDERS) { try { await loadSdk(p); out[p] = true; } catch { out[p] = false; } }
   return out;
+}
+
+const defaultFolder = prov => prov === 'claude' ? (process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')) : (process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
+export async function pickAccount(cfg, provider, w) {
+  if (w.config_dir || w.account) return;
+  const cli = _inject.loggedIn ? null : findCli(provider);
+  const isIn = (folder, bare = false) => _inject.loggedIn ? Promise.resolve(!!_inject.loggedIn(provider, folder)) : isLoggedIn(provider, folder, { cli, bare });
+  if (await isIn(defaultFolder(provider), !process.env[provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME'])) return;   // 환경변수로 폴더를 정한 사람은 그 폴더 그대로, 아니면 「기본」 그대로(맥 키체인)
+  for (const n of accountNames(cfg, provider)) if (await isIn(accountFolder(cfg, provider, n))) { w.account = n; return; }
+  throw new EngineError(1, `이 기기의 ${provider === 'claude' ? 'Claude' : 'ChatGPT(Codex)'} 계정이 아직 로그인되지 않았어요 — 설정 › 기기 › 엔진에서 「로그인」을 눌러 주세요`);
 }
 
 export function accountDir(cfg, provider, s) {
@@ -176,7 +187,7 @@ export async function open(cfg, s) {
   const cwd = expand(s.cwd) || os.homedir();
   mkdirSync(cwd, { recursive: true });
   const w = mk({ ...s, provider, cwd });
-  if (!w.test) { await loadSdk(provider); accountDir(cfg, provider, w); }   // SDK 없음 · 계정 이름 오류는 창을 만들기 전에
+  if (!w.test) { await loadSdk(provider); await pickAccount(cfg, provider, w); accountDir(cfg, provider, w); }   // SDK 없음 · 로그인 없음 · 계정 이름 오류는 창을 만들기 전에
   wins.set(w.id, w); persist();
   try { if (s.prompt) await startTurn(cfg, w, s.prompt); }
   catch (e) { wins.delete(w.id); persist(); throw e; }

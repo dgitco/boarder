@@ -396,6 +396,13 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   document.addEventListener('click', e => { if (!mp.hidden && !e.target.closest('.bx-mpop, [data-me]')) meClose(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !mp.hidden){ e.stopImmediatePropagation(); meClose(); } }, true);
 
+  function artThumb(id){
+    return `<span class="bx-art-thumb" aria-hidden="true"><iframe src="/art/${encodeURIComponent(id)}/?thumb" loading="lazy" tabindex="-1" sandbox="allow-scripts" title="캔버스 미리보기"></iframe></span>`;
+  }
+  function artChips(tags){
+    // 영역: · 노드: 같은 머리말은 칩에서 뺌(색인용), 날짜 · 종류 칩은 뒤로
+    return (tags || []).filter(t => !/^(영역|노드|date|종류):/.test(t)).slice(0, 3).map(t => `<span class="bx-fchip">${esc(t.replace(/^[^:]+:/, ''))}</span>`).join('');
+  }
   const fd = mk('div', 'bx-find', `<div class="bx-fbox" role="dialog" aria-modal="true" aria-label="찾기"><div class="bx-fq">${I.search}<input type="search" placeholder="찾기 — 노드 · 결정 · 대화 · 캔버스" aria-label="찾기" autocomplete="off" enterkeyhint="go"></div><div class="bx-fl" role="listbox"></div></div>`);
   fd.hidden = true; document.body.append(fd);
   const fin = fd.querySelector('input'), fl = fd.querySelector('.bx-fl');
@@ -436,7 +443,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     for (const m of r.chats || []) out.push({g: '대화', n: m.text, i: m.kind === 'log' ? I.node : blob(m.title === 'Owner' ? 'Owner' : (AREA_NAME[m.ch] || m.ch || ''), 18),
       sub: [m.kind === 'log' ? m.title + ' 장부' : (m.title + ' · ' + (AREA_NAME[m.ch] || m.ch || '')), m.kind !== 'log' && m.node, agoS(m.at)].filter(Boolean).join(' · '),
       go: () => { if (m.kind === 'log') return nodeGo(m.title, m.ts, m.thread); openChan(CH.includes(m.ch) ? m.ch : 'primary', m.thread); if (!m.thread && m.ts && typeof nodeFlash === 'function') nodeFlash(m.ts); }});
-    for (const a of r.arts || []) { const id = a.id.slice(2); out.push({g: '캔버스', n: a.title, i: `<i class="ki k-${esc(a.akind || 'doc')}"></i>`, sub: [a.folder, agoS(a.at)].filter(Boolean).join(' · '), go: () => ARTS[id] ? openArt(id) : toast('그 캔버스를 찾지 못했어요')}); }
+    for (const a of r.arts || []) { const id = a.id.slice(2); out.push({g: '캔버스', n: a.title, i: artThumb(id), art: true, tags: a.tags, sub: [a.folder, a.versions > 1 ? a.versions + '개 판' : '', agoS(a.at)].filter(Boolean).join(' · '), go: () => ARTS[id] ? openArt(id) : toast('그 캔버스를 찾지 못했어요')}); }
     return out;
   }
   function findItems(q){
@@ -457,7 +464,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (q) for (const t of (CS.T.topics || [])) { const p = t.state !== 'done' && live(t); if (p && (!sc || sc.area(byPane[p]?.area)) && (hit(t.title) || hit(t.id))) out.push({g: '노드', n: t.title || t.id, i: I.hash, go: () => openAns({p})}); }
     if (q && !sc) for (const n of (typeof D !== 'undefined' && D.archived || []).filter(hit).slice(0, 8)) out.push({g: '노드', n: n + ' · 보관', i: I.hash, go: () => nodeGo(n)});
     const arts = Object.entries(ARTS || {}).map(([id, x]) => ({id, ...x})).filter(r => !sc || sc.folder(r.folder)).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
-    for (const r of (q ? arts.filter(r => hit(r.title) || hit(r.id)) : arts.slice(0, 5))) out.push({g: q ? '캔버스' : '최근 캔버스', n: r.title || r.id, i: `<i class="ki k-${esc(r.kind || 'doc')}"></i>`, go: () => ARTS[r.id] && openArt(r.id)});
+    for (const r of (q ? arts.filter(r => hit(r.title) || hit(r.id)) : arts.slice(0, 5))) out.push({g: q ? '캔버스' : '최근 캔버스', n: r.title || r.id, i: artThumb(r.id), art: true, tags: r.tags, go: () => ARTS[r.id] && openArt(r.id)});
     if (sr){
       const sv = serverItems(sr), names = new Set(sv.filter(r => r.g === '노드').map(r => r.n)), G = ['태스크', '에이전트', '모아 보기', '노드', '결정 · 할 일', '대화', '캔버스', '최근 캔버스'];
       return out.filter(r => r.g !== '노드' || !names.has(r.n)).concat(sv).map((r, i) => [r, i]).sort((a, b) => G.indexOf(a[0].g) - G.indexOf(b[0].g) || a[1] - b[1]).map(x => x[0]).slice(0, 60);
@@ -472,8 +479,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const q = fin.value;
     fres = findItems(q); fsel = Math.min(fsel, Math.max(0, fres.length - 1));
     let g = '';
-    fl.innerHTML = fres.length ? fres.map((r, i) => (r.g !== g ? `<div class="bx-fg">${g = r.g}</div>` : '') + (r.sub || r.tag
-      ? `<button type="button" class="bx-fr bx-fr2" role="option" data-fi="${i}" aria-selected="${i === fsel}">${r.i}<span class="bx-ft"><b>${hl(r.n, q)}</b>${r.sub ? `<small>${hl(r.sub, q)}</small>` : ''}</span>${r.tag ? `<em class="${r.hot ? 'hot' : ''}">${esc(r.tag)}</em>` : ''}</button>`
+    fl.innerHTML = fres.length ? fres.map((r, i) => (r.g !== g ? `<div class="bx-fg">${g = r.g}</div>` : '') + (r.sub || r.tag || r.art
+      ? `<button type="button" class="bx-fr bx-fr2${r.art ? ' bx-fr-art' : ''}" role="option"${r.art ? ` aria-label="${esc(r.n)}"` : ''} data-fi="${i}" aria-selected="${i === fsel}">${r.i}<span class="bx-ft"><b>${hl(r.n, q)}</b>${r.art && r.tags?.length ? `<span class="bx-fchips">${artChips(r.tags)}</span>` : ''}${r.sub ? `<small>${hl(r.sub, q)}</small>` : ''}</span>${r.tag ? `<em class="${r.hot ? 'hot' : ''}">${esc(r.tag)}</em>` : ''}</button>`
       : `<button type="button" class="bx-fr" role="option" data-fi="${i}" aria-selected="${i === fsel}">${r.i}<span>${esc(r.n)}</span></button>`)).join('')
       : (q.trim() && !FS.r && FS.fail !== q.trim() ? '<div class="bx-fe"><i class="g g-spin"></i></div>' : window.HBEmpty ? window.HBEmpty({ic: 'search', sm: true, t: '찾은 것이 없어요', p: '다른 낱말로 찾아 보세요.'}) : '<div class="bx-fe">찾은 것이 없어요</div>');
     if (FS.r) { fl.dataset.ms = JSON.stringify(FS.r.ms || {}); fl.dataset.rtt = FS.r.rtt; fl.dataset.sem = FS.r.sem ? 1 : 0; fl.dataset.q = FS.r.q; }
@@ -664,7 +671,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   function arts(){ if (artsInit()) mark(); }
   function mark(){
     if (!A) return;
-    for (const r of A.v.querySelectorAll('.arow')){ const k = r.querySelector('.k')?.textContent.trim(); r.classList.add(k === ART_KIND.canvas ? 'k-canvas' : k === ART_KIND.page ? 'k-page' : 'k-doc'); }
+    for (const r of A.v.querySelectorAll('.arow')){ const k = r.querySelector('.k')?.textContent.trim(); r.classList.add(k === ART_KIND.canvas ? 'k-canvas' : k === ART_KIND.page ? 'k-page' : 'k-doc');
+      const a = r.querySelector('a[data-art]');
+      if (a && !a.querySelector('.bx-art-thumb')) a.insertAdjacentHTML('afterbegin', artThumb(a.dataset.art));
+    }
     const fold = AQ.folder || '';
     A.top.querySelector('.bx-kt').textContent = PC.matches ? (KIND_NAME()[AQ.kind] || '전체') : '캔버스';
     const rec = Object.entries(ARTS).map(([id, x]) => ({id, ...x})).sort((a, b) => (b.at || '').localeCompare(a.at || '')).slice(0, 5);

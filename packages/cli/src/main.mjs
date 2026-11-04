@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { loadDevice, server } from './config.mjs';
+import path from 'node:path';
+import { dir, loadDevice, readJson, server } from './config.mjs';
 import { windowKey, windowToken } from './window.mjs';
 import { setup, restore, targets, reportState } from './setup.mjs';
 import { label } from './targets.mjs';
@@ -196,7 +197,10 @@ async function status() {
   if (d?.token) { try { const r = await fetch(`${srv}/api/device/me`, { headers: { authorization: `Bearer ${d.token}` }, signal: AbortSignal.timeout(15000) }); me = r.ok ? await r.json() : null; } catch {} }
   lines.push(me ? ok(`signed in as ${me.email} (device ${me.device.name || me.device.id}${me.scope === 'watch' ? ', watch only' : ''})`) : todo(d?.token ? 'this device was revoked or the server is unreachable' : 'not signed in', 'boarder setup --yes [agent]'));
   const list = targets();
-  if (!list.length) lines.push(todo('no AI tools found', 'install Claude Code, Codex, Cursor or Gemini CLI [you]'));
+  if (!list.length) {
+    let sdk = false; try { sdk = readJson(path.join(dir(), 'engine.json'))?.default === 'sdk'; } catch {}
+    lines.push(sdk ? '· no AI tool needed here: the SDK engine runs on your own subscription (boarder engine account list)' : todo('no AI tools found', 'install Claude Code, Codex, Cursor or Gemini CLI [you]'));
+  }
   // 보기 · 누르기 전용이 기본 — 도구에 안 넣은 건 할 일이 아님(켜려면 boarder enable report). 설정 폴더마다 한 줄(Claude 계정이 여럿이면 계정마다)
   for (const t of list) {
     const s = reportState(t), name = label(t);

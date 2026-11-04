@@ -32,7 +32,22 @@ function fakeCodex() {
   class Codex { constructor(o) { this.env = o?.env; calls.push({ p: 'codex-new', home: o?.env?.CODEX_HOME }); } startThread(o) { return new Thread(null, o); } resumeThread(id, o) { return new Thread(id, o); } }
   return { Codex };
 }
-beforeEach(() => { calls = []; S._reset(); S._inject.claude = fakeClaude(); S._inject.codex = fakeCodex(); fs.rmSync(path.join(process.env.BOARDER_HOME, 'sdk-windows.json'), { force: true }); });
+beforeEach(() => { calls = []; S._reset(); S._inject.claude = fakeClaude(); S._inject.codex = fakeCodex(); S._inject.loggedIn = () => true; fs.rmSync(path.join(process.env.BOARDER_HOME, 'sdk-windows.json'), { force: true }); });
+
+test('로그인: 계정을 안 고른 창은 기본 로그인 → 로그인된 이름 있는 계정 → 없으면 이유를 말하고 안 엶', async () => {
+  const c = { sdk: { accounts: {} } };
+  fs.mkdirSync(path.join(home, 'cfg', 'sdk-accounts', 'claude', 'me'), { recursive: true });
+  S._inject.loggedIn = () => false;
+  await assert.rejects(S.open(c, { id: 'ew_nl1', name: 'nl', cwd: path.join(home, 'wnl'), prompt: 'x' }), /로그인되지 않았어요/);
+  assert.equal(S.state(c, 'ew_nl1').state, 'none', '안 열림');
+  S._inject.loggedIn = (prov, folder) => folder.endsWith(path.join('claude', 'me'));
+  const o = await S.open(c, { id: 'ew_nl2', name: 'nl2', cwd: path.join(home, 'wnl2'), prompt: 'x' });
+  assert.equal(o.account, 'me');
+  assert.equal(calls[0].options.env.CLAUDE_CONFIG_DIR, path.join(home, 'cfg', 'sdk-accounts', 'claude', 'me'));
+  S._inject.loggedIn = () => true;
+  const d = await S.open(c, { id: 'ew_nl3', name: 'nl3', cwd: path.join(home, 'wnl3'), prompt: 'x' });
+  assert.ok(!d.account, '기본 로그인이 있으면 계정을 안 씌움');
+});
 
 test('claude: 권한 모드 — auto 는 permissionMode auto, ask 는 기본(허락 없는 도구는 막힘)', async () => {
   await S.open(cfg, { id: 'ew_pa', name: 'pa', cwd: path.join(home, 'wpa'), prompt: 'x', perm: 'auto' });

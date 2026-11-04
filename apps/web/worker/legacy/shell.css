@@ -381,3 +381,14 @@ html.bx .bx-dge{padding:6px 10px;font-size:12px;color:var(--muted)}
   html.bx.bx-col .bx-sbrz,html.bx-embed .bx-sbrz,html.bx-set .bx-sbrz{display:none}
   html.bx.bx-sbdrag,html.bx.bx-sbdrag *{cursor:col-resize!important;user-select:none!important}
 }
+
+html.bx .bx-art-thumb{display:block;position:relative;flex:0 0 64px;width:64px;height:44px;overflow:hidden;border-radius:5px;background:var(--surface);pointer-events:none}
+html.bx .bx-art-thumb iframe{display:block;border:0;width:1024px;height:704px;max-width:none;transform:scale(.0625);transform-origin:top left;pointer-events:none}
+html.bx .bx-fr-art{height:auto;min-height:64px}
+html.bx .bx-fr-art .bx-ft{min-width:0}
+html.bx .bx-fr-art .bx-ft b{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+html.bx .bx-fr-art .bx-fchips{display:flex;flex-wrap:wrap;gap:4px;white-space:normal;overflow:visible}
+html.bx .bx-fr-art .bx-fchip{display:inline-block;max-width:100%;padding:1px 6px;border-radius:99px;background:color-mix(in srgb,var(--ink) 6%,transparent);font-size:11px;line-height:1.5;white-space:normal;overflow-wrap:anywhere}
+html.bx #v-arts .arow > a:has(.bx-art-thumb){height:auto;padding-left:88px;min-height:64px}
+html.bx #v-arts .arow > a:has(.bx-art-thumb)::before{display:none}
+html.bx #v-arts .arow > a > .bx-art-thumb{position:absolute;left:10px;top:50%;margin-top:-22px}

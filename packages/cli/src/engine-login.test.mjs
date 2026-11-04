@@ -101,3 +101,15 @@ test('accountList: 공급자별 계정 · 로그인 여부', async () => {
   assert.match(out[2], /^codex dir1: not logged in/);
   assert.equal((await L.accountList({}, { find: () => null, exists: () => false })).length >= 1, true);
 });
+
+test('isLoggedIn bare: 기본 로그인 확인은 폴더 환경변수 없이 상태 명령을 부름(맥 키체인 대비)', async () => {
+  const { isLoggedIn, _clearStatusCache } = await import('./engine/login.mjs');
+  _clearStatusCache();
+  let seen = null;
+  const run = async s => { seen = s; return 0; };
+  const cli = { cmd: 'x', pre: [], shell: false };
+  assert.equal(await isLoggedIn('claude', path.join(home, 'nofile-a'), { exists: () => false, run, cli, baseEnv: { CLAUDE_CONFIG_DIR: 'zzz' }, bare: true, ttl: 0 }), true);
+  assert.equal(seen.env.CLAUDE_CONFIG_DIR, undefined);
+  assert.equal(await isLoggedIn('claude', path.join(home, 'nofile-b'), { exists: () => false, run, cli, baseEnv: {}, ttl: 0 }), true);
+  assert.equal(seen.env.CLAUDE_CONFIG_DIR, path.join(home, 'nofile-b'), '이름 있는 계정은 폴더를 넣음');
+});

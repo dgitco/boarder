@@ -49,9 +49,10 @@ export function loginSpec(prov, cli, folder, { deviceAuth = false, baseEnv = pro
   const env = { ...baseEnv, [ENV[prov]]: folder };
   return cli.shell ? { cmd: q(cli.cmd), args: args.map(q), env, shell: true } : { cmd: cli.cmd, args, env, shell: false };
 }
-export function statusSpec(prov, cli, folder, baseEnv = process.env) {
+export function statusSpec(prov, cli, folder, baseEnv = process.env, { bare = false } = {}) {
   const args = [...cli.pre, ...(prov === 'claude' ? ['auth', 'status'] : ['login', 'status'])];
   const env = { ...baseEnv, [ENV[prov]]: folder };
+  if (bare) delete env[ENV[prov]];   // 기본 로그인(맥 키체인 · 이 PC 기본 폴더)은 실제 실행처럼 폴더 환경변수 없이 봄 — 있으면 키체인 항목 이름이 달라져 로그인을 못 찾을 수 있음
   return cli.shell ? { cmd: q(cli.cmd), args: args.map(q), env, shell: true } : { cmd: cli.cmd, args, env, shell: false };
 }
 
@@ -59,12 +60,12 @@ export function statusSpec(prov, cli, folder, baseEnv = process.env) {
 const statusCache = new Map();   // "공급자/폴더" → { at, ok } — 상태 명령 결과만(자격 파일 있음은 캐시 안 함 → 로그인 직후 바로 잡힘)
 export const STATUS_TTL_MS = 10_000;
 export const _clearStatusCache = () => statusCache.clear();
-export async function isLoggedIn(prov, folder, { exists = existsSync, run = runQuiet, cli = null, baseEnv = process.env, now = Date.now, ttl = STATUS_TTL_MS } = {}) {
+export async function isLoggedIn(prov, folder, { exists = existsSync, run = runQuiet, cli = null, baseEnv = process.env, now = Date.now, ttl = STATUS_TTL_MS, bare = false } = {}) {
   if (exists(path.join(folder, CRED[prov]))) return true;
   if (!cli) return false;
-  const key = `${prov}/${folder}`, hit = statusCache.get(key);
+  const key = `${prov}/${folder}${bare ? '/bare' : ''}`, hit = statusCache.get(key);
   if (hit && now() - hit.at < ttl) return hit.ok;
-  const ok = (await run(statusSpec(prov, cli, folder, baseEnv))) === 0;
+  const ok = (await run(statusSpec(prov, cli, folder, baseEnv, { bare }))) === 0;
   statusCache.set(key, { at: now(), ok });
   return ok;
 }

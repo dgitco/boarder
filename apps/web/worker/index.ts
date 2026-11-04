@@ -94,7 +94,7 @@ import * as live from "./live";
 import * as queue from "./queue";
 import * as bxs from "./bxs";
 
-type Env = AuthEnv & PH & { SNAP: DurableObjectNamespace<import("./board").BoardSnap>; BRIDGE: DurableObjectNamespace<import("./bridge").Bridge>; RELAY_TOKEN: string; LEDGER_TOKEN?: string; ADMIN_TOKEN?: string; ENGINE: DurableObjectNamespace<Engine>; RESULTS: R2Bucket; CF_VERSION_METADATA: WorkerVersionMetadata; CONNECTOR_KEY?: string; SEARCH: DurableObjectNamespace<import("./search").Search>; AI: Ai; OB_EXPORT_SIGN_KEY?: string; OB_EXPORT_URL?: string; PUSH: DurableObjectNamespace<import("./push-do").Pusher>; VAPID_PRIVATE?: string; SOURCE_URL?: string; FAULT_OK?: string };
+type Env = AuthEnv & PH & { SNAP: DurableObjectNamespace<import("./board").BoardSnap>; BRIDGE: DurableObjectNamespace<import("./bridge").Bridge>; RELAY_TOKEN: string; LEDGER_TOKEN?: string; ADMIN_TOKEN?: string; ENGINE: DurableObjectNamespace<Engine>; RESULTS: R2Bucket; CF_VERSION_METADATA: WorkerVersionMetadata; CONNECTOR_KEY?: string; SEARCH: DurableObjectNamespace<import("./search").Search>; AI: Ai; VOYAGE_API_KEY?: string; OB_EXPORT_SIGN_KEY?: string; OB_EXPORT_URL?: string; PUSH: DurableObjectNamespace<import("./push-do").Pusher>; VAPID_PRIVATE?: string; SOURCE_URL?: string; FAULT_OK?: string };
 const app = new Hono<{ Bindings: Env }>();
 const KEYS = new Set(["data", "topics", "page", "cfg", "history", "emoji"]);
 const bridge = (env: Env, ch = "owner") => env.BRIDGE.get(env.BRIDGE.idFromName(ch === "test" ? "test@wnam" : "owner@wnam"), { locationHint: "wnam" });
@@ -452,7 +452,7 @@ app.get("/api/live", async c => {
 });
 
 const SearchDoc = z.object({ id: z.string().min(3).max(300), kind: z.enum(["node", "card", "chat", "log", "art"]), title: z.string().max(2000), body: z.string().max(20000),
-  node: z.string().max(300).nullish(), ch: z.string().max(40).nullish(), at: z.number(), meta: z.record(z.string(), z.unknown()).optional(), emb: z.boolean().optional() });
+  node: z.string().max(300).nullish(), ch: z.string().max(40).nullish(), at: z.number(), meta: z.record(z.string(), z.unknown()).optional(), emb: z.boolean().optional(), ext: z.boolean().optional(), tags: z.array(z.string().max(60)).max(30).optional() });
 const SearchPut = z.object({ upsert: z.array(SearchDoc).max(1000).default([]), del: z.array(z.string().max(300)).max(5000).default([]), all: z.array(z.string().max(300)).max(100_000).optional() });
 app.put("/api/relay/search", async c => {
   const tok = (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -469,9 +469,9 @@ app.get("/api/relay/search", async c => {
 app.get("/api/search", async c => {
   const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401);
   const q = (c.req.query("q") || "").slice(0, 100), t0 = Date.now();
-  // 회원(boarder-internal#4)은 자기 D1 만(member-search.ts) — 주인 색인(DO)은 주인만. 회원 뜻 찾기(sem=1)는 같은 Workers AI 로 최근 글만(member-search.ts)
+  // 회원은 자기 D1 만(member-search.ts) — 주인 색인(DO)은 주인만. 회원 뜻 찾기(sem=1)는 같은 Workers AI 로 최근 글만(member-search.ts)
   const r = await memberSearch.route({ owner: isOwner(c.env, sb.user.email), me: sb.user.email, q, db: c.env.DB, sem: c.req.query("sem") === "1", ai: c.env.AI as unknown as memberSearch.Ai,
-    ownerSearch: () => search(c.env).query(q, c.req.query("sem") === "1", c.req.query("dbg") === "1") });   // dbg = 노드 점수 나눔(주인만, 순위 고칠 때)
+    ownerSearch: () => search(c.env).query(q, c.req.query("sem") === "1", c.req.query("dbg") === "1", c.req.query("engine") === "bge" ? "bge" : c.req.query("engine") === "voyage" ? "voyage" : "mix") });   // dbg = 노드 점수 나눔(주인만, 순위 고칠 때)
   seg(c.req.raw, "search", Date.now() - t0);
   return c.json({ ...r, ms: { ...r.ms, worker: Date.now() - t0 } }, 200, { "cache-control": "private, no-store" });
 });

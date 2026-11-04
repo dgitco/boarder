@@ -59,10 +59,6 @@ html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 #bxx .xfl button{height:32px;padding:0 14px;border-radius:16px;border:0;background:var(--xsunk);color:var(--xsoft);font:inherit;font-size:14px;font-weight:500;cursor:pointer}
 #bxx .xfl button[aria-selected="true"]{background:var(--xink);color:var(--xbg);font-weight:600}
 #bxx .xcmp{border-bottom:0}
-#bxx .xemb{margin-top:8px;border:.5px solid var(--xline);border-radius:14px;overflow:hidden;cursor:pointer;background:var(--xsunk)}
-#bxx .xembh{display:flex;align-items:center;gap:7px;padding:8px 12px;font-size:14px;font-weight:600;color:var(--xname);min-width:0}
-#bxx .xembh span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#bxx .xembh svg{flex:none;color:var(--xmut)}
-#bxx .xembf{height:240px;position:relative;background:#fff}#bxx .xembf iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none}
 #bxx .xp.xpend{opacity:.6}   /* 보내는 중 */
 #bxx .xp.xr2::before{content:'';position:absolute;left:29px;top:0;bottom:0;width:2px;background:var(--xthr)}
 #bxx .xbrief{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
@@ -152,3 +148,4 @@ html.xnodes:has(#ans:not([hidden])) #bxx .xglass,html.xnodes:has(#mview:not([hid
   html.bx-x.bx-col .bx-sb{display:flex}
   html.bx-x .bx-sb [data-sbcol],html.bx-x .bx-exp{display:none}
 }
+#bxx a.atm,#bxx a.atm:visited{color:var(--xname)}#bxx a.atm .atmt b{color:var(--xname)}
