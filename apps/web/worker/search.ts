@@ -292,7 +292,7 @@ export class Search extends DurableObject<Env> {
       const part = need.slice(i, i + 90);
       for (const r of s.exec<Row>(`SELECT rid, id, kind, title, body, node, ch, at, meta, tags FROM doc WHERE rid IN (${part.map(() => "?").join(",")})`, ...part)) rows.set(r.rid, r);
     }
-    const lexSet = new Set(lex.map(r => r.rid));
+    const lexSet = new Set(lex.map(r => r.rid)), margin = new Map<number, number>();   // margin = 뜻 점수가 그 종류 문턱을 얼마나 넘었나(엔진마다 따로 — bge · Voyage 점수 칸이 달라서)
     for (const rank of [semRank, voyageRank]) {
       const kindRank = new Map<string, number>(), kindTop = new Map<string, number>();
       for (const x of rank) {
@@ -300,7 +300,7 @@ export class Search extends DurableObject<Env> {
         const k = kindRank.get(r.kind) || 0; if (k >= 40) continue; kindRank.set(r.kind, k + 1);
         if (!kindTop.has(r.kind)) kindTop.set(r.kind, x.s);
         const gap = Math.exp((x.s - kindTop.get(r.kind)!) / 0.015);
-        semOf.set(x.rid, x.s); score.set(x.rid, (score.get(x.rid) || 0) + (multi && r.kind === "node" ? 1.5 : 1) * gap / (60 + k));
+        semOf.set(x.rid, x.s); margin.set(x.rid, Math.max(margin.get(x.rid) ?? -1, x.s - ((rank === voyageRank ? VOYAGE_MIN : SEM_MIN)[r.kind] ?? 0.55))); score.set(x.rid, (score.get(x.rid) || 0) + (multi && r.kind === "node" ? 1.5 : 1) * gap / (60 + k));
       }
     }
     const tl = (r: Row) => terms.every(t => r.title.toLowerCase().includes(t));
@@ -342,16 +342,22 @@ export class Search extends DurableObject<Env> {
     if (artHits.length) for (const r of s.exec<Row>("SELECT rid, id, kind, title, body, node, ch, at, meta, tags FROM doc WHERE kind='art' ORDER BY at DESC, id DESC")) {
       const key = artTitle(r.title), g = groups.get(key) || []; g.push(r); groups.set(key, g);
     }
-    const seenArts = new Set<string>(), arts = [];
+    const seenArts = new Set<string>(), arts = [], cand: { id: string; v: number }[] = [];
+    const closeness = (r: Row) => (tl(r) ? 0.7 : 0) + Math.max(0, margin.get(r.rid) ?? 0) + (lexSet.has(r.rid) ? 0.05 : 0);
     for (const h of artHits) {
       const key = artTitle(h.r.title); if (seenArts.has(key)) continue; seenArts.add(key);
       const group = groups.get(key)!, r = group[0], m = r.meta ? JSON.parse(r.meta) : {};
       arts.push({ ...m, id: r.id, kind: r.kind, title: r.title, text: snip(r.body, terms), ch: r.ch, node: m.node ?? r.node, at: r.at,
         tags: readTags(r.tags), thumb: `/art/${encodeURIComponent(r.id.slice(2))}/?thumb`, versions: group.length,
         sem: semOf.has(h.r.rid) && !lexSet.has(h.r.rid) ? 1 : 0 });
+      cand.push({ id: r.id, v: closeness(h.r) });
       if (arts.length >= 6) break;
     }
-    const out = { q, nodes, cards: pick(["card"], 6), chats: pick(["chat", "log"], 8), arts,
+    for (const n of nodes) { const h = hits.find(x => x.r.id === n.id); if (h) cand.push({ id: n.id, v: closeness(h.r) }); }
+    for (const h of hits.filter(x => x.r.kind === "card").slice(0, 6)) cand.push({ id: h.r.id, v: closeness(h.r) });
+    for (const h of hits.filter(x => x.r.kind === "chat" || x.r.kind === "log").slice(0, 8)) cand.push({ id: h.r.id, v: closeness(h.r) });
+    const best = cand.filter(x => x.v >= 0.12).sort((a, b) => b.v - a.v).slice(0, 3).map(x => ({ id: x.id, kind: x.id.startsWith("a:") ? "art" : x.id.startsWith("n:") ? "node" : x.id.startsWith("c:") ? "card" : "chat" }));
+    const out = { q, nodes, cards: pick(["card"], 6), chats: pick(["chat", "log"], 8), arts, best,
       ...(dbg ? { engine, semantic: distributions, thresholds: { bge: SEM_MIN, voyage: VOYAGE_MIN } } : {}),
       ...(dbg ? { dbg: [...nodeScore.entries()].sort((a, b) => b[1].s - a[1].s).slice(0, 8).map(([n, x]) => [n, +x.s.toFixed(5), x.via ? [x.via.r.kind, lexSet.has(x.via.r.rid) ? "lex" : "sem", +x.via.s.toFixed(5), x.via.r.body.slice(0, 60)] : null,
         hits.find(h => h.r.kind === "node" && h.r.title === n)?.s.toFixed(5) ?? null, semOf.get(hits.find(h => h.r.kind === "node" && h.r.title === n)?.r.rid ?? -1)?.toFixed(3) ?? null]) } : {}) };

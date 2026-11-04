@@ -436,14 +436,15 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   function serverItems(r){
     const out = [], sc = SC();
     if (sc) r = {...r, nodes: (r.nodes || []).filter(n => sc.area(n.area)), cards: [], chats: [], arts: (r.arts || []).filter(a => sc.folder(a.folder))};
-    for (const n of r.nodes || []) out.push({g: '노드', n: n.title, i: I.hash, tag: n.turn, hot: /^내 차례/.test(n.turn || ''),
+    for (const n of r.nodes || []) out.push({id: n.id, g: '노드', n: n.title, i: I.hash, tag: n.turn, hot: /^내 차례/.test(n.turn || ''),
       sub: [n.line || (n.hit && n.hit.text), agoS(n.line_at || (n.hit && n.hit.at))].filter(Boolean).join(' · '), go: () => nodeGo(n.title, n.hit?.ts, n.hit?.thread)});
-    for (const c of r.cards || []) out.push({g: '결정 · 할 일', n: c.title, i: I.flag, tag: c.state === 'open' ? (KIND[c.ckind] || '열림') : '닫힘', hot: c.state === 'open',
+    for (const c of r.cards || []) out.push({id: c.id, g: '결정 · 할 일', n: c.title, i: I.flag, tag: c.state === 'open' ? (KIND[c.ckind] || '열림') : '닫힘', hot: c.state === 'open',
       sub: [c.text, c.node, agoS(c.at)].filter(Boolean).join(' · '), go: () => cardGo(c)});
-    for (const m of r.chats || []) out.push({g: '대화', n: m.text, i: m.kind === 'log' ? I.node : blob(m.title === 'Owner' ? 'Owner' : (AREA_NAME[m.ch] || m.ch || ''), 18),
+    for (const m of r.chats || []) out.push({id: m.id, g: '대화', n: m.text, i: m.kind === 'log' ? I.node : blob(m.title === 'Owner' ? 'Owner' : (AREA_NAME[m.ch] || m.ch || ''), 18),
       sub: [m.kind === 'log' ? m.title + ' 장부' : (m.title + ' · ' + (AREA_NAME[m.ch] || m.ch || '')), m.kind !== 'log' && m.node, agoS(m.at)].filter(Boolean).join(' · '),
       go: () => { if (m.kind === 'log') return nodeGo(m.title, m.ts, m.thread); openChan(CH.includes(m.ch) ? m.ch : 'primary', m.thread); if (!m.thread && m.ts && typeof nodeFlash === 'function') nodeFlash(m.ts); }});
-    for (const a of r.arts || []) { const id = a.id.slice(2); out.push({g: '캔버스', n: a.title, i: artThumb(id), art: true, tags: a.tags, sub: [a.folder, a.versions > 1 ? a.versions + '개 판' : '', agoS(a.at)].filter(Boolean).join(' · '), go: () => ARTS[id] ? openArt(id) : toast('그 캔버스를 찾지 못했어요')}); }
+    for (const a of r.arts || []) { const id = a.id.slice(2); out.push({id: a.id, g: '캔버스', n: a.title, i: artThumb(id), art: true, tags: a.tags, sub: [a.folder, a.versions > 1 ? a.versions + '개 판' : '', agoS(a.at)].filter(Boolean).join(' · '), go: () => ARTS[id] ? openArt(id) : toast('그 캔버스를 찾지 못했어요')}); }
+    if (Array.isArray(r.best)) { const top = []; for (const b of r.best) { const k = out.findIndex(x => x.id === b.id); if (k >= 0) top.push({...out.splice(k, 1)[0], g: '가장 가까운 것'}); } out.unshift(...top); }
     return out;
   }
   function findItems(q){

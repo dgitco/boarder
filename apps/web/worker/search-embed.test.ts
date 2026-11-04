@@ -284,3 +284,24 @@ test("밖(Voyage)으로 나가는 글만 식별 번호를 가리고, 저장 본�
   const r = await s.query("123-45-67890", false);
   assert.equal(r.chats[0]?.id, "m:one", "원문 번호로 낱말 찾기가 됨");
 });
+
+test("가장 가까운 것(best): 제목에 낱말이 다 든 캔버스가 아래 묶음에 묻히지 않고 맨 위 후보로 옴", async () => {
+  mock.method(globalThis, "fetch", async (_u: string, init: RequestInit) => { const b = JSON.parse(init.body as string); return Response.json({ data: b.input.map((_: string, index: number) => ({ index, embedding: unit() })) }); });
+  const { s, alarm } = mk(aiOk(), { key: "fake-test-key" });
+  await s.upsert([
+    { id: "a:artone", kind: "art", title: "에이전트 아바타 — 안 셋", body: "프로필 그림", at: 1_793_300_000, ext: true, emb: true },
+    { id: "m:chat1", kind: "chat", title: "Owner", body: "아바타 이야기 말고 다른 긴 이야기를 길게 길게 적은 대화 글", ch: "dgit", at: 1_793_300_000, ext: true, emb: true },
+  ]); await alarm();
+  const r = await s.query("아바타", true);
+  assert.ok(r.best.length >= 1 && r.best.length <= 3, "best 는 최대 3");
+  assert.equal(r.best[0].id, "a:artone");
+  assert.equal(r.best[0].kind, "art");
+});
+
+test("가장 가까운 것: 문턱만 겨우 넘은 엉뚱한 대화는 best 에 못 오름", async () => {
+  mock.method(globalThis, "fetch", async (_u: string, init: RequestInit) => { const b = JSON.parse(init.body as string); return Response.json({ data: b.input.map((t: string, index: number) => ({ index, embedding: t.includes("점심") ? unit(0.43) : unit(1) })) }); });
+  const { s, alarm } = mk(aiOk(), { key: "fake-test-key" });
+  await s.upsert([{ id: "m:lunch", kind: "chat", title: "Owner", body: "오늘 점심은 김치찌개를 먹었다 아주 맛있었다 정말로", ch: "dgit", at: 1_793_300_000, ext: true, emb: true }]); await alarm();
+  const r = await s.query("완전히 다른 질의", true);
+  assert.deepEqual(r.best, [], "문턱 0.42 를 0.01 넘은 글은 best 가 아님");
+});
