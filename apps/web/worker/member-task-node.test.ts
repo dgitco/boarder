@@ -74,3 +74,24 @@ test("업무 상태 다섯 꼴은 켠 사람만(설정 › 노드 task_dots, 기
   db.prepare("UPDATE node_setting SET data = ? WHERE owner = ?").run(JSON.stringify({ task_dots: true }), A);
   assert.equal((await data(d1, A, null) as any).panes.find((x: any) => x.win === "덱 확정").task.state, "waiting", "켠 사람만 다섯 꼴");
 });
+
+test("표지 셋(주차 · 담당 없음 · 확인 대기)은 점 설정이 꺼져도 모두에게", async () => {
+  const { db, d1 } = fakeD1();
+  node(db, "tk_c", "확인 받을 일", "idle", { state: "waiting", line: "", body: "", issue: "", confirm: true });
+  node(db, "tk_u", "담당 없는 일", "working", { state: "working", line: "", body: "", issue: "" });
+  node(db, "tk_p", "주차된 일", "working", { state: "working", line: "", body: "", issue: "" });
+  node(db, "tk_w", "도는 일", "working", { state: "working", line: "", body: "", issue: "" });
+  node(db, "n_w", "보통 노드", "working", null);
+  for (const [k, st, n] of [["window:w1", "parked", "tk_p"], ["window:w2", "working", "tk_w"], ["window:w3", "parked", "tk_c"]]) {
+    db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?,?)").run(A, k, "d", "window", "tmux", k, st, k.slice(7), Date.now());
+    db.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?, 'pin')").run(A, k, n);
+  }
+  const d = await data(d1, A, null) as any, p = (w: string) => d.panes.find((x: any) => x.win === w);
+  assert.deepEqual(p("확인 받을 일").tkChips, ["confirm", "parked"]);
+  assert.deepEqual(p("담당 없는 일").tkChips, ["unassigned"]);
+  assert.deepEqual(p("주차된 일").tkChips, ["parked"]);
+  assert.equal(p("도는 일").tkChips, undefined, "표지 없으면 칸도 없음");
+  assert.equal(p("보통 노드").tkChips, undefined, "보통 노드엔 표지 없음");
+  for (const w of ["확인 받을 일", "담당 없는 일", "주차된 일"]) assert.equal(p(w).task, undefined, "점은 지금 그대로(다섯 꼴 안 실음)");
+});
+
