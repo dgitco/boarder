@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "067e0df7919f";
+window.HB_VER = "2b23ace96689";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -3371,7 +3371,10 @@ function attnRows() {
 const rowPane = (r) => r.item?.to || r.item?.todo && (asks.find((a) => a.todo?.ts === r.item.todo.ts)?.to || leadPane(r.item.todo.area)) || leadPane(r.area);
 const nodeRows = (pane) => (attnRows() || []).filter((r) => rowPane(r) === pane);
 function attnCount() {
-  return (attnRows() || []).length;
+  const all = (attnRows() || []).length;
+  if (!window.HB_MEMBER) return all;
+  const t = window.HBInbox?.counts?.().turn;
+  return typeof t === "number" ? t : all;
 }
 function headPills() {
   const a = $("#h-attn"), st = $("#h-stall");
