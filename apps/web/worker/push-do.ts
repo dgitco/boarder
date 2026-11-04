@@ -10,11 +10,11 @@ type Res = [number, Record<string, unknown>];
 // Worker 가 부르는 길(RPC 꼴 추론이 unknown 값을 never 로 만들어서 손으로 적음)
 export type PushApi = {
   key(): Promise<string>; subscribe(b: unknown): Promise<Res>; unsubscribe(b: unknown): Promise<Res>; trial(b: unknown, welcome?: boolean): Promise<Res>; ack(b: unknown): Promise<Res>;
-  tickNow(): Promise<[string, P.Msg][]>; ensure(): Promise<boolean>; importData(b: unknown): Promise<{ ok: boolean; error?: string }>; stat(): Promise<unknown>;
+  tickNow(): Promise<[string, P.Msg][]>; page(after: number | null): Promise<Res>; ensure(): Promise<boolean>; importData(b: unknown): Promise<{ ok: boolean; error?: string }>; stat(): Promise<unknown>;
 };
 // 회원 칸(이름 = 회원 메일, index.ts memberPusher): 늘 그 사람 메일(세션)을 첫 값으로 — 칸에 적힌 주인과 다르면 거절
 export type MemberPushApi = {
-  key(): Promise<string>; mSubscribe(me: string, b: unknown): Promise<Res>; mUnsubscribe(me: string, b: unknown): Promise<Res>; mTrial(me: string, b: unknown, welcome?: boolean): Promise<Res>; mAck(me: string, b: unknown): Promise<Res>; mLog(me: string): Promise<unknown[] | null>; mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }, key?: string, opt?: { wide?: boolean }): Promise<Res>;
+  key(): Promise<string>; mSubscribe(me: string, b: unknown): Promise<Res>; mUnsubscribe(me: string, b: unknown): Promise<Res>; mTrial(me: string, b: unknown, welcome?: boolean): Promise<Res>; mAck(me: string, b: unknown): Promise<Res>; mLog(me: string): Promise<unknown[] | null>; mFails(me: string): Promise<ReturnType<typeof P.failView>[]>; mPage(me: string, after: number | null): Promise<Res>; mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }, key?: string, opt?: { wide?: boolean }): Promise<Res>;
   mDigest(me: string): Promise<Res>; mPrefs(me: string): Promise<Res>; mSetPrefs(me: string, b: unknown): Promise<Res>;
 };
 
@@ -134,7 +134,10 @@ export class Pusher extends DurableObject<Env> {
     const sent: [string, P.Msg][] = [];
     for (const t of todo) {
       if (!live) { P.settle(st, t, []); this.log({ ev: "observe", tag: t[1].tag }); }
-      else if (P.settle(st, t, await this.send(t[1]))) sent.push([t[0], t[1]]);
+      else {
+        if (!st.tries[t[0]]) this.pageAdd(t[1]);   // 「보드가 열려 있을 때 알림」 몫(웹 푸시가 없는 브라우저) — 다시 보내기 차례엔 또 안 넣음
+        if (P.settle(st, t, await this.send(t[1]))) sent.push([t[0], t[1]]);
+      }
       this.save(st);
     }
     return sent;
@@ -202,6 +205,32 @@ export class Pusher extends DurableObject<Env> {
     if (!this.bind(me)) return null;
     return this.ctx.storage.sql.exec<{ at: string; ev: string }>("SELECT at, ev FROM log ORDER BY id DESC LIMIT 40").toArray().map(r => ({ at: r.at, ...JSON.parse(r.ev) }));
   }
+  async mFails(me: string) {
+    if (this.member() !== me) return [];
+    return this.ctx.storage.sql.exec<{ at: string; ev: string }>("SELECT at, ev FROM log WHERE ev LIKE '%\"client-fail\"%' ORDER BY id DESC LIMIT 20").toArray()
+      .map(r => { try { return P.failView(r.at, JSON.parse(r.ev)); } catch { return null; } }).filter((x): x is ReturnType<typeof P.failView> => !!x);
+  }
+  private pageAdd(msg: P.Msg) {
+    const sql = this.ctx.storage.sql, cur = sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'page'").toArray()[0]?.v;
+    let q: { seq: number; items: { seq: number; at: number; msg: P.Msg }[] } = { seq: 0, items: [] };
+    try { if (cur) q = JSON.parse(cur); } catch {}
+    const seq = q.seq + 1, now = Date.now();
+    q = { seq, items: [...q.items.filter(x => now - x.at < 86_400_000), { seq, at: now, msg }].slice(-P.PAGE_KEEP) };
+    sql.exec("INSERT INTO kv(k, v) VALUES ('page', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", JSON.stringify(q));
+  }
+  page(after: number | null): Promise<Res> { return this.lock(async () => [200, this.pageRead(after)] as Res); }
+  private pageRead(after: number | null) {
+    const cur = this.ctx.storage.sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'page'").toArray()[0]?.v;
+    let q: { seq: number; items: { seq: number; at: number; msg: P.Msg }[] } = { seq: 0, items: [] };
+    try { if (cur) q = JSON.parse(cur); } catch {}
+    return { seq: q.seq, items: after == null ? [] : q.items.filter(x => x.seq > after && Date.now() - x.at < 86_400_000).map(x => x.msg) };
+  }
+  mPage(me: string, after: number | null): Promise<Res> {
+    return this.lock(async () => {
+      if (!this.bind(me)) return this.no();
+      return [200, this.pageRead(after)] as Res;
+    });
+  }
   // 새 카드 한 장 · 답 · 부름: 그 사건을 만든 요청이 그 자리에서 부름. 구독이 없으면 할 일 없음.
   // key = 사건 이름(card:<id> · log:<줄 id>) — 이미 보낸 key 면 안 보냄(같은 사건 두 번 안 감, 최근 SENT_KEEP 개 기억)
   private sentKeys(): string[] { const v = this.ctx.storage.sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'sent'").toArray()[0]?.v; try { return v ? JSON.parse(v) : []; } catch { return []; } }
@@ -214,6 +243,7 @@ export class Pusher extends DurableObject<Env> {
         if (sent.includes(key)) return [200, { ok: true, sent: 0, dup: true }] as Res;
         this.ctx.storage.sql.exec("INSERT INTO kv(k, v) VALUES ('sent', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", JSON.stringify([...sent, key].slice(-SENT_KEEP)));   // 보내기 전에 적음 — 두 요청이 겹쳐도 한 통
       }
+      this.pageAdd(P.memberMsg(card));   // 웹 푸시가 없는 브라우저(Dia 등)의 「보드가 열려 있을 때 알림」 몫 — 같은 규칙을 지난 알림만, 구독이 없어도 모아 둠
       if (!this.subs().length || !(await this.vapid())) return [200, { ok: true, sent: 0 }] as Res;
       let msg = P.memberMsg(card);
       if (!card.id.startsWith("log:")) {

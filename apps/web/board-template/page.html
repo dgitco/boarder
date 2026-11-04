@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "0dac36d01a71";
+window.HB_VER = "7eb7745de93a";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -10224,32 +10224,89 @@ async function pushDiag(first) {
   pushReport("diag", { name: "ours", message: `${first?.name || ""}: ${first?.message || first} | ${res}` });
 }
 const pushEnable = () => pushSubscribe();
-const pushNoSvc = (x) => !window.HB_MEMBER && /push service error/i.test(x?.message || "");
+const pushNoSvc = (x) => /push service error/i.test(x?.message || "");
 const pageMode = () => !!lsGet("hb-push-page") && !lsGet("hb-push-off") && window.Notification?.permission === "granted";
 let PS = null;
-function pageStream() {
-  if (PS || !pageMode() || !window.EventSource) return;
-  PS = new EventSource("api/push/stream");
-  PS.onmessage = (e) => {
-    let m;
-    try {
-      m = JSON.parse(e.data);
-    } catch (x) {
-      return;
+const pageShow = (m) => {
+  const n = new Notification(m.title || "보드", { body: m.body || "", icon: "icons/icon-192.png", tag: m.tag });
+  n.onclick = () => {
+    window.focus();
+    n.close();
+    pushOpen(new URL(m.url || "./", document.baseURI).href, m.tag);
+  };
+};
+const pageOne = (ms) => {
+  if (ms.length < 2) return ms[0];
+  const l = ms[ms.length - 1];
+  return { title: ms.every((x) => x.title === l.title) ? l.title : "보드", body: `새 ${ms.length}개 — ${l.body || ""}`, url: l.url, tag: "cards:" + (l.tag || Date.now()) };
+};
+let pageFail = !!lsGet("hb-push-page-fail");
+const pageTry = (m) => {
+  try {
+    pageShow(m);
+    if (pageFail) {
+      pageFail = false;
+      try {
+        localStorage.removeItem("hb-push-page-fail");
+      } catch (e) {
+      }
     }
-    const n = new Notification(m.title || "보드", { body: m.body || "", icon: "icons/icon-192.png", tag: m.tag });
-    n.onclick = () => {
-      window.focus();
-      n.close();
-      pushOpen(new URL(m.url || "./", location.href).href, m.tag);
+  } catch (x) {
+    if (!pageFail) pushReport("page-show", x);
+    pageFail = true;
+    lsSet("hb-push-page-fail", "1");
+  }
+};
+function pageStream() {
+  if (PS || !pageMode()) return;
+  {
+    let after = null;
+    const key = "hb-push-after:" + (window.HB_MEMBER?.email || "owner");
+    const shared = () => {
+      const v = lsGet(key);
+      return v != null && /^\d{1,9}$/.test(v) ? +v : null;
     };
-  };
-  PS.onerror = () => {
-    if (PS && PS.readyState === 2) PS = null;
-  };
+    const tick = () => {
+      const s = after == null ? null : Math.max(after, shared() ?? 0);
+      return fetch("api/push/page" + (s == null ? "" : "?after=" + s), { cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((j) => {
+        if (!j || typeof j.seq !== "number") return;
+        if (s == null) {
+          after = j.seq;
+          if (shared() == null) lsSet(key, String(j.seq));
+          return;
+        }
+        if (j.seq < s) {
+          after = j.seq;
+          lsSet(key, String(j.seq));
+          return;
+        }
+        const cur2 = Math.max(s, shared() ?? 0), n = j.seq - cur2;
+        after = Math.max(cur2, j.seq);
+        if (n <= 0) return;
+        lsSet(key, String(j.seq));
+        const ms = (j.items || []).slice(-n);
+        if (ms.length) pageTry(pageOne(ms));
+      }).catch(() => {
+      });
+    };
+    const t = setInterval(() => {
+      if (!pageMode()) {
+        clearInterval(t);
+        PS = null;
+        return;
+      }
+      tick();
+    }, 2e4);
+    PS = { close: () => clearInterval(t) };
+    tick();
+  }
 }
 function pageOn() {
   lsSet("hb-push-page", String(Date.now()));
+  try {
+    localStorage.removeItem("hb-push-off");
+  } catch (e) {
+  }
   pageStream();
   $("#h-push").classList.add("on");
 }
@@ -10440,17 +10497,22 @@ function pushPanel() {
   el = document.createElement("div");
   el.id = "pushp";
   document.body.append(el);
-  if (window.HB_MEMBER && pushSub) fetch("api/push/prefs", { cache: "no-store" }).then((r) => r.json()).then((j) => {
-    if (j && j.ok && el.isConnected) {
-      pushPrefs = { wide: j.wide === true, progress: j.progress || "digest" };
-      draw();
-    }
-  }).catch(() => {
-  });
+  const loadPrefs = () => {
+    if (window.HB_MEMBER && (pushSub || pageMode())) fetch("api/push/prefs", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+      if (j && j.ok && el.isConnected) {
+        const was = pushPrefs;
+        pushPrefs = { wide: j.wide === true, progress: j.progress || "digest" };
+        if (was.wide !== pushPrefs.wide || was.progress !== pushPrefs.progress) draw();
+      }
+    }).catch(() => {
+    });
+  };
+  loadPrefs();
   const draw = (msg = "") => {
     const denied = PUSH_OK && Notification.permission === "denied";
-    el.innerHTML = IOS && !STANDALONE ? `<div class="ps">아이폰은 홈 화면 앱에서만 알림이 와요</div><div class="ph">Safari 공유 → 홈 화면에 추가 → 홈 화면의 보드 앱을 열고 여기서 알림을 켜요.</div>` : !PUSH_OK ? `<div class="ps">이 브라우저는 웹 푸시를 못 받아요</div>` : `<div class="ps">이 기기 알림: ${pushSub ? "켜짐" : pageMode() ? "켜짐 — 보드가 열려 있을 때" : denied ? "막힘" : "꺼짐"}</div><div class="ph">${denied ? "설정에서 이 앱 알림을 허용해야 켤 수 있어요." : window.HB_MEMBER ? pushPrefs.wide ? "결정·할 일 새 카드, 내 글에 온 답, 나를 부르는 글이 바로 와요. 누르면 그 자리가 열려요." : "내 차례 새 카드만 와요. 누르면 그 카드가 열려요." : "급한 일(장애·오늘 마감·곧 만료 링크)과 내 차례 새 카드만 와요. 누르면 그 카드가 열려요."}</div>${msg ? `<div class="ph">${esc(msg)}</div>` : ""}
-         <div class="pb">${pushSub || pageMode() ? '<button data-pa="test" class="pri">시험 알림</button><button data-pa="off">끄기</button>' : `<button data-pa="on" class="pri"${denied ? " disabled" : ""}>알림 켜기</button>`}</div>` + (window.HB_MEMBER && pushSub ? `<div class="ps pph">결정·할 일·답도 받기</div><div class="pb"><button data-pw="0"${!pushPrefs.wide ? ' class="pri" aria-pressed="true"' : ""}>급한 것만</button><button data-pw="1"${pushPrefs.wide ? ' class="pri" aria-pressed="true"' : ""}>받기</button></div>` + (pushPrefs.wide ? `<div class="ps pph">그 밖의 진행 글</div><div class="pb"><button data-pp="digest"${pushPrefs.progress === "digest" ? ' class="pri" aria-pressed="true"' : ""}>5분마다 묶어서</button><button data-pp="off"${pushPrefs.progress === "off" ? ' class="pri" aria-pressed="true"' : ""}>받지 않음</button></div>` : "") : "");
+    el.innerHTML = IOS && !STANDALONE ? `<div class="ps">아이폰은 홈 화면 앱에서만 알림이 와요</div><div class="ph">Safari 공유 → 홈 화면에 추가 → 홈 화면의 보드 앱을 열고 여기서 알림을 켜요.</div>` : !PUSH_OK ? `<div class="ps">이 브라우저는 웹 푸시를 못 받아요</div>` : `<div class="ps">이 기기 알림: ${pushSub ? "켜짐" : pageMode() ? "켜짐 — 보드가 열려 있을 때" : denied ? "막힘" : "꺼짐"}</div><div class="ph">${denied ? "설정에서 이 앱 알림을 허용해야 켤 수 있어요." : window.HB_MEMBER ? pushPrefs.wide ? "결정·할 일 새 카드, 내 글에 온 답, 나를 부르는 글이 바로 와요. 누르면 그 자리가 열려요." : "급한 일만 와요. 누르면 그 카드가 열려요." : "급한 일만 와요. 누르면 그 글이 열려요."}</div>${msg ? `<div class="ph">${esc(msg)}</div>` : ""}
+${!pushSub && pageMode() ? `<div class="ph">${pageFail ? "이 브라우저가 알림을 띄우지 못했어요" : "이 브라우저는 백그라운드 알림을 못 받아요"} — Chrome · Safari 에서 켜면 받아요</div>` : ""}
+         <div class="pb">${pushSub || pageMode() ? '<button data-pa="test" class="pri">시험 알림</button><button data-pa="off">끄기</button>' : `<button data-pa="on" class="pri"${denied ? " disabled" : ""}>알림 켜기</button>`}</div>` + (window.HB_MEMBER && (pushSub || pageMode()) ? `<div class="ps pph">결정·할 일·답도 받기</div><div class="pb"><button data-pw="0"${!pushPrefs.wide ? ' class="pri" aria-pressed="true"' : ""}>급한 것만</button><button data-pw="1"${pushPrefs.wide ? ' class="pri" aria-pressed="true"' : ""}>받기</button></div>` + (pushPrefs.wide && pushSub ? `<div class="ps pph">그 밖의 진행 글</div><div class="pb"><button data-pp="digest"${pushPrefs.progress === "digest" ? ' class="pri" aria-pressed="true"' : ""}>5분마다 묶어서</button><button data-pp="off"${pushPrefs.progress === "off" ? ' class="pri" aria-pressed="true"' : ""}>받지 않음</button></div>` : "") : "");
   };
   draw();
   el.addEventListener("click", async (e) => {
@@ -10479,9 +10541,14 @@ function pushPanel() {
         b.innerHTML = spin;
         const r = await pushEnable().catch((x) => {
           pushReport(x?.step || "panel", x);
+          if (pushNoSvc(x) && Notification.permission === "granted") {
+            pageOn();
+            return { ok: true };
+          }
           return { ok: false };
         });
         draw(r.ok ? "켰어요." : PUSH_FAIL);
+        if (r.ok) loadPrefs();
       } else if (b.dataset.pa === "off") {
         if (pushSub) {
           const ep = pushSub.endpoint;
@@ -10493,7 +10560,7 @@ function pushPanel() {
         lsSet("hb-push-off", "1");
         draw("껐어요.");
       } else if (!pushSub) {
-        const n = new Notification("[시험] 알림이 켜졌어요", { body: "보드가 열려 있을 때 급한 일과 내 차례 새 카드가 이렇게 와요", icon: "icons/icon-192.png", tag: "page-test" });
+        const n = new Notification("[시험] 알림이 켜졌어요", { body: `보드가 열려 있을 때 ${window.HB_MEMBER && pushPrefs.wide ? "급한 일과 결정·할 일·답이" : "급한 일이"} 이렇게 와요`, icon: "icons/icon-192.png", tag: "page-test" });
         n.onclick = () => {
           window.focus();
           n.close();
@@ -10512,8 +10579,11 @@ function pushPanel() {
   });
 }
 function pushOpen(url, tag) {
-  const m = String(new URL(url, location.href).searchParams.get("open") || "").match(/^(card):(.+)$|^(thread):(\w+):(\d{10}\.\d{6})$|^(list)$/);
-  if (!m) return;
+  const u = new URL(url, location.href), m = String(u.searchParams.get("open") || "").match(/^(card):(.+)$|^(thread):(\w+):(\d{10}\.\d{6})$|^(list)$/);
+  if (!m) {
+    if (!u.searchParams.has("open") && u.origin === location.origin && u.pathname !== new URL("./", document.baseURI).pathname && u.href !== location.href) location.assign(u.href);
+    return;
+  }
   const ack = (found) => pushPost("api/push/ack", { tag: tag || "", url: String(url), found }).catch(() => {
   });
   if (m[3]) {

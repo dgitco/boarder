@@ -71,7 +71,7 @@ import * as memberInbox from "./member-inbox";
 import * as nodeTodo from "./node-todo";
 import * as memberFiles from "./member-files";
 import { importedWindow, queueToImported } from "./member-imported";
-import { claimEndpoint, releaseEndpoint, routeCard, routeLine, type PushCard, type PushLine } from "./member-push";
+import { claimEndpoint, linePushOpen, releaseEndpoint, routeCard, routeLine, setWideRow, type PushCard, type PushLine } from "./member-push";
 import * as emoji from "./emoji";
 import * as memberSearch from "./member-search";
 import { newMeter, meterEnv, meterProps, sampleOf } from "./perf";
@@ -1567,6 +1567,13 @@ app.post("/api/admin/member-push-log", async c => {
   const pu = memberPusher(c.env, e); if (!pu) return c.json({ error: "no" }, 404);
   return c.json({ log: await pu.mLog(e) ?? [] });
 });
+app.post("/api/admin/member-push-fails", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const e = String((await c.req.json<{ email?: string }>().catch(() => ({} as { email?: string }))).email || "").trim().toLowerCase();
+  if (!PU.memberName(e) || isOwner(c.env, e) || !(await member(c.env, e))) return c.json({ error: "초대한 회원 주소만" }, 400);
+  const pu = memberPusher(c.env, e); if (!pu) return c.json({ error: "no" }, 404);
+  return c.json({ email: e, fails: await pu.mFails(e) });
+});
 app.post("/api/admin/test-session", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ email?: string; revoke?: boolean }>().catch(() => ({} as { email?: string; revoke?: boolean }));
@@ -2336,6 +2343,10 @@ async function pushRoute(c: Context<{ Bindings: Env }>, url: URL) {
   if (c.req.method === "GET" || c.req.method === "HEAD") {
     if (p === "/sw.js") return new Response(c.req.method === "HEAD" ? null : PU.SW, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff" } });
     if (p === "/api/push/key") return c.json({ key: await pu.key() }, 200, { "cache-control": "no-store" });
+    if (p === "/api/push/page") {   // 「보드가 열려 있을 때 알림」(웹 푸시가 없는 브라우저): 틱이 보낸 것과 같은 알림을 after 뒤 것만(회원 길과 같은 꼴)
+      const a = url.searchParams.get("after"), after = a != null && /^\d{1,9}$/.test(a) ? Number(a) : null;
+      const r = await pu.page(after); return c.json(r[1], r[0] as 200, { "cache-control": "no-store" });
+    }
     let d = p; try { d = decodeURIComponent(p); } catch {}
     const m = /^\/api\/push\/resolve\/([\w:.-]{1,80})$/.exec(d);   // 알림의 카드 → 지금 판(뒤에 Slack 카드로 바뀌었으면 그 카드)
     if (m) { const ts = await pushResolve(c.env.DB, m[1]); return c.json({ ts, loc: await cardLoc(c.env.DB, ts) }, 200, { "cache-control": "no-store" }); }
@@ -2377,14 +2388,16 @@ const memberCardPush = async (env: Env, me: string, card: PushCard) => {
   catch (e) { console.log(JSON.stringify({ ev: "member_push", error: String(e).slice(0, 200) })); }
 };
 // 에이전트 글 한 줄(넓힘을 켠 회원만, member-push.ts routeLine): 내 글에 온 답 · 나를 부름은 바로 한 통(key log:<줄>), 그 밖 진행 글은 묶음(5분에 한 통 「새 글 n」, 설정에서 끔).
-// 켠 기기가 없거나 넓힘이 꺼졌으면(기본) 글을 가르지도 않음 — 기본 회원은 main 과 같게 글 알림 0
+// 구독 줄도 넓힘 표시 줄(페이지 알림 기기)도 없으면 칸을 안 부르고, 넓힘이 꺼졌으면(기본) 글을 가르지도 않음 — 기본 회원은 main 과 같게 글 알림 0
 const memberLinePush = async (env: Env, me: string, line: PushLine) => {
   try {
     if (!(await ledger.f7On(env.DB, "member_push"))) return;
-    if (!(await env.DB.prepare("SELECT 1 x FROM member_push_ep WHERE owner = ? LIMIT 1").bind(me.toLowerCase()).first())) return;
+    if (!(await linePushOpen(env.DB, me))) return;
     const pu = memberPusher(env, me); if (pu) await routeLine(env.DB, me, line, pu);
   } catch (e) { console.log(JSON.stringify({ ev: "member_push_line", error: String(e).slice(0, 200) })); }
 };
+// 넓힘 표시 줄 맞추기(설정은 칸이 정본, 이 줄은 글 알림 문만): POST 때 맞추고, 읽을 때도 켜짐이면 되살림(이 고침 전에 켠 회원 · 줄 쓰기가 실패한 때). 실패해도 설정 답은 그대로
+const wideRow = (db: D1Database, me: string, wide: boolean) => setWideRow(db, me, wide).catch(e => console.log(JSON.stringify({ ev: "member_push_wide", error: String(e).slice(0, 200) })));
 // 회원 웹 푸시(pushRoute 와 같은 답 꼴): 칸 = 세션 메일 · 원천 = 그 사람 board_card. POST 는 주인 길과 같은 x-hb 문 + 회원 쓰기와 같은 sameSite(다른 사이트 폼 · 링크 막기)
 async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   const p = url.pathname, pu = memberPusher(c.env, me);
@@ -2392,7 +2405,11 @@ async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: U
   if (c.req.method === "GET" || c.req.method === "HEAD") {
     if (p === "/sw.js") return new Response(c.req.method === "HEAD" ? null : PU.SW, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff" } });
     if (p === "/api/push/key") return c.json({ key: await pu.key() }, 200, { "cache-control": "no-store" });
-    if (p === "/api/push/prefs") { const r = await pu.mPrefs(me); return c.json(r[1], r[0] as 200, { "cache-control": "no-store" }); }   // 알림 범위 넓힘 · 진행 글 묶음 · 끔(사람마다, 기본 급한 것만)
+    if (p === "/api/push/page") {   // 「보드가 열려 있을 때 알림」(웹 푸시 서비스가 없는 브라우저): after 뒤 알림만
+      const a = url.searchParams.get("after"), after = a != null && /^\d{1,9}$/.test(a) ? Number(a) : null;
+      const r = await pu.mPage(me, after); return c.json(r[1], r[0] as 200, { "cache-control": "no-store" });
+    }
+    if (p === "/api/push/prefs") { const r = await pu.mPrefs(me); if (r[1].wide === true) await wideRow(c.env.DB, me, true); return c.json(r[1], r[0] as 200, { "cache-control": "no-store" }); }   // 알림 범위 넓힘 · 진행 글 묶음 · 끔(사람마다, 기본 급한 것만)
     let d = p; try { d = decodeURIComponent(p); } catch {}
     const m = /^\/api\/push\/resolve\/([\w:.-]{1,80})$/.exec(d);   // 회원 카드는 바뀌지 않음 — 그 사람 카드면 그 글 자리(Primary 채팅의 카드 글)
     if (m) return c.json(await memberBoard.pushLoc(c.env.DB, me, m[1]), 200, { "cache-control": "no-store" });   // 회원 보드 길(member-board.get)과 같은 셈 — w:<n> 카드도
@@ -2414,7 +2431,7 @@ async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: U
     if (r[1].new) c.executionCtx.waitUntil(pu.mTrial(me, { endpoint: ep }, true).catch(() => null));   // 새로 켠 기기엔 바로 시험 알림 1건(주인과 같게)
   } else if (p === "/api/push/unsubscribe") { r = await pu.mUnsubscribe(me, b); if (r[0] === 200) await releaseEndpoint(c.env.DB, me, String(b.endpoint ?? "")).catch(() => {}); }
   else if (p === "/api/push/test") r = await pu.mTrial(me, b);
-  else if (p === "/api/push/prefs") r = await pu.mSetPrefs(me, b);
+  else if (p === "/api/push/prefs") { r = await pu.mSetPrefs(me, b); if (r[0] === 200) await wideRow(c.env.DB, me, r[1].wide === true); }
   else r = await pu.mAck(me, b);
   return c.json(r[1], r[0] as 200);
 }

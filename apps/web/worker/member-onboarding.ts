@@ -12,7 +12,7 @@ export async function onboarding(db: Db, me: string, o: { server: string; push: 
     db.prepare("SELECT service, label, read_only FROM connection WHERE owner = ? ORDER BY created_at").bind(me),
     db.prepare("SELECT count(*) AS n, coalesce(sum(msgs), 0) AS m FROM slack_chan WHERE owner = ?").bind(me),
     db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me),
-    db.prepare("SELECT count(*) AS n FROM member_push_ep WHERE owner = ?").bind(me),
+    db.prepare("SELECT count(*) AS n FROM member_push_ep WHERE owner = ? AND endpoint NOT LIKE 'page:%'").bind(me),
   ]);
   const devices = (dv.results as { id: string; name: string; features: string | null }[]).map(d => ({ ...d, f: json<{ report?: string[]; engine?: boolean; reportDirs?: Dir[] }>(d.features, {}) }));
   const engines = devices.filter(d => d.f.engine).length;

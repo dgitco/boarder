@@ -93,6 +93,17 @@ export async function claimEndpoint(db: D1Database, me: string, endpoint: string
   await db.prepare("INSERT INTO member_push_ep(endpoint, owner, at) VALUES (?,?,?) ON CONFLICT(endpoint) DO UPDATE SET owner = excluded.owner, at = excluded.at").bind(endpoint, me, Date.now()).run();
   return prev && prev !== me ? prev : null;
 }
+// 글 알림의 문(글마다 도는 D1 한 번): 구독 줄이 있거나 넓힘을 켠 회원(아래 표시 줄)만 회원 칸까지 감. 둘 다 없으면(기본) 칸을 안 부르고 끝 — 기기 조회도 없음
+export const linePushOpen = async (db: D1Database, me: string) => !!(await db.prepare("SELECT 1 x FROM member_push_ep WHERE owner = ? LIMIT 1").bind(me.toLowerCase()).first());
+/**
+ * 넓힘 표시 줄(member_push_ep 의 page:<메일>): 구독 없는 기기(페이지 알림)만 쓰는 회원도 문을 지나게 — 켜면 답 · 부름이 칸의 페이지 모음에 쌓임.
+ * 표는 그대로라 마이그레이션 없음. 보내기는 칸의 sub 표를 쓰니 이 줄로 나가는 푸시는 없고, 진짜 구독 주소는 https:// 만이라(push.ts subOf) 겹치지 않음
+ */
+export async function setWideRow(db: D1Database, me: string, wide: boolean) {
+  const m = me.toLowerCase(), ep = `page:${m}`;
+  if (wide) await db.prepare("INSERT INTO member_push_ep(endpoint, owner, at) VALUES (?,?,?) ON CONFLICT(endpoint) DO NOTHING").bind(ep, m, Date.now()).run();
+  else await db.prepare("DELETE FROM member_push_ep WHERE endpoint = ?").bind(ep).run();
+}
 /** 구독을 끔 — 내 것으로 적힌 줄만 지움 */
 export async function releaseEndpoint(db: D1Database, me: string, endpoint: string) {
   if (endpoint) await db.prepare("DELETE FROM member_push_ep WHERE endpoint = ? AND owner = ?").bind(endpoint, me).run();

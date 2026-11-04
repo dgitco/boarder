@@ -210,7 +210,7 @@ self.addEventListener('notificationclick', e => {
 // ---------- 회원(초대 계정) 웹 푸시 ----------
 // 주인 규칙(위)은 그대로 두고 회원 것만 따로: 카드가 생길 때 그 자리에서 보냄(틱 · 알람 없음 — 회원 칸은 알람을 안 걸어 비용이 없고, 되돌려도 옛 주인 틱이 회원 칸에서 돌 일이 없음).
 // 제목은 늘 M_TITLE. 주소는 주인과 같은 ./?open=card:<id> — 열린 창이면 pushOpen, 없으면 첫 화면이 resolve 로 그 글을 엶
-export const M_TITLE = "내 차례", M_BURST = 3, M_WINDOW = 60_000, M_SUBS = 10;
+export const M_TITLE = "내 차례", M_BURST = 3, M_WINDOW = 60_000, M_SUBS = 10, PAGE_KEEP = 20;
 export function memberMsg(r: { id: string; question: string; url?: string; title?: string }): Msg {
   return { title: r.title || M_TITLE, body: cut(String(r.question || "").trim(), 180) || "새 카드", url: r.url && /^\.\/([a-z]|\?open=[\w:.-]+$|$)/.test(r.url) ? r.url : `./?open=card:${r.id}`, tag: r.id.startsWith("log:") ? r.id : `card:${r.id}` };
 }
@@ -222,4 +222,17 @@ export function memberBurst(prev: { t: number; n: number } | null, now: number, 
 export function memberName(email: unknown): string | null {
   const e = String(email ?? "").trim().toLowerCase();
   return e.length <= 254 && /^[^@\s/]+@[^@\s/]+\.[^@\s/]+$/.test(e) ? e : null;
+}
+
+export function uaKind(ua: unknown): { device: string; browser: string } {
+  const u = String(ua ?? "");
+  const device = /iPhone|iPod/.test(u) ? "iPhone" : /iPad/.test(u) ? "iPad" : /Android/.test(u) ? "Android" : /Macintosh|Mac OS X/.test(u) ? "Mac" : /Windows/.test(u) ? "Windows" : /Linux|CrOS/.test(u) ? "Linux" : "기타";
+  const browser = /Edg\//.test(u) ? "Edge" : /Whale\//.test(u) ? "Whale" : /OPR\//.test(u) ? "Opera" : /SamsungBrowser/.test(u) ? "Samsung" : /Firefox\/|FxiOS/.test(u) ? "Firefox"
+    : /CriOS|Chrome\//.test(u) ? "Chrome 계열" : /Safari\//.test(u) ? "Safari" : "기타";
+  return { device, browser };
+}
+// 오류 글에서 주소 · 긴 열쇠 꼴 글을 가림(브라우저 오류 글에 끝점 주소가 섞일 수 있음)
+export const maskErr = (t: unknown) => String(t ?? "").replace(/[a-z][\w+.-]*:\/\/\S+/gi, "<주소>").replace(/[A-Za-z0-9_+\/=-]{24,}/g, "<…>").slice(0, 300);
+export function failView(at: string, ev: Record<string, unknown>) {
+  return { at, step: String(ev.step ?? "").slice(0, 40), err: maskErr(ev.err), perm: String(ev.perm ?? "").slice(0, 20), standalone: !!ev.standalone, ...uaKind(ev.ua) };
 }
