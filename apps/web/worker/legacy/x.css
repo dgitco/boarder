@@ -83,6 +83,7 @@ html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 #bxx .xbd p.mdi{padding-left:1em;text-indent:-1em;margin-bottom:4px}
 #bxx .xbd a{color:var(--xlink);text-decoration:none}
 #bxx .xc img,#bxx .xc video{border-radius:16px}
+#bxx .xc a.atm .atmi img{border-radius:0}
 #bxx .xnn{display:inline-block;font-size:12.5px;line-height:20px;color:var(--xmut);background:var(--xsunk);border-radius:999px;padding:0 8px;margin-left:6px;text-indent:0;vertical-align:1px}
 #bxx .xgo{display:flex;align-items:center;gap:6px;margin-top:6px;border:0;background:none;padding:0;color:var(--xmut);font:inherit;font-size:14px;line-height:20px;text-align:left;cursor:pointer}
 #bxx .xgo svg{width:16px;height:16px;flex:none}#bxx .xgo b{color:var(--xink);font-weight:600}

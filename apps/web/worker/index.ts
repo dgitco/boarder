@@ -48,6 +48,7 @@ import { run as runTool, hasTool, addTools, onlyReads } from "./mcp/tools";
 import { registry, view, dropCache, diff } from "./mcp/registry";
 import { mountConnectors } from "./connectors/routes";
 import { mountConnectLink } from "./connectors/connect-link";
+import { mountApprovalLink } from "./approval-link";
 import { mountTasks } from "./tasks/routes";
 import { mountFeatures } from "./status-pages/routes";   // 설정 › 기능: 태스크 현황 · 기기 세션 현황 켜기/끄기(사람마다, 기본 꺼짐)
 import { mountTaskBoard, sweepTaskBoard } from "./status-pages/taskboard";   // 태스크 현황(요청 · 요청 대화 · 말하기) — 기기가 올리고 켠 사람만 봄
@@ -1053,6 +1054,11 @@ connReq.mountConnectRequests(app as never, {
   card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허용 — 늘 보냄(비밀 넣기와 같음)
 });
 mountConnectLink(app as never, {
+  device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
+  human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s && await member(c.env as never, s.user.email) ? s.user.email.toLowerCase() : null; },
+  sameSite: c => sameSite(c as never),
+});
+mountApprovalLink(app as never, {
   device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
   human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s && await member(c.env as never, s.user.email) ? s.user.email.toLowerCase() : null; },
   sameSite: c => sameSite(c as never),

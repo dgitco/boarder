@@ -178,7 +178,7 @@ async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, c
     const touchy = TOUCHY_BUNDLES.filter(k => patch.bundles && k in patch.bundles && patch.bundles[k] !== (cur.prefs.bundles as Record<string, boolean> | undefined)?.[k]);
     const rulesNow = cur.prefs.rules as Record<string, boolean> | undefined;
     for (const k of TOUCHY_RULES) if (patch.rules && k in patch.rules && patch.rules[k as never] !== rulesNow?.[k]) touchy.push(`rules.${k}` as never);
-    if (touchy.length) return { error: `approval_required: ${touchy.join(", ")} 는 사람 몸에 닿는 묶음이라 기기 허락만으로는 못 바꿔요 — 보드 화면에서 직접 바꾸거나 건건 승인 길(준비 중)을 써요`, status: 403 };
+    if (touchy.length) return { error: `approval_required: ${touchy.join(", ")} 는 사람 몸에 닿아 기기 허락만으로는 못 바꿔요 — 사람이 링크로 승인해요: ${touchy.map(t => t.startsWith("rules.") ? `boarder approve rule.set name=${t.slice(6)} on=…` : `boarder approve bundle.set name=${t} on=…`).join(" · ")}`, status: 403 };
     await savePrefs(DB, me, patch);
     if (patch.primary_item !== undefined || patch.park_on !== undefined || patch.park_h !== undefined || patch.tree_tidy !== undefined) await h.regroup(env, me);
     const after = { ...(await readPrefs(DB, me)) } as Record<string, unknown>; delete after.task_channels; delete after.task_repo; delete after.front_door;
@@ -207,7 +207,7 @@ async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, c
   }
   if (key === "session_sync") {
     if (typeof value !== "boolean") return { error: "session_sync: true | false", status: 400 };
-    if (value && !cur.session_sync) return { error: "approval_required: 세션 싱크를 켜면 대화가 서버에 저장되기 시작해요 — 보드 화면에서 직접 켜요(끄기는 이 명령으로 돼요)", status: 403 };
+    if (value && !cur.session_sync) return { error: "approval_required: 세션 싱크를 켜면 대화가 서버에 저장되기 시작해요 — 사람이 링크로 승인해요: boarder approve session-sync.on (끄기는 이 명령으로 돼요)", status: 403 };
     await h.sessionSync.set(env, me, value);
     return { after: value };
   }
