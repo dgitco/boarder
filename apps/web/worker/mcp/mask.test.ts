@@ -6,6 +6,7 @@ import { register } from "node:module";
 register("data:text/javascript," + encodeURIComponent(`
 export async function resolve(s, c, next) {
   if (s.endsWith("?module")) return { url: "data:text/javascript,export default null", shortCircuit: true };
+  if (s === "cloudflare:workers") return { url: "data:text/javascript,export class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }", shortCircuit: true };   // tools.ts → role-edit → engine.ts 가 DurableObject 를 끌어옴
   if ((s.startsWith("./") || s.startsWith("../")) && !/\\.[a-z]+$/.test(s)) { try { return await next(s + ".ts", c); } catch {} }
   return next(s, c);
 }`));

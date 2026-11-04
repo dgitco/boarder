@@ -1,6 +1,7 @@
 import { redact } from "../session/redact";
 import { z } from "zod";
 import type { Tool } from "./codemode";
+import { roleEditSchema } from "../role-edit";
 import { shape, type View } from "./registry";
 import type { Hosted } from "../hosted";
 
@@ -61,6 +62,7 @@ export const SCHEMAS = {
   chat_say: z.object({ text: safe(3000, true), thread: z.string().regex(/^\d{10}\.\d{6}$/).optional() }),
   chat_split: z.object({ thread: z.string().regex(/^\d{10}\.\d{6}$/), why: line(160).optional(), parts: z.array(z.object({ node: line(80), text: safe(3000, true) })).min(1).max(6) }),
   role_draft: z.object({ name: line(40), brief: safe(200).optional(), instructions: safe(3000, true), cwd: z.string().regex(/^~?[\w./ -]{1,200}$/).refine(v => !v.includes(".."), "..").optional() }),
+  role_edit: roleEditSchema,
   role_list: z.object({}),
   // 약속(회원 보드, 0047 member_promise — 주인 promise add 와 같은 칸): who 누구에게 · what 무엇 · check 확인 장치 · due 기한(YYYY-MM-DD[ HH:MM], 한국 시각이면 지남 판정)
   promise_add: z.object({ who: line(60), what: line(300), check: line(200), due: line(40) }),
@@ -70,7 +72,7 @@ export const SCHEMAS = {
 } as const;
 export type ToolName = keyof typeof SCHEMAS;
 
-export const MEMBER_ONLY = new Set<string>(["chat_say", "chat_split", "role_draft", "role_list", "promise_add", "promise_done", "promise_list"]);
+export const MEMBER_ONLY = new Set<string>(["chat_say", "chat_split", "role_draft", "role_edit", "role_list", "promise_add", "promise_done", "promise_list"]);
 const READS = new Set<string>(["role_list", "promise_list", "inbox_wait", "inbox_cards", "hook_events", "hook_event", "session_search", "session_handoff"]);
 export const onlyReads = (n: string) => READS.has(n);
 
@@ -131,6 +133,10 @@ const CORE_TOOLS: (Tool & { name: ToolName })[] = [
   { name: "role_draft", title: "Propose a role (agent window)",
     description: "Main bot only: put a role draft card in the Primary chat — name (short), brief (one line: what it handles), instructions (what the agent does, how it reports, what it must not do), optional cwd. The person approves it with one tap and Boarder opens a Claude Code window for it; drafting the same name again replaces the old card.",
     inputSchema: { type: "object", properties: { name: { type: "string" }, brief: { type: "string" }, instructions: { type: "string" }, cwd: { type: "string", description: "Folder for the window, default ~/boarder/<role id>" } }, required: ["name", "instructions"] },
+    annotations: { readOnlyHint: false, destructiveHint: false } },
+  { name: "role_edit", title: "Edit an existing role",
+    description: "Main bot: change a role the person owns. Needs the person to allow this device on their board first (`boarder settings allow`) — otherwise it fails with not_allowed. role_id from role_list; provide any of name (40 chars), brief (200 chars, empty clears it), instructions (full replacement, 3000 chars). Saves masked text and sends the new instructions once to each live window; parked windows read the latest role when reopened. Returns delivery per window (sent, queued, failed).",
+    inputSchema: { type: "object", properties: { role_id: { type: "string" }, name: { type: "string" }, brief: { type: "string" }, instructions: { type: "string" } }, required: ["role_id"] },
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "role_list", title: "List roles and windows",
     description: "Roles on the person's board, their engine windows (state: starting, busy, idle, waiting, parked …) and drafts waiting for approval.",
@@ -215,8 +221,8 @@ async function listCards(ctx: Ctx, query: string | undefined, limit: number) {
   return { total: hit.length, cards: hit.slice(-limit).reverse().map(c => ({ card_id: c.ts, state: c.state, kind: c.kind, area: c.area, title: c.title, thread: c.thread })) };
 }
 
-const WRITES = new Set(["inbox_ask", "inbox_log", "inbox_close", "inbox_say", "inbox_status", "chat_say", "chat_split", "role_draft", "promise_add", "promise_done", "feedback_send"]);
-const NO_MASK = new Set(["cwd", "node", "thread", "thread_id", "card_id", "replaced_by", "promise_id"]);
+const WRITES = new Set(["inbox_ask", "inbox_log", "inbox_close", "inbox_say", "inbox_status", "chat_say", "chat_split", "role_draft", "role_edit", "promise_add", "promise_done", "feedback_send"]);
+const NO_MASK = new Set(["cwd", "node", "thread", "thread_id", "card_id", "replaced_by", "promise_id", "role_id"]);
 const maskDeep = (v: unknown): unknown => typeof v === "string" ? redact(v) : Array.isArray(v) ? v.map(maskDeep) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, NO_MASK.has(k) ? x : maskDeep(x)])) : v;
 export const maskWrites = <T extends Record<string, any>>(name: string, a: T): T => (WRITES.has(name) ? maskDeep(a) as T : a);
 export async function run(ctx: Ctx, name: string, raw: Record<string, unknown>): Promise<unknown> {

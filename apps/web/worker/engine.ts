@@ -28,6 +28,7 @@ export function mainSystem(email: string, name = "Primary", oneGoal = true) {
 - Your job: learn what they want their AI agents to do, then set up roles. A role is one agent window with one clear job. Propose one role at a time:
   boarder role draft --name "<short name>" --brief "<one line: what it handles>" --instructions "<what this agent does, how it reports, what it must not do>"
   They see it as a card in the chat and press 「이대로」 (Boarder then opens a Claude Code window for it), or tell you what to change — then draft again.
+- To change an existing role when the person asks, use \`boarder role edit <role id> --name "<name>" --brief "<one line>" --instructions "<full new instructions>"\` (only the fields to change). Boarder saves it and informs its live windows. It needs this device allowed on their board once: if it fails with not_allowed, run \`boarder settings allow\` and ask them to press 「허용」 on the card.
 - Don't do the roles' work yourself and don't open windows yourself. \`boarder role list\` shows roles and their windows.
 - The person writes only here; you hand each ask to the node or role window that owns it. Look first (\`boarder role list\`, the nodes on the board). When a message is an ask for an existing node or role, send it there: \`boarder split <id> --why "<one line: why it goes there>" --part "<node>: <their words, as they wrote them>"\` (the id from the head) — one --part for a single ask, one per node when one message holds asks for several nodes. Each part shows in that node's channel and goes into that node's window with your why; that window answers under their message here. Then tell them in one line where it went.
 - If you can't tell which node or role an ask belongs to (two could fit, or none does and it is not clearly a new goal), don't guess and don't split: ask them in one line under their message — \`boarder chat --thread <id> "<which one: A or B?>"\` — and split after they answer.${oneGoal ? ONE_GOAL_MAIN : ""}`;
@@ -414,7 +415,7 @@ export class Engine extends DurableObject<EngEnv> {
     try { r = await this.cmd("park", { id }); }
     catch (e) { if ((e as EngineError).code === 5) { await this.env.DB.prepare("UPDATE engine_window SET note = ? WHERE id = ?").bind("이 엔진은 주차를 못 해요 — 열어 둠", id).run(); return { ok: false, cannot: true }; } throw e; }
     const old = (() => { try { return JSON.parse(w.handle || "{}"); } catch { return {}; } })();
-    await this.env.DB.prepare("UPDATE engine_window SET state = 'parked', state_at = ?, handle = ?, note = ? WHERE id = ?").bind(Date.now(), JSON.stringify({ ...old, ...(r?.handle || {}), argv: undefined }), why || null, id).run();
+    await this.env.DB.prepare("UPDATE engine_window SET state = 'parked', state_at = ?, handle = ?, note = ? WHERE id = ?").bind(Date.now(), JSON.stringify({ ...old, ...(r?.handle || {}), argv: undefined, role_at: old.role_at }), why || null, id).run();   // 지시 받은 시각(role_at)은 서버 값 그대로
     return { ok: true };
   }
   async reopen(id: string, text = "", k?: string): Promise<Delivered> {
@@ -425,7 +426,11 @@ export class Engine extends DurableObject<EngEnv> {
     const claim = await this.env.DB.prepare("UPDATE engine_window SET state = 'starting', state_at = ?, woke_at = NULL, note = NULL WHERE id = ? AND state IN ('parked','gone')").bind(Date.now(), id).run();
     if (!claim.meta.changes) { if (text && LIVE.includes((await this.row(id))?.state || "")) return this.pend({ id, text, at: Date.now(), k }); throw new EngineError(1, "다시 열 수 없는 창이에요"); }
     const cfg = await ownerCfg(this.env.DB, w.owner);
-    try { await this.cmd("reopen", { id, handle: { ...h, perm: cfg.perm }, text: text || `[Boarder] This window was parked and is open again. Continue from your last board line.` }); }
+    const role = w.role_id ? await this.env.DB.prepare("SELECT name, instructions, updated_at FROM role WHERE owner = ? AND id = ?").bind(w.owner, w.role_id).first<{ name: string; instructions: string; updated_at: number | null }>() : null;
+    const fresh = !!role && Number(role.updated_at || 0) > (Number(h.role_at) || w.created_at || 0);
+    const resumeText = text || `[Boarder] This window was parked and is open again. Continue from your last board line.`;
+    const { role_at: _roleAt, ...dh } = h;   // 받은 시각은 서버 몫 — 기기 손잡이로 안 보냄(되돌아와 새 값을 덮지 않게)
+    try { await this.cmd("reopen", { id, handle: { ...dh, ...(role ? { name: role.name } : {}), perm: cfg.perm }, text: fresh ? `${rolePrompt(role!.name, role!.instructions, cfg.rules.one_goal !== false)}\n\n${resumeText}` : resumeText }); }
     catch (e) {
       const st = await this.cmd("state", { id }).catch(() => null), s = String(st?.state || "");
       if (/^(busy|idle|waiting|background|starting)$/.test(s)) {
@@ -440,6 +445,7 @@ export class Engine extends DurableObject<EngEnv> {
       }
       await this.env.DB.prepare("UPDATE engine_window SET state = ?, state_at = ?, note = ? WHERE id = ?").bind(w.state, Date.now(), String((e as Error).message).slice(0, 200), id).run(); throw e;
     }
+    if (fresh) await this.env.DB.prepare("UPDATE engine_window SET handle = json_set(CASE WHEN json_valid(handle) THEN handle ELSE '{}' END, '$.role_at', ?) WHERE id = ?").bind(Number(role!.updated_at), id).run().catch(() => null);
     if (text && !(await this.who()).harness) { const m = (await this.ctx.storage.get<Record<string, number>>("reopens")) || {}; m[id] = Date.now(); await this.ctx.storage.put("reopens", m); }
     return { reopened: true };
   }

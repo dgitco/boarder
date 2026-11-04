@@ -1,3 +1,5 @@
+import { editRoleFromDevice } from "./role-edit";
+import type { EngEnv } from "./engine";
 import { nodeRoot, primaryRoot, primaryThread } from "./member-board";
 import { overdue } from "./member-views";
 import { splitAdd } from "./member-split";
@@ -15,7 +17,7 @@ export const askedAt = (v: unknown): number | null => {
 type Card = { id: string; state: string; question: string; choices: string; answer: string | null; answered_at: number | null; done: string | null; win: string; at: number };
 
 // onLine = 에이전트가 보드에 쓴 글 한 줄(inbox_log · inbox_say · chat_say)마다 — 폰 알림이 답 · 부름 · 진행 글을 가름(member-push.ts lineWhy). 상태 줄(inbox_status)은 안 부름
-export function localTools(db: D1Database, owner: string, win: string, publicUrl: string, key = "", onCard?: (card: { id: string; question: string; kind?: string; urgent: boolean; at: number; orig_at: number | null }) => void, send?: SplitSend, onLine?: (l: PushLine) => void) {
+export function localTools(db: D1Database, owner: string, win: string, publicUrl: string, key = "", onCard?: (card: { id: string; question: string; kind?: string; urgent: boolean; at: number; orig_at: number | null }) => void, send?: SplitSend, onLine?: (l: PushLine) => void, roleEnv?: EngEnv, device?: string | null) {
   const wid = /:(ew_[a-z0-9]{6,30})$/.exec(key)?.[1] ?? null;
   const log = async (kind: string, text: string, thread?: string, ev?: { tool: PushLine["tool"]; unblocks?: string }) => {
     const r = await db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?) RETURNING id").bind(owner, win, kind, text, thread ?? null, Date.now(), wid).first<{ id: number }>();
@@ -97,6 +99,12 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
           db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(owner, win, "role", id, "primary", now, wid),
         ]);
         return { draft_id: id, shown: "as a card in the Primary chat — the person approves it there" };
+      }
+      case "role_edit": {
+        if (!roleEnv) throw new Error("역할 수정 엔진이 없어요");
+        const r = await editRoleFromDevice(roleEnv, owner, device, a);
+        if ("error" in r) throw new Error(r.error);
+        return r;
       }
       case "role_list": {
         const [r, w, d] = await db.batch([

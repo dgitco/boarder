@@ -76,6 +76,7 @@ const OUT: Record<ToolName, string[]> = {
   chat_say: ["ok"],
   chat_split: ["ok", "splits", "skipped", "sent"],
   role_draft: ["draft_id", "shown", "refused", "same_role", "window", "why"],
+  role_edit: ["ok", "role_id", "delivery"],
   role_list: ["roles", "windows", "drafts"],
   promise_add: ["promise_id", "shown"],
   promise_done: ["ok"],

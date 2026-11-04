@@ -25,6 +25,7 @@ export { Bridge } from "./bridge";
 export { Engine } from "./engine";
 export { Search } from "./search";
 export { Pusher } from "./push-do";
+import { mountRoleEdit, toolError } from "./role-edit";
 import { engineOf, chatToMain, approveDraft, deliverTo, ownerCfg, sysLine, RULES, engineSend, ownerWindows, harnessDevice, liveDevice, type Engine } from "./engine";
 import shellJs from "./legacy/shell.js?raw";
 import shellCss from "./legacy/shell.css?raw";
@@ -483,13 +484,13 @@ app.get("/api/relay/ws", async c => {
   return bridge(c.env, new URL(c.req.url).searchParams.get("ch") || "owner").fetch(c.req.raw);
 });
 const sha = async (t: string) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)))].map(b => b.toString(16).padStart(2, "0")).join("");
-const tokCache = new Map<string, { pane: string; win: string; host: string; tools: string; owner: string; hash: string; at: number }>();
+const tokCache = new Map<string, { pane: string; win: string; host: string; tools: string; owner: string; device_id: string | null; hash: string; at: number }>();
 const flagAt = new Map<string, number>();
 async function bound(env: Env, tok: string) {
   if (!/^bxa_[A-Za-z0-9_-]{30,80}$/.test(tok)) return null;
   const h = await sha(tok), hit = tokCache.get(h);
   if (hit && Date.now() - hit.at < 10_000) return hit;
-  const r = await env.DB.prepare("SELECT t.pane, t.win, t.host, t.tools, t.owner FROM agent_token t LEFT JOIN device d ON d.id = t.device_id WHERE t.hash = ? AND t.revoked_at IS NULL AND (t.device_id IS NULL OR d.revoked_at IS NULL)").bind(h).first<{ pane: string; win: string; host: string; tools: string; owner: string }>();
+  const r = await env.DB.prepare("SELECT t.pane, t.win, t.host, t.tools, t.owner, t.device_id FROM agent_token t LEFT JOIN device d ON d.id = t.device_id WHERE t.hash = ? AND t.revoked_at IS NULL AND (t.device_id IS NULL OR d.revoked_at IS NULL)").bind(h).first<{ pane: string; win: string; host: string; tools: string; owner: string; device_id: string | null }>();
   if (!r) { tokCache.delete(h); return null; }
   if (tokCache.size > 1000) tokCache.clear();
   const v = { ...r, hash: h, at: Date.now() }; tokCache.set(h, v); return v;
@@ -526,7 +527,7 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
       return `${c.env.PUBLIC_URL}/api/agent/result/${id}`;
     },
     owner, person: who.owner || "",   // person = 봉함 DEK 주인(주인 '')
-    ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)), splitSender(c.env, who.owner), line => c.executionCtx.waitUntil(memberLinePush(c.env, who.owner!, line))) } : {}),
+    ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)), splitSender(c.env, who.owner), line => c.executionCtx.waitUntil(memberLinePush(c.env, who.owner!, line)), c.env, who.device_id) } : {}),
     host: who.host, win: who.win || who.pane,
     conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", card: who.owner ? (card: { id: string; question: string }) => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)) : undefined, catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
   };
@@ -606,7 +607,7 @@ app.post("/api/agent/:tool", async c => {
   const name = c.req.param("tool"); if (!hasTool(name)) return c.json({ error: "없는 도구" }, 404);
   if (onlyReads(name)) quiet(c.req.raw);
   try { return c.json(await runTool(ctx, name, await c.req.json().catch(() => ({})))); }
-  catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e) }, 400); }
+  catch (e) { const [body, status] = toolError(e); return c.json(body, status); }   // 역할 고치기 허락 없음은 403 not_allowed + 안내(role-edit.ts)
 });
 
 const b64url = (u: Uint8Array) => btoa(String.fromCharCode(...u)).replace(/[+/=]/g, m => ({ "+": "-", "/": "_", "=": "" } as Record<string, string>)[m]);
@@ -1291,6 +1292,7 @@ const memberOnly = async (c: Context<{ Bindings: Env }>) => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return null;
   return s.user.email.toLowerCase();
 };
+mountRoleEdit(app, memberOnly);
 const engErr = (c: Context<{ Bindings: Env }>, e: unknown) => c.json({ ok: false, error: e instanceof Error && /^[가-힣]/.test(e.message) ? e.message : "일시적인 오류가 발생했어요" }, 400);
 app.post("/api/me/chat", async c => {
   const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);

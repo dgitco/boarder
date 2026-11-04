@@ -57,6 +57,8 @@ Main bot (the Primary chat on your board)
   boarder promise done <id> "<how it was kept>" [--dropped]   ·   boarder promise list [--all]
   boarder role draft --name "<name>" --brief "<one line>" --instructions "<what it does, what it must not do>" [--cwd <folder>]
                                               put a role draft card in the chat (the human approves it, Boarder opens its window)
+  boarder role edit <role id> [--name "<name>"] [--brief "<one line>"] [--instructions "<full instructions>"]
+                                              save changes and inform the role’s live windows (this device must be allowed on the board first: boarder settings allow)
   boarder role list                           roles and their windows
   boarder headers                   MCP headers (JSON) for this window
   boarder mcp                       stdio MCP server (setup adds it to your tools)
@@ -121,7 +123,7 @@ async function call(tool, args) {
   let r = await go(w.token);
   if (r.status === 401) { w = await windowToken({ fresh: true }); r = await go(w.token); }
   const j = await r.json().catch(() => ({ error: `Boarder ${r.status}` }));
-  if (!r.ok) { console.error(j.error || r.status); process.exit(1); }
+  if (!r.ok) { console.error(j.hint ? `${j.error}: ${j.hint}` : j.error || r.status); process.exit(1); }   // 허락 없음(403 not_allowed)은 안내까지 — boarder settings allow
   if (/^(?:inbox_say|chat_say|boarder_execute_write)$/.test(tool)) { const T = await import('./turn.mjs'); T.recordReply([process.env.BOARDER_WINDOW, process.env.TMUX_PANE, windowKey().key], tool, args); }   // 코드 모드 안의 답도(turn.mjs sayCalls)
   console.log(JSON.stringify(j));
   if (tool === 'inbox_wait' && j.state === 'open') process.exit(2);
@@ -265,7 +267,7 @@ export async function main(argv) {
       split: () => ['chat_split', { thread: pos[0], ...(flags.why ? { why: flags.why } : {}), parts: (flags.part || []).map(x => { const i = String(x).indexOf(':'); return i < 0 ? { node: '', text: String(x) } : { node: String(x).slice(0, i).trim(), text: String(x).slice(i + 1).trim() }; }) }],
       chat: () => ['chat_say', { text: pos.join(' '), ...(flags.thread ? { thread: flags.thread } : {}) }],
       promise: () => pos[0] === 'add' ? ['promise_add', { who: flags.who, what: pos.slice(1).join(' '), check: flags.check, due: flags.due }] : pos[0] === 'done' ? ['promise_done', { promise_id: num(pos[1]), done: pos.slice(2).join(' '), state: flags.dropped ? 'dropped' : 'kept' }] : pos[0] === 'list' ? ['promise_list', { all: !!flags.all }] : null,
-      role: () => pos[0] === 'draft' ? ['role_draft', { name: flags.name, brief: flags.brief, instructions: flags.instructions, cwd: flags.cwd }] : pos[0] === 'list' ? ['role_list', {}] : null,
+      role: () => pos[0] === 'draft' ? ['role_draft', { name: flags.name, brief: flags.brief, instructions: flags.instructions, cwd: flags.cwd }] : pos[0] === 'edit' ? ['role_edit', { role_id: pos[1], name: flags.name, brief: flags.brief, instructions: flags.instructions }] : pos[0] === 'list' ? ['role_list', {}] : null,
     }[cmd];
     const p = plan?.();
     if (!p) { console.error(HELP); process.exit(64); }

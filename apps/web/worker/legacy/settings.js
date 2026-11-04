@@ -621,10 +621,68 @@
     ['move_h', '옮기기 간격', '한 노드에서 나누기 · 합치기는 이 간격에 한 번', '시간'], ['rename_h', '이름 바꾸기 간격', '한 노드 이름은 이 간격에 한 번', '시간']];
   const ARCH_H = [1, 3, 6, 12, 24, 48, 72, 168];
   const hrs = h => h % 24 ? `${h}시간` : `${h / 24}일`;
+  const ROLE_F = [['name', '이름', 40, '이름은'], ['brief', '설명', 200, '설명은'], ['instructions', '지시', 3000, '지시는']];
+  const ROLE_WST = {busy: '일함', background: '뒤에서 일함', idle: '쉼', waiting: '기다림', parked: '주차', opening: '여는 참', starting: '여는 참', failed: '멈춤'};
+  const roleWins = ws => { if (!ws?.length) return '붙은 창 없음'; const n = {}; for (const w of ws){ const k = ROLE_WST[w.state] || '그 밖'; n[k] = (n[k] || 0) + 1; } return `창 ${ws.length}곳 · ` + Object.entries(n).map(([k, c]) => `${k} ${c}`).join(' · '); };
+  // 바뀐 칸만(서버와 같이 앞뒤 공백을 떼고 견줌)
+  const roleDiff = (r, v) => { const d = {}; for (const [k] of ROLE_F){ const t = String(v[k] ?? r[k] ?? '').trim(); if (t !== String(r[k] ?? '').trim()) d[k] = t; } return d; };
+  const roleBad = d => { if ('name' in d && !d.name) return '이름을 넣어 주세요'; if ('instructions' in d && !d.instructions) return '지시를 넣어 주세요';
+    for (const [k, , max, lbl] of ROLE_F) if (k in d && d[k].length > max) return `${lbl} ${max}자까지예요(지금 ${d[k].length}자)`; return ''; };
+  const roleDone = dl => { const n = s => dl.filter(d => d.state === s).length, a = n('sent'), q = n('queued'), f = n('failed');
+    if (!dl.length) return '저장했어요 · 열린 창이 없어 다음에 창을 열 때 새 지시로 시작해요';
+    return [a && `${a}곳에 바로 넣었어요`, q && `${q}곳은 줄 서 있어요`, f && `${f}곳은 못 넣었어요(다음에 다시 열 때 새 지시로)`].filter(Boolean).map((t, i) => i ? t : '열린 창 ' + t).join(' · '); };
+  // 저장 한 번: 고칠 칸이 없거나 넘치면 보내지 않음. 서버 4xx 글은 api() 가 한 줄로 바꾼 그대로
+  async function roleSave(call, r, v){
+    const d = roleDiff(r, v); if (!Object.keys(d).length) return {ok: null, line: '바뀐 칸이 없어요'};
+    const bad = roleBad(d); if (bad) return {ok: false, line: bad};
+    try { const j = await call('POST', 'api/me/roles/' + encodeURIComponent(r.id), d); return {ok: true, sent: d, line: roleDone(j.delivery || [])}; }
+    catch (e) { return {ok: false, line: e.message || '일시적인 오류가 발생했어요'}; }
+  }
+  const roleField = (k, lbl, max, v, area) => { const val = String(v ?? ''), n = val.trim().length;
+    return `<label style="display:flex;flex-direction:column;gap:6px"><span class="bxs-row between"><span class="bxs-mut">${lbl}</span><span class="bxs-mut${n > max ? ' bad' : ''}" data-rlc="${k}">${n}/${max}</span></span>`
+      + (area ? `<textarea class="bxs-in" rows="8" data-rlf="${k}" aria-label="${esc(lbl)}">${esc(val)}</textarea>` : `<input class="bxs-in" data-rlf="${k}" value="${esc(val)}" aria-label="${esc(lbl)}">`) + '</label>'; };
+  // st = {open: 펼친 역할 id, busy: 저장 중인 역할 id, msg: {id: {t, bad}}, vals: {id: {칸: 고친 값}}}
+  const roleHtml = (roles, st) => !roles?.length ? '' : '<div class="bxs-sech">역할</div><div class="bxs-card" data-rl>' + roles.map((r, i) => {
+    const open = st.open === r.id, busy = st.busy === r.id, v = {...r, ...(st.vals[r.id] || {})}, m = st.msg[r.id];
+    return `<div data-rli="${esc(r.id)}"${i ? ' style="border-top:1px solid var(--line);padding-top:12px"' : ''}>`
+      + `<div class="bxs-row between" style="flex-wrap:nowrap;cursor:pointer" data-rlo="${esc(r.id)}"><div style="min-width:0;overflow-wrap:anywhere"><b>${esc(r.name)}</b>`
+      + `<p class="bxs-mut" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.brief || '설명 없음')}</p><p class="bxs-mut">${esc(roleWins(r.windows))}</p></div>`
+      + btn(open ? '닫기' : '고치기', `aria-expanded="${open}" aria-label="${esc(r.name)} ${open ? '닫기' : '고치기'}"`, 'sm ghost') + '</div>'
+      + (!open ? '' : '<div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">'
+        + ROLE_F.map(([k, lbl, max]) => roleField(k, lbl, max, v[k], k === 'instructions')).join('')
+        + `<div class="bxs-row between" style="flex-wrap:nowrap"><p class="bxs-mut${m?.bad ? ' bad' : ''}" data-rlm role="status" style="min-width:0;overflow-wrap:anywhere">${m ? esc(m.t) : ''}</p>`
+        + btn(busy ? '<i class="g g-spin" aria-hidden="true"></i>' : '저장', `data-rls="${esc(r.id)}"${busy ? ' disabled aria-busy="true" aria-label="저장"' : ''}`, 'pri') + '</div></div>')
+      + '</div>';
+  }).join('') + '</div>';
+  function roleMount(box, roles){
+    const st = {open: null, busy: null, msg: {}, vals: {}}, draw = () => { box.innerHTML = roleHtml(roles, st); };
+    box.oninput = e => {   // 고친 값은 상태에(페이지가 다시 그려도 남게), 글자 수는 그 자리에서
+      const f = e.target.closest('[data-rlf]'), id = f?.closest('[data-rli]')?.dataset.rli; if (!id) return;
+      const k = f.dataset.rlf, max = ROLE_F.find(x => x[0] === k)[2], n = f.value.trim().length; (st.vals[id] ||= {})[k] = f.value;
+      const c = f.closest('label')?.querySelector('[data-rlc]'); if (c){ c.textContent = `${n}/${max}`; c.classList.toggle('bad', n > max); }
+    };
+    box.onclick = async e => {
+      const o = e.target.closest('[data-rlo]'); if (o){ st.open = st.open === o.dataset.rlo ? null : o.dataset.rlo; return draw(); }
+      const sv = e.target.closest('[data-rls]'), r = sv && !st.busy && roles.find(x => x.id === sv.dataset.rls); if (!r) return;
+      st.busy = r.id; delete st.msg[r.id]; draw();
+      const res = await roleSave(api, r, st.vals[r.id] || {});
+      if (res.ok){
+        delete st.vals[r.id];
+        try { const j = await api('GET', 'api/me/roles'); if (j.roles?.length) roles.splice(0, roles.length, ...j.roles); else Object.assign(r, res.sent); }   // 서버가 비밀 꼴을 가린 값 그대로
+        catch { Object.assign(r, res.sent); }
+      }
+      st.busy = null; st.msg[r.id] = {t: res.line, bad: res.ok === false}; draw();
+    };
+    draw();
+  }
   PAGES.nodes = async (el, id, live) => {
+    // 역할 목록은 회원만(주인은 서버가 403) — 노드 설정 · 얼굴과 같이 받아 첫 그림에 넣음, 못 받으면 카드 없음
+    const rolesP = OWNER ? Promise.resolve(null) : api('GET', 'api/me/roles').then(r => r.roles, () => null);
     let j = await api('GET', 'api/me/nodeset'), more = false; if (!live()) return;
     const AF = () => window.HBAgentFaces || window.parent?.HBAgentFaces, AFS = (k, f) => (window.HBAgentFaceSet || window.parent?.HBAgentFaceSet)?.(k, f);
     let faces = !window.BXBot ? null : OWNER ? (AF()?.() || null) : await api('GET', 'api/me/nodes/avatar').then(r => r.nodes).catch(() => null), openFace = null, openName = null; if (!live()) return;
+    const roles = await rolesP, roleBox = mk('div'); if (!live()) return;
+    if (roles?.length) roleMount(roleBox, roles);   // 역할 칸은 따로 그림 — 스위치를 눌러 페이지를 다시 그려도 쓰던 글이 남게 같은 상자를 다시 끼움
     const faceSm = f => !f ? '' : f.photo ? `<img src="/_blob/${esc(f.photo)}.png" alt="">` : BXBot.svg(f.seed, f.hue, 32, true);
     const faceRow = x => `<div class="bxs-li"><div class="bxs-row" style="flex-wrap:nowrap;gap:12px"><i class="bxs-face" aria-hidden="true">${faceSm(x.avatar)}</i><div><b>${esc(x.name)}</b><span>${x.head ? `${esc(x.column)} 열 머리` : OWNER ? '에이전트' : '노드'} · ${x.custom ? '고른 얼굴' : '기본 얼굴'}</span></div></div>`
       + `<div class="bxs-row" style="flex-wrap:nowrap">${x.node && !String(x.node).startsWith('ew_') ? btn(openName === x.pane ? '취소' : '이름', `data-nno="${esc(x.pane)}" aria-expanded="${openName === x.pane}"`, 'sm ghost') : ''}${x.custom ? btn('기본으로', `data-nfr="${esc(x.pane)}"`, 'sm ghost') : ''}${btn(openFace === x.pane ? '닫기' : '바꾸기', `data-nfo="${esc(x.pane)}" aria-expanded="${openFace === x.pane}"`, 'sm ghost')}</div></div>`
@@ -685,6 +743,7 @@
           + `<select class="bxs-in sm bxs-sel" data-nu aria-label="채널 묶기">${j.unit ? '' : '<option value="" selected>고르지 않음</option>'}<option value="agent"${j.unit === 'agent' ? ' selected' : ''}>에이전트마다 채널 · 일은 스레드</option><option value="goal"${j.unit === 'goal' ? ' selected' : ''}>일마다 채널</option></select></div></div>`)
         + `<div class="bxs-sech bxs-row between"><span>정리 기준</span><span class="bxs-row"><a class="bxs-btn sm ghost" style="text-decoration:none" href="/node-rules.md" download="node-rules.md" title="쓰던 하네스의 총괄에 붙여 넣는 노드 = 목표 규칙">노드 규칙 묶음 내려받기</a>${btn('기본값으로', 'data-ndef', 'sm ghost')}</span></div><div class="bxs-list">${NRULES.map(num).join('')}</div>`
         + prefSec()
+        + (roles?.length ? '<div data-rlslot></div>' : '')
         + faceSec()
         + `<div class="bxs-sech">보관</div><div class="bxs-list"><div class="bxs-li"><div><b>끝난 노드 보관</b><span>끝나고 닫힌 노드를 트리 · 타임라인에서 보관함으로 옮겨요(대화 · 장부 · 결과는 그대로)</span></div>`
         + `<select class="bxs-in sm bxs-sel" data-nk="archive_h" aria-label="끝난 노드 보관">${[...new Set([...ARCH_H, j.values.archive_h])].sort((x, y) => x - y).map(h => `<option value="${h}"${h === j.values.archive_h ? ' selected' : ''}>닫히고 ${hrs(h)} 뒤</option>`).join('')}</select></div>`
@@ -692,6 +751,7 @@
         + `<div class="bxs-sech">보관함 ${a.length}</div>`
         + (a.length ? `<div class="bxs-list">${shown.map(archRow).join('')}</div>` + (a.length > shown.length ? `<div class="bxs-row">${btn(`${a.length - shown.length}개 더 보기`, 'data-nmore', 'sm ghost')}</div>` : '')
           : empty({ic: 'archive', sm: true, t: '보관한 노드가 없어요', p: '끝난 노드가 닫히고 정한 시간이 지나면 여기로 와요.'}, '<p class="bxs-mut">보관한 노드가 없어요</p>'));
+      el.querySelector('[data-rlslot]')?.replaceWith(roleBox);
       facePick();
     };
     draw();
