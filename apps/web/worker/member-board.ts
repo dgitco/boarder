@@ -165,7 +165,7 @@ export async function load(db: D1Database, me: string) {
   const closedIds = new Set(json<{ closed?: string[] }>((ns.results[0] as R | undefined)?.data, {}).closed || []);
   const shown = (primary ? nodes.filter(n => !onlyPrim(n.id)) : nodes).filter(n => !closedIds.has(n.id));
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
-  return { defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
+  return { defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefsOf((ns.results[0] as R | undefined)?.data).task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
     parents: parentsOf((ns.results[0] as R | undefined)?.data), faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
@@ -215,11 +215,19 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   panes[0].avatar = botFace;
   const nodeOfPane = new Map<string, string>();
   const parked: R[] = [], closed: R[] = [];
+  // 업무 노드 값(mnode.task, 0054) — 따로 읽음: 칸이 아직 없는 D1 이면 빈 표(load 의 한 batch 에 넣으면 보드 전체가 깨짐)
+  const TASK_ST = new Set(["working", "blocked", "waiting", "done", "cancelled"]);
+  const tasks = new Map(((await db.prepare("SELECT id, task FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\' AND task IS NOT NULL").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results)
+    .map(r => [String(r.id), json<R>(r.task, {})] as [string, R]).filter(([, t]) => TASK_ST.has(String(t.state))));
+  const hasKid = new Set(L.nodes.map(n => L.parents[n.id]).filter(Boolean));   // 보이는 노드의 상위만(닫힘 · 보관된 하위만 있으면 담당 없음 그대로)
   for (const n of L.nodes) {
     const rows = logsOf(n), w0 = n.windows[0];
     if (n.archived_at || n.state === "done") { closed.push({ pane: n.pane, win: n.name, ago: ago(n.archived_at || n.updated_at), msg: rows[0] ? cut(rows[0].text, 200) : n.why, area: "primary" }); continue; }
     if (n.state === "parked") { parked.push({ id: "c" + n.pane.slice(1), name: n.name, area: "primary", msg: n.why || "주차", owner: false, ago: ago(n.updated_at), stale: null, wait: n.why || "주차", topics: [], pri: priOf(L.pri, n.name), pane: n.pane, short: n.why || "주차", watch: "" }); continue; }
-    panes.push(pane({ pane: n.pane, win: n.name, kind: "lead", state: STATE[n.state] || (n.state === "turn" ? "질문" : "쉼"), cwd: w0?.cwd, branch: w0?.branch, rows }));
+    const pn: R = pane({ pane: n.pane, win: n.name, kind: "lead", state: STATE[n.state] || (n.state === "turn" ? "질문" : "쉼"), cwd: w0?.cwd, branch: w0?.branch, rows });
+    const tk = tasks.get(n.id);
+    if (tk && L.taskDots) pn.task = { state: tk.state, line: tk.line || "", issue: tk.issue || "", chips: [...(tk.confirm ? ["confirm"] : []), ...(!w0 ? (hasKid.has(n.id) ? [] : ["unassigned"]) : n.windows.every(w => w.state === "parked") ? ["parked"] : [])] };
+    panes.push(pn);
     nodeOfPane.set(n.pane, n.id);
   }
   for (const w of L.engineNodes) {

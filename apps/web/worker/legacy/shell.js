@@ -317,7 +317,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const A = 'data:image/svg+xml,' + encodeURIComponent(open), B = 'data:image/svg+xml,' + encodeURIComponent(shut);
     const fav = document.head.appendChild(Object.assign(document.createElement('link'), {rel: 'icon', type: 'image/svg+xml', href: A}));
     const still = matchMedia('(prefers-reduced-motion: reduce)');
-    setInterval(() => { if (still.matches || R.classList.contains('bx-still')) return; fav.href = B; setTimeout(() => { fav.href = A; }, 180); }, 5000);
+    const favOff = () => { try { return localStorage.getItem('hb-favblink') === '0'; } catch { return false; } };   // 설정 › 모양 「파비콘 눈 깜빡」(계정 값 ui:favblink — 설정 화면이 열 때 이 브라우저에 맞춤)
+    setInterval(() => { if (still.matches || R.classList.contains('bx-still') || favOff()) return; fav.href = B; setTimeout(() => { fav.href = A; }, 180); }, 5000);
   }
 
   const mi = (k, icon, label) => `<button type="button" class="bx-it" data-mi="${k}" role="menuitem">${icon}<span>${label}</span></button>`;

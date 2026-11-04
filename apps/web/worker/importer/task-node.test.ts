@@ -163,3 +163,13 @@ test("task 칸(0054)이 아직 없는 D1 이어도 노드 목록은 예전처럼
   assert.equal(r.status, 200, await r.clone().text());
   assert.deepEqual((await r.json() as any).nodes.map((n: any) => [n.id, "task" in n]), [["n_keep", false]]);
 });
+
+test("확인 대기(confirm): 주면 task 에 confirm, false 로 지움 · 안 주면 그대로", async () => {
+  const { db, D1 } = d1(), call = app(D1);
+  await call("POST", "/api/device/tasks", { tasks: [{ key: "x", name: "확인 받을 업무", state: "waiting", confirm: true }] });
+  assert.equal(JSON.parse(row(db, "tk_x").task).confirm, true);
+  await call("POST", "/api/device/tasks", { tasks: [{ key: "x", line: "한 줄만 고침" }] });
+  assert.equal(JSON.parse(row(db, "tk_x").task).confirm, true, "안 주면 그대로");
+  await call("POST", "/api/device/tasks", { tasks: [{ key: "x", confirm: false }] });
+  assert.equal("confirm" in JSON.parse(row(db, "tk_x").task), false);
+});

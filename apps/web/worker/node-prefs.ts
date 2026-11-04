@@ -2,8 +2,8 @@ import { RULE_KEYS, type Rules } from "./install";
 import { BUNDLE_KEYS, BUNDLE_DEF } from "./harness-bundles";
 import { pickOf, PARK_H_LIM, PARK_QUIET_MS, type PrimaryPick } from "./importer/group";
 
-export type NodePrefs = { park_on: boolean; park_h: number; primary_item: PrimaryPick; rules: Required<Rules>; bundles: Record<string, boolean> };
-export const PREF_DEF: NodePrefs = { park_on: true, park_h: PARK_QUIET_MS / 3600_000, primary_item: "auto", bundles: { ...BUNDLE_DEF }, rules: Object.fromEntries(RULE_KEYS.map(k => [k, true])) as Required<Rules> };
+export type NodePrefs = { park_on: boolean; park_h: number; primary_item: PrimaryPick; rules: Required<Rules>; bundles: Record<string, boolean>; task_dots: boolean };
+export const PREF_DEF: NodePrefs = { park_on: true, park_h: PARK_QUIET_MS / 3600_000, primary_item: "auto", task_dots: false, bundles: { ...BUNDLE_DEF }, rules: Object.fromEntries(RULE_KEYS.map(k => [k, true])) as Required<Rules> };
 
 const obj = (v: unknown): Record<string, unknown> => {
   if (typeof v === "string") { try { v = JSON.parse(v); } catch { return {}; } }
@@ -18,6 +18,7 @@ export function prefsOf(data: unknown): NodePrefs {
     park_on: d.park_on !== false,
     park_h: hours(d.park_h) ?? PREF_DEF.park_h,
     primary_item: pickOf(d.primary_item),
+    task_dots: d.task_dots === true,
     rules: Object.fromEntries(RULE_KEYS.map(k => [k, r[k] !== false])) as Required<Rules>,
     bundles: Object.fromEntries(BUNDLE_KEYS.map(k => [k, typeof b[k] === "boolean" ? b[k] : BUNDLE_DEF[k]])) as Record<string, boolean>,
   };
@@ -28,6 +29,7 @@ export const parkHOf = (p: NodePrefs) => p.park_on ? p.park_h : 0;
 export function prefsPatch(raw: unknown): Partial<NodePrefs> | null {
   const b = obj(raw), out: Partial<NodePrefs> = {};
   if (typeof b.park_on === "boolean") out.park_on = b.park_on;
+  if (typeof b.task_dots === "boolean") out.task_dots = b.task_dots;
   const h = hours(b.park_h); if (h !== null) out.park_h = h;
   if (typeof b.primary_item === "string" && b.primary_item.trim() && b.primary_item.length <= 300) out.primary_item = b.primary_item.trim();
   const r = obj(b.rules), rules: Rules = {};
@@ -45,6 +47,7 @@ export async function savePrefs(db: D1Database, owner: string, patch: Partial<No
   const sets: string[] = [], args: unknown[] = [];
   const put = (k: string, expr: string, v: unknown) => { sets.push(`'$.${k}', ${expr}`); args.push(v); };
   if (patch.park_on !== undefined) put("park_on", "json(?)", JSON.stringify(patch.park_on));
+  if (patch.task_dots !== undefined) put("task_dots", "json(?)", JSON.stringify(patch.task_dots));
   if (patch.park_h !== undefined) put("park_h", "?", patch.park_h);
   if (patch.primary_item !== undefined) put("primary_item", "?", patch.primary_item);
   if (patch.rules) put("rules", `json_patch(CASE WHEN json_valid(data) AND json_type(data, '$.rules') = 'object' THEN json_extract(data, '$.rules') ELSE '{}' END, json(?))`, JSON.stringify(patch.rules));

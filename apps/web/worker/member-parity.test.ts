@@ -67,7 +67,7 @@ test("회원 노드 설정(node-prefs): 기본 = 주인 방식, 저장은 그 �
   const P = await import("./node-prefs.ts");
   const { db, D1 } = setup();
   assert.deepEqual(await P.readPrefs(D1, A), P.PREF_DEF);
-  assert.deepEqual(P.PREF_DEF, { park_on: true, park_h: 6, primary_item: "auto", bundles: P.PREF_DEF.bundles, rules: { one_goal: true, report: true, park: true, ask: true, outside: true } });
+  assert.deepEqual(P.PREF_DEF, { park_on: true, park_h: 6, primary_item: "auto", task_dots: false, bundles: P.PREF_DEF.bundles, rules: { one_goal: true, report: true, park: true, ask: true, outside: true } });
   db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ unit: "agent", unit_by: "me", pri: { "매출 보고": { pri: "급함" } }, faces: { "n-1": { seed: "s" } }, archive_h: 12 }), 1);
   await P.savePrefs(D1, A, P.prefsPatch({ park_h: 3, park_on: false, primary_item: "window:lap:tmux:%3", rules: { outside: false } })!);
   await P.savePrefs(D1, A, P.prefsPatch({ rules: { report: false, junk: false }, park_h: "x" })!);
@@ -75,8 +75,11 @@ test("회원 노드 설정(node-prefs): 기본 = 주인 방식, 저장은 그 �
   assert.equal(raw.unit, "agent"); assert.equal(raw.unit_by, "me"); assert.equal(raw.pri["매출 보고"].pri, "급함"); assert.equal(raw.faces["n-1"].seed, "s"); assert.equal(raw.archive_h, 12);
   assert.equal(raw.park_on, false, "불은 JSON 참 · 거짓으로"); assert.deepEqual(raw.rules, { outside: false, report: false }, "규칙은 합침 · 모르는 칸 버림");
   const p = await P.readPrefs(D1, A);
-  assert.deepEqual(p, { park_on: false, park_h: 3, primary_item: "window:lap:tmux:%3", bundles: P.PREF_DEF.bundles, rules: { one_goal: true, report: false, park: true, ask: true, outside: false } });
+  assert.deepEqual(p, { park_on: false, park_h: 3, primary_item: "window:lap:tmux:%3", task_dots: false, bundles: P.PREF_DEF.bundles, rules: { one_goal: true, report: false, park: true, ask: true, outside: false } });
   assert.equal(P.parkHOf(p), 0, "끄면 0");
+  await P.savePrefs(D1, A, P.prefsPatch({ task_dots: true, junk: 1 })!);
+  assert.equal((await P.readPrefs(D1, A)).task_dots, true); assert.equal(JSON.parse((db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(A) as any).data).unit, "agent", "다른 칸 그대로");
+  assert.equal(P.prefsPatch({ task_dots: "yes" }), null, "참 · 거짓만");
   assert.equal(P.prefsPatch({}), null); assert.equal(P.prefsPatch({ park_h: 1e9 })?.park_h, 168); assert.equal(P.prefsPatch({ primary_item: "  " }), null);
   // 줄이 없던 사람도 처음 저장에 그 칸만
   await P.savePrefs(D1, B, { primary_item: "none" });

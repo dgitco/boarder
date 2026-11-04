@@ -43,7 +43,7 @@ const Features = z.object({
 
 const now = () => Date.now();
 const TASK_STATES = ["working", "blocked", "waiting", "done", "cancelled"] as const;
-type Task = { state: typeof TASK_STATES[number]; line: string; body: string; issue: string };
+type Task = { state: typeof TASK_STATES[number]; line: string; body: string; issue: string; confirm?: true };   // confirm = 사람 확인 대기(보드 칩 「확인」, ③)
 const TASK_NODE_STATE: Record<Task["state"], string> = { working: "working", blocked: "blocked", waiting: "idle", done: "done", cancelled: "done" };
 const TOP = "top";   // 상위 칸의 「맨 위」(열 머리) 표지 — member-board TOP 과 같음
 const TaskIn = z.object({
@@ -52,6 +52,7 @@ const TaskIn = z.object({
   parent: z.union([z.string().min(1).max(80), z.null()]).optional(),
   state: z.enum(TASK_STATES).optional(),
   line: s(200).optional(), body: s(4000).optional(),
+  confirm: z.boolean().optional(),
   issue: z.union([z.number().int().positive().max(99_999_999), z.string().regex(/^(?:[\w.-]+\/[\w.-]+)?#?\d{1,8}$/), z.literal(""), z.null()]).optional(),
 });
 const TasksIn = z.object({ tasks: z.array(TaskIn).min(1).max(200) });
@@ -291,7 +292,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     const out = tasks.map((t, i) => {
       const id = ids[i], o = have.get(id), was = json<Task>(o?.task, { state: "working", line: "", body: "", issue: "" });
       const issue = t.issue === undefined ? was.issue : t.issue === null ? "" : typeof t.issue === "number" || /^\d+$/.test(t.issue) ? "#" + t.issue : t.issue;
-      const task: Task = { state: t.state ?? was.state, line: t.line ?? was.line, body: t.body ?? was.body, issue };
+      const task: Task = { state: t.state ?? was.state, line: t.line ?? was.line, body: t.body ?? was.body, issue, ...((t.confirm ?? was.confirm) ? { confirm: true as const } : {}) };
       const name = t.name || o?.name || "업무", pinned = t.name ? null : o?.pinned_name ?? null, area = t.area ?? o?.area ?? "", state = TASK_NODE_STATE[task.state], why = task.line.slice(0, 80), tj = JSON.stringify(task);
       const done = task.state === "done" || task.state === "cancelled", arch = done ? o?.archived_at ?? t0 : null;
       if (o && o.name === name && (o.pinned_name ?? null) === pinned && o.area === area && o.state === state && o.why === why && o.task === tj && (o.archived_at ?? null) === arch) return { key: t.key, id, created: false, changed: false };
