@@ -12,9 +12,15 @@ export function cleanPins(v: unknown): Pin[] | null {
   }
   return out;
 }
+/** 래퍼 값(person_custom.wside) — 그 사람 값이 없을 때만 씀. 표가 아직 없거나 깨졌으면 없는 것 */
+async function wrapperSide(db: D1Database, owner: string): Promise<{ side?: unknown; pins?: unknown } | null> {
+  const r = await db.prepare("SELECT wside s FROM person_custom WHERE owner = ?").bind(owner).first<{ s: string | null }>().catch(() => null);
+  try { return r?.s ? JSON.parse(r.s) : null; } catch { return null; }
+}
+/** 그 사람이 한 번이라도 저장했으면(빈 목록 포함) 그 값, 아니면 래퍼 값 */
 export async function readPins(db: D1Database, owner: string): Promise<Pin[]> {
   const r = await db.prepare(`SELECT json_extract(${BASE}, '$.pins') s FROM node_setting WHERE owner = ?`).bind(owner).first<{ s: string | null }>().catch(() => null);
-  if (!r?.s) return [];
+  if (!r?.s) return (cleanPins((await wrapperSide(db, owner))?.pins) ?? []);
   try { return cleanPins(JSON.parse(r.s)) ?? []; } catch { return []; }
 }
 export async function savePins(db: D1Database, owner: string, pins: Pin[]) {
@@ -32,7 +38,7 @@ export function cleanSide(v: unknown): string[] | null {
 
 export async function readSide(db: D1Database, owner: string): Promise<string[] | null> {
   const r = await db.prepare(`SELECT json_extract(${BASE}, '$.side') s FROM node_setting WHERE owner = ?`).bind(owner).first<{ s: string | null }>().catch(() => null);
-  if (!r?.s) return null;
+  if (!r?.s) return cleanSide((await wrapperSide(db, owner))?.side);
   try { return cleanSide(JSON.parse(r.s)); } catch { return null; }
 }
 

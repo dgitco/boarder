@@ -4,7 +4,7 @@
 // INBOX_OLD=<옛 owner-read.ts 경로> 면 그 코드로도 바로 대조(왕복 수는 안 봄)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as OR from "./owner-read.ts";
 
@@ -129,4 +129,21 @@ test("등록한 에이전트 채널 키도 채팅 길(있는지는 build 가 cfg
   const { d1, n } = fakeD1(new DatabaseSync(":memory:"));
   assert.equal(await OR.build(d1, { channels: { primary: "CPRI" } }, OR.route("/api/chat/harness")!), null);   // 등록 전(cfg 에 없음) → D1 안 묻고 다리로
   assert.equal(n.round, 0);
+});
+
+test("시스템 글(원문 raw 없음)도 글쓴이가 화면에 나옴 — 에이전트 글과 같은 꼴로, 글쓴이가 없으면 예전 그대로", async () => {
+  const db = new DatabaseSync(":memory:");
+  for (const f of readdirSync(new URL("../migrations/", import.meta.url)).filter(f => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
+  const m = db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cli')");
+  m.run("1703390100.000100", "primary", null, "system", "보더", null, "기기 「내 노트북」가 화면 덧씌우기를 바꿨어요", NOW - 100);
+  m.run("1703390101.000100", "primary", null, "system", null, null, "글쓴이 없는 시스템 글", NOW - 90);
+  m.run("1703390102.000100", "primary", null, "agent", "도우미", "p1", "에이전트 글", NOW - 80);
+  db.prepare("INSERT INTO wl_talk_chan(id, name, slack_channel) VALUES ('primary', 'primary', 'C2')").run();
+  const { d1 } = fakeD1(db);
+  const o = await OR.build(d1, CFG, OR.route("/api/chat/primary")!, NOW) as { status: number; body: { messages: { ts: string; name: string }[] } };
+  assert.equal(o.status, 200);
+  const name = (ts: string) => o.body.messages.find(x => x.ts === ts)?.name;
+  assert.equal(name("1703390100.000100"), "보더", "「비서」가 아니라 글쓴이 이름");
+  assert.equal(name("1703390101.000100"), "비서", "글쓴이가 없으면 예전 그대로");
+  assert.equal(name("1703390102.000100"), "도우미", "에이전트 글은 그대로");
 });

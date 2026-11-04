@@ -11,6 +11,7 @@ import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, t
 import { BUNDLE_KEYS } from "./harness-bundles";
 import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
 import { cleanPins, cleanSide, readPins, readSide, savePins, saveSide } from "./side-order";
+import * as pc from "./person-custom";
 import * as artView from "./art-view";
 import * as agentFace from "./agent-face";
 import { canBePrimary, primaryPick, PARK_H_LIM, type Item } from "./importer/group";
@@ -1114,6 +1115,90 @@ app.post("/api/me/side", async c => {
   await saveSide(c.env.DB, s.user.email.toLowerCase(), side);
   return c.json({ ok: true, side });
 });
+// 사람별 화면 덧씌우기(person-custom.ts): 내 계정 것만 읽고 씀. 쓰기는 같은 사이트에서만, 값은 css · js 각 200KB 까지
+const ovMeta = (o: pc.Overlay | null) => ({ cssBytes: o?.css.length ?? 0, jsBytes: o?.js.length ?? 0, wrapper: { css: o?.wcss.length ?? 0, js: o?.wjs.length ?? 0, jsSha: o?.wjsSha || null, side: !!o?.wside } });
+app.get("/api/me/overlay", async c => {
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  const o = await pc.readOverlay(c.env.DB, s.user.email.toLowerCase());
+  return c.json({ css: o?.css ?? "", js: o?.js ?? "", ...ovMeta(o) }, 200, { "cache-control": "no-store" });
+});
+app.post("/api/me/overlay", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  const b = Object(await c.req.json().catch(() => ({}))) as { css?: unknown; js?: unknown };
+  const css = b.css === undefined ? undefined : pc.cleanText(b.css), js = b.js === undefined ? undefined : pc.cleanText(b.js);
+  if (css === null || js === null || (css === undefined && js === undefined)) return c.json({ ok: false, error: "css · js 는 글이고 각각 200KB 까지예요" }, 400);
+  await pc.savePatch(c.env.DB, s.user.email.toLowerCase(), { ...(css !== undefined ? { css } : {}), ...(js !== undefined ? { js } : {}) });
+  return c.json({ ok: true });
+});
+app.delete("/api/me/overlay", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  // ?all=1 이면 래퍼 칸(css · js · 사이드)까지 — 웹에서 래퍼 js 도 끌 수 있게
+  const all = new URL(c.req.url).searchParams.get("all") === "1";
+  await pc.savePatch(c.env.DB, s.user.email.toLowerCase(), { css: null, js: null, ...(all ? { wcss: null, wjs: null, wjs_sha: null, wside: null } : {}) });
+  return c.json({ ok: true });
+});
+const plainName = (n: unknown) => String(n || "").replace(/[^\p{L}\p{N} ]/gu, "").replace(/\s+/g, " ").trim().slice(0, 40) || "이름 없음";
+function noteDevice(c: Context<{ Bindings: Env }>, owner: string, device: { name?: string }, text: string) {
+  const line = `기기 「${plainName(device.name)}」가 ${text}. 내가 한 게 아니면 설정에서 기기를 끊어 주세요`, viaRelay = isOwner(c.env, owner) && !!hosted.exec;
+  c.executionCtx.waitUntil((async () => {
+    try {
+      if (viaRelay) await (boardTool(c.env, "owner", "notify", { text: line }, "boarder@worker") as Promise<unknown>);
+      else await sysLine(c.env.DB, owner, line);
+    } catch (e) { console.error("기기 알림 못 올림", viaRelay ? "relay" : "d1", String((e as Error)?.message || e).slice(0, 160)); }
+  })());
+}
+async function overlayDevice(c: Context<{ Bindings: Env }>) {
+  const d = await deviceOf(c); if (!d || d.scope !== "full") return null;
+  if (!isOwner(c.env, d.owner) && !(await member(c.env, d.owner))) return null;
+  return { d, owner: d.owner.toLowerCase() };
+}
+app.get("/api/device/overlay", async c => {
+  const a = await overlayDevice(c); if (!a) return c.json({ ok: false, error: "기기 토큰" }, 401);
+  return c.json({ ok: true, ...ovMeta(await pc.readOverlay(c.env.DB, a.owner)) }, 200, { "cache-control": "no-store" });
+});
+app.post("/api/device/overlay", async c => {
+  const a = await overlayDevice(c); if (!a) return c.json({ ok: false, error: "기기 토큰" }, 401);
+  if (+(c.req.header("content-length") || 0) > 700_000) return c.json({ ok: false, error: "너무 커요" }, 413);
+  const b = Object(await c.req.json().catch(() => ({}))) as { slot?: unknown; set?: Record<string, unknown>; consent?: unknown };
+  const set = b.set && typeof b.set === "object" && !Array.isArray(b.set) ? b.set : null;
+  if ((b.slot !== "mine" && b.slot !== "wrapper") || !set) return c.json({ ok: false, error: "slot · set" }, 400);
+  const patch: Parameters<typeof pc.savePatch>[2] = {}, what: string[] = [];
+  for (const k of Object.keys(set)) {
+    const v = set[k];
+    if ((k === "css" || k === "js") && v !== undefined) {
+      const t = v === null ? "" : pc.cleanText(v); if (t === null) return c.json({ ok: false, error: `${k} 는 글이고 200KB 까지예요` }, 400);
+      if (b.slot === "mine") patch[k] = t;
+      else if (k === "css") patch.wcss = t;
+      else {   // 래퍼 js: 받는 사람이 동의한 해시와 같은 글일 때만
+        if (t && (typeof b.consent !== "string" || b.consent !== await pc.sha256(t))) return c.json({ ok: false, error: "래퍼 js 는 켜기에 동의한 해시가 있어야 올라가요" }, 400);
+        patch.wjs = t; patch.wjs_sha = t ? String(b.consent) : null;
+      }
+      what.push(`${b.slot === "wrapper" ? "래퍼 " : ""}${k}${t ? "" : " 비움"}`);
+    } else if (k === "side" && b.slot === "wrapper") {
+      const w = v === null ? null : pc.cleanWrapperSide(v); if (v !== null && !w) return c.json({ ok: false, error: "side 꼴이 틀렸어요" }, 400);
+      patch.wside = w ? JSON.stringify(w) : null; what.push(`래퍼 사이드${w ? "" : " 비움"}`);
+    } else return c.json({ ok: false, error: `모르는 칸: ${k}` }, 400);
+  }
+  if (!what.length) return c.json({ ok: false, error: "바꿀 칸이 없어요" }, 400);
+  await pc.savePatch(c.env.DB, a.owner, patch);
+  noteDevice(c, a.owner, a.d, `화면 덧씌우기를 바꿨어요 (${what.join(" · ")})`);
+  return c.json({ ok: true });
+});
+// 프롬프트 칸: 메인 봇 첫 글 · 새 회원 기본 역할을 그 사람 값으로(래퍼 prompts/ 를 기기가 읽어 올림). 비우면 코드 기본값
+app.post("/api/device/prompts", async c => {
+  const a = await overlayDevice(c); if (!a) return c.json({ ok: false, error: "기기 토큰" }, 401);
+  if (+(c.req.header("content-length") || 0) > 200_000) return c.json({ ok: false, error: "너무 커요" }, 413);
+  const b = Object(await c.req.json().catch(() => ({}))) as { main?: unknown; roles?: unknown };
+  const patch: Parameters<typeof pc.savePatch>[2] = {};
+  if (b.main !== undefined) { const m = b.main === null ? "" : pc.cleanText(b.main, pc.MAX_MAIN); if (m === null) return c.json({ ok: false, error: "main 은 글이고 6000바이트까지예요" }, 400); patch.p_main = m.trim() || null; }
+  if (b.roles !== undefined) { const r = b.roles === null ? [] : pc.cleanRoles(b.roles); if (!r) return c.json({ ok: false, error: "roles 꼴이 틀렸어요(열두 개까지, id · name · instructions)" }, 400); patch.p_roles = r.length ? JSON.stringify(r) : null; }
+  if (!Object.keys(patch).length) return c.json({ ok: false, error: "바꿀 칸이 없어요" }, 400);
+  await pc.savePatch(c.env.DB, a.owner, patch);
+  noteDevice(c, a.owner, a.d, "메인 봇 · 역할 글을 바꿨어요");
+  return c.json({ ok: true });
+});
 app.get("/api/me/nodes/avatar", async c => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   const me = s.user.email.toLowerCase();
@@ -1986,6 +2071,8 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
 async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false, ea: boolean | "personal" | "x" = false) {
   // 큰 껍데기 css · js 는 /bxs 주소로(bxs.ts — 같은 차례, 고전 스크립트). 해시를 못 만들면 예전처럼 인라인
   const bx = await shellTags(c.env, c.executionCtx).catch(() => null);
+  // 사람별 덧씌우기: 지금 로그인한 사람 것만. ?no_overlay=1 이면 얹지 않음(깨졌을 때 꺼내는 길). 읽기 실패는 덧씌우기 없이 그대로 그림
+  const ov = new URL(c.req.url).searchParams.has("no_overlay") ? null : pc.overlayTags(await pc.readOverlay(c.env.DB, email.toLowerCase()).catch(() => null));
   const emb = new URL(c.req.url).searchParams.has("embed");
   return new HTMLRewriter()
       .on('meta[name="apple-mobile-web-app-title"]', { element: e => { e.setAttribute("content", "보더"); } })
@@ -1994,8 +2081,8 @@ async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: s
         if (!ea && !emb) e.prepend(`<base href="/"><script>window.HB_PATHS=1</script>`, { html: true });
         if (ea === "x") e.prepend(`<script>window.BX_X=1</script>`, { html: true });   // /x = 피드 화면(x.js 가 같은 몸통 위에 피드 · 유리 막대를 얹음)
         else if (ea) e.prepend(`<script>window.BX_EA=1${ea === "personal" ? ';window.BX_EA_MODE="personal"' : ""}</script>`, { html: true });
-        e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>`) + (ea === "x" ? (bx ? bx.xHead : `<style id="hbx-x-css">${xCss}</style>`) : ea ? (bx ? bx.eaHead : `<style id="hbx-ea-css">${eaCss}</style>`) : "") + snippet(c.env, await phId(c.env, email)), { html: true }); } })
-      .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script>`) + (ea === "x" ? (bx ? bx.xBody : `<script>${xJs.replace(/<\//g, "<\\/")}</script>`) : ea ? (bx ? bx.eaBody : `<script>${eaJs.replace(/<\//g, "<\\/")}</script><script>${eaSecretJs.replace(/<\//g, "<\\/")}</script>`) : "") + `<script>document.documentElement.classList.remove('bx-boot')</script>`, { html: true }); } })
+        e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>`) + (ea === "x" ? (bx ? bx.xHead : `<style id="hbx-x-css">${xCss}</style>`) : ea ? (bx ? bx.eaHead : `<style id="hbx-ea-css">${eaCss}</style>`) : "") + snippet(c.env, await phId(c.env, email)) + (ov?.head || ""), { html: true }); } })
+      .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script>`) + (ea === "x" ? (bx ? bx.xBody : `<script>${xJs.replace(/<\//g, "<\\/")}</script>`) : ea ? (bx ? bx.eaBody : `<script>${eaJs.replace(/<\//g, "<\\/")}</script><script>${eaSecretJs.replace(/<\//g, "<\\/")}</script>`) : "") + `<script>document.documentElement.classList.remove('bx-boot')</script>` + (ov?.body || ""), { html: true }); } })
     .transform(res);
 }
 app.all("*", async c => {

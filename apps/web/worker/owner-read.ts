@@ -82,7 +82,7 @@ function exOf(rs: D1Result<R>[]): Ex {
 function asSlack(row: R, ex: Ex): R {
   const mid = row.id, who = row.who;
   let m = row.raw ? loads(row.raw) : null;
-  if (!m || typeof m !== "object" || Array.isArray(m)) m = { user: who === "owner" ? REP : row.user, ...(who === "agent" ? { bot_id: or(row.user, "talk"), username: row.author } : {}) };
+  if (!m || typeof m !== "object" || Array.isArray(m)) m = { user: who === "owner" ? REP : row.user, ...(who === "agent" ? { bot_id: or(row.user, "talk"), username: row.author } : {}), ...(who === "system" && T(row.author) ? { username: row.author } : {}) };   // 시스템 글(기기 알림)도 글쓴이를 화면에(chat.py 의 as_slack 과 같게)
   m.ts = or(row.slack_ts, mid); m.text = row.text;
   if (T(row.edited_at)) m.edited = { ...((T(m.edited) ? m.edited : {}) as R), ts: f6(row.edited_at) };
   let blocks = row.blocks;

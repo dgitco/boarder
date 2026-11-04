@@ -78,7 +78,7 @@ Connect a service (Linear, Notion, GitHub, any MCP server)
 
 ${SESSION_HELP}`;
 
-const SECTION_HELP = { device: DEVICE_HELP, import: IMPORT_HELP, canvas: CANVAS_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, secret: SECRET_HELP, enable: VIEW_HELP, disable: VIEW_HELP, harness: VIEW_HELP, uninstall: VIEW_HELP };
+const SECTION_HELP = { device: DEVICE_HELP, import: IMPORT_HELP, canvas: CANVAS_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, secret: SECRET_HELP, enable: VIEW_HELP, disable: VIEW_HELP, harness: VIEW_HELP, view: VIEW_HELP, uninstall: VIEW_HELP };
 function wantsHelp(cmd, rest) {
   if (cmd === 'engine' && rest[0] === 'verify') return false;
   if (cmd === 'profile' && rest[0] === 'run') return rest[1] === '--help' || rest[1] === '-h';
@@ -213,7 +213,8 @@ export async function main(argv) {
     if (cmd === 'connect') return await connectCommand(pos, flags);
     if (cmd === 'session') return await sessionCommand(pos[0], pos.slice(1), flags);
     if (cmd === 'setup') return await setup({ yes: !!flags.yes, server: flags.server, email: flags.email, only: csv(flags.only), skip: csv(flags.skip), noBrowser: !!flags['no-browser'], deviceAuth: !!flags['device-auth'], noWatch: !!flags['no-watch'], noEngine: !!flags['no-engine'], report: !!flags.report, engine: !!flags.engine });
-    if (cmd === 'enable' || cmd === 'disable') { if (!['report', 'engine', 'harness'].includes(pos[0])) { console.error(VIEW_HELP); process.exit(64); } if (cmd === 'enable' && !loadDevice()?.token) { console.error('not signed in — run `boarder setup --yes` first'); process.exit(3); } const r = await (cmd === 'enable' ? enable : disable)(pos[0], { only: csv(flags.only), skip: csv(flags.skip), yes: !!flags.yes, name: flags.name, lang: flags.lang }); console.log(r.skipped ? `${pos[0]}: skipped (${r.skipped})` : `${pos[0]}: ${cmd === 'enable' ? 'on' : 'off'}`); if (!r.ok) process.exitCode = 1; return; }
+    if (cmd === 'enable' || cmd === 'disable') { if (!['report', 'engine', 'harness'].includes(pos[0])) { console.error(VIEW_HELP); process.exit(64); } if (cmd === 'enable' && !loadDevice()?.token && !(pos[0] === 'harness' && flags.from)) { console.error('not signed in — run `boarder setup --yes` first'); process.exit(3); } const r = await (cmd === 'enable' ? enable : disable)(pos[0], { only: csv(flags.only), skip: csv(flags.skip), yes: !!flags.yes, name: flags.name, lang: flags.lang, from: flags.from, wrapper: flags.wrapper }); console.log(r.skipped ? `${pos[0]}: skipped (${r.skipped})` : `${pos[0]}: ${cmd === 'enable' ? 'on' : 'off'}`); if (!r.ok) process.exitCode = 1; return; }
+    if (cmd === 'view' && pos[0] === 'overlay') { const { overlayCommand, OVERLAY_HELP } = await import('./overlay.mjs'); try { return void await overlayCommand(pos[1], pos.slice(2)); } catch (e) { if (e.code !== 'USAGE') throw e; console.error(OVERLAY_HELP); process.exit(64); } }   // 내 화면에만 얹는 css · js
     if (cmd === 'harness') { if (pos[0] !== 'list') { console.error(VIEW_HELP); process.exit(64); } const { listHarness } = await import('./harness.mjs'); return void await listHarness(); }
     if (cmd === 'uninstall') return void await uninstall();
     if (cmd === 'engine') return await engineCommand(pos[0], pos.slice(1), flags);

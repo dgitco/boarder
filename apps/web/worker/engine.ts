@@ -4,6 +4,7 @@ import { bumpMember } from "./live";
 import { envelopeOn, getDek, openField, sealFieldNow, type VaultEnv } from "./vault/index";
 import { primaryPick, type Item } from "./importer/group";
 import { readPrefs } from "./node-prefs";
+import { readPrompts } from "./person-custom";
 
 export type EngEnv = { DB: D1Database; ENGINE: DurableObjectNamespace<Engine>; PUBLIC_URL: string };
 type Win = { id: string; owner: string; device_id: string; kind: string; role_id: string | null; name: string; state: string; state_at: number | null; handle: string | null; woke_at: number | null; created_at: number; dialog: string | null };
@@ -40,6 +41,11 @@ export const DEFAULT_ROLES = [
   { id: "default-research", name: "조사", brief: "궁금한 것을 찾아 쉬운 말로 정리해 줘요", instructions: "Look things up for the person and report back in plain, short language: what you found, how sure you are, and where it came from. Say so when you could not confirm something. Do not change their files unless asked." },
   { id: "default-writing", name: "글쓰기", brief: "메일 · 문서 · 글의 초안을 같이 써요", instructions: "Draft and polish the person's emails, documents and messages in their tone and language. Offer a first draft quickly, then revise from their feedback. Never send anything to anyone yourself — they send it." },
 ] as const;
+/** 메인 봇 첫 글 · 새 회원 기본 역할: 그 사람 값(래퍼 prompts/ 를 기기가 올림)이 있으면 그것, 없으면 코드 기본값. 메인 봇 시스템 글(mainSystem)은 보더 명령 규약이라 바꾸지 않음 */
+export async function promptsOf(db: D1Database, owner: string): Promise<{ mainHello: string; roles: readonly { id: string; name: string; brief: string; instructions: string }[] }> {
+  const p = await readPrompts(db, owner).catch(() => ({ main: null, roles: null }));
+  return { mainHello: p.main ?? MAIN_HELLO, roles: p.roles ?? DEFAULT_ROLES };
+}
 export const MAIN_HELLO = `[Boarder] Boarder just started you as the person's main bot. Greet them in one or two sentences with boarder chat and ask what they would like their AI agents to do.`;
 export function rolePrompt(name: string, instructions: string, oneGoal = true) {
   return `[Boarder] You are the "${name}" agent. Your job: ${instructions}${oneGoal ? ONE_GOAL_ROLE : ""}
@@ -269,14 +275,15 @@ export class Engine extends DurableObject<EngEnv> {
     const now = Date.now(), claim = await db.prepare("INSERT OR IGNORE INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").bind(owner, "default_roles_seeded", have?.n ? "had-roles" : "seeded", now).run();
     if (!claim.meta.changes || have?.n) return { seeded: 0 };
     let opened = 0, why = "";
-    for (const r of DEFAULT_ROLES) {
+    const { roles: defaults } = await promptsOf(db, owner);
+    for (const r of defaults) {
       const cwd = `~/boarder/${r.id}`;
       await db.prepare("INSERT OR IGNORE INTO role(owner, id, name, instructions, intake, engine, source, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(owner, r.id, r.name, r.instructions, r.brief, JSON.stringify({ device, engine: "tmux", model: MODEL, cwd }), "default", now, now).run();
       try { await this.open({ owner, kind: "role", role_id: r.id, name: r.name, cwd, prompt: rolePrompt(r.name, r.instructions, rules.one_goal !== false) }); opened++; }
       catch (e) { why = shortWhy(e); }
     }
-    await sysLine(db, owner, opened ? `기본 역할 ${opened}개(${DEFAULT_ROLES.map(r => r.name).join(" · ")})를 만들었어요` : `기본 역할을 만들었지만 창은 못 열었어요${why ? ` — ${why}` : ""}`).catch(() => null);
-    return { seeded: DEFAULT_ROLES.length, opened };
+    await sysLine(db, owner, opened ? `기본 역할 ${opened}개(${defaults.map(r => r.name).join(" · ")})를 만들었어요` : `기본 역할을 만들었지만 창은 못 열었어요${why ? ` — ${why}` : ""}`).catch(() => null);
+    return { seeded: defaults.length, opened };
   }
   async ensureMain(owner: string, device: string) {
     const db = this.env.DB;
@@ -286,7 +293,7 @@ export class Engine extends DurableObject<EngEnv> {
     const bot = await db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(owner).first<{ name: string }>().catch(() => null);
     const name = bot?.name || "Primary";
     const { rules } = await ownerCfg(db, owner).catch(() => ({ rules: RULES }));
-    const r = await this.open({ owner, kind: "main", name, cwd: "~/boarder/primary", prompt: MAIN_HELLO, system: mainSystem(owner, name, rules.one_goal !== false) }).catch(async (e: unknown) => {
+    const r = await this.open({ owner, kind: "main", name, cwd: "~/boarder/primary", prompt: (await promptsOf(db, owner)).mainHello, system: mainSystem(owner, name, rules.one_goal !== false) }).catch(async (e: unknown) => {
       await sysLine(db, owner, `메인 봇을 못 열었어요 — ${shortWhy(e)}`).catch(() => null);
       return null;
     });

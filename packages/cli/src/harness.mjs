@@ -2,10 +2,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dir, ensureDir, home, loadDevice, readJson, server } from './config.mjs';
 import { targets } from './targets.mjs';
 import { LABEL_PREFIX, unitName, unitToPlist } from './launchd.mjs';
+import { dropAllRules } from './rules-block.mjs';
 
 export const TOUCHES = ['phone-alert', 'external-send', 'account-autoswitch'];
 const MARK = '# boarder harness — `boarder disable harness` removes this file';
@@ -83,12 +84,45 @@ async function download(p) {
     rmSync(harnessDir(), { recursive: true, force: true });
     renameSync(top, harnessDir());
   } finally { rmSync(tmp, { recursive: true, force: true }); }
+  buildRun();
+}
+
+function buildRun() {
   // run/: bin 사본(진짜 파일 — 명령이 제 경로로 lib 를 찾게) + lib 링크
   const run = runDir(); mkdirSync(run, { recursive: true });
   const bin = path.join(harnessDir(), 'bin'), lib = path.join(harnessDir(), 'lib');
   for (const n of existsSync(bin) ? readdirSync(bin) : []) { copyFileSync(path.join(bin, n), path.join(run, n)); chmodSync(path.join(run, n), 0o755); }
   for (const n of existsSync(lib) ? readdirSync(lib) : []) if (!present(path.join(run, n))) symlinkSync(path.join(lib, n), path.join(run, n));
   if (process.platform === 'darwin') writeFileSync(path.join(run, '.built-by-harness'), 'boarder enable harness\n');
+}
+
+const PACK_SKIP = /(^|\/)(\.env[^/]*|\.dev\.vars|harness\.env|__pycache__|[^/]*\.pyc)$/;
+const noLinks = a => { try { return !lstatSync(a).isSymbolicLink() && !PACK_SKIP.test(a); } catch { return false; } };
+const harnessRoot = from => { const r = path.resolve(String(from).replace(/^~(?=\/|$)/, home())); return existsSync(path.join(r, 'engine')) ? r : existsSync(path.join(r, 'harness', 'engine')) ? path.join(r, 'harness') : null; };
+/** 래퍼 bundles.json 의 켜기 값. 사람 몸에 닿는 묶음은 어떤 값이어도 꺼짐 */
+export function localPlan(from, wrapper) {
+  const H = harnessRoot(from); if (!H) throw new Error(`${from} has no engine/ (pass the harness folder or a Boarder checkout)`);
+  const W = path.join(H, 'wrappers', wrapper), b = readJson(path.join(W, 'bundles.json'));
+  if (!Array.isArray(b?.bundles)) throw new Error(`${W}/bundles.json is missing`);
+  const bundles = Object.fromEntries(b.bundles.map(x => [x.id, x.enabled === true && !TOUCHES.includes(x.id)]));
+  for (const t of TOUCHES) bundles[t] = false;
+  return { H, W, bundles, version: String(readJson(path.join(W, 'wrapper.json'))?.version || 'local') };
+}
+function packFromFolder(plan) {
+  const { H, W } = plan, E = path.join(H, 'engine');
+  if (!existsSync(path.join(W, 'install.json'))) throw new Error(`${W}/install.json is missing`);
+  mkdirp(shareRoot());
+  const stage = path.join(shareRoot(), `harness.new-${process.pid}`); rmSync(stage, { recursive: true, force: true });
+  try {
+    mkdirSync(path.join(stage, 'defaults'), { recursive: true });
+    for (const d of ['bin', 'lib', 'board', 'systemd', 'desktop', 'config.example']) if (existsSync(path.join(E, d)) && noLinks(path.join(E, d))) cpSync(path.join(E, d), path.join(stage, d), { recursive: true, filter: noLinks });
+    for (const d of ['skills', 'hooks', 'rules', 'plan-abc']) for (const base of [E, W]) if (existsSync(path.join(base, d))) cpSync(path.join(base, d), path.join(stage, d), { recursive: true, filter: noLinks });
+    for (const f of ['install.json', 'bundles.json']) copyFileSync(path.join(W, f), path.join(stage, 'defaults', f));
+    if (existsSync(path.join(W, 'wrapper.json'))) copyFileSync(path.join(W, 'wrapper.json'), path.join(stage, 'wrapper.json'));
+    rmSync(harnessDir(), { recursive: true, force: true });
+    renameSync(stage, harnessDir());
+  } finally { rmSync(stage, { recursive: true, force: true }); }
+  buildRun();
 }
 
 // ── 묻기(호칭 · 언어 둘만)
@@ -193,13 +227,19 @@ export function removeLaunchd(units, { lc, log = () => {}, load = true } = {}) {
 const unitBins = text => [...text.matchAll(/%h\/\.local\/bin\/([\w.-]+)/g)].map(m => m[1]);
 
 /** 켜기 — 앞서 깐 것은 먼저 걷고 지금 값으로 다시(다시 돌려도 같음) */
-export async function enableHarness({ log = console.log, name, lang } = {}) {
+export async function enableHarness({ log = console.log, name, lang, from, wrapper } = {}) {
   if (process.platform === 'win32') { log('Windows runs without the harness — Boarder uses your own subscription (SDK engine). 윈도우는 하네스 없이 내 구독(SDK)으로 써요.'); return { ok: true, skipped: 'win32' }; }
-  const p = await fetchPlan();
+  let p, plan0 = null;
+  if (from) {   // 서버 없이: 폴더에서 래퍼를 받아(직접 고른 것으로 적힘) 같은 꾸러미를 폄
+    const id = wrapper || undefined;
+    const WM = await import('./wrapper.mjs').catch(() => { throw new Error('--from needs the wrapper module, which this build does not include'); });
+    const r = await WM.wrapperPull(id, { log, from }); plan0 = localPlan(from, r.id);
+    p = { bundles: plan0.bundles, version: plan0.version };
+  } else p = await fetchPlan();
   const values = await askValues({ name, lang, log });
   const prev = loadState(); if (prev) disableHarness({ log: () => {}, keepFiles: true });
   made.clear(); for (const d of prev?.made || []) made.add(d);
-  await download(p);
+  if (plan0) packFromFolder(plan0); else await download(p);
   const spec = readJson(path.join(harnessDir(), 'defaults', 'install.json')) || {};
   const plan = planOf(spec, p.bundles);
   const st = { version: p.version, at: Date.now(), bundles: p.bundles, bins: [], skills: [], settings: [], settingsMade: [...(prev?.settingsMade || [])], units: [], env: null, made: [] };
@@ -281,6 +321,8 @@ export function disableHarness({ log = console.log, keepFiles = false } = {}) {
     for (const u of st.units) for (const f of u.files) { try { if (readFileSync(f, 'utf8').startsWith(MARK)) { rmSync(f, { force: true }); done.push(f); } } catch {} }
     if (realHome()) sh('systemctl', ['--user', 'daemon-reload']);
   }
+  const warn = [];
+  if (!keepFiles) { try { for (const d of dropAllRules()) (d.startsWith('! ') ? warn : done).push(d.replace(/^removed /, '')); } catch {} }   // 규칙 파일에 넣은 구역만(그 사람 글은 그대로)
   for (const p of [...(st.bins || []), ...(st.skills || [])]) if (ourLink(p)) { rmSync(p, { force: true }); done.push(p); }
   const settings = new Set([...(st.settings || []), ...targets().filter(t => t.tool === 'claude').map(t => t.files.settings)]);
   for (const p of settings) if (existsSync(p) && editSettings(p, stripOurs, log)) {
@@ -295,7 +337,8 @@ export function disableHarness({ log = console.log, keepFiles = false } = {}) {
     for (const d of [...(st.made || [])].sort((a, b) => b.length - a.length)) { try { if (!readdirSync(d).length) rmdirSync(d); } catch {} }
   }
   for (const p of done) log(`removed ${p}`);
-  return { ok: true, removed: done.length };
+  for (const w of warn) log(w);   // 경고는 지운 파일 목록과 따로
+  return { ok: true, removed: done.length, warnings: warn };
 }
 
 /** 목록 — 서버 값(켠 묶음)과 이 기기에 깐 것 */
@@ -313,10 +356,11 @@ export async function listHarness({ log = console.log } = {}) {
   return { installed: true, bundles, state: st };
 }
 
-export const HARNESS_HELP = `  boarder enable harness [--name <what agents call you>] [--lang ko|en|…]
+export const HARNESS_HELP = `  boarder enable harness [--name <what agents call you>] [--lang ko|en|…] [--from <harness folder or Boarder checkout> [--wrapper <name>]]
                                     install the harness bundles you turned on in Settings › Nodes (hosted Boarder, member machines):
                                     work commands in ~/.local/bin, skills in each AI tool, guard hooks added to Claude settings.json
                                     (your own entries stay), the timers that are on (systemd --user; launchd LaunchAgents on macOS). Bundles that reach people
-                                    (phone alerts, sending outside, account auto-switch) are never installed while they are off
+                                    (phone alerts, sending outside, account auto-switch) are never installed while they are off.
+                                    --from takes everything from a folder instead of the server (needs access to the internal repo; works against any Boarder server)
   boarder disable harness           take all of it back out
   boarder harness list              which bundles are on and what is installed here`;

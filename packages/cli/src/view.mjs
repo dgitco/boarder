@@ -5,6 +5,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync, readdirSync, rmdirSync } from 'node:fs';
 import { dir, ensureDir, home, loadDevice, server } from './config.mjs';
 import { HARNESS_HELP } from './harness.mjs';
+import { OVERLAY_HELP } from './overlay.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/boarder.mjs', import.meta.url));
 const UNIT = 'boarder-follow', LABEL = 'co.dgit.boarder.follow';
@@ -81,7 +82,7 @@ export async function enable(what, opts = {}) {
     const r = await ensureEngine({ log });
     return { ok: !!r.caps.length, engine: true, caps: r.caps };
   }
-  if (what === 'harness') { const { enableHarness } = await import('./harness.mjs'); return enableHarness({ log, name: opts.name, lang: opts.lang }); }
+  if (what === 'harness') { const { enableHarness } = await import('./harness.mjs'); return enableHarness({ log, name: opts.name, lang: opts.lang, from: opts.from, wrapper: opts.wrapper }); }
   throw new Error('enable report | engine | harness');
 }
 export async function disable(what, { log = console.log, only, skip } = {}) {
@@ -142,5 +143,6 @@ export const VIEW_HELP = `What Boarder may change on this machine (all off after
                                     every Claude account folder too — backed up first; fixes entries that point to an old Boarder path)
   boarder enable engine             let Boarder open, wake, park and close AI windows here (Boarder's own tmux and engine service)
 ${HARNESS_HELP}
+${OVERLAY_HELP}
   boarder disable report|engine|harness [--only <folder>]   take that back out again (report: all folders, or the ones named)
   boarder uninstall                 remove Boarder from this machine (leaves no trace)`;
