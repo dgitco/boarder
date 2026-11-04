@@ -47,6 +47,7 @@ import { mcp } from "./mcp/server";
 import { run as runTool, hasTool, addTools, onlyReads } from "./mcp/tools";
 import { registry, view, dropCache, diff } from "./mcp/registry";
 import { mountConnectors } from "./connectors/routes";
+import { mountConnectLink } from "./connectors/connect-link";
 import { mountTasks } from "./tasks/routes";
 import { mountFeatures } from "./status-pages/routes";   // 설정 › 기능: 태스크 현황 · 기기 세션 현황 켜기/끄기(사람마다, 기본 꺼짐)
 import { mountTaskBoard, sweepTaskBoard } from "./status-pages/taskboard";   // 태스크 현황(요청 · 요청 대화 · 말하기) — 기기가 올리고 켠 사람만 봄
@@ -880,6 +881,13 @@ async function memberNodeVals(env: Env, me: string) {
   const r = await env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>();
   try { return nodeVals(r ? JSON.parse(r.data) : null); } catch { return nodeVals(null); }
 }
+// 보낸 칸만 D1 안에서 합침(json_patch) — 화면 길(/api/me/nodeset)과 기기 CLI 길(device-settings.ts)이 같이 씀
+async function saveNodeVals(env: Env, me: string, raw: unknown) {
+  const patch = nodeVals(raw, {});
+  const row = await env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner) DO UPDATE SET data = json_patch(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, excluded.data), updated_at = excluded.updated_at RETURNING data")
+    .bind(me, JSON.stringify(patch), Date.now()).first<{ data: string }>();
+  try { return nodeVals(JSON.parse(row?.data || "{}")); } catch { return nodeVals(patch); }
+}
 app.get("/api/me/nodeset", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   if (isOwner(c.env, s.user.email)) {
@@ -1044,10 +1052,20 @@ connReq.mountConnectRequests(app as never, {
   device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
   card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허용 — 늘 보냄(비밀 넣기와 같음)
 });
+mountConnectLink(app as never, {
+  device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
+  human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s && await member(c.env as never, s.user.email) ? s.user.email.toLowerCase() : null; },
+  sameSite: c => sameSite(c as never),
+});
 devSettings.mountDeviceSettings(app as never, {
   device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
   ownWindow: (db, me, t) => ownWindow(db, me, t),
   regroup: (env, me) => regroup(env as never, me),
+  setUnit: (env, me, unit) => setUnit(env as never, me, unit, "me"),
+  uiPref: () => UI_PREF,
+  nodeValues: { read: (env, me) => memberNodeVals(env as never, me), save: (env, me, raw) => saveNodeVals(env as never, me, raw) },
+  sessionSync: { get: (env, me) => sessions.syncOn(env as never, me), set: (env, me, on) => sessions.setSync(env as never, me, on) },
+  flagsOff: env => (env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF,
   card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허락 — 늘 보냄(커넥터 허용과 같음)
 });
 mountSecrets(app as never, {

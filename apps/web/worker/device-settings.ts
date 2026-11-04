@@ -3,6 +3,10 @@ import { readPrefs, savePrefs, repoOf, type NodePrefs } from "./node-prefs";
 import { cleanPins, readPins, savePins, type Pin } from "./side-order";
 import { foldRows, frontDoorOf, type FrontDoor } from "./front-door";
 import { paneOfId } from "./member-board";
+import { listDevices } from "./devices";
+import { prefsPatch } from "./node-prefs";
+import { cleanHide, readHide, saveHide } from "./side-order";
+import { FEATS, isFeat, featsOf, setFeat } from "./status-pages/feature";
 
 type Env = { DB: D1Database; PUBLIC_URL: string };
 type C = Context<{ Bindings: Env }>;
@@ -12,7 +16,15 @@ export type Hooks = {
   ownWindow: (db: D1Database, me: string, target: string) => Promise<boolean>;
   regroup: (env: Env, me: string) => Promise<unknown>;
   card?: (env: Env, owner: string, card: { id: string; question: string }) => void;
+  // 화면 길(index.ts)이 쓰는 같은 함수 · 표 — 설정 칸을 한 곳에서만 정의하려고 받음
+  setUnit: (env: Env, me: string, unit: "goal" | "agent") => Promise<unknown>;
+  uiPref: () => Record<string, (v: string) => boolean>;
+  nodeValues: { read: (env: Env, me: string) => Promise<Record<string, number>>; save: (env: Env, me: string, raw: unknown) => Promise<Record<string, number>> };
+  sessionSync: { get: (env: Env, me: string) => Promise<boolean>; set: (env: Env, me: string, on: boolean) => Promise<unknown> };
+  flagsOff?: (env: Env) => string | undefined;
 };
+export const TOUCHY_BUNDLES = ["phone-alert", "external-send", "account-autoswitch"] as const;
+export const TOUCHY_RULES = ["outside", "ask"] as const;   // 바깥 발송 · 사람에게 묻기 규칙 — 끄면 에이전트가 승인 없이 움직이므로 같은 취급
 
 export const TTL = 10 * 60_000;
 export const ALLOW = "허용", DENY = "거절";
@@ -21,9 +33,9 @@ export const MAX_DAY_CARDS = 5;   // 기기마다 하루 다섯(device-card.ts �
 export const LOCK_MS = 24 * 3600_000;   // 거절 뒤 그 기기의 카드를 안 세우는 시간
 const DAY = 24 * 3600_000;
 export const NOT_ALLOWED_HINT = "이 기기는 설정을 바꿀 허락이 없어요 — boarder settings allow 로 보드에 허락 카드를 세우고 사람이 「허용」을 눌러요";
-export const KEYS = ["pins", "task_channels", "task_repo", "front_door", "primary_window", "bot_name"] as const;
+export const KEYS = ["pins", "task_channels", "task_repo", "front_door", "primary_window", "bot_name", "node_values", "unit", "prefs", "side_hide", "ui", "features", "session_sync"] as const;
 export type Key = typeof KEYS[number];
-export const LABEL: Record<Key, string> = { pins: "사이드바 고정 캔버스", task_channels: "채널 = 태스크", task_repo: "업무 저장소", front_door: "앞단 접기", primary_window: "기본 창", bot_name: "메인 봇 이름" };
+export const LABEL: Record<Key, string> = { pins: "사이드바 고정 캔버스", task_channels: "채널 = 태스크", task_repo: "업무 저장소", front_door: "앞단 접기", primary_window: "기본 창", bot_name: "메인 봇 이름", node_values: "노드 수치(점검 주기 · 나누기 · 이동 · 이름 · 보관)", unit: "채널 묶는 단위", prefs: "노드 설정(주차 · 메인 봇 창 · 규칙 · 묶음 · 트리 정리)", side_hide: "사이드바 숨김 줄", ui: "모양 설정", features: "기능 켜기", session_sync: "세션 싱크" };
 const NOSTORE = { "cache-control": "no-store" };
 const ctl = (s: unknown, n: number) => String(s ?? "").replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim().slice(0, n);
 const cardId = (now: number) => `${Math.floor(now / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
@@ -34,6 +46,12 @@ const askedKind = (dev: string) => `cli_settings_asked:${dev}`, lockedKind = (de
 /** 이 기기가 설정 바꾸기를 허락받았는지 */
 export async function allowed(db: D1Database, me: string, dev: string) {
   return !!(await db.prepare("SELECT 1 FROM user_pref WHERE owner = ? AND k = ?").bind(me, grantKey(dev)).first());
+}
+export const WIDE = "v2:";
+export const OLD_KEYS = ["pins", "task_channels", "task_repo", "front_door", "primary_window", "bot_name"] as const;
+export async function allowedWide(db: D1Database, me: string, dev: string) {
+  const r = await db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = ?").bind(me, grantKey(dev)).first<{ v: string }>();
+  return !!r && String(r.v).startsWith(WIDE);
 }
 /** 기다리는 허락 요청(10분 안)이 있는지 — 이 기기 것만 */
 async function pendingOf(db: D1Database, me: string, dev: string, now = Date.now()) {
@@ -56,7 +74,7 @@ export async function onSettingsCardAnswered(env: { DB: D1Database }, me: string
   if (!won.meta.changes) return true;
   const live = await env.DB.prepare("SELECT 1 FROM device WHERE id = ? AND owner = ? AND revoked_at IS NULL AND scope = 'full'").bind(r.dev, me).first();
   const ok = r.answer === ALLOW && now - r.at <= TTL && !!live;
-  if (ok) await env.DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(me, grantKey(r.dev), String(now), now).run();
+  if (ok) await env.DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(me, grantKey(r.dev), WIDE + now, now).run();
   const done = ok ? "허용함 — 이 기기에서 boarder 설정 명령을 쓸 수 있어요" : r.answer === ALLOW ? (live ? "만료" : "그 기기가 끊겨 허용하지 않았어요") : "거절함";
   await env.DB.prepare("UPDATE board_card SET state = 'closed', done = ? WHERE id = ? AND owner = ? AND state = 'answered'").bind(done, id, me).run();
   if (r.answer !== ALLOW) await env.DB.prepare("INSERT INTO device_card_event(email, kind, at) VALUES (?, ?, ?)").bind(me, lockedKind(r.dev), now).run();
@@ -65,25 +83,37 @@ export async function onSettingsCardAnswered(env: { DB: D1Database }, me: string
 /** 카드가 설정 허락 카드인지(답 길이 토큰 머리를 거절할 때) */
 export const isSettingsCard = async (env: { DB: D1Database }, me: string, id: string) => !!(await env.DB.prepare("SELECT 1 FROM user_pref WHERE owner = ? AND k = ?").bind(me, reqKey(id)).first());
 
-type Values = { pins: Pin[]; task_channels: boolean; task_repo: string; front_door: FrontDoor | null; primary_window: string | null; bot_name: string | null };
-async function readAll(db: D1Database, me: string): Promise<Values> {
-  const [p, pins, pw, bot] = await Promise.all([
+type Values = { pins: Pin[]; task_channels: boolean; task_repo: string; front_door: FrontDoor | null; primary_window: string | null; bot_name: string | null;
+  node_values: Record<string, number>; unit: string | null; prefs: Record<string, unknown>; side_hide: string[]; ui: Record<string, string>; features: Record<string, boolean>; session_sync: boolean };
+async function readAll(env: Env, h: Hooks, me: string): Promise<Values> {
+  const db = env.DB;
+  const [p, pins, pw, bot, nv, unit, hide, ui, feats, sync] = await Promise.all([
     readPrefs(db, me), readPins(db, me),
     db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me).first<{ v: string }>(),
     db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(me).first<{ name: string }>(),
+    h.nodeValues.read(env, me),
+    db.prepare("SELECT json_extract(data, '$.unit') u FROM node_setting WHERE owner = ? AND json_valid(data)").bind(me).first<{ u: string | null }>().catch(() => null),
+    readHide(db, me),
+    db.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(me).all<{ k: string; v: string }>(),
+    featsOf(db, me, h.flagsOff?.(env)),
+    h.sessionSync.get(env, me),
   ]);
-  return { pins, task_channels: p.task_channels, task_repo: p.task_repo, front_door: p.front_door, primary_window: pw?.v || null, bot_name: bot?.name ?? null };
+  const uiv: Record<string, string> = {};
+  for (const r of ui.results || []) { const k = r.k.slice(3); if (Object.hasOwn(h.uiPref(), k) && h.uiPref()[k](r.v)) uiv[k] = r.v; }
+  const { task_channels, task_repo, front_door, ...prefs } = p;   // 이 셋은 위에 따로 있음
+  return { pins, task_channels, task_repo, front_door, primary_window: pw?.v || null, bot_name: bot?.name ?? null,
+    node_values: nv, unit: unit?.u === "goal" || unit?.u === "agent" ? unit.u : null, prefs, side_hide: hide, ui: uiv, features: feats, session_sync: sync };
 }
 const canvasId = (s: string) => { const t = s.trim(), m = /\/(?:art|canvas)\/([A-Za-z0-9_-]{4,64})\/?(?:[?#].*)?$/.exec(t); return m ? m[1] : t; };
 /** 보드 기록에 남길 짧은 값 */
-export const show = (k: Key, v: unknown) => v === null || v === "" ? "없음" : k === "pins" ? (v as Pin[]).map(p => p.id).join(", ") || "없음" : k === "front_door" ? `${(v as FrontDoor).name}(${(v as FrontDoor).pairs.map(p => p.name).join(" · ")})` : typeof v === "boolean" ? (v ? "켬" : "끔") : String(v);
+export const show = (k: Key, v: unknown) => v === null || v === "" ? "없음" : k === "pins" ? (v as Pin[]).map(p => p.id).join(", ") || "없음" : k === "front_door" ? `${(v as FrontDoor).name}(${(v as FrontDoor).pairs.map(p => p.name).join(" · ")})` : typeof v === "boolean" ? (v ? "켬" : "끔") : typeof v === "object" ? JSON.stringify(v).slice(0, 300) : String(v);
 
 /** 그 회원 보드 기록에 「기기 ○○ 이 CLI 로 △△ 을 바꿨어요 — 전 → 후」 한 줄(실패해도 바꾸기는 그대로).
  *  화면 덧씌우기 알림과 같은 시스템 줄(engine.ts sysLine 꼴: kind sys · thread primary) — 그냥 progress 줄이면 묶기가 「보더」라는 노드 칸을 새로 만듦 */
 export const logChange = (db: D1Database, me: string, device: string, label: string, before: string, after: string) =>
   db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "보더", "sys", ctl(`기기 「${ctl(device, 60)}」 이 CLI 로 ${label} 을 바꿨어요 — 전: ${before} → 후: ${after}`, 600), "primary", Date.now()).run().catch(() => {});
 
-type Out = { after: unknown } | { error: string; status: 400 | 404 | 409; extra?: Record<string, unknown> };
+type Out = { after: unknown } | { error: string; status: 400 | 403 | 404 | 409; extra?: Record<string, unknown> };
 async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, cur: Values): Promise<Out> {
   const DB = env.DB;
   if (key === "pins") {
@@ -130,6 +160,57 @@ async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, c
     await DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(me, "primary_win", t, Date.now()).run();
     return { after: t };
   }
+  if (key === "node_values") {
+    const o = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+    if (!o || !Object.values(o).length || !Object.values(o).every(v => typeof v === "number" && Number.isFinite(v))) return { error: "node_values: { check_min | split_at | move_h | rename_h | archive_h: 숫자 } (보낸 칸만 바뀜)", status: 400 };
+    const bad = Object.keys(o).filter(k => !Object.hasOwn(cur.node_values, k));
+    if (bad.length) return { error: `모르는 칸: ${bad.join(", ")}`, status: 400 };
+    return { after: await h.nodeValues.save(env, me, o) };
+  }
+  if (key === "unit") {
+    if (value !== "goal" && value !== "agent") return { error: "unit: \"goal\" | \"agent\"", status: 400 };
+    await h.setUnit(env, me, value); await h.regroup(env, me);
+    return { after: value };
+  }
+  if (key === "prefs") {
+    const patch = prefsPatch(value);
+    if (!patch) return { error: "prefs: { park_on, park_h, task_dots, tree_tidy, primary_item, rules: {…}, bundles: {…} } 중 바꿀 칸 (틀린 칸은 무시되고 하나도 없으면 거절)", status: 400 };
+    const touchy = TOUCHY_BUNDLES.filter(k => patch.bundles && k in patch.bundles && patch.bundles[k] !== (cur.prefs.bundles as Record<string, boolean> | undefined)?.[k]);
+    const rulesNow = cur.prefs.rules as Record<string, boolean> | undefined;
+    for (const k of TOUCHY_RULES) if (patch.rules && k in patch.rules && patch.rules[k as never] !== rulesNow?.[k]) touchy.push(`rules.${k}` as never);
+    if (touchy.length) return { error: `approval_required: ${touchy.join(", ")} 는 사람 몸에 닿는 묶음이라 기기 허락만으로는 못 바꿔요 — 보드 화면에서 직접 바꾸거나 건건 승인 길(준비 중)을 써요`, status: 403 };
+    await savePrefs(DB, me, patch);
+    if (patch.primary_item !== undefined || patch.park_on !== undefined || patch.park_h !== undefined || patch.tree_tidy !== undefined) await h.regroup(env, me);
+    const after = { ...(await readPrefs(DB, me)) } as Record<string, unknown>; delete after.task_channels; delete after.task_repo; delete after.front_door;
+    return { after };
+  }
+  if (key === "side_hide") {
+    const hide = cleanHide(value);
+    if (!hide) return { error: "side_hide: [\"node\" | \"canvas\" | \"feed\"…] (빈 목록 = 다 보임)", status: 400 };
+    await saveHide(DB, me, hide);
+    return { after: hide };
+  }
+  if (key === "ui") {
+    const o = value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value as Record<string, unknown>) : [];
+    if (!o.length || o.length > 12 || o.some(([k, v]) => !Object.hasOwn(h.uiPref(), k) || typeof v !== "string" || !h.uiPref()[k](v))) return { error: `ui: { ${Object.keys(h.uiPref()).join(" | ")}: 값 } (화면과 같은 값 범위)`, status: 400 };
+    const now = Date.now();
+    await DB.batch(o.map(([k, v]) => DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(me, "ui:" + k, v as string, now)));
+    return { after: Object.fromEntries(o) };
+  }
+  if (key === "features") {
+    const o = value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value as Record<string, unknown>) : [];
+    if (!o.length || o.some(([k, v]) => !isFeat(k) || typeof v !== "boolean")) return { error: `features: { ${FEATS.join(" | ")}: true | false }`, status: 400 };
+    const off = String(h.flagsOff?.(env) || "").split(",").map(x => x.trim());
+    if (o.some(([k, v]) => v && off.includes(k))) return { error: "이 서버에서 꺼 둔 기능이에요", status: 409 };
+    for (const [k, v] of o) await setFeat(DB, me, k as never, v as boolean);
+    return { after: await featsOf(DB, me, h.flagsOff?.(env)) };
+  }
+  if (key === "session_sync") {
+    if (typeof value !== "boolean") return { error: "session_sync: true | false", status: 400 };
+    if (value && !cur.session_sync) return { error: "approval_required: 세션 싱크를 켜면 대화가 서버에 저장되기 시작해요 — 보드 화면에서 직접 켜요(끄기는 이 명령으로 돼요)", status: 403 };
+    await h.sessionSync.set(env, me, value);
+    return { after: value };
+  }
   // bot_name: 이름만(모양 · 색 · 그림은 화면에서 만든 그대로). 아직 메인 봇을 안 만든 회원은 화면에서 먼저(그림이 있어야 하는 줄)
   if (typeof value !== "string" || value.length > 200) return { error: "이름은 1–20자 글이에요", status: 400 };
   const name = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
@@ -145,7 +226,7 @@ export function mountDeviceSettings(host: Hono<any>, h: Hooks) {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
     const me = d.owner.toLowerCase();
     await sweep(c.env.DB, me);
-    return c.json({ allowed: await allowed(c.env.DB, me, d.id), pending: await pendingOf(c.env.DB, me, d.id), values: await readAll(c.env.DB, me) }, 200, NOSTORE);
+    return c.json({ allowed: await allowed(c.env.DB, me, d.id), allowed_wide: await allowedWide(c.env.DB, me, d.id), pending: await pendingOf(c.env.DB, me, d.id), values: await readAll(c.env, h, me) }, 200, NOSTORE);
   });
   app.post("/api/device/settings", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
@@ -154,23 +235,30 @@ export function mountDeviceSettings(host: Hono<any>, h: Hooks) {
     const b = Object(await c.req.json().catch(() => ({}))) as { key?: unknown; value?: unknown };
     const key = String(b.key ?? "") as Key;
     if (!KEYS.includes(key)) return c.json({ error: `key: ${KEYS.join(" | ")}` }, 400, NOSTORE);
+    if (!(OLD_KEYS as readonly string[]).includes(key) && !(await allowedWide(c.env.DB, me, d.id))) return c.json({ error: "not_allowed", hint: "이 기기의 옛 허락은 새 설정 칸을 포함하지 않아요 — boarder settings allow 로 허락을 다시 받아요" }, 403, NOSTORE);
     if (!("value" in b)) return c.json({ error: "value 가 없어요" }, 400, NOSTORE);
-    const cur = await readAll(c.env.DB, me), before = cur[key];
+    const cur = await readAll(c.env, h, me), before = cur[key];
     const r = await apply(c.env, h, me, key, b.value, cur);
     if ("error" in r) return c.json({ error: r.error, ...(r.extra || {}) }, r.status, NOSTORE);
     await logChange(c.env.DB, me, d.name, LABEL[key], show(key, before), show(key, r.after));
     return c.json({ ok: true, key, before, after: r.after }, 200, NOSTORE);
   });
+  // 내 기기 목록(읽기만, 허락 불필요) — 이름 · 도구 · 범위 · 마지막 연결. 지표 · 이력은 뺌(무거움). 폐기는 일부러 CLI 에 없음(되돌릴 수 없음 · 보안): 보드 화면에서
+  app.get("/api/device/devices", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401, NOSTORE);
+    const list = await listDevices(c.env.DB, d.owner.toLowerCase());
+    return c.json({ this: d.id, devices: (list as unknown as Record<string, unknown>[]).map(x => ({ id: x.id, name: x.name, tools: x.tools, scope: x.scope, created_at: x.created_at, last_at: x.last_at, engine_at: x.engine_at ?? null })) }, 200, NOSTORE);
+  });
   app.get("/api/device/settings/allow", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
     const me = d.owner.toLowerCase();
     await sweep(c.env.DB, me);
-    return c.json({ allowed: await allowed(c.env.DB, me, d.id), pending: await pendingOf(c.env.DB, me, d.id) }, 200, NOSTORE);
+    return c.json({ allowed: await allowedWide(c.env.DB, me, d.id), pending: await pendingOf(c.env.DB, me, d.id) }, 200, NOSTORE);
   });
   app.post("/api/device/settings/allow", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
     const me = d.owner.toLowerCase(), now = Date.now();
-    if (await allowed(c.env.DB, me, d.id)) return c.json({ allowed: true, pending: false }, 200, NOSTORE);
+    if (await allowedWide(c.env.DB, me, d.id)) return c.json({ allowed: true, pending: false }, 200, NOSTORE);   // 옛 허락(범위 좁음)이면 새 카드를 세워 다시 허락받음
     await sweep(c.env.DB, me, now);
     const open = await c.env.DB.prepare("SELECT substr(k, 18) card FROM user_pref WHERE owner = ? AND k LIKE 'cli\\_settings\\_req:%' ESCAPE '\\' AND v = ? LIMIT 1").bind(me, d.id).first<{ card: string }>();
     if (open) return c.json({ allowed: false, pending: true, card_id: open.card }, 200, NOSTORE);

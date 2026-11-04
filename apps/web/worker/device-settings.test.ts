@@ -177,6 +177,67 @@ test("칸마다 값 검사 · 전 값: 고정 캔버스(주소 → id) · 업무
   assert.equal((await s.call("POST", "/api/device/settings", { key: "task_channels" }, s.dev(DEV1))).status, 400);
 });
 
+test("새 칸: 노드 수치 · 단위 · prefs · 사이드 숨김 · 모양 · 기능 · 세션 싱크 — 허락 뒤만 · 전 값 · 틀리면 400 · 화면 길과 같은 자리", async () => {
+  const s = await setup();
+  const g0 = await s.get();
+  for (const k of ["node_values", "unit", "prefs", "side_hide", "ui", "features", "session_sync"]) assert.ok(k in g0.j.values, k);
+  assert.equal((await s.set("node_values", { move_h: 5 })).status, 403, "허락 없이는 못 바꿈");
+  await s.grant();
+  // 노드 수치: 보낸 칸만 · 범위로 자름 · 전 값
+  const nv = await s.set("node_values", { move_h: 5, archive_h: 9999 });
+  assert.equal(nv.status, 200, nv.text); assert.equal(nv.j.before.move_h, 24); assert.equal(nv.j.after.move_h, 5); assert.equal(nv.j.after.archive_h, 168); assert.equal(nv.j.after.check_min, 30, "안 보낸 칸은 그대로");
+  assert.equal((await s.set("node_values", { nope: 1 })).status, 400); assert.equal((await s.set("node_values", { move_h: "5" })).status, 400); assert.equal((await s.set("node_values", {})).status, 400);
+  // 단위
+  assert.equal((await s.set("unit", "agent")).status, 200); assert.equal((await s.get()).j.values.unit, "agent");
+  assert.equal((await s.set("unit", "x")).status, 400);
+  // prefs: 칸만 · 묶음 중 사람 몸에 닿는 것은 거절
+  const pf = await s.set("prefs", { park_on: false, park_h: 12, rules: { report: false }, bundles: { "priority-file": false } });
+  assert.equal(pf.status, 200, pf.text); assert.equal(pf.j.after.park_on, false); assert.equal(pf.j.after.park_h, 12); assert.equal(pf.j.after.rules.report, false); assert.equal(pf.j.after.bundles["priority-file"], false);
+  assert.equal(pf.j.before.park_on, true);
+  const touchy = await s.set("prefs", { bundles: { "phone-alert": true } });
+  assert.equal(touchy.status, 403, touchy.text); assert.match(touchy.j.error, /approval_required/);
+  assert.equal((await s.get()).j.values.prefs.bundles["phone-alert"], false, "안 바뀜");
+  assert.equal((await s.set("prefs", { bundles: { "phone-alert": false } })).status, 200, "값이 그대로면 통과");
+  assert.equal((await s.set("prefs", { nope: 1 })).status, 400);
+  // 사이드 숨김 · 모양 · 기능 · 세션 싱크
+  assert.deepEqual((await s.set("side_hide", ["feed"])).j.after, ["feed"]); assert.equal((await s.set("side_hide", ["x"])).j.after.length, 0, "모르는 열쇠는 버림");
+  const ui = await s.set("ui", { theme: "dark", still: "1" }); assert.equal(ui.status, 200, ui.text); assert.equal((await s.get()).j.values.ui.theme, "dark");
+  assert.equal((await s.set("ui", { theme: "pink" })).status, 400); assert.equal((await s.set("ui", { toString: "x" })).status, 400);
+  const ft = await s.set("features", { taskboard: true }); assert.equal(ft.status, 200, ft.text); assert.equal(ft.j.after.taskboard, true);
+  assert.equal((await s.set("features", { nope: true })).status, 400);
+  assert.equal((await s.set("session_sync", false)).status, 200); assert.equal((await s.get()).j.values.session_sync, false);
+  assert.equal((await s.set("session_sync", "off")).status, 400);
+  // 보드 기록에 전 값
+  const logs = (s.db.prepare("SELECT text FROM board_log WHERE owner = ? AND win = '보더'").all(MEMBER) as any[]).map(x => x.text);
+  assert.ok(logs.some(t => /노드 수치/.test(t) && /전:/.test(t)), logs.join("\n"));
+});
+
+test("옛 허락(범위 좁음)은 새 칸을 못 바꾸고 다시 허락받아야 함 · 바깥 발송 · 묻기 규칙 · 세션 싱크 켜기는 기기 허락만으로 못 바꿈", async () => {
+  const s = await setup();
+  s.db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").run(MEMBER, "cli_settings:dev1", String(Date.now()), Date.now());   // 옛 허락 값(접두사 없음)
+  assert.equal((await s.set("task_channels", true)).status, 200, "옛 칸은 그대로 됨");
+  const n = await s.set("node_values", { move_h: 5 });
+  assert.equal(n.status, 403, n.text); assert.match(n.j.hint, /다시 받아요/);
+  const a = await s.call("POST", "/api/device/settings/allow", {}, s.dev(DEV1));
+  assert.equal(a.j.allowed, false, "옛 허락이면 새 카드를 세움"); assert.equal(a.j.pending, true);
+  assert.equal((await s.call("POST", `/api/me/cards/${a.j.card_id}/answer`, { choice: "허용" }, await s.human())).status, 200);
+  assert.equal((await s.set("node_values", { move_h: 5 })).status, 200, "다시 허락한 뒤");
+  for (const rules of [{ outside: false }, { ask: false }]) { const r = await s.set("prefs", { rules }); assert.equal(r.status, 403, r.text); assert.match(r.j.error, /approval_required/); }
+  assert.equal((await s.set("prefs", { rules: { report: false } })).status, 200, "다른 규칙은 됨");
+  assert.equal((await s.set("session_sync", false)).status, 200, "끄기는 됨");
+  const on = await s.set("session_sync", true); assert.equal(on.status, 403, on.text); assert.match(on.j.error, /approval_required/);
+});
+
+test("내 기기 목록(GET /api/device/devices): 허락 없이도 읽힘 · 자기 회원 기기만 · 지표 없음 · 감시 · 토큰 없음은 401", async () => {
+  const s = await setup();
+  const r = await s.call("GET", "/api/device/devices", undefined, s.dev(DEV1));
+  assert.equal(r.status, 200, r.text); assert.equal(r.j.this, "dev1");
+  assert.deepEqual(r.j.devices.map((d: any) => d.id).sort(), ["dev1", "dev2", "devMW"]);
+  assert.ok(!("metrics" in r.j.devices[0]) && !("token_hash" in r.j.devices[0]));
+  for (const t of [DEVMW, DEVW]) assert.equal((await s.call("GET", "/api/device/devices", undefined, s.dev(t))).status, 401);
+  assert.equal((await s.call("GET", "/api/device/devices")).status, 401);
+});
+
 test("다른 회원 기기는 내 값을 못 읽고 못 바꿈(자기 값만)", async () => {
   const s = await setup();
   await s.grant(DEV1);

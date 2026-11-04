@@ -13,13 +13,26 @@ export const SETTINGS_HELP = `Board settings from this machine (show: any member
                                                                   fold old front nodes into the Primary chat under one name
   boarder primary-window show | set <window:…|ew_…> | set off     window that gets Primary chat messages instead of the main bot
   boarder bot show | set --name "<name>"                          main bot name (look and pictures stay)
+  boarder devices                                                 your machines on this board: name, tools, scope, last seen (revoking stays on the board screen)
+  boarder node-values show | set check_min=30 split_at=3 move_h=24 rename_h=6 archive_h=6   node numbers (only the ones you pass change)
+  boarder unit show | set goal|agent                              what a channel groups: one goal or one agent
+  boarder prefs show | set park_on=false park_h=6 task_dots=true tree_tidy=true primary_item=auto rules.<key>=false bundles.<name>=false
+                                                                  parking, main-bot window, harness rules and bundles (--json <file|-> for a whole object)
+                                                                  phone-alert / external-send / account-autoswitch need a person on the board, not this command
+  boarder side-hide show | set node|canvas|feed… | set --none     sidebar top rows to hide
+  boarder ui show | set theme=dark accent=orange still=1 …        look and feel (same value ranges as the screen)
+  boarder features show | set taskboard=on devboard=off           optional pages
+  boarder session-sync show | set on|off                          keep (or stop) saving sessions
   boarder roles show | set <file.json|->                          role seat chart [{name, win, node?, primary?, fold?}…]
   boarder window show | renew                                     this window's key and name · get a new window token (never printed)
   Every set prints {before, after, undo}: run undo to put the old value back.
   The same permission also lets this machine upload screen scripts: \`boarder view overlay js\` and \`boarder harness wrapper ui on\` need it too.`;
 
-const COMMANDS = { pins: 'pins', 'task-channels': 'task_channels', 'task-repo': 'task_repo', 'front-door': 'front_door', 'primary-window': 'primary_window', bot: 'bot_name' };
-export const SETTINGS_COMMANDS = ['settings', ...Object.keys(COMMANDS), 'roles', 'window'];
+const COMMANDS = { pins: 'pins', 'task-channels': 'task_channels', 'task-repo': 'task_repo', 'front-door': 'front_door', 'primary-window': 'primary_window', bot: 'bot_name',
+  'node-values': 'node_values', unit: 'unit', prefs: 'prefs', 'side-hide': 'side_hide', ui: 'ui', features: 'features', 'session-sync': 'session_sync' };
+const OBJECT_CMDS = new Set(['node-values', 'prefs', 'ui', 'features']);   // k=v 쌍(또는 --json)으로 받는 칸
+export const COMMAND_KEYS = Object.values(COMMANDS);   // 서버 device-settings.ts KEYS 와 같아야 함(settings.test.mjs 가 대조)
+export const SETTINGS_COMMANDS = ['settings', ...Object.keys(COMMANDS), 'roles', 'window', 'devices'];
 
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
 const out = j => console.log(JSON.stringify(j));
@@ -50,6 +63,14 @@ export function undoOf(cmd, before) {
     return `${b} --name ${q(before.name)} ${fold.map(n => `--fold ${q(n)}`).join(' ')}${aliases.some(a => !names.includes(a)) ? ` ${aliases.map(n => `--alias ${q(n)}`).join(' ')}` : ''}`;
   }
   if (cmd === 'bot') return before ? `${b} --name ${q(before)}` : null;   // 봇이 없던 때는 되돌릴 이름이 없음
+  if (cmd === 'unit') return before ? `${b} ${before}` : null;
+  if (cmd === 'session-sync') return before ? null : `${b} off`;   // 켜기는 사람 몫이라 되돌림 명령으로 안내하지 않음(서버가 approval_required)
+  if (cmd === 'side-hide') return before?.length ? `${b} ${before.join(' ')}` : `${b} --none`;
+  if (cmd === 'node-values' || cmd === 'ui' || cmd === 'features') {   // 납작한 칸은 k=v 그대로(에이전트가 바로 붙여 실행) — 전 값이 없던 칸(ui 의 빈 값)은 되돌릴 값이 없음
+    const e = Object.entries(before && typeof before === 'object' ? before : {});
+    return e.length ? `${b} ${e.map(([k, v]) => `${k}=${cmd === 'features' ? (v ? 'on' : 'off') : cmd === 'ui' ? q(v) : v}`).join(' ')}` : null;
+  }
+  if (cmd === 'prefs') return before && typeof before === 'object' ? `${b} --json - <<'JSON'\n${JSON.stringify(before)}\nJSON` : null;
   return null;
 }
 /** 명령 인자 → 서버에 보낼 값. 틀리면 null(사용법) */
@@ -61,7 +82,25 @@ export function valueOf(cmd, pos, flags) {
   if (cmd === 'primary-window') return v === 'off' ? null : v || undefined;
   if (cmd === 'front-door') return v === 'off' ? null : flags.name && flags.fold?.length ? { name: flags.name, fold: flags.fold, ...(flags.alias?.length ? { aliases: flags.alias } : {}) } : undefined;
   if (cmd === 'bot') return flags.name || null;
+  if (cmd === 'unit') return v === 'goal' || v === 'agent' ? v : undefined;
+  if (cmd === 'session-sync') return v === 'on' ? true : v === 'off' ? false : undefined;
+  if (cmd === 'side-hide') return flags.none ? [] : pos.length ? pos : undefined;
+  if (OBJECT_CMDS.has(cmd)) return pairsOf(cmd, pos, flags);
   return undefined;
+}
+export function pairsOf(cmd, pos, flags) {
+  if (flags.json !== undefined) { try { const o = JSON.parse(flags.json === true || flags.json === '-' ? readFileSync(0, 'utf8') : readFileSync(flags.json, 'utf8')); return o && typeof o === 'object' && !Array.isArray(o) ? o : undefined; } catch { return undefined; } }
+  if (!pos.length) return undefined;
+  const out = {};
+  for (const x of pos) {
+    const m = /^([A-Za-z0-9_]+)(?:\.([A-Za-z0-9_-]+))?=(.*)$/s.exec(x); if (!m) return undefined;
+    const [, k, sub, raw] = m;
+    const v = cmd === 'ui' ? raw : cmd === 'features' ? (raw === 'on' || raw === 'true' ? true : raw === 'off' || raw === 'false' ? false : undefined)
+      : cmd === 'node-values' ? Number(raw) : raw === 'true' ? true : raw === 'false' ? false : raw !== '' && !Number.isNaN(Number(raw)) ? Number(raw) : raw;
+    if (v === undefined) return undefined;
+    if (sub) (out[k] ||= {})[sub] = v; else out[k] = v;
+  }
+  return out;
 }
 const readJsonArg = p => JSON.parse(p === '-' ? readFileSync(0, 'utf8') : readFileSync(p, 'utf8'));
 const seatIn = s => Object.fromEntries(Object.entries({ name: s.name, win: s.win, node: s.node, primary: s.primary, fold: s.fold }).filter(([, x]) => x !== undefined && x !== null && x !== false));
@@ -87,6 +126,7 @@ export async function settingsCommand(cmd, sub, pos, flags) {
     if (sub === 'revoke') return out(await call('DELETE', '/api/device/settings/allow'));
     fail(SETTINGS_HELP, 64);
   }
+  if (cmd === 'devices') return out(await call('GET', '/api/device/devices'));
   if (cmd === 'window') {
     const w = windowKey();
     if (sub === 'show') return out({ key: w.key, name: w.name, server: server(), token_saved: !!loadWindow(w.key)?.token, env_token: !!process.env.BOARDER_TOKEN?.trim() });

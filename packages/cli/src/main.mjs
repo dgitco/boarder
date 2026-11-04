@@ -81,6 +81,8 @@ ${DEVICE_HELP}
 
 Connect a service (Linear, Notion, GitHub, any MCP server)
   boarder connect <service|https MCP URL> [--label <second account>] [--open]
+  boarder connect <service> --link [--label <name>] [--no-wait]
+                                    one-use link for a sign-in (OAuth) service: give it to the person, they open it and press 계속; waits until connected
   boarder connect <name> --key-file <file|-> [--base-url https://… --auth bearer|basic|header:<Name>|query:<name>] [--label <name>] [--write] [--no-wait]
                                     API key or mail (IMAP) from this machine: a card on your board asks you to allow it; read only unless --write
 
@@ -99,7 +101,7 @@ function parse(rest) {
     const a = rest[i];
     if (!a.startsWith('--')) { pos.push(a); continue; }
     const k = a.slice(2);
-    if (['bg', 'no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay', 'force', 'dropped', 'all', 'none'].includes(k)) { flags[k] = true; continue; }
+    if (['link', 'bg', 'no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay', 'force', 'dropped', 'all', 'none'].includes(k)) { flags[k] = true; continue; }
     const v = rest[++i];
     if (['choice', 'evidence', 'fold', 'alias', 'part'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
   }

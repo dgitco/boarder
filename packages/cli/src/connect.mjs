@@ -46,10 +46,35 @@ async function connectWithKey(service, flags) {
   fail('no answer in 10 minutes — run this again', 75);
 }
 
+// --link: 로그인(OAuth) 서비스 — 서버가 만든 일회용 링크를 찍음(에이전트가 사람에게 건넴). 사람은 열어 「계속」만 누름. 기본은 연결될 때까지 기다림(--no-wait 면 링크만)
+async function connectWithLink(service, flags) {
+  const d = loadDevice(); if (!d?.token) fail('this machine is not signed in — run `boarder setup` first', 3);
+  const auth = { authorization: `Bearer ${d.token}` };
+  const r = await fetch(`${server()}/api/device/connect-link`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ service, ...(flags.label ? { label: flags.label } : {}) }), signal: AbortSignal.timeout(20000) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) fail('this machine was revoked or is not a member machine — sign in again with `boarder setup`', 3);
+  if (!r.ok) fail(`no link: ${j.error || r.status}`);
+  console.log(`Give this link to the person (one use, ${Math.round(j.expires_in / 60)} min): ${j.url}`);
+  if (flags['no-wait']) return console.log(`check later: boarder connect ${service} --link-status ${j.id}`);
+  await waitLink(j.id, auth);
+}
+async function waitLink(id, auth) {
+  const until = Date.now() + 10 * 60_000;
+  while (Date.now() < until) {
+    await sleep(3000);
+    let s; try { const p = await fetch(`${server()}/api/device/connect-link/${encodeURIComponent(id)}`, { headers: auth, signal: AbortSignal.timeout(15000) }); s = await p.json(); } catch { continue; }
+    if (s.state === 'connected') return console.log(`✓ connected ${s.service}`);
+    if (s.state === 'expired') fail('the link expired — run this again', 75);
+  }
+  fail('not connected in 10 minutes — run this again', 75);
+}
+
 export async function connectCommand(pos, flags) {
   const target = pos[0];
   if (!target || !/^([a-z0-9][a-z0-9-]{0,39}|https:\/\/\S{4,400})$/.test(target)) { console.error('usage: boarder connect <service|https MCP URL> [--label <name>]\n       boarder connect <name> --key-file <file|-> [--base-url https://… --auth bearer|basic|header:<Name>|query:<name>] [--label <name>] [--write] [--no-wait]'); process.exit(1); }
   if (flags['key-file']) { if (target.startsWith('https://')) fail('--key-file takes a name (slack-team, github, imap …) — the address goes in --base-url', 64); return connectWithKey(target, flags); }
+  if (flags['link-status']) { const d = loadDevice(); if (!d?.token) fail('this machine is not signed in — run `boarder setup` first', 3); const p = await fetch(`${server()}/api/device/connect-link/${encodeURIComponent(flags['link-status'])}`, { headers: { authorization: `Bearer ${d.token}` }, signal: AbortSignal.timeout(15000) }); return console.log(JSON.stringify(await p.json().catch(() => ({})))); }
+  if (flags.link) { if (target.startsWith('https://')) fail('--link takes a service name (linear, notion, github …)', 64); return connectWithLink(target, flags); }
   const url = connectUrl(target, flags.label);
   console.log(`Connect ${target}${flags.label ? ` (${flags.label})` : ''} in Boarder: ${url}`);
   const open = flags.open || process.platform === 'darwin' || process.platform === 'win32';

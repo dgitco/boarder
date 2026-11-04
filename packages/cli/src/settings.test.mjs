@@ -1,7 +1,8 @@
 // node --test packages/cli/src/settings.test.mjs — boarder 설정 명령의 인자 → 서버 값 · 되돌리는 명령(지어낸 값). 서버까지의 끝에서 끝 시험은 apps/web/worker/device-settings.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-const { valueOf, undoOf, SETTINGS_COMMANDS } = await import('./settings.mjs');
+const { valueOf, undoOf, SETTINGS_COMMANDS, COMMAND_KEYS } = await import('./settings.mjs');
+import { readFileSync } from 'node:fs';
 
 test('인자 → 값: on/off · off 는 지움 · 빠지면 사용법(undefined · null)', () => {
   assert.equal(valueOf('task-channels', ['on'], {}), true);
@@ -36,4 +37,28 @@ test('되돌리는 명령: 전 값으로 다시 set — 따옴표 · 빈 값', (
 });
 test('명령 이름이 기존 명령과 안 겹침', () => {
   for (const c of ['log', 'ask', 'role', 'status', 'canvas', 'device', 'taskboard']) assert.ok(!SETTINGS_COMMANDS.includes(c), c);
+});
+
+test('pairsOf: k=v 쌍 · 점 한 단계 · --json — 칸마다 값 꼴이 다름', async () => {
+  const { pairsOf, undoOf, valueOf } = await import('./settings.mjs');
+  assert.deepEqual(pairsOf('node-values', ['move_h=5', 'check_min=60'], {}), { move_h: 5, check_min: 60 });
+  assert.deepEqual(pairsOf('prefs', ['park_on=false', 'park_h=12', 'rules.report=false', 'bundles.priority-file=false', 'primary_item=auto'], {}), { park_on: false, park_h: 12, rules: { report: false }, bundles: { 'priority-file': false }, primary_item: 'auto' });
+  assert.deepEqual(pairsOf('ui', ['theme=dark', 'still=1'], {}), { theme: 'dark', still: '1' }, 'ui 값은 글 그대로');
+  assert.deepEqual(pairsOf('features', ['taskboard=on', 'devboard=off'], {}), { taskboard: true, devboard: false });
+  assert.equal(pairsOf('features', ['taskboard=maybe'], {}), undefined);
+  assert.equal(pairsOf('prefs', ['nonsense'], {}), undefined); assert.equal(pairsOf('prefs', [], {}), undefined);
+  assert.equal(valueOf('unit', ['goal'], {}), 'goal'); assert.equal(valueOf('unit', ['x'], {}), undefined);
+  assert.equal(valueOf('session-sync', ['off'], {}), false);
+  assert.deepEqual(valueOf('side-hide', [], { none: true }), []); assert.deepEqual(valueOf('side-hide', ['feed'], {}), ['feed']);
+  assert.match(undoOf('unit', 'goal'), /boarder unit set goal/); assert.equal(undoOf('session-sync', true), null, '켜기는 사람 몫'); assert.equal(undoOf('session-sync', false), 'boarder session-sync set off');
+  assert.equal(undoOf('node-values', { move_h: 24, check_min: 30 }), 'boarder node-values set move_h=24 check_min=30'); assert.equal(undoOf('ui', { accent: '#ff8800', font: "Noto 'Sans'" }), `boarder ui set accent='#ff8800' font='Noto '\\''Sans'\\'''`, 'ui 값은 셸 인용');
+  assert.equal(undoOf('ui', {}), null, '전 값이 없던 칸은 되돌릴 값 없음');
+  assert.equal(undoOf('features', { taskboard: false }), 'boarder features set taskboard=off'); assert.match(undoOf('prefs', { park_h: 6 }), /prefs set --json -/); assert.match(undoOf('side-hide', []), /--none/);
+});
+
+test('화면 칸 ↔ 명령 대조: 서버 설정 KEYS 마다 CLI 명령이 하나씩 있고 그 반대도 — 칸을 더하고 명령을 빼먹으면 여기서 걸림', () => {
+  const src = readFileSync(new URL('../../../apps/web/worker/device-settings.ts', import.meta.url), 'utf8');
+  const keys = JSON.parse(/export const KEYS = (\[[^\]]+\]) as const/.exec(src)[1]);
+  assert.deepEqual([...keys].sort(), [...COMMAND_KEYS].sort());
+  assert.ok(SETTINGS_COMMANDS.includes('devices'));
 });
