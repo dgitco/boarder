@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "2b23ace96689";
+window.HB_VER = "b5c3db81a50c";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -3352,6 +3352,17 @@ function cardRows(state = "open") {
   });
 }
 function attnRows() {
+  const k = attnKey();
+  if (!k) return attnRows0();
+  if (attnMemo && attnMemo.k.length === k.length && attnMemo.k.every((x, i) => x === k[i])) return attnMemo.v;
+  const v = attnRows0();
+  attnMemo = { k, v };
+  queueMicrotask(() => {
+    attnMemo = null;
+  });
+  return v;
+}
+function attnRows0() {
   const cr = cardRows();
   if (!cr) return null;
   if (!Array.isArray(D.attn)) return cr.map((r) => ({ ...r, grp: "decide", links: [], same: [] }));
@@ -3367,6 +3378,14 @@ function attnRows() {
   }));
   const pr = (r) => priRank((byPane[rowPane(r)] || parkBy[rowPane(r)] || {}).pri);
   return rows.map((r, i) => [r, i]).sort((a, b) => pr(a[0]) - pr(b[0]) || a[1] - b[1]).map((x) => x[0]);
+}
+var attnMemo = null;
+function attnKey() {
+  try {
+    return [D, D.cardlist, D.attn, D.cards, CS.T.threads, byPane, parkBy, answeredCard.size, todoDone.size, answeredHere.size, asks];
+  } catch {
+    return null;
+  }
 }
 const rowPane = (r) => r.item?.to || r.item?.todo && (asks.find((a) => a.todo?.ts === r.item.todo.ts)?.to || leadPane(r.item.todo.area)) || leadPane(r.area);
 const nodeRows = (pane) => (attnRows() || []).filter((r) => rowPane(r) === pane);
@@ -9827,12 +9846,16 @@ function syncScrollLock() {
   }
 }
 let mlockQ = 0;
-new MutationObserver(() => {
-  if (!mlockQ) mlockQ = requestAnimationFrame(() => {
+const mlockHit = (n) => n.nodeType === 1 && (n.matches(MODAL_SEL) || !!n.querySelector(MODAL_SEL));
+const mlockMO = new MutationObserver((rs) => {
+  if (mlockQ || !rs.some((r) => r.type === "attributes" ? mlockHit(r.target) : [...r.addedNodes, ...r.removedNodes].some(mlockHit))) return;
+  mlockQ = requestAnimationFrame(() => {
     mlockQ = 0;
     syncScrollLock();
   });
-}).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "class", "style"] });
+});
+mlockMO.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "class", "style"] });
+mlockMO.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
 document.addEventListener("touchmove", (e) => {
   if (mlockY !== null && !e.target.closest?.(MODAL_SEL + ", .bx-sb, .bx-dock, .bxs-main, .bxs-sb")) e.preventDefault();
 }, { passive: false });
