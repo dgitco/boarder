@@ -1,8 +1,9 @@
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, openSync, readSync, closeSync, fstatSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { redact } from '../redact.mjs';
 
 const SESSION = 'boarder';
 const sock = () => process.env.BOARDER_TMUX_SOCKET || 'boarder';
@@ -20,10 +21,14 @@ const expand = p => (p || '').replace(/^~(?=$|\/)/, os.homedir());
 const FMT = ['#{@bx_id}', '#{window_id}', '#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{@bx_sid}', '#{window_name}', '#{pane_current_command}', '#{@bx_spec}'].join('\t');
 export function list(cfg) {
   if (!has(cfg)) return [];
-  return tmuxCmd(cfg, ['list-panes', '-s', '-t', SESSION, '-F', FMT]).split('\n').filter(Boolean).map(l => {
+  const wins = tmuxCmd(cfg, ['list-panes', '-s', '-t', SESSION, '-F', FMT]).split('\n').filter(Boolean).map(l => {
     const [id, win, pane, pid, cwd, sid, name, cmd, spec] = l.split('\t');
     return { id, tmux: win, pane, pid: +pid, cwd, session_id: sid || null, name, cmd, spec: spec ? JSON.parse(Buffer.from(spec, 'base64url').toString()) : null };
   }).filter(w => w.id);
+  const codex = wins.filter(w => w.spec?.tool === 'codex');
+  const taken = new Set(codex.filter(w => w.spec.codex_rollout).map(w => w.session_id));
+  for (const w of codex) if (!w.spec.codex_rollout) bindCodex(cfg, w, taken);
+  return wins;
 }
 const find = (cfg, id) => list(cfg).find(w => w.id === id) || null;
 
@@ -45,7 +50,7 @@ export async function open(cfg, s) {
   if (find(cfg, s.id)) throw new EngineError(1, 'window already open');
   const cwd = expand(s.cwd) || os.homedir();
   mkdirSync(cwd, { recursive: true });
-  const spec = { ...s, session_id: s.session_id || randomUUID(), prompt: undefined, resume: undefined };   // 다시 열 때 쓸 손잡이(글은 빼고)
+  const spec = { ...s, opened_at: Date.now(), session_id: s.session_id || randomUUID(), prompt: undefined, resume: undefined };   // 다시 열 때 쓸 손잡이(글은 빼고)
   const argv = agentArgv(cfg, { ...s, session_id: spec.session_id });
   if (!s.argv?.length) { try { execFileSync('sh', ['-c', 'command -v "$1"', 'sh', argv[0]], { stdio: 'ignore' }); } catch { throw new EngineError(1, `Claude Code not found (${argv[0]}) — install it and sign in, then run \`boarder engine setup\``); } }   // 없으면 창이 바로 죽어 「server exited」만 보였음
   const name = String(s.name || s.id).replace(/[\x00-\x1f]/g, ' ').slice(0, 40);
@@ -69,7 +74,14 @@ function visible(line) {
   for (const m of line.matchAll(ESC)) {
     if (!dim) out += line.slice(i, m.index);
     i = m.index + m[0].length;
-    if (m[1] !== undefined) for (const c of (m[1] || '0').split(';')) { if (c === '' || c === '0' || c === '22') dim = false; else if (c === '2') dim = true; }
+    if (m[1] !== undefined) {
+      const a = (m[1] || '0').split(';');
+      for (let k = 0; k < a.length; k++) {
+        const c = a[k];
+        if (c === '38' || c === '48' || c === '58') { k += a[k + 1] === '5' ? 2 : a[k + 1] === '2' ? 4 : 0; continue; }   // 색 인자(38;2;r;g;b · 48;5;n) 안의 2 는 흐림이 아님
+        if (c === '' || c === '0' || c === '22') dim = false; else if (c === '2') dim = true;
+      }
+    }
   }
   if (!dim) out += line.slice(i);
   return out;
@@ -92,6 +104,80 @@ export function dialogOf(plain) {
 }
 const LIMIT = /(usage limit|limit reached|rate limit|resets? (at|in) \d)/i;
 const capture = (cfg, pane, esc) => tmuxCmd(cfg, ['capture-pane', '-p', ...(esc ? ['-e'] : []), '-t', pane]);
+
+// Codex owns its session UUID. A separate internal cwd per worker lets us bind the
+// actual rollout without borrowing another open worker's conversation.
+function rolloutPart(file, end = false) {
+  let fd;
+  try {
+    fd = openSync(file, 'r');
+    const size = fstatSync(fd).size, len = Math.min(size, end ? 65536 : 524288), buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, end ? size - len : 0);
+    return buf.toString().split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
+  } catch { return []; } finally { if (fd !== undefined) closeSync(fd); }
+}
+// 첫 사용자 글이 창에 넣은 첫 지시인가. Codex 가 앞에 붙이는 머리 글(AGENTS.md · <environment_context> 등)은 건너뜀. 아직 첫 글이 없으면 false — 다음 목록 때 다시 봄
+const squeeze = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+const CODEX_HEAD = /^(?:# ?AGENTS\.md instructions|<[a-z_-]+[\s>])/i;
+function firstAskIs(items, want) {
+  for (const x of items) {
+    const p = x.payload;
+    const parts = x.type === 'event_msg' && p?.type === 'user_message' ? [p.message]
+      : x.type === 'response_item' && p?.role === 'user' && Array.isArray(p.content) ? p.content.filter(c => c?.type === 'input_text').map(c => c.text) : [];
+    const real = parts.map(squeeze).filter(t => t && (t === want || !CODEX_HEAD.test(t)));
+    if (real.length) return real.includes(want);
+  }
+  return false;
+}
+function bindCodex(cfg, w, taken) {
+  const opened = w.spec.opened_at;
+  if (!Number.isFinite(opened)) return;   // 언제 열었는지 모르는 옛 창: 옛 대화에 잘못 묶느니 안 묶음(상태는 codexState 가 시간 한도로)
+  const cwd = path.resolve(expand(w.spec.cwd) || os.homedir());
+  const want = w.spec.argv?.[1] === '-c' ? squeeze(w.spec.argv[4]) : '';
+  const root = path.join(configDir(w.spec) || expand(process.env.CODEX_HOME) || path.join(os.homedir(), '.codex'), 'sessions');
+  for (const age of [0, 1]) {
+    const d = new Date(Date.now() - age * 86400000);
+    const folder = path.join(root, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+    let files = []; try { files = readdirSync(folder).filter(f => /^rollout-.*\.jsonl$/.test(f)).map(f => path.join(folder, f)); } catch {}   // globSync 는 Node 22 부터 — 이 꾸러미는 Node 20 도 받음
+    for (const file of files) {
+      const items = rolloutPart(file), meta = items.find(x => x.type === 'session_meta')?.payload;
+      if (!meta?.id || typeof meta.cwd !== 'string' || path.resolve(meta.cwd) !== cwd || !(Date.parse(meta.timestamp) >= opened - 1000)) continue;
+      if (meta.originator === 'codex_exec' || meta.source === 'exec' || meta.source?.subagent) continue;
+      if (taken.has(meta.id) || (want && !firstAskIs(items, want))) continue;
+      taken.add(meta.id);
+      w.session_id = meta.id; w.spec.session_id = meta.id; w.spec.codex_rollout = file;
+      tmuxCmd(cfg, ['set-option', '-w', '-t', w.tmux, '@bx_sid', meta.id]);
+      tmuxCmd(cfg, ['set-option', '-w', '-t', w.tmux, '@bx_spec', Buffer.from(JSON.stringify(w.spec)).toString('base64url')]);
+      return;
+    }
+  }
+}
+export function codexHandle(spec) {
+  if (!spec?.codex_rollout || !Array.isArray(spec.argv)) return {};
+  const argv = JSON.stringify(spec.argv.slice(0, 4));
+  return spec.codex_rollout.length > 400 || argv.length > 400 || redact(argv) !== argv ? {} : { codex_rollout: spec.codex_rollout, codex_argv: argv };
+}
+// 입력칸: 마지막 › 줄 + 바로 아래 2칸 들여 쓴 줄(여러 줄 글). 빈 줄(입력칸 아래 여백)에서 끝 — 그 아래 안내 줄은 글이 아님
+function codexBox(raw) {
+  const lines = raw.split('\n');
+  const i = lines.findLastIndex(l => /^\s*›/.test(l.replace(ESC, '')));
+  if (i < 0) return '';
+  const parts = [visible(lines[i]).replace(/^\s*›\s?/, '').trim()];
+  for (let k = i + 1; k < lines.length; k++) { const t = visible(lines[k]); if (!/^ {2}\s*\S/.test(t)) break; parts.push(t.trim()); }
+  return parts.join(' ').trim();
+}
+const BIND_LIMIT = 120000;
+function codexState(w, raw, plain) {
+  const events = w.spec.codex_rollout ? rolloutPart(w.spec.codex_rollout, true).filter(x => x.type === 'event_msg') : [];
+  const turn = events.findLast(x => ['task_started', 'task_complete', 'turn_aborted'].includes(x.payload?.type));
+  const rising = Date.now() - w.spec.opened_at < BIND_LIMIT;   // opened_at 없는 옛 창은 false
+  let state = !w.spec.codex_rollout ? (rising ? 'starting' : 'idle') : !turn || turn.payload.type === 'task_started' ? 'busy' : 'idle';
+  if (/esc to interrupt|esc to cancel/i.test(plain.split('\n').slice(-12).join('\n'))) state = 'busy';
+  const dialog = dialogOf(plain), box = codexBox(raw);
+  if (dialog) state = 'waiting';
+  return { id: w.id, state, session_id: w.spec.codex_rollout ? w.session_id : null,
+    since: turn?.timestamp ? Date.parse(turn.timestamp) : null, ...(box ? { box } : {}), ...(dialog ? { dialog } : {}) };
+}
 
 // Claude Code 가 남기는 세션 상태 파일(<설정 폴더>/sessions/<pid>.json: sessionId · status busy|idle|waiting|shell) — 자격 파일이 아님(C-1)
 export const configDir = s => (s?.config_dir ? expand(String(s.config_dir)) : null);
@@ -118,6 +204,7 @@ export function state(cfg, id, { tail = 0 } = {}) {
   const w = find(cfg, id);
   if (!w) return { id, state: 'none' };
   const raw = capture(cfg, w.pane, true), plain = raw.replace(ESC, '');
+  if (w.spec?.tool === 'codex') return { ...codexState(w, raw, plain), ...(tail ? { tail: plain.split('\n').slice(-tail).join('\n') } : {}) };
   const s = claudeSession(w.session_id, configDir(w.spec)), dialog = dialogOf(plain), box = inputBox(raw);
   const lines = plain.split('\n').filter(l => l.trim());
   const lim = lines.slice(-12).find(l => LIMIT.test(l));
@@ -130,7 +217,8 @@ export function state(cfg, id, { tail = 0 } = {}) {
 export async function send(cfg, id, text) {
   const w = find(cfg, id); if (!w) throw new EngineError(4, 'no such window');
   const raw = capture(cfg, w.pane, true);
-  if (inputBox(raw)) throw new EngineError(2, 'someone is typing in that window');
+  const box = w.spec?.tool === 'codex' ? codexBox : inputBox;
+  if (box(raw)) throw new EngineError(2, 'someone is typing in that window');
   const dlg = dialogOf(raw.replace(ESC, ''));
   if (dlg) throw new EngineError(2, `a ${dlg} dialog is open in that window`);
   const buf = `bx${process.pid}${Date.now()}`;
@@ -140,7 +228,7 @@ export async function send(cfg, id, text) {
     await sleep(i ? 1500 : 400);
     tmuxCmd(cfg, ['send-keys', '-t', w.pane, 'Enter']);
     await sleep(700);
-    if (!inputBox(capture(cfg, w.pane, true))) return { ok: true, tries: i + 1 };
+    if (!box(capture(cfg, w.pane, true))) return { ok: true, tries: i + 1 };
   }
   throw new EngineError(1, 'the text stayed in the input box');
 }
@@ -149,12 +237,26 @@ export async function key(cfg, id, k) { const w = find(cfg, id); if (!w) throw n
 /** park: 다시 열 손잡이를 돌려주고 창을 닫음 */
 export async function park(cfg, id) {
   const w = find(cfg, id); if (!w) throw new EngineError(4, 'no such window');
-  const handle = { engine: 'tmux', ...(w.spec || {}), id, session_id: w.session_id, cwd: w.spec?.cwd || w.cwd, name: w.name };
+  // Codex 창은 argv 를 안 실음: 손잡이는 서버(imp_item.handle · engine_cmd.result)에 저장되는데 argv 에 첫 지시 전문과 명령 속 비밀값이 듦. 다시 열기는 codex_argv(첫 지시 · 비밀 꼴 뺀 것)로
+  const { argv: _argv, ...specNoArgv } = w.spec || {};
+  const handle = { engine: 'tmux', ...(w.spec?.tool === 'codex' ? { ...specNoArgv, ...codexHandle(w.spec) } : (w.spec || {})), id, session_id: w.session_id, cwd: w.spec?.cwd || w.cwd, name: w.name };
   tmuxCmd(cfg, ['kill-window', '-t', w.tmux]);
   return { handle };
 }
 export async function reopen(cfg, handle, text, id) {
   if (!handle?.session_id) throw new EngineError(1, 'handle has no session');
+  if (handle.tool === 'codex') {
+    // Our Codex windows use a shell solely to enter an internal cwd. Resume the
+    // actual bound conversation; never replay the original first instruction.
+    if (!handle.codex_rollout || !/^[a-f0-9-]{36}$/.test(handle.session_id)) throw new EngineError(1, 'Codex conversation is not bound yet');
+    let argv = handle.argv;
+    if (!Array.isArray(argv)) { try { argv = JSON.parse(handle.codex_argv); } catch {} }
+    argv = Array.isArray(argv) ? [...argv] : [];
+    if (argv[0] !== '/bin/sh' || argv[1] !== '-c' || !/-- "\$1"$/.test(argv[2] || '')) throw new EngineError(1, 'unsupported Codex launch handle');
+    argv[2] = argv[2].replace(/(?:resume [a-f0-9-]{36} )?-- "\$1"$/, `resume ${handle.session_id} -- "$1"`);
+    argv[4] = text || 'Continue the existing conversation from its last state.';
+    return open(cfg, { ...handle, id: id || handle.id, argv, prompt: undefined });
+  }
   return open(cfg, { ...handle, id: id || handle.id, prompt: text || undefined, resume: !handle.argv });
 }
 export async function close(cfg, id) {

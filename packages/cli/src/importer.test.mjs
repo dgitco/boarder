@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { refsOf, normRepo, tomlMcp, frontmatter, collectMcp, since, sameAsSent, markSent, SAME_MAX } from './importer.mjs';
+import { refsOf, normRepo, tomlMcp, frontmatter, collectMcp, since, sameAsSent, markSent, SAME_MAX, codexSessions } from './importer.mjs';
 
 test('링크 뽑기: Slack 스레드 · GitHub 이슈/PR · Linear · 리포 안 #번호', () => {
   const r = refsOf('see https://acme.slack.com/archives/C0000000001/p1700000000000100 and https://github.com/Acme/Ledger/pull/88 and linear.app/acme/issue/ENG-12 fix #3720', 'github.com/acme/ledger');
@@ -46,4 +46,23 @@ test('--follow 같은 목록: 보낸 지 5분 안이면 안 보냄, 5분 넘거�
   assert.equal(sameAsSent('a', 1000 + 60_000), true);
   assert.equal(sameAsSent('b', 1000 + 60_000), false);
   assert.equal(sameAsSent('a', 1000 + SAME_MAX), false);
+});
+
+test('Codex 세션: `codex exec` 로 돈 기록(originator codex_exec)은 세션 줄로 안 올림 — SDK 대화(source exec, 다른 originator)는 올림', () => {
+  const C = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-cdx-')), old = process.env.CODEX_HOME;
+  try {
+    process.env.CODEX_HOME = C;
+    const d = new Date(), dir = path.join(C, 'sessions', String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+    fs.mkdirSync(dir, { recursive: true });
+    const roll = (name, id, meta) => fs.writeFileSync(path.join(dir, `rollout-${name}.jsonl`), [
+      JSON.stringify({ type: 'session_meta', payload: { id, cwd: '/tmp/made-up', timestamp: d.toISOString(), ...meta } }),
+      JSON.stringify({ type: 'response_item', payload: { role: 'user', content: [{ type: 'input_text', text: `${name} 일 해 줘` }] } }),
+    ].join('\n') + '\n');
+    roll('cli', 'aaaaaaaa-0000-4000-8000-000000000001', { originator: 'codex_cli_rs', source: 'cli' });
+    roll('exec1', 'aaaaaaaa-0000-4000-8000-000000000002', { originator: 'codex_exec', source: 'exec' });
+    roll('sdk', 'aaaaaaaa-0000-4000-8000-000000000003', { originator: 'codex_sdk_ts', source: 'exec' });
+    roll('exec3', 'aaaaaaaa-0000-4000-8000-000000000004', { originator: 'codex_exec' });
+    roll('exec4', 'aaaaaaaa-0000-4000-8000-000000000005', { originator: 'codex_exec', source: { subagent: {} } });
+    assert.deepEqual(codexSessions(1).map(s => s.key).sort(), ['session:codex:aaaaaaaa-0000-4000-8000-000000000001', 'session:codex:aaaaaaaa-0000-4000-8000-000000000003']);
+  } finally { if (old === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = old; fs.rmSync(C, { recursive: true, force: true }); }
 });

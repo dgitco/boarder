@@ -110,11 +110,32 @@ export function lastTurnOfFile(file, { first = 1 << 20, max = 64 << 20 } = {}) {
 }
 export const clip = t => { const s = redact(String(t || '')).trim(); return s.length > REPLY_MAX ? s.slice(0, REPLY_MAX - 12).trimEnd() + '\n…(줄였어요)' : s; };
 
+const WAKE_LINE = /^ {0,3}(?:\*\*)?깨움(?:\*\*)?[ \t]*[:：](?:\*\*)?[ \t]*(?:\*\*)?\d{1,2}\/\d{1,2}[ \t]+\d{1,2}:\d{2}(?:\*\*)?[ \t]*$/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const blank = l => !l.trim();
+export function dropWake(reply) {
+  const text = String(reply ?? ''), lines = text.split('\n'), out = [];
+  let fence = null, dropped = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i], bare = line.replace(/\r$/, ''), f = FENCE.exec(bare);
+    if (fence) { if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !f[2].trim()) fence = null; out.push(line); continue; }
+    if (f && !(f[1][0] === '`' && f[2].includes('`'))) { fence = f[1]; out.push(line); continue; }
+    if (!WAKE_LINE.test(bare)) { out.push(line); continue; }
+    dropped = true;
+    let gap = false;
+    while (out.length && blank(out.at(-1))) { out.pop(); gap = true; }
+    while (i + 1 < lines.length && blank(lines[i + 1])) { i++; gap = true; }
+    if (gap && out.length && i + 1 < lines.length) out.push('');
+  }
+  return dropped ? out.join('\n') : text;
+}
+
 /** 턴 하나(입력 · 시각 · 답, 열쇠들) → 올릴 답 글(보드에서 온 턴이 아니거나 답이 없으면 null) */
 export function replyFor({ keys, prompt, at, reply }) {
   if (!reply?.trim() || !prompt) return null;
   if (!takeTurn(keys, prompt, at)) return null;
-  return clip(reply);
+  const r = dropWake(reply);
+  return r ? clip(r) : null;
 }
 
 // 성공한 명시적 답만 해당 창의 같은 자리 표지에 남김(Codex notify 에는 도구 기록이 없음).
@@ -180,5 +201,6 @@ export function replyPlan({ keys, prompt, at, reply, said = [] }) {
   const mark = takeMark(keys, prompt, at); if (!mark) return null;
   const head = mark.head === undefined ? parseHead(Array.isArray(prompt) ? prompt.find(p => HEAD_RE.test(String(p).trimStart())) : prompt) : mark.head;
   if (mark.said || toolReplied(said, head)) return null;
-  return replyCall(head, clip(reply));
+  const r = dropWake(reply);   // 깨움 줄만 있던 답이면 표지는 소비하고 아무것도 안 올림
+  return r ? replyCall(head, clip(r)) : null;
 }

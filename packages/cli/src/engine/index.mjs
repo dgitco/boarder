@@ -7,9 +7,9 @@ import { dir, ensureDir, loadDevice, readJson } from '../config.mjs';
 import * as tmux from './tmux.mjs';
 import * as herdr from './herdr.mjs';
 import * as sdk from './sdk.mjs';
-import { EngineError } from './tmux.mjs';
+import { EngineError, codexHandle } from './tmux.mjs';
 
-export { EngineError };
+export { EngineError, codexHandle };
 export const VERBS = tmux.VERBS;
 const cfgPath = () => path.join(dir(), 'engine.json');
 export const loadCfg = () => readJson(cfgPath(), {}) || {};

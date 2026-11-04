@@ -120,9 +120,12 @@ export async function collectWindows() {
     for (const w of engWins) {
       let st = ''; try { st = (await E.run('state', { id: w.id, engine: w.engine }))?.state || ''; } catch {}
       const l = w.session_id && bySid.get(w.session_id); if (l) taken.add(l.pid);
+      // 엔진이 연 Codex 창(spec.tool codex): 도구 이름을 codex 로. 대화(rollout)에 아직 안 묶인 창은 세션 id 를 비움(엔진이 지어 둔 id 는 Codex 대화 id 가 아님)
+      const tool = w.spec?.tool === 'codex' ? 'codex' : 'claude';
+      const sid = tool === 'codex' && !w.spec?.codex_rollout ? '' : w.session_id;
       items.push({ key: `window:${H}:${w.id}`, kind: 'window', engine: w.engine, title: clip(w.name || w.id, 120), cwd: w.cwd || '', win: `${H}:${w.id}`,
-        session: w.session_id ? `session:claude:${w.session_id}` : '', state: ({ busy: 'working', waiting: 'question', background: 'working', starting: 'working', none: 'gone' })[st] || (st || 'idle'),
-        state_at: l?.at || 0, handle: { engine: w.engine, id: w.id, tool: 'claude', session_id: w.session_id || '', cwd: w.cwd || '', name: w.name || '' } });
+        session: sid ? `session:${tool}:${sid}` : '', state: ({ busy: 'working', waiting: 'question', background: 'working', starting: 'working', none: 'gone' })[st] || (st || 'idle'),
+        state_at: l?.at || 0, handle: { engine: w.engine, id: w.id, tool, session_id: sid || '', cwd: w.cwd || '', name: w.name || '', ...(tool === 'codex' ? E.codexHandle(w.spec) : {}) } });
     }
   }
   const pt = procTable();
@@ -194,6 +197,7 @@ export function codexSessions(days = 7) {
   for (const { full, t } of files.sort((a, b) => b.t - a.t).slice(0, 60)) {
     const H = jl(head(full)), meta = H.find(x => x.type === 'session_meta')?.payload || {};
     if (!meta.id) continue;
+    if (meta.originator === 'codex_exec') continue;
     const ask = H.find(x => x.type === 'response_item' && x.payload?.role === 'user' && !noise(textOf(x.payload?.content)) && !/<environment_context>|<user_instructions>/.test(textOf(x.payload?.content)));
     const cwd = meta.cwd || '', repo = normRepo(meta.git?.repository_url) || repoOf(cwd), branch = meta.git?.branch || '';
     const text = [...H, ...jl(tail(full))].map(x => textOf(x.payload?.content)).join('\n');

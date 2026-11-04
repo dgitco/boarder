@@ -377,3 +377,51 @@ test('후속: Primary 스레드 글에 스레드 없이 chat_say 로 답했으�
   T.markTurn(K, '[보드 · 예시 팀장 · 스레드 ' + TH + '] 노드 글'); T.recordReply(K, 'chat_say', { text: 'Primary 맨 위' });
   assert.deepEqual(T.replyPlan({ keys: K, prompt: '[보드 · 예시 팀장 · 스레드 ' + TH + '] 노드 글', at: 0, reply: '노드 답' }), ['inbox_say', { thread_id: TH, text: '노드 답' }], '노드 스레드 글은 Primary 답으로 막지 않음');
 });
+
+test('깨움 줄: 줄 맨 앞 「깨움: <시각>」(굵게 · 전각 콜론 포함)만 빼고, 글 가운데 낱말은 그대로 · 깨움 줄만 있던 답은 null', () => {
+  assert.equal(T.dropWake('했어요\n\n깨움: 11/05 09:00\n'), '했어요');
+  assert.equal(T.dropWake('**깨움**: 11/05 09:00\n결과는 초록'), '결과는 초록');
+  assert.equal(T.dropWake('  깨움 ： 11/05 09:00\n끝'), '끝');
+  assert.equal(T.dropWake('내일 깨움: 신호가 오면 다시 봅니다'), '내일 깨움: 신호가 오면 다시 봅니다');
+  T.markTurn(['ew_wake01'], '배포 봐 줘');
+  assert.deepEqual(T.replyPlan({ keys: ['ew_wake01'], prompt: '배포 봐 줘', at: Date.now(), reply: '배포 초록이에요\n\n깨움: 11/05 09:00' }), ['inbox_log', { kind: 'reply', text: '배포 초록이에요' }]);
+  T.markTurn(['ew_wake02'], '쉬어 둬');
+  assert.equal(T.replyPlan({ keys: ['ew_wake02'], prompt: '쉬어 둬', at: Date.now(), reply: '깨움: 11/05 09:00' }), null, '깨움 줄만이면 아무것도 안 올림');
+  assert.equal(T.replyPlan({ keys: ['ew_wake02'], prompt: '쉬어 둬', at: Date.now(), reply: '다음 답' }), null, '표지는 소비됨(다음 턴이 그 표지로 올라가지 않음)');
+  T.markTurn(['ew_wake03'], '정리해 줘');
+  assert.equal(T.replyFor({ keys: ['ew_wake03'], prompt: '정리해 줘', at: Date.now(), reply: '정리했어요\n깨움: 11/05 09:00' }), '정리했어요');
+});
+
+test('hook stop · codex-turn: 턴 끝 깨움 줄은 보드 글에 안 실림', async () => {
+  await hookWorld(async ({ hook, posts }) => {
+    T.markTurn(['ew_team01', SID], '오늘 일 끝내고 쉬어');
+    const f = path.join(TMP, 's-wake.jsonl'); fs.writeFileSync(f, transcript('오늘 일 끝내고 쉬어', '다 끝냈어요\n\n깨움: 11/05 09:00'));
+    const a = await hook(['stop'], JSON.stringify({ session_id: SID, transcript_path: f, hook_event_name: 'Stop', stop_hook_active: false }));
+    T.markTurn([null, 'th-wake-1'], '배포 확인해 줘');
+    const b = await hook(['codex-turn', JSON.stringify({ type: 'agent-turn-complete', 'thread-id': 'th-wake-1', 'turn-id': '1', 'input-messages': ['배포 확인해 줘'], 'last-assistant-message': '초록이에요\n**깨움**: 11/05 10:00' })]);
+    for (const r of [a, b]) assert.equal(r.code, 0, r.err);
+    assert.deepEqual(posts.map(p => p.body), [{ kind: 'reply', text: '다 끝냈어요\n\n— 끝' }, { kind: 'reply', text: '초록이에요' }]);
+  });
+});
+
+test('깨움 줄 리뷰 1: 줄 나머지가 시각 꼴일 때만 뺌 — 「깨움:」으로 시작하는 진짜 답 · 설명 · 코드 상자는 그대로', () => {
+  for (const keep of ['깨움: 내일 봐 주세요', '깨움： 서버 재시작하면 창이 다시 떠요', '원인은 둘이에요.\n깨움: 줄을 쓰면 장치가 그 시각에 창을 엽니다.\n끝.', '깨움: 11/05 09:00 쯤 봐 주세요',
+    '예시:\n```\n깨움: 11/05 09:00\n```\n이렇게 쓰세요.', '예시:\n~~~md\n깨움: 11/05 09:00\n~~~', '안 닫힌 상자\n```\n깨움: 11/05 09:00', '들여 쓴 코드:\n\n    깨움: 11/05 09:00', '> 깨움: 11/05 09:00']) assert.equal(T.dropWake(keep), keep);
+  for (const form of ['깨움: 11/05 09:00', '**깨움**: 11/05 09:00', '**깨움:** 11/05 09:00', '**깨움: 11/05 09:00**', '깨움: **11/05 09:00**', '**깨움**: **11/05 09:00**', '  깨움 ： 11/05 09:00  ', '깨움: 11/5 9:00', '깨움: 11/05 09:00\r']) assert.equal(T.dropWake(`답입니다\n${form}\n끝`), '답입니다\n끝', form);
+  assert.equal(T.dropWake('```\n깨움: 11/05 09:00\n```\n깨움: 11/05 10:00'), '```\n깨움: 11/05 09:00\n```', '상자 밖 깨움 줄만');
+  T.markTurn(['ew_wake04'], '언제 볼까요?');
+  assert.deepEqual(T.replyPlan({ keys: ['ew_wake04'], prompt: '언제 볼까요?', at: Date.now(), reply: '깨움: 내일 봐 주세요' }), ['inbox_log', { kind: 'reply', text: '깨움: 내일 봐 주세요' }], '답이 사라지지 않음');
+});
+
+test('깨움 줄 리뷰 2: 깨움 줄이 없으면 한 글자도 안 바뀜 · 뺐을 때는 그 자리 빈 줄만 줄임', () => {
+  for (const same of ['```\na\n\n\n\nb\n```', '첫 문단\n\n\n\n둘째 문단', '  앞뒤 빈칸 \n\n\n본문\n\n', '    들여 쓴 코드\n\n\n다음']) assert.equal(T.dropWake(same), same);
+  assert.equal(T.dropWake('위\n\n깨움: 11/05 09:00\n\n아래'), '위\n\n아래');
+  assert.equal(T.dropWake('위\n\n\n깨움: 11/05 09:00\n\n\n아래'), '위\n\n아래', '그 자리 앞뒤 빈 줄이 한 줄로');
+  assert.equal(T.dropWake('```\na\n\n\n\nb\n```\n\n깨움: 11/05 09:00\n\n끝\n\n\n\n맺음'), '```\na\n\n\n\nb\n```\n\n끝\n\n\n\n맺음', '다른 곳 빈 줄은 그대로');
+  assert.equal(T.dropWake('위\n깨움: 11/05 09:00\n아래'), '위\n아래');
+  assert.equal(T.dropWake('깨움: 11/05 09:00\n\n아래'), '아래');
+  assert.equal(T.dropWake('위\n\n깨움: 11/05 09:00\n\n'), '위');
+  assert.equal(T.dropWake('위\n\n깨움: 11/05 09:00\n\n깨움: 11/05 10:00\n\n아래'), '위\n\n아래');
+  assert.equal(T.dropWake('깨움: 11/05 09:00'), '');
+  assert.equal(T.dropWake(undefined), '');
+});
