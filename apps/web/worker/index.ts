@@ -10,7 +10,7 @@ import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } 
 import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, type Bot } from "./install";
 import { BUNDLE_KEYS } from "./harness-bundles";
 import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
-import { cleanSide, readSide, saveSide } from "./side-order";
+import { cleanPins, cleanSide, readPins, readSide, savePins, saveSide } from "./side-order";
 import * as artView from "./art-view";
 import * as agentFace from "./agent-face";
 import { canBePrimary, primaryPick, PARK_H_LIM, type Item } from "./importer/group";
@@ -1095,12 +1095,20 @@ app.post("/api/me/avatar", async c => {
 });
 app.get("/api/me/side", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  return c.json({ side: await readSide(c.env.DB, s.user.email.toLowerCase()) }, 200, { "cache-control": "no-store" });
+  const me = s.user.email.toLowerCase();
+  return c.json({ side: await readSide(c.env.DB, me), pins: await readPins(c.env.DB, me) }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/side", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  const side = cleanSide((Object(await c.req.json().catch(() => ({}))) as { side?: unknown }).side);
+  const b = Object(await c.req.json().catch(() => ({}))) as { side?: unknown; pins?: unknown };
+  if (b.pins !== undefined) {
+    const pins = cleanPins(b.pins);
+    if (!pins) return c.json({ ok: false, error: "캔버스 주소가 틀렸거나 12개를 넘었어요" }, 400);
+    await savePins(c.env.DB, s.user.email.toLowerCase(), pins);
+    return c.json({ ok: true, pins });
+  }
+  const side = cleanSide(b.side);
   if (!side) return c.json({ ok: false, error: "값" }, 400);
   await saveSide(c.env.DB, s.user.email.toLowerCase(), side);
   return c.json({ ok: true, side });
@@ -1979,7 +1987,7 @@ async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: s
   const emb = new URL(c.req.url).searchParams.has("embed");
   return new HTMLRewriter()
       .on('meta[name="apple-mobile-web-app-title"]', { element: e => { e.setAttribute("content", "보더"); } })
-      .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (!/^#(chat|art\\/|arts|node\\/|tree|w\\/|inbox|unread|saved|drafts|timeline|nf|settings|t=|board)/.test(location.hash) && location.pathname && location.pathname !== '/') { var hp = location.pathname, hq = new URLSearchParams(location.search), hm; if (hp === '/nodes') HB_HASH0 = '#tree'; else if (hm = /^\\/nodes\\/([^/]+)$/.exec(hp)) HB_HASH0 = '#node/' + hm[1]; else if (hm = /^\\/canvas\\/([A-Za-z0-9]{16,40})$/.exec(hp)) HB_HASH0 = '#art/' + hm[1]; else if (hp === '/canvas') HB_HASH0 = '#arts'; else if (hm = /^\\/chat\\/([^/]+)(?:\\/([^/]+))?$/.exec(hp)) HB_HASH0 = '#chat/' + hm[1] + (hm[2] ? (hq.get('thread') ? '/' + hq.get('thread') + '/' + hm[2] : '/' + hm[2]) : ''); else if (hm = /^\\/(inbox|unread|saved|drafts|timeline|nf|w\\/.+|settings(?:\\/.*)?)$/.exec(hp)) HB_HASH0 = '#' + hm[1]; } document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000); if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|unread$|saved$|drafts$|settings(\\/|$|\\?))/.test(window.HB_HASH0)) { document.documentElement.classList.add('bx-route'); setTimeout(function(){ document.documentElement.classList.remove('bx-route') }, 35000) }</script>", { html: true });
+      .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (!/^#(chat|art\\/|arts|node\\/|tree|w\\/|inbox|unread|saved|drafts|timeline|nf|settings|t=|board)/.test(location.hash) && location.pathname && location.pathname !== '/') { var hp = location.pathname, hq = new URLSearchParams(location.search), hm; if (hp === '/nodes') HB_HASH0 = '#tree'; else if (hm = /^\\/nodes\\/([^/]+)$/.exec(hp)) HB_HASH0 = '#node/' + hm[1] + (/^\\d{10}\\.\\d{6}$/.test(hq.get('thread') || '') ? '/' + hq.get('thread') : ''); else if (hm = /^\\/canvas\\/([A-Za-z0-9]{16,40})$/.exec(hp)) HB_HASH0 = '#art/' + hm[1]; else if (hp === '/canvas') HB_HASH0 = '#arts'; else if (hm = /^\\/chat\\/([^/]+)(?:\\/([^/]+))?$/.exec(hp)) HB_HASH0 = '#chat/' + hm[1] + (hm[2] ? (hq.get('thread') ? '/' + hq.get('thread') + '/' + hm[2] : '/' + hm[2]) : ''); else if (hm = /^\\/(inbox|unread|saved|drafts|timeline|nf|w\\/.+|settings(?:\\/.*)?)$/.exec(hp)) HB_HASH0 = '#' + hm[1]; } document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000); if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|unread$|saved$|drafts$|settings(\\/|$|\\?))/.test(window.HB_HASH0)) { document.documentElement.classList.add('bx-route'); setTimeout(function(){ document.documentElement.classList.remove('bx-route') }, 35000) }</script>", { html: true });
         e.prepend(`<script>window.HBR=window.HBR||{hash:function(){return location.hash},same:function(a,b){return a===b},go:function(h){location.hash=h},toHash:function(){return ''},toPath:function(){return null},isApp:function(){return false},url:function(h){return location.origin+'/'+h}}</script>`, { html: true });
         if (!ea && !emb) e.prepend(`<base href="/"><script>window.HB_PATHS=1</script>`, { html: true });
         if (ea === "x") e.prepend(`<script>window.BX_X=1</script>`, { html: true });   // /x = 피드 화면(x.js 가 같은 몸통 위에 피드 · 유리 막대를 얹음)

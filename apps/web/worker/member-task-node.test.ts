@@ -63,6 +63,32 @@ test("칩 판정: 닫힌 하위만 있는 업무는 담당 없음 그대로 · �
   assert.deepEqual(p("창 둘").task.chips, []);
 });
 
+test("부서 표시: 맨 위 · 이슈 없는 묶음만(왼쪽 에이전트 칸) — 맨 위 업무 · 하위 업무는 아님", async () => {
+  const { db, d1 } = fakeD1();
+  node(db, "tk_sales", "Sales", "idle", { state: "working", line: "", body: "", issue: "" });
+  node(db, "tk_1", "맨 위 업무", "idle", { state: "working", line: "", body: "", issue: "#1" });
+  node(db, "tk_2", "하위 업무", "idle", { state: "working", line: "", body: "", issue: "#2" });
+  node(db, "tk_3", "이슈 없는 하위", "idle", { state: "working", line: "", body: "", issue: "" });
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?) ON CONFLICT(owner) DO UPDATE SET data = excluded.data").run(A, JSON.stringify({ parent: { tk_sales: "top", tk_1: "top", tk_2: "tk_1", tk_3: "tk_sales" } }), T);
+  const d = await data(d1, A, null) as any, p = (w: string) => d.panes.find((x: any) => x.win === w);
+  assert.equal(p("Sales").tkdept, true);
+  for (const w of ["맨 위 업무", "하위 업무", "이슈 없는 하위"]) { assert.equal(p(w).tk, true, w); assert.equal(p(w).tkdept, undefined, w); }
+});
+
+test("부서가 있는 영역의 머리는 부서 — 더 최근에 움직인 맨 위 업무가 있어도 왼쪽 칸에서 안 빠짐", async () => {
+  const { db, d1 } = fakeD1();
+  node(db, "tk_sales", "Sales", "idle", { state: "working", line: "", body: "", issue: "" });
+  node(db, "tk_fin", "Finance", "idle", { state: "working", line: "", body: "", issue: "" });
+  node(db, "tk_1", "맨 위 업무", "idle", { state: "working", line: "", body: "", issue: "#1" });
+  db.prepare("UPDATE mnode SET area = 'Sales' WHERE id IN ('tk_sales', 'tk_1')").run(); db.prepare("UPDATE mnode SET area = 'Finance' WHERE id = 'tk_fin'").run();
+  db.prepare("UPDATE mnode SET updated_at = updated_at + 5000 WHERE id = 'tk_1'").run();
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?) ON CONFLICT(owner) DO UPDATE SET data = excluded.data").run(A, JSON.stringify({ parent: { tk_sales: "top", tk_fin: "top", tk_1: "top" } }), T);
+  const d = await data(d1, A, null) as any, lead = (w: string) => d.panes.find((x: any) => x.win === w).pane;
+  const leads = d.areas.map((a: any) => a.lead);
+  assert.ok(leads.includes(lead("Sales")) && leads.includes(lead("Finance")), JSON.stringify(d.areas.map((a: any) => a.lead_name)));
+  assert.ok(!leads.includes(lead("맨 위 업무")));
+});
+
 test("업무 상태 다섯 꼴은 켠 사람만(설정 › 노드 task_dots, 기본 꺼짐 = 지금 점)", async () => {
   const { db, d1 } = fakeD1();
   node(db, "tk_a", "덱 확정", "idle", { state: "waiting", line: "확인 대기", body: "", issue: "#1969", confirm: true });

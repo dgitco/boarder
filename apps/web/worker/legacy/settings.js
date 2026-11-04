@@ -777,6 +777,22 @@
     hexIn.addEventListener('blur', () => { hexIn.value = hsv2hex(h, s, v).slice(1); });
     paint(false);
   }
+  let PINS = null;
+  const pinsDraw = async el => {
+    const box0 = el.querySelector('[data-pins]');
+    if (!PINS) try { PINS = (await api('GET', 'api/me/side')).pins || []; } catch (e) { if (box0) box0.innerHTML = `<b>사이드 고정 캔버스</b><p class="bxs-err">${esc(e.message)}</p>`; return; }   // 못 읽었는데 빈 목록으로 저장하면 있던 것이 지워짐
+    const box = el.querySelector('[data-pins]'); if (!box) return;
+    box.innerHTML = `<b>사이드 고정 캔버스</b><p class="bxs-mut">왼쪽 칸 「캔버스」 바로 밑에 보여요. 캔버스 주소와 이름을 넣으면 더해요.</p>`
+      + PINS.map(p => `<div class="bxs-row between"><span>${esc(p.title)}</span><button type="button" class="bxs-link" data-pinrm="${esc(p.id)}">빼기</button></div>`).join('')
+      + `<div class="bxs-row"><input class="bxs-in sm" data-pinu placeholder="캔버스 주소" aria-label="캔버스 주소"><input class="bxs-in sm" data-pint placeholder="이름" aria-label="이름">${btn('더하기', 'data-pinadd')}</div>`;
+    const save = async next => { try { PINS = (await api('POST', 'api/me/side', {pins: next})).pins; window.dispatchEvent(new CustomEvent('hbpins', {detail: PINS})); pinsDraw(el); } catch (e) { toast(e.message); } };
+    box.onclick = e => {
+      const rm = e.target.closest('[data-pinrm]'); if (rm) return save(PINS.filter(p => p.id !== rm.dataset.pinrm));
+      if (!e.target.closest('[data-pinadd]')) return;
+      const u = box.querySelector('[data-pinu]').value.trim(), id = (/\/(?:art|canvas)\/([A-Za-z0-9_-]{4,64})/.exec(u) || [])[1] || u, title = box.querySelector('[data-pint]').value.trim();
+      if (id) save([...PINS, {id, title}]);
+    };
+  };
   PAGES.look = async el => {
     const TH = [['system', '시스템'], ['light', '라이트'], ['dark', '다크']];
     const cur = () => { try { return localStorage.getItem('hb-theme') || 'system'; } catch { return 'system'; } };
@@ -786,8 +802,10 @@
       el.innerHTML = header('모양', '내 계정에 저장돼 다른 기기에서도 같아요.')
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>테마</b><p class="bxs-mut">시스템은 기기 설정(라이트 · 다크)을 따라요</p></div><div class="bxs-seg" role="radiogroup" aria-label="테마">${TH.map(([k, v]) => `<button type="button" role="radio" aria-checked="${cur() === k}" data-th="${k}">${v}</button>`).join('')}</div></div></div>`
         + accCard()
+        + '<div class="bxs-card" data-pins></div>'
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>움직임 줄이기</b><p class="bxs-mut">블롭 · 파비콘 깜빡임 · 화면 전환 움직임을 멈춰요(기기의 움직임 줄이기도 따라요)</p></div>${sw(still(), `data-st="${still() ? 0 : 1}"`, '움직임 줄이기')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>파비콘 눈 깜빡</b><p class="bxs-mut">브라우저 탭 아이콘이 5초마다 눈을 깜빡여요. 끄면 탭 아이콘만 멈추고 다른 움직임은 그대로예요</p></div>${sw(favb(), `data-fb="${favb() ? 0 : 1}"`, '파비콘 눈 깜빡')}</div></div>`;
+      pinsDraw(el);
     };
     const setAcc = (v, redraw = true) => {
       const old = ACC(); if (v === old) return;

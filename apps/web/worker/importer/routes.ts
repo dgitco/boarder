@@ -1,3 +1,4 @@
+import { cleanPins, savePins } from "../side-order";
 import { deviceFeatures } from "./device-engine";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
@@ -267,6 +268,13 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     return c.json({ ok: true, node, parent });
   });
 
+  app.post("/api/device/pins", async c => {
+    const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);
+    const pins = cleanPins((Object(await c.req.json().catch(() => ({}))) as { pins?: unknown }).pins);
+    if (!pins) return c.json({ error: "캔버스 주소가 틀렸거나 12개를 넘었어요" }, 400);
+    await savePins(env(c).DB, me, pins);
+    return c.json({ ok: true, pins });
+  });
   app.post("/api/device/tasks", async c => {
     const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);
     if (+(c.req.header("content-length") || 0) > 1_000_000) return c.json({ error: "너무 큼" }, 413);

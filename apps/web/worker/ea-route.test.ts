@@ -109,6 +109,10 @@ test("머리 글 주소 대기: 채팅 · 스레드 · 캔버스 · 노드 · �
   for (const h of ["#chat/primary/1793681208.264390", "#chat/primary", "#art/abcdefghijklmnop", "#node/%2512", "#w/Q-1", "#inbox", "#unread", "#saved", "#drafts", "#settings", "#settings/nodes"]) {
     const r = run(h); assert.ok(r.route && r.boot, h + " → bx-route"); assert.equal(r.h0, h);
   }
+  const atPath = (pathname: string, search: string) => { const w: Record<string, unknown> = {}, doc = { documentElement: { classList: { add() {}, remove() {} } } }; new Function("window", "location", "document", "history", "setTimeout", head!)(w, { hash: "", pathname, search }, doc, { state: null, replaceState() {} }, () => 0); const g = globalThis as any, h = g.HB_HASH0; delete g.HB_HASH0; return h; };   // 경로 갈래는 맨 이름 HB_HASH0 에 씀(브라우저에선 window 와 같음)
+  assert.equal(atPath("/nodes/abc", "?thread=1793681208.264390"), "#node/abc/1793681208.264390", "새로 고침 · 공유한 노드 스레드 주소");
+  assert.equal(atPath("/nodes/abc", "?thread=../x"), "#node/abc", "틀린 스레드 값은 버림");
+  assert.equal(atPath("/nodes/abc", ""), "#node/abc");
   for (const h of ["", "#tree", "#timeline", "#arts", "#t=1793681208.264390&c=primary", "#nf"]) assert.equal(run(h).route, false, (h || "빈 주소") + " → 가림막 없음");
   for (const h of ["#chat/primary", "#chat/primary/1793681208.264390", "#art/abcdefghijklmnop", "#node/%2512", "#inbox", "#settings/connectors", "#t=1793681208.264390&c=primary"]) assert.equal(run(h).hash, h, h + " → 주소 그대로(#tree 를 거치지 않게)");
   const css = (await Promise.all([...html.matchAll(/\/bxs\/([0-9a-f]{32})\.css/g)].map(async m => (await get(`/bxs/${m[1]}.css`)).text()))).join("\n");
