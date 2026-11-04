@@ -28,9 +28,9 @@
     save: ['<path d="M7 3.6h10a1.6 1.6 0 0 1 1.6 1.6v15.2l-6.6-4.3-6.6 4.3V5.2A1.6 1.6 0 0 1 7 3.6z"/>', 1],
     me: ['<circle cx="12" cy="7.9" r="3.7"/><path d="M4.7 20.6c.8-3.9 3.8-6.1 7.3-6.1s6.5 2.2 7.3 6.1"/>', 1],
   };
-  const ji = (n, on, w = 26) => { const [p, can] = J[n]; const fill = on && can ? p.replace(/<path /g, '<path fill="currentColor" ').replace(/<circle /g, '<circle fill="currentColor" ').replace('M6.5 12h6.2', '') : p;
-    return `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${fill}</svg>`; };
-  const CHK = (w = 20, sw = 2.2) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12.5l5 5L19.5 7"/></svg>`;
+  const ji = (n, on, w = 24) => { const [p, can] = J[n]; const fill = on && can ? p.replace(/<path /g, '<path fill="currentColor" ').replace(/<circle /g, '<circle fill="currentColor" ').replace('M6.5 12h6.2', '') : p;
+    return `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${fill}</svg>`; };
+  const CHK = (w = 20, sw = 1.9) => `<svg viewBox="0 0 24 24" width="${w}" height="${w}" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12.5l5 5L19.5 7"/></svg>`;
   const MSG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L3 21l1.6-5.3A8.5 8.5 0 1 1 21 12z"/></svg>';
   const IMG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>';
   const BACK = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>';
@@ -42,7 +42,7 @@
   const root = document.createElement('div'); root.id = 'bxx'; document.body.append(root);
   root.innerHTML = `<div class="xv" data-v="home"></div><div class="xv" data-v="thread" hidden></div><div class="xv" data-v="save" hidden></div><div class="xv" data-v="me" hidden></div>
     <nav class="xglass" aria-label="아래 내비">${['home', 'dm', 'plus', 'save', 'me'].map(k => `<button type="button" class="xt" data-xtab="${k}" aria-label="${{home: '홈', dm: '에이전트 DM', plus: '새 글', save: '저장됨', me: '프로필'}[k]}"></button>`).join('')}</nav>
-    <div class="xtoast" role="status" hidden></div>`;
+    <button type="button" class="xfab" data-xtab-fab aria-label="새 글">${ji('plus', false)}</button><div class="xtoast" role="status" hidden></div>`;
   const V = k => root.querySelector(`.xv[data-v="${k}"]`);
 
   // ── 데이터: 채널 글(뿌리) · 스레드 · 물음 · 읽지 않음 · 저장
@@ -68,7 +68,8 @@
     return it.sort((a, b) => (b.ask - a.ask) || (a.ask && b.ask ? a.rank - b.rank : 0) || (b.un - a.un) || (b.at - a.at)).slice(0, 80);
   }
 
-  const head = (m, k, turn) => `<div class="xh"><b>${E(who(m))}</b><span class="xtm">${ago(m.ts)}</span>${turn ? '<span class="xturn">· 내 차례</span>' : ''}</div>`;
+  const head = (m, k, turn) => `<div class="xh"><b>${E(who(m))}</b>${topic(m, k)}<span class="xtm">${ago(m.ts)}</span>${turn ? '<span class="xturn">· 내 차례</span>' : ''}</div>`;
+  const topic = (m, k) => { const t = chs().length > 1 ? NAMES()[k] : ''; return t && t !== who(m) ? `<span class="xtp">${E(t)}</span>` : ''; };   // 이름 › 채널 — 채널이 하나면 뺌
   const body = m => { const f = files(m); return `${f.text ? `<div class="xbd">${mdx(f.text, m.who !== 'owner')}</div>` : ''}${f.html || ''}`; };
   const acts = (k, m, n, done, sts, un) => `<div class="xact"><button type="button" class="xck${done ? ' on' : ''}" data-xdone="${E(m.ts)}" data-k="${E(k)}" aria-label="완료 · 읽음">${CHK()}</button>`
     + `<button type="button" class="xrp" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}" aria-label="${un ? '답글 · 읽지 않음' : '답글'}">${MSG}${n ? `<span>${n}</span>` : ''}${un ? '<i class="xnew"></i>' : ''}</button>`
@@ -95,29 +96,29 @@
     const q = (m.buttons || []).some(b => !b.other);
     const bd = body(m), part = q ? (o.part ? nn(o.part) : o.feed ? nn('1/2') : '') : '';
     const goto = q && o.feed ? `<button type="button" class="xgo" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}">${MSG}<span>${o.more ? `<b>투표</b>에서 고르기 · ${E(o.more)}` : '<b>2/2 투표</b>에서 고르기 · 눌러서 열기'}</span></button>` : '';
-    return `<article class="xp${o.joined ? ' j' : ''}${o.dim ? ' rd' : ''}${o.ask ? ' ask' : ''}" data-ts="${E(m.ts)}" data-k="${E(k)}" data-root="${E(o.root || m.ts)}">${o.joined ? '<i class="xl"></i>' : ''}`
-      + `<span class="xav">${av(who(m), 36)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${goto}${o.pollHere ? '' : ''}${acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
+    const sz = o.reply || o.ans ? 28 : 42;
+    return `<article class="xp${o.joined ? ' j' : ''}${o.reply ? ' xr' : ''}${o.main ? ' xm' : ''}${o.ans ? ' xa' : ''}${o.ask ? ' ask' : ''}" data-ts="${E(m.ts)}" data-k="${E(k)}" data-root="${E(o.root || m.ts)}">${o.joined ? '<i class="xl"></i>' : ''}${o.reply ? '<i class="xcv"></i>' : ''}`
+      + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${goto}${o.pollHere ? '' : ''}${acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
   }
   // 피드 한 묶음: 뿌리 글 + 볼 답 하나(물음이 있으면 그 글, 없으면 마지막 답) — 곧은 이음선
   function unit(x){
     const {k, m} = x, r = rest(k, m), ask = askIn(k, m), pv = ask && ask !== m ? ask : (r.length ? r[r.length - 1] : null);
-    const dim = !x.ask && !x.un && X.tab === 'home';
     // 묶음이면 첫 열린 물음을 보이고 「n/N」 + 이어짐 · 남은 수
     const qs = qList(k, m), bundle = qs.length > 1, open = qs.filter(isAsk), bq = bundle ? (open[0] || qs[qs.length - 1]) : null;
     const bo = bundle ? {part: `${qs.indexOf(bq) + 1}/${qs.length}`, more: open.length ? `${qs.length}개 중 ${open.length}개 남음` : `${qs.length}개 모두 접수됨`} : {};
     const show = bundle ? bq : pv;
     const tgt = !x.ask ? null : bundle ? bq : (ask || m);   // 「내 차례」를 붙일 글 = 실제로 고를 글(뿌리 물음 · 열린 카드 뿌리면 뿌리, 묶음이면 열린 물음)
-    if (!show) return wrap(x, post(k, m, {feed: true, n: m.replies || 0, dim, ask: x.ask, turn: tgt === m, un: x.un, sts: x.sts}));
-    if (show === m) return wrap(x, post(k, m, {feed: true, n: m.replies || r.length, dim, ask: x.ask, turn: tgt === m, un: x.un, sts: x.sts, ...bo}));
-    return wrap(x, post(k, m, {joined: true, feed: true, dim, ask: x.ask, turn: tgt === m, sts: x.sts}) + post(k, show, {feed: true, root: m.ts, n: m.replies || r.length, dim, ask: x.ask, turn: tgt === show, un: x.un, sts: x.sts, ...bo}));
+    if (!show) return wrap(x, post(k, m, {feed: true, n: m.replies || 0, ask: x.ask, turn: tgt === m, un: x.un, sts: x.sts}));
+    if (show === m) return wrap(x, post(k, m, {feed: true, n: m.replies || r.length, ask: x.ask, turn: tgt === m, un: x.un, sts: x.sts, ...bo}));
+    return wrap(x, post(k, m, {joined: true, feed: true, ask: x.ask, turn: tgt === m, sts: x.sts}) + post(k, show, {reply: true, feed: true, root: m.ts, n: m.replies || r.length, ask: x.ask, turn: tgt === show, un: x.un, sts: x.sts, ...bo}));
   }
   const wrap = (x, h) => `<div class="xu${x.ask ? ' ask' : ''}" data-root="${E(x.m.ts)}" data-k="${E(x.k)}">${h}</div>`;
 
   // ── 홈(X2 · X9): 맨 위 새 글 칸 + 피드
   const NAMES = () => Object.fromEntries(chs().map(k => [k, k === 'primary' ? (AN().primary || 'Primary') : String(AN()[k] || k).replace(/\s*리드\s*$/, '')]));
   function composer(){
-    return `<form class="xcmp" autocomplete="off"><span class="xav">${av(ME(), 36)}</span><div class="xc"><b class="xme">${E(ME())}</b>`
-      + `<button type="button" class="xsel" data-xsel aria-haspopup="listbox"># ${E(NAMES()[X.sel] || X.sel)} ▾</button>`
+    return `<form class="xcmp" autocomplete="off"><span class="xav">${av(ME(), 42)}</span><div class="xc"><div class="xmeh"><b class="xme">${E(ME())}</b>`
+      + `<button type="button" class="xsel" data-xsel aria-haspopup="listbox">${E(NAMES()[X.sel] || X.sel)} ▾</button></div>`
       + `<textarea id="xnew" rows="1" placeholder="무엇을 시킬까요?" aria-label="새 글"></textarea>`
       + `<div class="xcb"><label class="xib" aria-label="사진 · 첨부">${IMG}<input type="file" id="xfile" multiple hidden></label><span class="xatt"></span><button type="submit" class="xsend" aria-label="올리기">올리기</button></div></div></form>`;
   }
@@ -126,14 +127,14 @@
     const v = V('home'), it = items(), sig = JSON.stringify([it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked]), it.map(x => isSaved(x.m.ts))]);
     if (!force && sig === lastSig && v.firstChild) return; lastSig = sig;
     // 글 칸은 한 번만 만듦(다시 그려도 쓰던 글 · 포커스 · 한글 조합 · 첨부 · 토픽 창이 그대로) — 피드만 바꿈
-    if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd"><b>홈</b></header>${composer()}<div class="xfeed"></div>`;
-    const sl = v.querySelector('.xsel'); if (sl) sl.textContent = `# ${NAMES()[X.sel] || X.sel} ▾`;
+    if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd"><b>boarder</b></header>${composer()}<div class="xfeed"></div>`;
+    const sl = v.querySelector('.xsel'); if (sl) sl.textContent = `${NAMES()[X.sel] || X.sel} ▾`;
     const st = v.scrollTop;
     v.querySelector('.xfeed').innerHTML = it.map(unit).join('') || '<p class="xempty">글이 없어요</p>';
     v.scrollTop = st; watchSeen();
     for (const x of it.slice(0, 30)) if (x.m.replies && !thr(x.m.ts)) loadThr(x.k, x.m.ts);
   }
-  const grow = t => { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 220) + 'px'; };
+  const grow = t => { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 220) + 'px'; if (t.form?.classList.contains('xrep') && t.isConnected){ t.form.classList.toggle('has', !!t.value.trim()); root.style.setProperty('--xrh', t.form.offsetHeight + 'px'); } };   // 답 칸 올리기 단추는 글이 있을 때만, 칸이 커진 만큼 스레드 아래 여백도(마지막 답이 안 가리게)
   const pending = new Set();
   async function loadThr(k, ts){ if (pending.has(ts)) return; pending.add(ts); try { await G('loadTh')(k, ts); } catch {} pending.delete(ts); sched(); }
 
@@ -144,16 +145,16 @@
     const ms = [...all.filter(m => m.ts === t.ts), ...all.filter(m => m.ts !== t.ts)], rootM = ms[0]?.ts === t.ts ? ms[0] : {ts: t.ts};
     let h = '';
     const qs = ms.filter(qOf), N = qs.length;
-    ms.forEach((m, i) => { const last = i === ms.length - 1, q = qOf(m);
-      if (q){
-        h += post(t.k, {...m, buttons: m.buttons}, {joined: true, root: t.ts}).replace(/(<\/p>)/, nn(N > 1 ? `${qs.indexOf(m) + 1}/${N}` : '1/2') + '$1');
-        h += `<article class="xp${last ? '' : ' j'}" data-ts="${E(m.ts)}" data-k="${E(t.k)}" data-root="${E(t.ts)}">${last ? '' : '<i class="xl"></i>'}<span class="xav">${av(who(m), 36)}</span><div class="xc">${head(m, t.k)}<div class="xbd"><p>골라 주세요.${N > 1 ? '' : nn('2/2')}</p></div>${poll(t.k, rootM, m)}${acts(t.k, m, 0, pollState(t.k, rootM, m).st !== 'open')}</div></article>`;
-      } else h += post(t.k, m, {joined: !last, root: t.ts});
+    const nRep = ms.length - 1;
+    ms.forEach((m, i) => { const q = qOf(m), rt = i === 0 && m.ts === t.ts, form = rt ? {main: true} : {ans: true};
+      h += q ? post(t.k, m, {...form, root: t.ts}).replace(/(<\/p>)/, nn(N > 1 ? `${qs.indexOf(m) + 1}/${N}` : '1/2') + '$1') : post(t.k, m, {...form, root: t.ts});
+      if (q) h += `<article class="xp xa" data-ts="${E(m.ts)}" data-k="${E(t.k)}" data-root="${E(t.ts)}"><span class="xav">${av(who(m), 28)}</span><div class="xc">${head(m, t.k)}<div class="xbd"><p>골라 주세요.${N > 1 ? '' : nn('2/2')}</p></div>${poll(t.k, rootM, m)}${acts(t.k, m, 0, pollState(t.k, rootM, m).st !== 'open')}</div></article>`;
+      if (rt && nRep) h += `<div class="xsec">답글 ${nRep}</div>`;   // 뿌리(투표까지) 뒤
     });
     if (v.dataset.th !== t.ts){   // 다른 스레드로 왔을 때만 틀 · 답 칸을 새로(쓰던 답은 그 스레드 것이라 비움)
-      v.dataset.th = t.ts; v.dataset.sig = '';
-      v.innerHTML = `<header class="xhd xbk"><button type="button" class="xback" data-xback aria-label="뒤로">${BACK}</button><b>스레드</b></header><div class="xfeed"></div>`
-        + `<form class="xrep"><span class="xav">${av(ME(), 26)}</span><textarea id="xth" rows="1" placeholder="답글로 의견 · 불만 쓰기" aria-label="답글"></textarea><button type="submit" class="xsend">올리기</button></form>`;
+      v.dataset.th = t.ts; v.dataset.sig = ''; v.scrollTop = 0; root.style.removeProperty('--xrh');
+      v.innerHTML = `<header class="xhd xbk"><button type="button" class="xback" data-xback aria-label="뒤로">${BACK}</button><b>스레드</b><small>${E(NAMES()[t.k] || '')}</small></header><div class="xfeed"></div>`
+        + `<form class="xrep"><span class="xav">${av(ME(), 26)}</span><textarea id="xth" rows="1" placeholder="답글 쓰기" aria-label="답글"></textarea><button type="submit" class="xsend">올리기</button></form>`;
     }
     if (v.dataset.sig === h) return; v.dataset.sig = h;
     v.querySelector('.xfeed').innerHTML = h;
@@ -164,17 +165,18 @@
   function drawSave(){
     const v = V('save'), s = window.HBInbox?.state?.saved || [], by = new Map(roots().map(x => [x.m.ts, x]));
     const rows = s.map(x => { const r = by.get(x.thread || x.ts) || by.get(x.ts); return r ? unit({...r, ask: false, un: false, sts: x.ts}) : `<div class="xrow" data-xopen="${E(x.thread || x.ts)}" data-k="${E(x.chan)}"><b>${E(x.author || '')}</b><span>${E(String(x.text || '').slice(0, 120))}</span></div>`; }).join('');
-    v.innerHTML = `<header class="xhd"><b>저장됨</b></header><div class="xfeed">${rows || '<p class="xempty">저장한 글이 없어요. 글 아래 책갈피를 누르면 여기 모여요.</p>'}</div>`;
+    v.innerHTML = `<header class="xhd xbig"><b>저장됨</b></header><div class="xfeed">${rows || '<p class="xempty">저장한 글이 없어요. 글 아래 책갈피를 누르면 여기 모여요.</p>'}</div>`;
   }
   function drawMe(){
     const v = V('me'), mine = roots().filter(x => x.m.who === 'owner').sort((a, b) => b.m.ts - a.m.ts).slice(0, 20);
-    v.innerHTML = `<header class="xhd"><b>${E(ME())}</b></header><div class="xpf"><span class="xav xbig">${av(ME(), 72)}</span><div class="xpb"><a class="xpbtn" href="/#settings">설정</a><a class="xpbtn" href="/#settings/connect">연결</a><a class="xpbtn" href="/">보더</a></div></div>`
+    v.innerHTML = `<header class="xhd xbig"><b>${E(ME())}</b></header><div class="xpf"><span class="xav xbig">${av(ME(), 72)}</span><div class="xpb"><a class="xpbtn" href="/#settings">설정</a><a class="xpbtn" href="/#settings/connect">연결</a><a class="xpbtn" href="/">보더</a></div></div>`
       + `<div class="xtabs"><b>내 요청</b></div><div class="xfeed">${mine.map(x => unit({...x, ask: false, un: false})).join('') || '<p class="xempty">아직 쓴 글이 없어요</p>'}</div>`;
   }
 
   // ── 화면 바꾸기 · 그리기 일정
   function show(tab){
     X.tab = tab; for (const v of root.querySelectorAll('.xv')) v.hidden = v.dataset.v !== tab;
+    root.classList.toggle('xnonav', tab === 'thread'); root.classList.remove('xlow');
     for (const b of root.querySelectorAll('.xt')){ const k = b.dataset.xtab, on = k === tab || (tab === 'thread' && k === 'home'); b.classList.toggle('on', on); b.innerHTML = ji(k, on) + badge(k); }
     if (tab === 'home') drawHome(true); else if (tab === 'save') drawSave(); else if (tab === 'me') drawMe();
   }
@@ -216,13 +218,25 @@
     clearTimeout(note.t); note.t = setTimeout(() => { t.hidden = true; X.undo = null; }, 5000);
   }
 
+  function compose(){ show('home'); const v = V('home'); v.scrollTop = 0; const ta = v.querySelector('#xnew'); ta?.closest('.xcmp')?.classList.add('open'); ta?.focus(); }
+  // 내리면 막대가 숨고 + 단추만, 올리면 다시. 머리 줄도 내렸을 때만. 옆으로는 아무것도 안 움직임(transform 만)
+  const lastY = new WeakMap();
+  root.addEventListener('scroll', e => { const v = e.target; if (!v.classList?.contains('xv')) return;
+    const y = Math.max(0, v.scrollTop), p = lastY.has(v) ? lastY.get(v) : 0; v.classList.toggle('xs', y > 2);
+    if (y < 60){ root.classList.remove('xlow'); lastY.set(v, y); }
+    else if (Math.abs(y - p) > 8){ root.classList.toggle('xlow', y > p); lastY.set(v, y); } }, {capture: true, passive: true});
+  // 답 칸은 화면 아래 고정 — 키보드가 뜨면 그 위로(보이는 영역 아래 끝 기준)
+  { const vv = window.visualViewport; if (vv){ const kb = () => { const h = Math.max(0, innerHeight - vv.height - vv.offsetTop); root.style.setProperty('--xkb', h > 60 ? h + 'px' : '0px'); }; vv.addEventListener('resize', kb); vv.addEventListener('scroll', kb); } }
   // ── 누름
+  root.addEventListener('focusin', e => { if (e.target.id === 'xnew') e.target.closest('.xcmp')?.classList.add('open'); });
   root.addEventListener('click', e => {
     const t = e.target, q = s => t.closest(s);
     const nav = q('.xt'); if (nav){ const k = nav.dataset.xtab;
       if (k === 'dm') return void (location.href = '/es');
-      if (k === 'plus'){ show('home'); const ta = V('home').querySelector('#xnew'); ta?.focus(); return; }
+      if (k === 'plus') return compose();
       return show(k); }
+    if (q('[data-xtab-fab]')) return compose();
+    { const c = root.querySelector('.xcmp.open'); if (c && !q('.xcmp') && !c.querySelector('#xnew')?.value.trim() && !X.att?.length) c.classList.remove('open'); }   // 빈 글 칸 밖을 누르면 다시 한 줄
     if (q('[data-xback]')){ X.th = null; return show('home'); }
     if (q('[data-xundo]')){ const u = X.undo; X.undo = null; root.querySelector('.xtoast').hidden = true; return u?.(); }
     const v = q('[data-xvote]'); if (v){ const ts = v.dataset.ts, rt = v.dataset.root, k = v.dataset.k;
@@ -250,7 +264,9 @@
     if (f.classList.contains('xrep')){ if (!text || !X.th) return; const th = X.th; ta.value = ''; grow(ta);
       const r = await send({channel: th.k, thread: th.ts, text}, 't' + th.ts);
       if (r === 'maybe') say('답글이 올라갔을 수 있어요. 스레드에서 확인해 주세요');
-      else if (r === 'fail'){ if (X.th?.ts === th.ts && !ta.value){ ta.value = text; grow(ta); } say('답글을 보내지 못했어요. 글은 칸에 다시 넣어 뒀어요'); }
+      else if (r === 'fail'){ const now = root.querySelector('#xth');   // 보내는 동안 다른 스레드에 다녀오면 칸이 새로 만들어짐 — 지금 화면의 칸에 되살림
+        const back = X.th?.ts === th.ts && now && !now.value; if (back){ now.value = text; grow(now); }
+        say(back ? '답글을 보내지 못했어요. 글은 칸에 다시 넣어 뒀어요' : '답글을 보내지 못했어요. 다시 써 주세요'); }
       return; }
     const att = X.att || []; if (!text && !att.length) return;
     const ids = [];
@@ -259,7 +275,7 @@
     const r = await send({channel: ch, text, ...(ids.length ? {files: ids} : {})}, 'new:' + ch);
     if (r === 'ok') return say(`# ${NAMES()[ch] || ch}에 올렸어요`);
     if (r === 'maybe') return say(`# ${NAMES()[ch] || ch}에 올라갔을 수 있어요. 피드에서 확인해 주세요`);
-    if (!ta.value){ ta.value = text; grow(ta); X.att = kept; if (a) a.textContent = kept.length ? `첨부 ${kept.length}개` : ''; }
+    if (!ta.value){ ta.value = text; grow(ta); X.att = kept; if (a) a.textContent = kept.length ? `첨부 ${kept.length}개` : ''; f.classList.add('open'); }   // 보내는 동안 접혔어도 단추 줄을 다시
     say('올리지 못했어요. 글은 칸에 다시 넣어 뒀어요');
   });
   root.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && e.target.matches('#xnew, #xth')){ e.preventDefault(); e.target.form.requestSubmit(); } });

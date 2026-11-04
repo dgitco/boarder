@@ -3,8 +3,8 @@
    틀의 아이콘 레일 · 사이드바 · 트리/타임라인 머리 · 서랍 · Primary 판은 숨김(보드가 쓰는 요소라 지우지 않고 가리기만). */
 html.bx-ea{--ea-w:340px;--ea-h:52px;--ea-b:0px}   /* --ea-b = 비밀값 띠 높이(ea-secret.js, 대화가 열렸고 띠가 있을 때만) */
 html.bx-ea{--ea-bub:#f2f2f4;--ea-me:#111113;--ea-me-ink:#ffffff;--ea-glass:rgba(118,118,128,.14);--ea-blue:#0a84ff}
-@media (prefers-color-scheme:dark){html.bx-ea:not([data-theme="light"]){--ea-bub:#232326;--ea-me:#3a3a40;--ea-me-ink:#f5f5f7;--ea-glass:rgba(118,118,128,.3)}}
-html.bx-ea[data-theme="dark"]{--ea-bub:#232326;--ea-me:#3a3a40;--ea-me-ink:#f5f5f7;--ea-glass:rgba(118,118,128,.3)}
+@media (prefers-color-scheme:dark){html.bx-ea:not([data-theme="light"]){--surface:#101010;--ea-bub:#1e1e1e;--ea-me:#3a3a40;--ea-me-ink:#f5f5f7;--ea-glass:rgba(118,118,128,.3)}}
+html.bx-ea[data-theme="dark"]{--surface:#101010;--ea-bub:#1e1e1e;--ea-me:#3a3a40;--ea-me-ink:#f5f5f7;--ea-glass:rgba(118,118,128,.3)}
 html.bx-ea,html.bx-ea body{height:100%;overflow:hidden;background:var(--surface)}
 html.bx-ea body{margin:0}
 html.bx-ea .bx-sb,html.bx-ea .bx-exp,html.bx-ea .bx-menu,html.bx-ea .bx-seg,html.bx-ea .bx-cap,html.bx-ea .bx-chatmenu,html.bx-ea .bx-dr,html.bx-ea .bx-scrim,html.bx-ea .bx-dock,html.bx-ea #scrim{display:none!important}

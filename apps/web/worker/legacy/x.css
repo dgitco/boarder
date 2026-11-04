@@ -1,95 +1,124 @@
-html.bx-x{--xbg:#fff;--xink:#000;--xname:#1d1d1d;--xmut:#949494;--xline:#dadada;--xthr:#e4e4e4;--xsoft:#3c3c42;--xsunk:#f2f2f4;--xok:#2e9d5b;--xsave:#2f6fec;--xdot:#0a84ff;--xred:#ff3b30}
-@media (prefers-color-scheme:dark){html.bx-x:not([data-theme="light"]){--xbg:#101010;--xink:#f3f3f3;--xname:#f3f3f3;--xmut:#7a7a82;--xline:#313232;--xthr:#313232;--xsoft:#c2c2c8;--xsunk:#232326}}
-html.bx-x[data-theme="dark"]{--xbg:#101010;--xink:#f3f3f3;--xname:#f3f3f3;--xmut:#7a7a82;--xline:#313232;--xthr:#313232;--xsoft:#c2c2c8;--xsunk:#232326}
+html.bx-x{--xbg:#fff;--xink:#000;--xname:#000;--xmut:#999;--xico:#424242;--xline:#dadada;--xthr:#e5e5e5;--xsoft:#424242;--xsunk:#f5f5f5;--xpill:#f0f0f0;--xlink:#0095f6;--xdot:#0a84ff;--xred:#ff3040;--xtoast:#1e1e1e;--xf:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Geist","Noto Sans KR",system-ui,sans-serif}
+@media (prefers-color-scheme:dark){html.bx-x:not([data-theme="light"]){--xbg:#101010;--xink:#f3f5f7;--xname:#f3f5f7;--xmut:#777;--xico:#ccc;--xline:#313232;--xthr:#323638;--xsoft:#ccc;--xsunk:#1e1e1e;--xpill:#292929;--xlink:#49a3f8;--xtoast:#2f2f2f}}
+html.bx-x[data-theme="dark"]{--xbg:#101010;--xink:#f3f5f7;--xname:#f3f5f7;--xmut:#777;--xico:#ccc;--xline:#313232;--xthr:#323638;--xsoft:#ccc;--xsunk:#1e1e1e;--xpill:#292929;--xlink:#49a3f8;--xtoast:#2f2f2f}
 html.bx-x body > *:not(#bxx):not(#toast):not(#mview):not(.sscrim){display:none!important}
 html.bx-x body{background:var(--xbg);overflow:hidden}
-html.bx-x #toast{bottom:calc(96px + env(safe-area-inset-bottom,0px))!important}   /* 보드 안내 글이 아래 막대를 가리지 않게 */
-#bxx{position:fixed;inset:0;z-index:30;background:var(--xbg);color:var(--xink);font-family:var(--f,"Geist","Noto Sans KR",system-ui,sans-serif);-webkit-font-smoothing:antialiased}
+/* 보드 안내 글: 아래 막대를 가리지 않게 위로, 폰에서도 글 길이만큼 가운데 알약(.xtoast 와 같은 꼴) */
+html.bx-x #toast:not(.err){bottom:calc(96px + env(safe-area-inset-bottom,0px))!important;left:0;right:0;width:max-content;max-width:calc(100% - 32px);background:var(--xtoast);color:#fff;border-radius:14px;padding:10px 14px;font-size:13.5px}
+html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!important}
+#bxx{position:fixed;inset:0;z-index:30;background:var(--xbg);color:var(--xink);font-family:var(--xf);-webkit-font-smoothing:antialiased}
 #bxx .xv{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-bottom:110px;max-width:640px;margin:0 auto;border-left:1px solid transparent;border-right:1px solid transparent}
 @media (min-width:700px){#bxx .xv{border-color:var(--xline)}}
 #bxx .xv[hidden]{display:none}
-#bxx .xhd{position:sticky;top:0;z-index:3;margin:0;box-sizing:border-box;flex-wrap:nowrap;height:52px;display:flex;align-items:center;gap:10px;padding:0 16px;background:color-mix(in srgb,var(--xbg) 88%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--xline)}
-#bxx .xhd b{font-size:22px;font-weight:700}
-#bxx .xhd.xbk{justify-content:center}#bxx .xhd.xbk b{font-size:16px;font-weight:600}
-#bxx .xback{position:absolute;left:10px;width:40px;height:40px;display:grid;place-items:center;color:var(--xink);background:none;border:0}
-#bxx .xav{width:36px;height:36px;flex:none;display:block;border-radius:11px;overflow:hidden}
-#bxx .xav svg,#bxx .xav img{width:100%;height:100%;display:block}
+#bxx .xhd{position:sticky;top:0;z-index:3;margin:0;box-sizing:border-box;flex-wrap:nowrap;height:calc(52px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 16px 0;display:flex;align-items:center;justify-content:center;gap:10px;background:var(--xbg);border-bottom:.5px solid transparent;transition:border-color .15s}
+#bxx .xv.xs .xhd{border-bottom-color:var(--xline)}   /* 줄은 내렸을 때만 */
+#bxx .xhd b{font-size:19px;font-weight:700;letter-spacing:-.02em}
+#bxx .xhd.xbk{flex-direction:column;gap:0}#bxx .xhd.xbk b{font-size:16px;font-weight:600;letter-spacing:0;line-height:20px}#bxx .xhd.xbk small{font-size:12.5px;line-height:15px;color:var(--xmut)}
+#bxx .xhd.xbig{justify-content:flex-start;height:calc(60px + env(safe-area-inset-top,0px));padding-left:16px}#bxx .xhd.xbig b{font-size:30px;line-height:36px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#bxx .xback{position:absolute;left:8px;bottom:6px;width:40px;height:40px;display:grid;place-items:center;color:var(--xink);background:none;border:0;cursor:pointer}
+#bxx .xav{width:42px;height:42px;flex:none;display:block;border-radius:50%;overflow:hidden}
+#bxx .xav > *,#bxx .xav svg,#bxx .xav img{width:100%!important;height:100%!important;display:block;border-radius:50%}   /* 보드 blob 은 span.bl 로 감싸 나옴 */
 /* 새 글 칸 */
-#bxx .xcmp{display:grid;grid-template-columns:36px minmax(0,1fr);gap:0 12px;padding:14px 16px 12px 12px;border-bottom:1px solid var(--xline);position:relative}
-#bxx .xme{font-size:15px;font-weight:600;color:var(--xname)}
-#bxx .xsel{display:inline-flex;align-items:center;gap:4px;margin:2px 0 4px;border:0;border-radius:8px;background:var(--xsunk);color:var(--xsoft);font:inherit;font-size:12.5px;padding:2px 8px;cursor:pointer}
-#bxx textarea{width:100%;border:0;outline:0;resize:none;background:none;color:var(--xink);font:inherit;font-size:15px;line-height:21px;padding:2px 0;min-height:23px}
+#bxx .xcmp{display:grid;grid-template-columns:42px minmax(0,1fr);gap:0 9px;padding:8px 14px 14px 9px;border-bottom:.5px solid var(--xline);position:relative}
+#bxx .xmeh{display:flex;align-items:baseline;gap:2px;min-width:0;line-height:20px}
+#bxx .xme{font-size:15px;font-weight:600;color:var(--xname);flex:none;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#bxx .xsel{display:inline-flex;align-items:baseline;gap:3px;min-width:0;border:0;background:none;color:var(--xname);font:inherit;font-size:15px;font-weight:500;padding:0;cursor:pointer;white-space:nowrap}
+#bxx .xsel::before,#bxx .xtp::before{content:'›';color:var(--xmut);font-weight:400;margin:0 5px 0 4px}
+#bxx .xcmp .xcb{display:none}#bxx .xcmp.open .xcb{display:flex}   /* 도구 줄은 글 칸을 눌렀을 때만 */
+#bxx textarea{width:100%;border:0;outline:0;resize:none;background:none;color:var(--xink);font:inherit;font-size:15px;line-height:22px;padding:1px 0 0;min-height:23px;display:block}
 #bxx textarea::placeholder{color:var(--xmut)}
 #bxx .xcb{display:flex;align-items:center;gap:12px;margin-top:8px;color:var(--xmut)}
 #bxx .xib{display:grid;place-items:center;cursor:pointer;color:var(--xmut)}
 #bxx .xatt{font-size:12.5px}
 #bxx .xsend{margin-left:auto;height:32px;padding:0 14px;border-radius:999px;border:0;background:var(--xink);color:var(--xbg);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
-#bxx .xselpop{position:absolute;left:56px;top:62px;z-index:9;width:min(300px,80vw);background:var(--xbg);border:1px solid var(--xline);border-radius:14px;box-shadow:0 12px 36px rgba(0,0,0,.18);padding:6px 0}
+#bxx .xselpop{position:absolute;left:60px;top:34px;z-index:9;width:min(300px,80vw);background:var(--xbg);border:1px solid var(--xline);border-radius:14px;box-shadow:0 12px 36px rgba(0,0,0,.18);padding:6px 0}
 #bxx .xselpop h5{margin:8px 14px 4px;font-size:12px;color:var(--xmut);font-weight:600}
 #bxx .xselpop button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 14px;border:0;background:none;color:var(--xink);font:inherit;font-size:15px;text-align:left;cursor:pointer}
 #bxx .xselpop button b{color:var(--xmut);font-weight:600}
 #bxx .xselpop button[aria-selected="true"],#bxx .xselpop button:hover{background:var(--xsunk)}
 #bxx .xselpop .xav{width:22px;height:22px;border-radius:7px}
-/* 글: 곧은 이음선 = 사진 가운데(x 30)에서 다음 글 사진 위까지 */
-#bxx .xu{position:relative;overflow:hidden;border-bottom:1px solid var(--xline)}
-#bxx .xp{display:grid;grid-template-columns:36px minmax(0,1fr);gap:0 12px;padding:16px 16px 12px 12px;position:relative}
-#bxx .xp.j{padding-bottom:0}
-#bxx .xp > .xl{position:absolute;left:29px;top:56px;bottom:-12px;width:2px;border-radius:1px;background:var(--xthr)}
-#bxx .xfeed > .xp:not(.j){border-bottom:1px solid var(--xline)}
-#bxx .xp.rd{opacity:.5}
-#bxx .xturn{color:var(--xsoft);font-weight:600;font-size:13.5px}
-#bxx .xh{display:flex;align-items:baseline;gap:6px;font-size:15px;min-width:0}
-#bxx .xh b{font-weight:600;color:var(--xname)}
-#bxx .xtm{color:var(--xmut)}
-#bxx .xbd{font-size:15px;line-height:21px;color:var(--xink);overflow-wrap:anywhere;margin-top:2px}
-#bxx .xbd p{margin:0 0 6px}#bxx .xbd p:last-child{margin:0}
+/* 글. 이음선 = 사진 아래(x 30)에서 곧게 내려와 답 사진 가운데 높이로 둥글게 꺾여, 답 사진 앞 14 에서 끝남(곡선 반지름 16) */
+#bxx .xu{position:relative;overflow:hidden;border-bottom:.5px solid var(--xline)}
+#bxx .xp{display:grid;grid-template-columns:42px minmax(0,1fr);gap:0 9px;padding:16px 14px 8px 9px;position:relative}
+#bxx .xp.j{padding-bottom:6px}
+#bxx .xp > .xl{position:absolute;left:29px;top:64px;bottom:0;width:2px;background:var(--xthr)}
+/* 답 미리보기: 작은 사진 28 이 글 시작(60)에, 이름은 그 옆, 글은 다시 60 에서 */
+#bxx .xp.xr{grid-template-columns:28px minmax(0,1fr);gap:0 8px;padding:4px 14px 8px 60px}
+#bxx .xp.xr > .xcv{position:absolute;left:29px;top:0;width:17px;height:18px;box-sizing:border-box;border:solid var(--xthr);border-width:0 0 2px 2px;border-bottom-left-radius:16px}
+#bxx .xp.xr > .xav{width:28px;height:28px}
+#bxx .xp.xr > .xc{display:contents}#bxx .xp.xr > .xc > *{grid-column:1/-1}#bxx .xp.xr > .xc > .xh{grid-column:2;grid-row:1;align-self:center}
+#bxx .xp.xr .xbd{margin-top:4px}
+/* 스레드 뿌리: 사진 옆에 이름, 글은 왼쪽 끝(12)부터 */
+#bxx .xp.xm{grid-template-columns:42px minmax(0,1fr);gap:0 12px;padding:6px 14px 10px 12px}
+#bxx .xp.xm > .xc{display:contents}#bxx .xp.xm > .xc > *{grid-column:1/-1}#bxx .xp.xm > .xc > .xh{grid-column:2;grid-row:1;align-self:center}
+#bxx .xp.xm .xbd{margin-top:10px}
+#bxx .xfeed > .xp.xm:last-child{border-bottom:.5px solid var(--xline)}
+#bxx .xp.xm + .xp.xa{border-top:.5px solid var(--xline)}
+/* 스레드 답: 사진 28(왼쪽 12) · 글 시작 52 · 글마다 줄 */
+#bxx .xp.xa{grid-template-columns:28px minmax(0,1fr);gap:0 12px;padding:12px 14px 8px 12px;border-bottom:.5px solid var(--xline)}
+#bxx .xp.xa > .xav{width:28px;height:28px}
+#bxx .xsec{display:flex;align-items:center;height:44px;padding:0 14px 0 12px;border-top:.5px solid var(--xline);border-bottom:.5px solid var(--xline);font-size:15px;font-weight:600;color:var(--xname)}
+#bxx .xturn{color:var(--xsoft);font-weight:600;font-size:13.5px;flex:none}
+#bxx .xh{display:flex;align-items:baseline;gap:6px;font-size:15px;line-height:20px;min-width:0}
+#bxx .xh b{font-weight:600;color:var(--xname);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#bxx .xtp{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:var(--xname);margin-left:-6px}
+#bxx .xtm{color:var(--xmut);flex:none}
+#bxx .xbd{font-size:15px;line-height:23px;color:var(--xink);overflow-wrap:anywhere;margin-top:1px}
+#bxx .xbd p{margin:0 0 8px}#bxx .xbd p:last-child{margin:0}
 #bxx .xbd p.mdi{padding-left:1em;text-indent:-1em;margin-bottom:4px}
-#bxx .xbd a{color:inherit;text-decoration:underline;text-decoration-color:var(--xmut)}
-#bxx .xnn{display:inline-block;font-size:12.5px;color:var(--xmut);background:var(--xsunk);border-radius:999px;padding:0 7px;margin-left:6px;text-indent:0;vertical-align:1px}
-#bxx .xgo{display:flex;align-items:center;gap:6px;margin-top:8px;border:0;background:none;padding:0;color:var(--xsoft);font:inherit;font-size:13.5px;cursor:pointer}
-#bxx .xgo svg{width:16px;height:16px}#bxx .xgo b{color:var(--xink)}
-#bxx .xact{display:flex;gap:16px;align-items:center;margin-top:10px;color:var(--xink)}
-#bxx .xact button{display:inline-flex;align-items:center;gap:5px;border:0;background:none;padding:0;color:inherit;font:inherit;font-size:13.5px;cursor:pointer}
-#bxx .xck.on{color:var(--xok)}
-#bxx .xrp{position:relative}#bxx .xnew{position:absolute;top:-1px;left:15px;width:7px;height:7px;border-radius:50%;background:var(--xdot);box-shadow:0 0 0 2px var(--xbg)}
-#bxx .xact .xck{order:0}#bxx .xact .xsv{order:1}#bxx .xact .xrp{order:2}#bxx .xsv.on{color:var(--xsave)}
+#bxx .xbd a{color:var(--xlink);text-decoration:none}
+#bxx .xc img,#bxx .xc video{border-radius:16px}
+#bxx .xnn{display:inline-block;font-size:12.5px;line-height:20px;color:var(--xmut);background:var(--xsunk);border-radius:999px;padding:0 8px;margin-left:6px;text-indent:0;vertical-align:1px}
+#bxx .xgo{display:flex;align-items:center;gap:6px;margin-top:6px;border:0;background:none;padding:0;color:var(--xmut);font:inherit;font-size:14px;line-height:20px;text-align:left;cursor:pointer}
+#bxx .xgo svg{width:16px;height:16px;flex:none}#bxx .xgo b{color:var(--xink);font-weight:600}
+#bxx .xact{display:flex;gap:22px;align-items:center;min-height:32px;margin-top:3px;color:var(--xico)}
+#bxx .xact button{display:inline-flex;align-items:center;gap:5px;min-height:32px;border:0;background:none;padding:0;color:inherit;font:inherit;font-size:14px;cursor:pointer}
+#bxx .xck.on,#bxx .xsv.on{color:var(--xink)}
+#bxx .xrp{position:relative}#bxx .xnew{position:absolute;top:4px;left:15px;width:7px;height:7px;border-radius:50%;background:var(--xdot);box-shadow:0 0 0 2px var(--xbg)}
+#bxx .xact .xck{order:0}#bxx .xact .xsv{order:1}#bxx .xact .xrp{order:2}
 /* 투표(X · Threads poll 꼴) */
 #bxx .xpoll{margin:10px 0 2px}
-#bxx .xop{position:relative;display:flex;align-items:center;gap:8px;width:100%;border:1px solid var(--xline);border-radius:14px;padding:11px 14px;margin-top:6px;background:var(--xbg);color:var(--xink);font:inherit;font-size:15px;text-align:left;overflow:hidden;cursor:pointer}
+#bxx .xop{position:relative;display:flex;align-items:center;gap:8px;width:100%;border:1px solid var(--xline);border-radius:14px;padding:11px 14px;margin-top:6px;background:none;color:var(--xink);font:inherit;font-size:15px;text-align:left;overflow:hidden;cursor:pointer}
 #bxx .xop span,#bxx .xop i,#bxx .xop b{position:relative}
 #bxx .xop i{font-style:normal;font-size:12.5px;color:var(--xmut);font-weight:600}
 #bxx .xop.res{border-color:transparent;background:var(--xsunk);cursor:default}
-#bxx .xop .xf{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--xok) 22%,transparent)}
-#bxx .xop.me span:not(.xf){font-weight:600}#bxx .xop b{margin-left:auto;color:var(--xok);display:grid}
-#bxx .xft{font-size:13px;color:var(--xmut);margin-top:8px}#bxx .xft b{color:var(--xok);font-weight:600}
+#bxx .xop .xf{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--xink) 12%,transparent)}
+#bxx .xop.me span:not(.xf){font-weight:600}#bxx .xop b{margin-left:auto;color:var(--xink);display:grid}
+#bxx .xft{font-size:13px;color:var(--xmut);margin-top:8px}#bxx .xft b{color:var(--xsoft);font-weight:600}
 /* 스레드 답 칸 */
-#bxx .xrep{position:sticky;bottom:96px;margin:12px 12px 0;display:flex;align-items:flex-end;gap:10px;border-radius:24px;background:var(--xsunk);padding:8px 8px 8px 12px}
-#bxx .xrep .xav{width:26px;height:26px;border-radius:8px}
-#bxx .xrep textarea{flex:1}
+#bxx .xv[data-v="thread"]{padding-bottom:calc(36px + var(--xrh,48px) + max(env(safe-area-inset-bottom,0px),var(--xkb,0px)))}
+#bxx .xrep{position:fixed;left:0;right:0;margin:0 auto;width:calc(100% - 20px);max-width:620px;box-sizing:border-box;bottom:calc(10px + max(env(safe-area-inset-bottom,0px),var(--xkb,0px)));z-index:6;display:flex;align-items:center;gap:10px;min-height:48px;border-radius:24px;background:var(--xpill);padding:6px 8px 6px 12px}
+#bxx .xrep .xav{width:26px;height:26px}
+#bxx .xrep textarea{flex:1;min-width:0;min-height:22px;max-height:220px;padding:0}
+#bxx .xrep .xsend{display:none}#bxx .xrep.has .xsend{display:block}
+#bxx.xnonav .xglass,#bxx.xnonav .xfab{display:none}   /* 스레드 화면엔 막대 없이 답 칸만 */
 /* 저장됨 · 프로필 */
-#bxx .xrow{display:flex;flex-direction:column;gap:2px;padding:12px 16px;border-bottom:1px solid var(--xline);cursor:pointer;font-size:14px}
+#bxx .xrow{display:flex;flex-direction:column;gap:2px;padding:12px 16px;border-bottom:.5px solid var(--xline);cursor:pointer;font-size:14px}
 #bxx .xempty{color:var(--xmut);text-align:center;padding:48px 24px;font-size:14px}
-#bxx .xpf{display:flex;align-items:center;gap:16px;padding:16px}
-#bxx .xav.xbig{width:72px;height:72px;border-radius:22px}
+#bxx .xpf{display:flex;align-items:center;gap:16px;padding:6px 16px 16px}
+#bxx .xav.xbig{width:72px;height:72px}
 #bxx .xpb{display:flex;gap:8px;flex-wrap:wrap;flex:1;min-width:0}
-#bxx .xpbtn{flex:none;white-space:nowrap;border:1px solid var(--xline);border-radius:10px;padding:7px 14px;font-size:14px;font-weight:600;color:var(--xink);text-decoration:none}
-#bxx .xtabs{display:flex;border-bottom:1px solid var(--xline);padding:0 16px}#bxx .xtabs b{padding:10px 0;border-bottom:2px solid var(--xink);font-size:14.5px}
-#bxx .xglass{position:fixed;left:0;right:0;margin:0 auto;width:calc(100% - 32px);max-width:520px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:6;height:64px;padding:6px;border-radius:32px;
-  display:grid;grid-template-columns:repeat(5,1fr);gap:2px;align-items:center;isolation:isolate;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.85),inset 0 -1px 0 rgba(255,255,255,.3),inset 0 0 0 1px rgba(255,255,255,.4),0 0 0 .5px rgba(0,0,0,.07),0 10px 30px rgba(0,0,0,.14)}
-#bxx .xglass::before,#bxx .xglass::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1}
-#bxx .xglass::before{background:color-mix(in srgb,var(--xbg) 26%,transparent);-webkit-backdrop-filter:blur(2.5px) saturate(185%) brightness(1.06);backdrop-filter:blur(2.5px) saturate(185%) brightness(1.06)}
-#bxx .xglass::after{padding:9px;background:linear-gradient(180deg,rgba(255,255,255,.42),rgba(255,255,255,0) 46%);-webkit-backdrop-filter:blur(9px) saturate(220%);backdrop-filter:blur(9px) saturate(220%);
-  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0)}
-#bxx .xt{position:relative;height:52px;border-radius:26px;display:grid;place-items:center;border:0;background:none;color:var(--xsoft);cursor:pointer;-webkit-tap-highlight-color:transparent}
-#bxx .xt.on{background:rgba(255,255,255,.62);color:var(--xink);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 1px 6px rgba(0,0,0,.08)}
-@media (prefers-color-scheme:dark){html.bx-x:not([data-theme="light"]) #bxx .xglass{box-shadow:inset 0 1px 0 rgba(255,255,255,.28),inset 0 0 0 1px rgba(255,255,255,.12),0 10px 30px rgba(0,0,0,.5)}
-  html.bx-x:not([data-theme="light"]) #bxx .xglass::after{background:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,0) 46%)}
-  html.bx-x:not([data-theme="light"]) #bxx .xt.on{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}}
-html.bx-x[data-theme="dark"] #bxx .xglass{box-shadow:inset 0 1px 0 rgba(255,255,255,.28),inset 0 0 0 1px rgba(255,255,255,.12),0 10px 30px rgba(0,0,0,.5)}
-html.bx-x[data-theme="dark"] #bxx .xglass::after{background:linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,0) 46%)}
-html.bx-x[data-theme="dark"] #bxx .xt.on{background:rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
-#bxx .xbdg{position:absolute;top:6px;right:calc(50% - 22px);min-width:18px;height:18px;border-radius:9px;background:var(--xred);color:#fff;font-size:11px;font-weight:600;display:grid;place-items:center;padding:0 5px}
-#bxx .xtoast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:7;display:flex;gap:14px;align-items:center;background:#111113;color:#fff;border-radius:12px;padding:10px 14px;font-size:13.5px;white-space:nowrap}
+#bxx .xpbtn{flex:none;white-space:nowrap;border:1px solid var(--xline);border-radius:999px;padding:7px 16px;font-size:14px;font-weight:600;color:var(--xink);text-decoration:none}
+#bxx .xtabs{display:flex;border-bottom:.5px solid var(--xline);padding:0 16px}#bxx .xtabs b{padding:10px 0;border-bottom:2px solid var(--xink);font-size:14.5px}
+/* 리퀴드 글래스 아래 막대: 양옆 21 · 아래 21 · 높이 62 · 안쪽 4, 고른 칸 = 뒤보다 어두운 알약, 위 가장자리에 빛 한 줄.
+   흐림은 가짜 요소에(막대 자신에 backdrop-filter 를 걸면 안쪽 층이 뒤를 못 봄). 내리면 숨고 오른쪽 아래 + 단추만, 올리면 다시 나옴 */
+#bxx .xglass{position:fixed;left:0;right:0;margin:0 auto;width:calc(100% - 42px);max-width:440px;box-sizing:border-box;bottom:max(21px,env(safe-area-inset-bottom,0px));z-index:6;height:62px;padding:4px;border-radius:31px;
+  display:grid;grid-template-columns:repeat(5,1fr);align-items:center;isolation:isolate;transition:transform .24s ease,opacity .2s;
+  box-shadow:inset 0 .5px 0 rgba(255,255,255,.9),0 0 0 .5px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.12)}
+#bxx .xglass::before,#bxx .xfab::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1;background:rgba(255,255,255,.66);-webkit-backdrop-filter:blur(9px) saturate(170%);backdrop-filter:blur(9px) saturate(170%)}
+#bxx.xlow .xglass{transform:translateY(calc(100% + 40px));opacity:0;pointer-events:none}
+#bxx .xt{position:relative;height:54px;border-radius:27px;display:grid;place-items:center;border:0;background:none;color:var(--xico);cursor:pointer;-webkit-tap-highlight-color:transparent}
+#bxx .xt.on{background:rgba(0,0,0,.07);color:var(--xink)}
+#bxx .xfab{position:fixed;right:max(21px,calc(50vw - 320px + 21px));bottom:max(21px,env(safe-area-inset-bottom,0px));z-index:6;width:60px;height:60px;border-radius:50%;border:0;padding:0;display:grid;place-items:center;color:var(--xink);isolation:isolate;cursor:pointer;opacity:0;pointer-events:none;transform:scale(.8);transition:transform .2s ease,opacity .2s;
+  box-shadow:inset 0 .5px 0 rgba(255,255,255,.9),0 0 0 .5px rgba(0,0,0,.08),0 8px 24px rgba(0,0,0,.12);background:none}
+#bxx.xlow .xfab{opacity:1;pointer-events:auto;transform:none}
+@media (prefers-color-scheme:dark){html.bx-x:not([data-theme="light"]) #bxx .xglass,html.bx-x:not([data-theme="light"]) #bxx .xfab{box-shadow:inset 0 .5px 0 rgba(255,255,255,.4),inset 0 0 0 .5px rgba(255,255,255,.1),0 8px 24px rgba(0,0,0,.4)}
+  html.bx-x:not([data-theme="light"]) #bxx .xglass::before,html.bx-x:not([data-theme="light"]) #bxx .xfab::before{background:rgba(60,60,60,.68)}
+  html.bx-x:not([data-theme="light"]) #bxx .xt.on{background:rgba(0,0,0,.55)}}
+html.bx-x[data-theme="dark"] #bxx .xglass,html.bx-x[data-theme="dark"] #bxx .xfab{box-shadow:inset 0 .5px 0 rgba(255,255,255,.4),inset 0 0 0 .5px rgba(255,255,255,.1),0 8px 24px rgba(0,0,0,.4)}
+html.bx-x[data-theme="dark"] #bxx .xglass::before,html.bx-x[data-theme="dark"] #bxx .xfab::before{background:rgba(60,60,60,.68)}
+html.bx-x[data-theme="dark"] #bxx .xt.on{background:rgba(0,0,0,.55)}
+#bxx .xbdg{position:absolute;top:5px;right:calc(50% - 22px);min-width:18px;height:18px;border-radius:9px;background:var(--xred);color:#fff;font-size:11px;font-weight:600;display:grid;place-items:center;padding:0 5px}
+#bxx .xtoast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:7;display:flex;gap:14px;align-items:center;background:var(--xtoast);color:#fff;border-radius:14px;padding:10px 14px;font-size:13.5px;white-space:nowrap}
 #bxx .xtoast[hidden]{display:none}
-#bxx .xtoast button{border:0;background:none;color:#9fe0b5;font:inherit;font-weight:600;cursor:pointer}
+#bxx .xtoast button{border:0;background:none;color:#fff;font:inherit;font-weight:600;cursor:pointer}
