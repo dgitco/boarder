@@ -226,6 +226,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     if (n.state === "parked") { parked.push({ id: "c" + n.pane.slice(1), name: n.name, area: "primary", msg: n.why || "주차", owner: false, ago: ago(n.updated_at), stale: null, wait: n.why || "주차", topics: [], pri: priOf(L.pri, n.name), pane: n.pane, short: n.why || "주차", watch: "" }); continue; }
     const pn: R = pane({ pane: n.pane, win: n.name, kind: "lead", state: STATE[n.state] || (n.state === "turn" ? "질문" : "쉼"), cwd: w0?.cwd, branch: w0?.branch, rows });
     const tk = tasks.get(n.id);
+    if (tk) pn.tk = true;   // 업무 노드 표시(점 설정과 무관) — 왼쪽 채널 · 에이전트 칸은 대화 자리라 빼고, 트리 · /tasks 에서 봄
     if (tk && L.taskDots) pn.task = { state: tk.state, line: tk.line || "", issue: tk.issue || "", chips: [...(tk.confirm ? ["confirm"] : []), ...(!w0 ? (hasKid.has(n.id) ? [] : ["unassigned"]) : n.windows.every(w => w.state === "parked") ? ["parked"] : [])] };
     panes.push(pn);
     nodeOfPane.set(n.pane, n.id);
