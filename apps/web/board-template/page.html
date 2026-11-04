@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "2f8b44d6e88c";
+window.HB_VER = "d892c6f7a53d";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -5048,6 +5048,7 @@ const EMO = {
 const QUICK = ["white_check_mark", "eyes", "raised_hands"];
 const SHEETQ = ["white_check_mark", "eyes", "+1", "hushed", "raised_hands", "slightly_smiling_face"];
 const PICK = ["+1", "white_check_mark", "eyes", "hushed", "slightly_smiling_face", "pray", "heart", "raised_hands", "tada", "fire", "rocket", "ok_hand", "thinking_face", "100", "joy", "x", "heavy_check_mark", "warning", "memo", "bulb"];
+let thLast = null;
 const CS = { chTop: {}, old: {}, oldBusy: {}, view: "chan", topic: null, at: "primary", th: null, T: { topics: [], threads: [] }, ch: {}, thr: {}, pane: {}, pend: {}, fail: {}, pmeta: {}, mark: {}, showDone: false, att: {}, pop: null, pick: null, seen: {}, toBottom: false, edit: null, sheet: null };
 const BLOB_BOTS = [["primary", "Primary"], ["dgit", "DGit 리드"], ["company", "회사 리드"], ["shop", "가게 리드"], ["personal", "퍼스널 리드"]];
 const BLOB_EXPR = [["happy", "기뻐요"], ["love", "좋아요"], ["thinking", "생각 중"], ["surprised", "놀랐어요"], ["sad", "아쉬워요"], ["sleepy", "졸려요"]];
@@ -7546,6 +7547,7 @@ new MutationObserver(() => {
 function viewChat(keepScroll) {
   const el = chatOn() && $("#mchatbox");
   if (!el) return;
+  if (CS.th?.ts) thLast = { k: CS.th.k, ts: CS.th.ts, side: !!CS.th.side };
   document.body.classList.toggle("xch", isXCh(CS.at));
   if (composing) {
     afterCompose.add(() => viewChat(true));
@@ -8578,6 +8580,17 @@ document.addEventListener("drop", (e) => {
   if (id && document.getElementById(id)) addFiles(id, e.dataTransfer.files);
   else toast("주제·채널·스레드 입력칸이 있는 곳에 놓아 주세요");
 });
+document.addEventListener("keydown", (e) => {
+  if (e.code !== "Period" || e.isComposing || e.keyCode === 229 || e.altKey || e.shiftKey || !(MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return;
+  if (!chatOn() || CS.sheet || document.querySelector("#mview")) return;
+  e.preventDefault();
+  if (CS.th) {
+    thLast = { k: CS.th.k, ts: CS.th.ts, side: !!CS.th.side };
+    CS.th = null;
+    return viewChat(true);
+  }
+  if (thLast) openThread(thLast.k, thLast.ts, true, thLast.side);
+}, true);
 document.addEventListener("keydown", (e) => {
   if (!chatOn()) return;
   if (enterSends(e) && ["cnew", "cth"].includes(e.target.id) && window.HBV?.memo?.id === e.target.id) {

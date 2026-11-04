@@ -64,7 +64,15 @@ export async function boardSend(args) {
       log(`queued send for ${args.id} (${r.size} waiting)`);
       return { ok: true, queued: true };
     }
-    const r = await E.run('send', args);
+    let r;
+    try { r = await E.run('send', args); }
+    catch (e) {
+      if (e?.code !== 2) throw e;
+      const q = Q.push(args.id, args.text, args.cmd ? { cmd: String(args.cmd) } : {});
+      if (q.full) throw e;
+      log(`queued send for ${args.id} after busy (${e.message}) (${q.size} waiting)`);
+      return { ok: true, queued: true };
+    }
     try { markTurn(keys, args.text); } catch {}   // 표지를 못 남겨도 넣기는 된 것
     return r;
   });

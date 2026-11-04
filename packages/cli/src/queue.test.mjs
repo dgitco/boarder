@@ -172,6 +172,16 @@ test('바쁨(사람이 입력 중)이면 줄에 남겨 다음 회에 · 줄은 �
   assert.equal(Q.pending('ew_team01'), 1, '파일에서 다시 읽어도 그대로');
 });
 
+test('쉬는 창에 바로 넣다 바쁨(입력칸에 글)이면 「못 넣음」 대신 줄에 둠 → 입력칸이 비면 다음 회에 들어감', async () => {
+  reset(); world({ ew_team01: { state: 'typing', session_id: SID } });
+  const r = await send('ew_team01', '[보드 · 예시 팀장 · 스레드 1793000000.000030] 사라지지 마');
+  assert.equal(r.queued, true, '실패로 돌려주지 않고 줄에');
+  assert.deepEqual(queued('ew_team01'), ['[보드 · 예시 팀장 · 스레드 1793000000.000030] 사라지지 마']);
+  setState('ew_team01', 'idle');
+  assert.equal(await drain('ew_team01'), true);
+  assert.deepEqual(sent('ew_team01').map(x => x.text), ['[보드 · 예시 팀장 · 스레드 1793000000.000030] 사라지지 마']);
+});
+
 test('takeTurn: 한 창에 표지가 여럿이면 그 턴을 연 글의 표지만 쓰고 나머지는 남김', () => {
   reset();
   const now = Date.now();

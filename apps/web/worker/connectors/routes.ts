@@ -187,9 +187,13 @@ export function mountConnectors(host: Hono<any>, who: Who) {
   app.get("/api/connectors/callback", async c => {
     const q = new URL(c.req.url).searchParams, state = q.get("state") || "";
     const back = (to: string, k: string, v: string) => c.redirect(`/${to}${to.includes("?") ? "&" : "?"}${k}=${encodeURIComponent(v)}`, 302);
-    const w = await who(c); if (!w) return c.redirect("/", 302);
-    const p = await c.env.DB.prepare("DELETE FROM connection_pending WHERE state = ? RETURNING *").bind(state).first<{ owner: string; service: string; label: string; url: string; auth: string; back: string; bind: string; expires_at: number }>();
-    if (!p || p.expires_at < Date.now()) return back("#settings/connectors", "error", "연결 시간이 지났어요 — 다시 눌러요");
+    const w = await who(c); if (!w) return c.redirect("/#settings/connectors?error=" + encodeURIComponent("보더에 로그인한 브라우저에서 다시 눌러 주세요"), 302);
+    const p = await c.env.DB.prepare("DELETE FROM connection_pending WHERE state = ? AND owner = ? RETURNING *").bind(state, w.owner).first<{ owner: string; service: string; label: string; url: string; auth: string; back: string; bind: string; expires_at: number }>();
+    if (!p) {
+      const other = await c.env.DB.prepare("SELECT 1 AS x FROM connection_pending WHERE state = ? AND expires_at >= ?").bind(state, Date.now()).first();
+      return back("#settings/connectors", "error", other ? "이 연결을 시작한 사람이 아니에요 — 시작한 계정으로 로그인해 주세요" : "연결 시간이 지났거나 이미 끝났어요 — 설정에서 상태를 보고 필요하면 다시 눌러요");
+    }
+    if (p.expires_at < Date.now()) return back("#settings/connectors", "error", "연결 시간이 지났어요 — 다시 눌러요");
     if (p.owner !== w.owner) return back(p.back, "error", "이 연결을 시작한 사람이 아니에요");
     if (q.get("error")) return back(p.back, "error", `${p.service}: ${q.get("error_description") || q.get("error")}`.slice(0, 200));
     const g = await openSecret<{ google?: boolean; slack?: boolean; github?: boolean; spec?: ApiSpec; redirect_uri?: string }>(c.env, p.owner, PEND(state), p.auth);
