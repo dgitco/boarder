@@ -121,3 +121,12 @@ test("표지 셋(주차 · 담당 없음 · 확인 대기)은 점 설정이 꺼�
   for (const w of ["확인 받을 일", "담당 없는 일", "주차된 일"]) assert.equal(p(w).task, undefined, "점은 지금 그대로(다섯 꼴 안 실음)");
 });
 
+test("보드: 표지는 task 가 없어도 tkChips 로 그리고, 낱말은 확인 대기 · 담당 없음 · 주차", () => {
+  const html = readFileSync(new URL("../board-template/page.html", import.meta.url), "utf8");
+  const src = html.match(/const TASK_CHIP = [^\n]+\n(const taskChips = [^\n]+)/);
+  assert.ok(src, "TASK_CHIP · taskChips 줄");
+  const fn = new Function(src[0] + "; return taskChips;")() as (p: unknown) => string;
+  assert.equal(fn({ tkChips: ["confirm", "unassigned", "parked"] }).replace(/<[^>]+>/g, "|"), "|확인 대기||담당 없음||주차|");
+  assert.equal(fn({}), "");
+  assert.match(fn({ task: { chips: ["parked"] }, tkChips: ["unassigned"] }), /주차/, "켠 사람은 task.chips 그대로");
+});

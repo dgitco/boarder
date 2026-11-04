@@ -119,7 +119,8 @@ export async function uninstall({ log = console.log } = {}) {
   // 설치기가 만든 폴더(.local/bin 등)는 적어 둔 것만, 비었을 때만 지움
   let made = madeList(); try { made = made.concat(readFileSync(path.join(shareDir(), 'created-dirs'), 'utf8').split(/\r?\n/).map(x => x.replace(/^\uFEFF/, '').trim()).filter(Boolean)); } catch {}
   const wrapper = path.join(home(), '.local', 'bin', 'boarder'), cmd = path.join(home(), '.local', 'bin', 'boarder.cmd');
-  for (const f of [wrapper, cmd]) { try { if (/boarder[\\/]cli[\\/]bin[\\/]boarder\.mjs/.test(readFileSync(f, 'utf8'))) { rmSync(f, { force: true }); done.push(f); } } catch {} }
+  const short = path.join(home(), '.local', 'bin', 'bdr'), shortCmd = path.join(home(), '.local', 'bin', 'bdr.cmd');   // 짧은 이름(설치기가 같은 감싸기로 씀) — 우리 것만
+  for (const f of [wrapper, cmd, short, shortCmd]) { try { if (/boarder[\\/]cli[\\/]bin[\\/]boarder\.mjs/.test(readFileSync(f, 'utf8'))) { rmSync(f, { force: true }); done.push(f); } } catch {} }
   const later = [];
   for (const p of [dir(), shareDir()]) if (existsSync(p)) { try { rmSync(p, { recursive: true, force: true }); done.push(p); } catch { later.push(p); } }
   const dirs = [...new Set(made)].filter(m => path.resolve(m).startsWith(path.resolve(home()) + path.sep)).sort((a, b) => b.length - a.length);

@@ -132,7 +132,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const act = active(), top = S.ib || ibChat() ? null : act, chan = chatMode() && !cur.page && cur.chan;
     const tn = typeof attnCount === 'function' ? attnCount() : 0;
     const ib = it('turn', I.flag, '결정 · 할 일', cnt(tn, true), ibChat() === 'turn') + IBK.map(k => it(k, I[k], IBN[k], cnt(c[k], k === 'unread'), S.ib === k || ibChat() === k)).join('');
-    const MA = window.HB_CH && typeof MHEAD !== 'undefined' ? ((typeof D === 'object' && D?.areas) || []).filter(a => a && a.key !== 'primary' && a.lead && typeof byPane !== 'undefined' && byPane[a.lead] && (!byPane[a.lead].tk || byPane[a.lead].tkdept)) : [];
+    const MA = window.HB_CH ? ((typeof D === 'object' && D?.areas) || []).filter(a => a && a.key !== 'primary' && a.lead && typeof byPane !== 'undefined' && byPane[a.lead] && (!byPane[a.lead].tk || byPane[a.lead].tkdept)) : [];
     const pg = !ans.hidden && !!cur?.page && cur.p;
     const ch = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('')
       + MA.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('');

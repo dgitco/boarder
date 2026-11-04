@@ -8,7 +8,7 @@
     toast: () => typeof toast === 'function' ? toast : undefined, CS: () => typeof CS !== 'undefined' ? CS : undefined, D: () => typeof D !== 'undefined' ? D : undefined,
     cardShut: () => typeof cardShut === 'function' ? cardShut : undefined, picked: () => typeof picked !== 'undefined' ? picked : undefined, attnRows: () => typeof attnRows === 'function' ? attnRows : undefined,
     loadTh: () => typeof loadTh === 'function' ? loadTh : undefined, loadCh: () => typeof loadCh === 'function' ? loadCh : undefined, chatPost: () => typeof chatPost === 'function' ? chatPost : undefined,
-    upOne: () => typeof upOne === 'function' ? upOne : undefined, inputBox: () => typeof inputBox === 'function' ? inputBox : undefined, attChips: () => typeof attChips === 'function' ? attChips : undefined,
+    upOne: () => typeof upOne === 'function' ? upOne : undefined, ARTS: () => typeof ARTS !== 'undefined' ? ARTS : undefined, openArt: () => typeof openArt === 'function' ? openArt : undefined, inputBox: () => typeof inputBox === 'function' ? inputBox : undefined, attChips: () => typeof attChips === 'function' ? attChips : undefined,
     addFiles: () => typeof addFiles === 'function' ? addFiles : undefined, filePick: () => typeof filePick !== 'undefined' ? filePick : undefined, enterSends: () => typeof enterSends === 'function' ? enterSends : undefined,
     boardGrow: () => typeof grow === 'function' ? grow : undefined, withLnk: () => typeof withLnk === 'function' ? withLnk : undefined, dropAtt: () => typeof dropAtt === 'function' ? dropAtt : undefined};
   const G = n => { try { return L[n]?.(); } catch { return undefined; } };
@@ -40,7 +40,8 @@
 
   // ── 상태
   const DK = 'bx-x-done', ld = () => { try { const o = JSON.parse(localStorage.getItem(DK) || '{}'), cut = Date.now() - 14 * 864e5; return new Map(Object.entries(o).filter(([, t]) => t > cut)); } catch { return new Map(); } };
-  const X = {tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map(), pend: new Map()};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
+  const FLK = 'bx-x-fl', flLoad = () => { try { const v = localStorage.getItem(FLK); return v === 'ask' || v === 'info' ? v : 'all'; } catch { return 'all'; } };
+  const X = {fl: flLoad(), tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map(), pend: new Map(), kids: new Map()};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
   const keepDone = () => { try { localStorage.setItem(DK, JSON.stringify(Object.fromEntries(X.done))); } catch {} };
   const root = document.createElement('div'); root.id = 'bxx'; document.body.append(root);
   root.innerHTML = `<div class="xv" data-v="home"></div><div class="xv" data-v="thread" hidden></div><div class="xv" data-v="save" hidden></div><div class="xv" data-v="me" hidden></div>
@@ -49,32 +50,40 @@
   const V = k => root.querySelector(`.xv[data-v="${k}"]`), PC = matchMedia('(min-width: 861px)');
 
   // ── 데이터: 채널 글(뿌리) · 스레드 · 물음 · 읽지 않음 · 저장
-  const roots = () => { const out = []; for (const k of chs()){ const ms = cs().ch?.[k]?.messages || []; for (const m of ms) if (!m.deleted && !(m.thread && m.thread !== m.ts)) out.push({k, m}); for (const q of X.pend.get('new:' + k) || []) if (!ms.some(m => sameQ(m, q))) out.push({k, m: q}); } return out; };
+  const roots = () => { const out = []; for (const k of chs()){ const ms = cs().ch?.[k]?.messages || []; for (const m of ms) if (!m.deleted && !(m.thread && m.thread !== m.ts)) out.push({k, m}); for (const q of X.pend.get('new:' + k) || []) if (!ms.some(m => sameQ(m, q))) out.push({k, m: q}); }
+    const have = new Set(out.map(x => x.m.ts)); for (const [t, {k}] of wantRoots()){ if (have.has(t)) continue; const m = (cs().thr?.[t]?.messages || []).find(y => y.ts === t); if (m && !m.deleted && !(m.thread && m.thread !== m.ts)){ out.push({k, m}); have.add(t); } }
+    return out; };
+  const upRoot = t0 => { let t = t0; for (let i = 0; i < 6; i++){ const m = (cs().thr?.[t]?.messages || []).find(y => y.ts === t); if (!m?.thread || m.thread === t) break; t = m.thread; } if (t !== t0){ if (!X.kids.has(t)) X.kids.set(t, new Set()); X.kids.get(t).add(t0); } return t; };   // 답글에 달린 글은 뿌리 스레드 목록에 안 나옴(서버는 thread = 뿌리만 돌려줌) — thr 이 그 조각을 합침
+  const wantRoots = () => { const w = new Map(), add = (t, k, at) => { if (!t || /^[ingq]:/.test(k || 'primary')) return; t = upRoot(t); const o = w.get(t); w.set(t, {k: o?.k || k || 'primary', at: Math.max(o?.at || 0, +at || 0)}); };
+    for (const c of openCards()) add(c.thread || c.ts, c.channel, c.ts); for (const u of window.HBInbox?.state?.unread || []) add(u.thread || u.ts, u.chan, u.ts); return w; };
   const openCards = () => (G('D')?.cardlist || []).filter(c => c.state === 'open' && c.kind !== 'briefing' && /^\d/.test(c.ts));
   const shut = m => { try { return G('cardShut')(m); } catch { return false; } };
   const isAsk = m => !!m && m.who !== 'owner' && !m.deleted && (m.card ? !shut(m) && m.card.state !== 'answered' : (m.buttons || []).some(b => !b.other) && !m.picked && !G('picked')?.[m.ts]);
-  const askRank = () => { const rows = (() => { try { return G('attnRows')() || []; } catch { return []; } })(), r = new Map(); rows.forEach((x, i) => { r.set(x.ts, i); if (x.thread) r.set(x.thread, i); }); return r; };
-  const unreadSet = () => { const s = new Set(); for (const x of window.HBInbox?.state?.unread || []) s.add(x.thread || x.ts); return s; };
+  const askRank = () => { const rows = (() => { try { return G('attnRows')() || []; } catch { return []; } })(), r = new Map(); const one = (k, i) => { if (k && !r.has(k)) r.set(k, i); }; rows.forEach((x, i) => { one(x.ts, i); if (x.thread){ one(x.thread, i); one(upRoot(x.thread), i); } }); return r; };
+  const unreadSet = () => { const s = new Set(); for (const x of window.HBInbox?.state?.unread || []) s.add(upRoot(x.thread || x.ts)); return s; };
   // 보내는 중인 글(주인 글은 판에 닿을 때까지 202 로 오래 걸림, 보드의 보내는 중 말풍선은 #ans 안에만 있음): 서버 글이 오면 빠짐
   const sameQ = (m, q) => m.who === 'owner' && +m.ts >= q.at - 5 && (q.att || String(m.src ?? m.text ?? '').trim() === q.text);   // 원문은 src(text 는 블록 꼴일 수 있음, 보드와 같은 비교)
-  const thr = ts => { const real = cs().thr?.[ts]?.messages || null, p = X.pend.get(ts); if (!p?.length) return real; const left = p.filter(q => !(real || []).some(m => sameQ(m, q))); return real || left.length ? [...(real || []), ...left] : null; };
+  const thr = ts => { let real = cs().thr?.[ts]?.messages || null; const ks = X.kids.get(ts);
+    if (ks){ const seen = new Set((real || []).map(m => m.ts)), more = []; for (const k of ks) for (const m of cs().thr?.[k]?.messages || []) if (!seen.has(m.ts)){ seen.add(m.ts); more.push(m); } if (more.length) real = [...(real || []), ...more].sort((a, b) => a.ts === ts ? -1 : b.ts === ts ? 1 : +a.ts - +b.ts); }
+    const p = X.pend.get(ts); if (!p?.length) return real; const left = p.filter(q => !(real || []).some(m => sameQ(m, q))); return real || left.length ? [...(real || []), ...left] : null; };
   const rest = (k, m) => (thr(m.ts) || []).filter(x => x.ts !== m.ts && !x.deleted);
   const askIn = (k, m) => { if (isAsk(m)) return m; const r = rest(k, m); for (let i = r.length - 1; i >= 0; i--) if (isAsk(r[i])) return r[i]; return null; };
   const qOf = m => (m.buttons || []).some(b => !b.other);
   const qList = (k, m) => [m, ...rest(k, m)].filter(qOf);
-  const cardRoots = () => { const s = new Set(); for (const c of openCards()) s.add(c.thread || c.ts); return s; };
+  const cardRoots = () => { const s = new Set(); for (const c of openCards()) s.add(upRoot(c.thread || c.ts)); return s; };
   function items(){
     const rk = askRank(), un = unreadSet(), cr = cardRoots(), it = [];
     for (const {k, m} of roots()){
-      const dAt = X.done.get(m.ts); if ((dAt && Math.max(+m.ts || 0, +m.latest || 0) * 1000 <= dAt)) continue;   // 완료 뒤 새 답이 오면 다시 뜸
+      const rr = rest(k, m), lastAt = Math.max(+m.ts || 0, +m.latest || 0, rr.length ? +rr[rr.length - 1].ts : 0);
+      const dAt = X.done.get(m.ts); if (dAt && lastAt * 1000 <= dAt) continue;   // 완료 뒤 새 답이 오면 다시 뜸
       const ask = cr.has(m.ts) || !!askIn(k, m);
-      it.push({k, m, ask, un: un.has(m.ts), at: Math.max(+m.ts || 0, +m.latest || 0), rank: rk.has(m.ts) ? rk.get(m.ts) : 1e6});
+      it.push({k, m, ask, un: un.has(m.ts), at: lastAt, rank: rk.has(m.ts) ? rk.get(m.ts) : 1e6});
     }
-    return it.sort((a, b) => (b.ask - a.ask) || (a.ask && b.ask ? a.rank - b.rank : 0) || (b.un - a.un) || (b.at - a.at)).slice(0, 80);
+    return it.sort((a, b) => (b.ask - a.ask) || (a.ask && b.ask ? a.rank - b.rank : 0) || (b.un - a.un) || (b.at - a.at)).filter((x, i) => i < 80 || x.ask || x.un);   // 내 차례 · 안 읽음은 80칸을 넘어도 안 자름
   }
 
   const head = (m, k, turn) => `<div class="xh"><b>${E(who(m))}</b>${topic(m, k)}<span class="xtm">${ago(m.ts)}</span>${turn ? '<span class="xturn">· 내 차례</span>' : ''}</div>`;
-  const topic = (m, k) => { const t = chs().length > 1 ? NAMES()[k] : ''; return t && t !== who(m) ? `<span class="xtp">${E(t)}</span>` : ''; };   // 이름 › 채널 — 채널이 하나면 뺌
+  const topic = (m, k) => { const t = chs().length > 1 ? (NAMES()[k] || AN()[k] || k) : ''; return t && t !== who(m) ? `<span class="xtp">${E(t)}</span>` : ''; };   // 이름 › 채널 — 채널이 하나면 뺌
   const firstPara = t => { const s = String(t || '').trim(), p = s.split(/\n\s*\n/)[0], one = p.split('\n')[0]; return /^\s*(\*\*|\*)?→/.test(p.split('\n')[1] || '') ? one : p; };   // 결론 한 단락(→ 항목 앞까지)
   const body = (m, brief) => { const f = files(m), t = brief ? firstPara(f.text) : f.text; return `${t ? `<div class="xbd${brief ? ' xbrief' : ''}">${mdx(t, m.who !== 'owner')}</div>` : ''}${f.html || ''}`; };
   const acts = (k, m, n, done, sts, un) => `<div class="xact"><button type="button" class="xck${done ? ' on' : ''}" data-xdone="${E(m.ts)}" data-k="${E(k)}" aria-label="완료 · 읽음">${CHK()}</button>`
@@ -98,13 +107,17 @@
     return `<div class="xpoll">${rows}<div class="xft">${ft}</div></div>`;
   }
   const nn = s => `<span class="xnn">${s}</span>`;
+  const CVI = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>';
+  const artIds = m => { const o = []; for (const y of String(m.src ?? m.text ?? '').matchAll(/\/(?:canvas|art)\/(hb[1-9A-HJ-NP-Za-km-z]{22})/g)) if (!o.includes(y[1])) o.push(y[1]); return o.slice(0, 2); };
+  const embeds = m => artIds(m).map(id => { const t = G('ARTS')?.[id]?.title || '캔버스'; return `<div class="xemb" data-xart="${id}" role="button" tabindex="0" aria-label="${E(t)} 크게 보기"><div class="xembh">${CVI}<span>${E(t)}</span></div><div class="xembf"><iframe loading="lazy" tabindex="-1" title="${E(t)}" sandbox="allow-scripts" src="art/${id}/"></iframe></div></div>`; }).join('');
+  const openCanvas = id => { const f = G('openArt'); if (f && G('ARTS')?.[id]) return f(id); location.href = '/canvas/' + id; };
   function post(k, m, o = {}){
     const q = (m.buttons || []).some(b => !b.other);
     const bd = body(m, o.brief), part = q ? (o.part ? nn(o.part) : o.feed ? nn('1/2') : '') : '';
     const goto = q && o.feed ? `<button type="button" class="xgo" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}">${MSG}<span>${o.more ? `<b>투표</b>에서 고르기 · ${E(o.more)}` : '<b>2/2 투표</b>에서 고르기 · 눌러서 열기'}</span></button>` : '';
     const sz = o.reply || o.ans ? 28 : 42;
     return `<article class="xp${m.pendingX ? ' xpend' : ''}${o.joined ? ' j' : ''}${o.reply ? ' xr' : ''}${o.more2 ? ' xr2' : ''}${o.main ? ' xm' : ''}${o.ans ? ' xa' : ''}${o.ask ? ' ask' : ''}" data-ts="${E(m.ts)}" data-k="${E(k)}" data-root="${E(o.root || m.ts)}">${o.joined ? '<i class="xl"></i>' : ''}${o.reply ? '<i class="xcv"></i>' : ''}`
-      + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${goto}${o.pollHere ? '' : ''}${m.pendingX ? '' : acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
+      + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${embeds(m)}${goto}${o.pollHere ? '' : ''}${m.pendingX ? '' : acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
   }
   function unit(x){
     const {k, m} = x, r = rest(k, m), ask = askIn(k, m), qs = qList(k, m), bundle = qs.length > 1, open = qs.filter(isAsk), n = m.replies || r.length;
@@ -136,19 +149,23 @@
   }
   let lastSig = '';
   function drawHome(force){
-    const v = V('home'), it = items(), sig = JSON.stringify([it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked]), it.map(x => isSaved(x.m.ts))]);
+    fetchWanted();
+    const v = V('home'), all = items(), it = X.fl === 'ask' ? all.filter(y => y.ask) : X.fl === 'info' ? all.filter(y => !y.ask) : all, sig = JSON.stringify([X.fl, all.filter(y => y.ask).length]) + JSON.stringify([it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked]), it.map(x => isSaved(x.m.ts))]);
     if (!force && sig === lastSig && v.firstChild) return; lastSig = sig;
     // 글 칸은 한 번만 만듦(다시 그려도 쓰던 글 · 포커스 · 한글 조합 · 첨부 · 토픽 창이 그대로) — 피드만 바꿈
-    if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd"><button type="button" class="xdrb" data-xdr aria-label="메뉴">${DR2}</button><button type="button" class="xpri" data-xpri></button><button type="button" class="xfnd" data-xfind aria-label="찾기">${FND}</button></header>${composer()}<div class="xfeed"></div>`;
-    { const p = v.querySelector('.xpri'), h = priHead(), s = JSON.stringify(h); if (p && p.dataset.s !== s){ p.dataset.s = s; p.innerHTML = `<span class="xpa">${h.face}</span><b>${E(h.name)}</b>`; p.setAttribute('aria-label', `${h.name} 와 대화`); } }
+    if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd"><button type="button" class="xdrb" data-xdr aria-label="메뉴">${DR2}</button><button type="button" class="xpri" data-xpri></button><button type="button" class="xfnd" data-xfind aria-label="찾기">${FND}</button></header>${composer()}<div class="xfl" role="tablist" aria-label="거르개"></div><div class="xfeed"></div>`;
+    { const p = v.querySelector('.xpri'), h = priHead(), s = JSON.stringify(h); if (p && p.dataset.s !== s){ p.dataset.s = s; p.innerHTML = `<span class="xpa">${h.face}</span>`; p.setAttribute('aria-label', `${h.name} 와 대화`); } }
     const sl = v.querySelector('.xsel'); if (sl) sl.textContent = `${NAMES()[X.sel] || X.sel} ▾`;
     const st = v.scrollTop;
-    v.querySelector('.xfeed').innerHTML = it.map(unit).join('') || '<p class="xempty">글이 없어요</p>';
+    const nAsk = all.filter(y => y.ask).length; v.querySelector('.xfl').innerHTML = [['all', '전체'], ['ask', `결정${nAsk ? ` ${nAsk}` : ''}`], ['info', '정보']].map(([k, l]) => `<button type="button" role="tab" aria-selected="${X.fl === k}" data-xfl="${k}">${l}</button>`).join('');
+    v.querySelector('.xfeed').innerHTML = it.map(unit).join('') || `<p class="xempty">${X.fl === 'ask' ? '지금 고를 것이 없어요' : '글이 없어요'}</p>`;
     v.scrollTop = st; watchSeen();
     for (const x of it.slice(0, 30)){ const t = thr(x.m.ts), l = t && t[t.length - 1]; if (x.m.replies && (!t || (x.m.latest && l && +x.m.latest > +l.ts))) loadThr(x.k, x.m.ts); }   // 한 번 읽은 스레드도 새 답이 왔으면 다시(안 그러면 피드 댓글이 옛 글에 멈춤)
   }
   const xgrow = t => { try { G('boardGrow')(t); } catch {} };   // 보드 grow(칸 높이 · has · ↑) — 이 안에 같은 이름을 두면 L.boardGrow 가 자기 자신을 읽음
   const pending = new Set();
+  // 내 차례 · 안 읽음 스레드 받기: 없거나 · 오류였거나 · 그 일의 글이 받아 둔 것보다 새로우면. 한 번에 여섯까지(나머지는 끝나는 대로 다음 그리기에서)
+  function fetchWanted(){ const now = Date.now(); X.tried ||= new Map(); for (const [t, {k, at}] of wantRoots()){ if (pending.size >= 6) break; if (pending.has(t)) continue; const T = cs().thr?.[t], ms = thr(t), last = ms?.length ? Math.max(...ms.map(m => +m.ts || 0)) : 0; if (T && !T.err && (!T.messages?.length || at <= last + .001)) continue; if (now - (X.tried.get(t) || 0) < 20000) continue; X.tried.set(t, now); loadThr(k, t); for (const kid of X.kids.get(t) || []) loadThr(k, kid); } }   // 같은 스레드는 20초에 한 번(받기가 끝날 때마다 다시 그리므로 오류면 끝없이 돌 수 있음)
   async function loadThr(k, ts){ if (pending.has(ts)) return; pending.add(ts); try { await G('loadTh')(k, ts); } catch {} pending.delete(ts); sched(); }
 
   function drawThread(){
@@ -175,7 +192,7 @@
     const stick = Date.now() < (X.stickTo || 0) || (v.scrollTop > 0 && v.scrollHeight - v.scrollTop - v.clientHeight < 80);   // 맨 아래를 보던 중이면(방금 보낸 답 포함) 새 글이 와도 아래에 붙음
     v.querySelector('.xfeed').innerHTML = h; if (stick) v.scrollTop = v.scrollHeight;
   }
-  async function openThread(k, ts){ X.th = {k, ts}; show('thread'); drawThread(); await loadThr(k, ts); drawThread(); }
+  async function openThread(k, ts){ X.th = {k, ts}; show('thread'); drawThread(); await Promise.all([loadThr(k, ts), ...[...(X.kids.get(ts) || [])].map(kid => loadThr(k, kid))]); drawThread(); }
 
   // ── 저장됨(X11) · 프로필(X12)
   function drawSave(){
@@ -213,7 +230,7 @@
   }
   function readOne(k, rootTs, quiet){
     X.seenT.delete(rootTs);
-    const rows = (window.HBInbox?.state?.unread || []).filter(x => (x.thread || x.ts) === rootTs);
+    const rows = (window.HBInbox?.state?.unread || []).filter(x => upRoot(x.thread || x.ts) === rootTs);
     if (rows.length) try { window.HBInbox.read(rows); } catch {}
     if (!quiet) sched();
   }
@@ -252,6 +269,9 @@
       if (k === 'dm') return void (location.href = '/es');
       return show(k); }
     if (q('[data-xtab-fab]')) return compose();
+    { const fl = q('[data-xfl]'); if (fl){ X.fl = fl.dataset.xfl; try { localStorage.setItem(FLK, X.fl); } catch {} V('home').scrollTop = 0; return drawHome(true); } }
+    { const xa2 = q('[data-xart]'), al = t.closest('a[href]'), am = al && /\/(?:canvas|art)\/(hb[1-9A-HJ-NP-Za-km-z]{22})/.exec(al.getAttribute('href') || ''), id = xa2?.dataset.xart || am?.[1];
+      if (id){ e.preventDefault(); e.stopPropagation(); return openCanvas(id); } }
     if (q('[data-xfind]')) return void document.querySelector('.bx-sb [data-go="find"], .bx-dr [data-go="find"]')?.click();
     if (q('[data-xdr]')) return void document.querySelector('.bx-menu')?.click();
     if (q('[data-xpri]')){ if (PC.matches){ feedOff(); return void window.openChan?.('primary'); } return void (location.href = '/es#chat/primary'); }

@@ -67,10 +67,13 @@ if [ "${NODE}" = node ] && [ "$(uname -s)" = Darwin ]; then
 fi
 printf '#!/bin/sh\nexec %s "%s/cli/bin/boarder.mjs" "$@"\n' "${N}" "${SHARE}" > "${BIN}/boarder"
 chmod +x "${BIN}/boarder"
+# Short name `bdr` (same command). Only written when nothing else owns that name - another tool's `bdr` is left alone.
+if [ ! -e "${BIN}/bdr" ] || grep -q 'boarder/cli/bin/boarder.mjs' "${BIN}/bdr" 2>/dev/null; then cp "${BIN}/boarder" "${BIN}/bdr" && chmod +x "${BIN}/bdr"; fi
 "${BIN}/boarder" --version >/dev/null || die "installed, but \`${BIN}/boarder --version\` failed"
 [ -z "${MADE}" ] || printf '%s' "${MADE}" >> "${SHARE}/created-dirs"
 
 say "Installed boarder ${VERSION} (${BIN}/boarder, SHA-256 checked)."
+[ ! -f "${BIN}/bdr" ] || ! grep -q 'boarder/cli/bin/boarder.mjs' "${BIN}/bdr" 2>/dev/null || say "Short name: bdr (same as boarder)."
 # Shell files (.zshrc, .bashrc, .profile) are never edited: installing Boarder must not change a person's setup. Off PATH, print the full path instead.
 case ":${PATH}:" in
   *":${BIN}:"*) ;;

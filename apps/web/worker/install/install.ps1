@@ -53,6 +53,9 @@
     # Paths through %LOCALAPPDATA%, so the file stays ASCII even when the Windows user name is Korean
     Set-Content -Encoding ASCII -Path $cmd -Value "@$NodeCmd `"%LOCALAPPDATA%\boarder\cli\bin\boarder.mjs`" %*"
     & $cmd --version | Out-Null; if ($LASTEXITCODE) { throw "installed, but $cmd --version failed" }
+    # Short name bdr.cmd (same command) - only when no other tool owns that name
+    $short = Join-Path $Bin 'bdr.cmd'
+    if (-not (Test-Path $short) -or (Select-String -Quiet -SimpleMatch -Path $short -Pattern 'boarder\cli\bin\boarder.mjs')) { Copy-Item -Force $cmd $short }
     Write-Host "Installed boarder $Version ($cmd, SHA-256 checked)."
 
     # The user PATH is never changed: installing Boarder must not change a person's setup. This terminal only.

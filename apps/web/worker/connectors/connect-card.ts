@@ -51,7 +51,7 @@ export async function targetOf(env: store.Env, owner: string, tool: string): Pro
  */
 export async function offerConnect(c: { env: store.Env; owner: string; card?: (card: { id: string; question: string }) => void }, tool: string, err: unknown, now = Date.now()): Promise<string | null> {
   const msg = err instanceof Error ? err.message : String(err);
-  if (!c.owner || !GONE.test(msg) || !c.card) return null;
+  if (!c.owner || !GONE.test(msg)) return null;
   const t = await targetOf(c.env, c.owner, tool); if (!t) return null;
   const q = `「${t.title}」에 연결해 주세요`, id = cardId(now), kind = connectKind(t.service, t.label, t.reconnect);
   const db = c.env.DB;

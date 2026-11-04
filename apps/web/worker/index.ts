@@ -517,7 +517,7 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
     owner, person: who.owner || "",   // person = 봉함 DEK 주인(주인 '')
     ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)), splitSender(c.env, who.owner)) } : {}),
     host: who.host, win: who.win || who.pane,
-    conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", card: undefined, catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
+    conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", card: who.owner ? (card: { id: string; question: string }) => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)) : undefined, catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
   };
 }
 const ProfileSync = z.object({ host: z.string().regex(/^[\w.@-]{1,60}$/), profiles: z.array(z.object({ name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/), clis: z.array(z.object({ cli: z.enum(["wrangler", "gh"]), account: z.string().max(80) })).max(4) })).max(30),
@@ -2108,7 +2108,7 @@ app.all("*", async c => {
           async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name || "");
           if (r && r.status === 200 && !pa.rel && artView.viewable(c.req.method, c.req.header("sec-fetch-dest"), url.search)) c.executionCtx.waitUntil(artView.record(c.env.DB, me, pa.id).catch(e => console.error("열람 기록", e)));
           if (r) return r; }
-        if (url.pathname.startsWith("/art/")) return docNav(c, url) ? c.redirect("/#nf", 302) : c.text("not found", 404, { "cache-control": "no-store" });
+        if (url.pathname.startsWith("/art/")) return docNav(c, url) ? c.redirect("/nf", 302) : c.text("not found", 404, { "cache-control": "no-store" });
         if (url.pathname === "/api/data") { if (!memberBoard.dataGate(me)) return queue.retrySafe(c); await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e)); }
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드
         if (sl) return sl;
@@ -2131,7 +2131,7 @@ app.all("*", async c => {
       }
       if (c.req.method === "POST") return memberPost(c, me, url);
     }
-    if (docNav(c, url)) return c.redirect("/#nf", 302);
+    if (docNav(c, url)) return c.redirect("/nf", 302);
     return c.json({ error: "no" }, 403);
   }
   // 비서(/es, 주인): / 와 같은 길(첫 화면 · 틀 · 캐시 지우기)로 — 받는 path 만 「/」, 틀에 BX_EA 를 더 얹음
@@ -2168,7 +2168,7 @@ app.all("*", async c => {
     let r: [number, object] | null; const rid = queue.ridOfBody(b);
     try { r = await (url.pathname === "/api/artnote" ? ownerWrite.artnote(c.env, b, rid) : ownerWrite.artfolder(c.env, b, rid)); }
     catch { return rid ? queue.retrySafe(c) : c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503); }
-    if (r && r[0] < 400 && url.pathname === "/api/artnote" && !b.del && /^(?:📍\d+ \(|✅ 정함)/.test(String(b.text || "").trim()) && await files.isCanvas(c.env, String(b.art))) {
+    if (r && r[0] < 400 && url.pathname === "/api/artnote" && !b.del && /^(?:📍\d+ \(|✅ 정함|\[?[A-Z]\d{1,3}(?![0-9A-Za-z]))/.test(String(b.text || "").trim()) && await files.isCanvas(c.env, String(b.art))) {
       const cut = (v: unknown, n: number) => String(v ?? "").slice(0, n);
       const sending = boardCall(c.env, chOf(c), { method: "POST", path: "/api/artpin", headers: { "content-type": "application/json", "x-hb": "1" }, body: new TextEncoder().encode(JSON.stringify({ art: cut(b.art, 40), target: cut(b.target, 200), page: cut(b.page, 200), text: cut(b.text, 4000), near: cut(b.near, 400) })) })
         .then(x => (JSON.parse(new TextDecoder().decode(x.body)) as { sent?: string | null }).sent ?? null, () => null).catch(() => null);
@@ -2238,7 +2238,7 @@ app.all("*", async c => {
     return new HTMLRewriter().on("head", { element: e => { e.prepend(artFetchShim(shell![1], t), { html: true }); } })
       .transform(new Response(unzip(), { status: r.status, headers: out }));
   }
-  if ((r.status === 404 || r.status === 403) && docNav(c, url)) return c.redirect("/#nf", 302);
+  if ((r.status === 404 || r.status === 403) && docNav(c, url)) return c.redirect("/nf", 302);
   return new Response(c.req.method === "HEAD" ? null : (r.body as unknown as BodyInit), { status: r.status, headers: out, ...(out.get("content-encoding") ? { encodeBody: "manual" as const } : {}) });
 });
 

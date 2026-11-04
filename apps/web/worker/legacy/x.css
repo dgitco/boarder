@@ -55,6 +55,14 @@ html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 #bxx .xp.xr > .xc{display:contents}#bxx .xp.xr > .xc > *{grid-column:1/-1}#bxx .xp.xr > .xc > .xh{grid-column:2;grid-row:1;align-self:center}
 #bxx .xp.xr .xbd{margin-top:4px}
 /* 댓글 둘(물음 + 마지막 답): 줄기가 첫 댓글을 지나 다음 댓글로. 마지막 답은 결론 한 단락, 넘치면 세 줄(나머지는 눌러서 스레드) */
+#bxx .xfl{position:sticky;top:calc(52px + env(safe-area-inset-top,0px));z-index:2;display:flex;gap:6px;padding:8px 12px;background:var(--xbg);border-bottom:.5px solid var(--xline)}
+#bxx .xfl button{height:32px;padding:0 14px;border-radius:16px;border:0;background:var(--xsunk);color:var(--xsoft);font:inherit;font-size:14px;font-weight:500;cursor:pointer}
+#bxx .xfl button[aria-selected="true"]{background:var(--xink);color:var(--xbg);font-weight:600}
+#bxx .xcmp{border-bottom:0}
+#bxx .xemb{margin-top:8px;border:.5px solid var(--xline);border-radius:14px;overflow:hidden;cursor:pointer;background:var(--xsunk)}
+#bxx .xembh{display:flex;align-items:center;gap:7px;padding:8px 12px;font-size:14px;font-weight:600;color:var(--xname);min-width:0}
+#bxx .xembh span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#bxx .xembh svg{flex:none;color:var(--xmut)}
+#bxx .xembf{height:240px;position:relative;background:#fff}#bxx .xembf iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none}
 #bxx .xp.xpend{opacity:.6}   /* 보내는 중 */
 #bxx .xp.xr2::before{content:'';position:absolute;left:29px;top:0;bottom:0;width:2px;background:var(--xthr)}
 #bxx .xbrief{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
