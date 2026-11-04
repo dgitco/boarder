@@ -2,7 +2,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   try { const reg = await navigator.serviceWorker.getRegistration(), sub = await reg?.pushManager.getSubscription(); if (!sub) return;
     await fetch('api/push/unsubscribe', {method: 'POST', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({endpoint: sub.endpoint})}).catch(() => {}); await sub.unsubscribe(); } catch (e) {} };
 (() => {
-  if (!window.HB_LIVE || !window.show) return document.documentElement.classList.remove('bx-route');   // 틀이 안 뜨면 주소 대기 가림막도 걷음
+  if (!window.HB_LIVE || !window.show){ if (window.HB_ART0 && !window.HB_ART0.dataset.loaded) { window.HB_ART0.remove(); window.HB_ART0 = null; } return document.documentElement.classList.remove('bx-route'); }
   const MOBILE_ON = true;
   const R = document.documentElement, PC = matchMedia('(min-width: 861px)');
   const on = () => PC.matches || MOBILE_ON;
@@ -511,8 +511,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     let moved = false;   // 글 링크를 서버가 알려 준 자리로 옮겼으면 끝에서 주소를 링크로 되돌리지 않음
     applying++;
     try {
-      if (k !== 'art' && MVv()) mvClose();
-      if (k === 'art'){ if (MVv() !== a){ if (await linkUntil(() => ARTS[a])){ if (gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ if (!ans.hidden) closeAns(); openArt(a); } } else if (gen === G) linkFail(); } }
+      const pre0 = () => { window.HB_ART0?.remove(); window.HB_ART0 = null; };
+      if (k !== 'art'){ if (MVv()) mvClose(); pre0(); }
+      if (k === 'art'){ const aid = () => ARTS[a] ? a : window.artId?.('#art/' + a);
+        if (MVv() !== a){ if (await linkUntil(aid)){ if (gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ if (!ans.hidden) closeAns(); const id = aid(); openArt(id); if (id !== a){ history.replaceState(history.state, '', '#art/' + id); moved = true; } } } else if (gen === G){ pre0(); linkFail(); } } }
       else if (k === 'chat' && CH.includes(a)){
         if (b && typeof window.HBOpenCard === 'function' && !(chatMode() && cur.chan === a && CS.th?.ts === b)){
           const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail();
@@ -674,7 +676,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     }; }
   wrap('show', a => 'view_' + String(a[0] || '').replace(/[^a-z]/g, '').slice(0, 12));
   wrap('openArt', 'canvas_open', () => new Promise(res => {
-    const f = document.querySelector('#mview iframe'); if (!f) return res();
+    const f = document.querySelector('#mview iframe'); if (!f || f.closest('#mview').dataset.loaded) return res();
     let d = false; const done = () => { if (!d){ d = true; res(); } };
     f.addEventListener('load', done, {once: true}); setTimeout(done, 20000);
   }));

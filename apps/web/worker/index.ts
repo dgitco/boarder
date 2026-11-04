@@ -1239,10 +1239,10 @@ app.post("/api/me/drafts/:id/:act", async c => {
 app.post("/api/me/engine/perm", async c => {
   const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
   const { mode } = await c.req.json<{ mode?: string }>().catch(() => ({} as { mode?: string }));
-  if (mode !== "bypass" && mode !== "ask") return c.json({ error: "mode" }, 400);
+  if (mode !== "bypass" && mode !== "auto" && mode !== "ask") return c.json({ error: "mode" }, 400);
   const now = Date.now();
   await c.env.DB.prepare("INSERT INTO engine_owner(owner, perm_mode, perm_at, updated_at) VALUES (?,?,?,?) ON CONFLICT(owner) DO UPDATE SET perm_mode = excluded.perm_mode, perm_at = excluded.perm_at, updated_at = excluded.updated_at").bind(me, mode, now, now).run();
-  await sysLine(c.env.DB, me, mode === "bypass" ? "묻지 않고 일하기를 허용했어요 — 다음에 여는 창부터" : "묻지 않고 일하기를 껐어요 — 다음에 여는 창부터 하나하나 물어요");
+  await sysLine(c.env.DB, me, mode === "bypass" ? "묻지 않고 일하기를 허용했어요 — 다음에 여는 창부터" : mode === "auto" ? "자동 허용으로 바꿨어요 — 안전한 일은 알아서 하고 위험한 일은 막아요. 다음에 여는 창부터" : "묻지 않고 일하기를 껐어요 — 다음에 여는 창부터 하나하나 물어요");
   return c.json({ ok: true, mode });
 });
 // BYOS 설정 › 엔진: 그 기기의 지금 엔진 · 공급자별 계정, 브라우저 로그인 주소, 엔진 고르기 — 내 기기(owner = 나 · full · 폐기 안 됨)만.

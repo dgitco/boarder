@@ -114,6 +114,14 @@ test("메인 봇 창을 사람이 고름(primary_item): none = 들여온 창 안
   assert.equal(await importedPrimary(s.env.DB, MEMBER), null, "고른 창이 닫히면 보더 메인 봇(이름 primary 창으로 몰래 안 바꿈)");
 });
 
+test("권한 모드: auto · bypass 는 그대로 읽고, 모르는 값은 ask", async () => {
+  const s = setup(null);
+  for (const [v, want] of [["auto", "auto"], ["bypass", "bypass"], ["ask", "ask"], ["엉뚱", "ask"]] as const) {
+    s.db.prepare("INSERT INTO engine_owner(owner, perm_mode, updated_at) VALUES (?,?,?) ON CONFLICT(owner) DO UPDATE SET perm_mode = excluded.perm_mode").run(MEMBER, v, T);
+    assert.equal((await ownerCfg(s.env.DB, MEMBER)).perm, want, v);
+  }
+});
+
 test("하네스 규칙 one_goal: 그 사람이 설정에서 고른 값이 엔진 규칙(관리 값)보다 이김, 안 골랐으면 그대로", async () => {
   const s = setup(null);
   assert.equal((await ownerCfg(s.env.DB, MEMBER)).rules.one_goal, true, "기본 켬");

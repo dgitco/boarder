@@ -128,7 +128,7 @@ async function claudeTurn(cfg, w, text, onSession) {
     ...(w.session_id ? { resume: w.session_id } : {}),
     ...(w.system ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: w.system } } : {}),
     // 허용은 사람이 「묻지 않고 일하기」를 한 번 허용한 창만(perm bypass). 아니면 SDK 기본 — 허락 없는 도구는 막힘
-    ...(w.perm === 'bypass' ? { permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true } : {}),
+    ...(w.perm === 'bypass' ? { permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true } : w.perm === 'auto' ? { permissionMode: 'auto' } : {}),
   };
   for await (const m of query({ prompt: text, options })) {
     if (m?.session_id && m.session_id !== w.session_id) { w.session_id = m.session_id; onSession?.(); persist(); }

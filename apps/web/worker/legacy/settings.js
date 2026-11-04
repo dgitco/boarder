@@ -815,7 +815,7 @@
     return (ds.length ? `<div class="bxs-sech">기기에서 보더가 하는 일</div>` + ds.map(d => { const f = d.features, on = {report: (f.report || []).length > 0, engine: !!f.engine};
       return `<div class="bxs-card"><div class="bxs-row"><b>${esc(d.name || '기기')}</b></div>` + row('읽기 · 누르기', '창 · 세션 · 할 일을 읽어 노드로 보이고, 누른 것은 그 하네스의 원래 동사로 넣어요. 그 사람 설정은 안 바꿔요.', sw(true, 'disabled aria-disabled="true" title="늘 켜져 있어요"', '읽기 · 누르기'))
         + ['report', 'engine'].map(k => row(FT[k][0], FT[k][1], pend.some(x => x.device_id === d.id && x.args?.what === k) ? '<span class="bxs-mut">바꾸는 중</span>' : sw(on[k], `data-feat="${k}" data-dev="${esc(d.id)}" data-on="${on[k] ? 0 : 1}"`, FT[k][0]))).join('') + '</div>'; }).join('') : '')
-      + (perm == null ? '' : `<div class="bxs-sech">엔진 창</div><div class="bxs-card">${row('묻지 않고 일하기', '허용하면 보더가 여는 창의 Claude Code 가 파일 고치기 · 명령 실행을 하나하나 묻지 않고 해요. 다음에 여는 창부터.', sw(perm === 'bypass', 'data-perm', '묻지 않고 일하기'))}</div>`);   // 상태를 못 읽으면 칸을 숨김(허용된 것을 「꺼짐」으로 보이지 않게)
+      + (perm == null ? '' : `<div class="bxs-sech">엔진 창</div><div class="bxs-card"><div class="bxs-row between"><div><b>권한</b><p class="bxs-mut">보더가 여는 창이 파일 고치기 · 명령 실행을 어떻게 할지 골라요. 다음에 여는 창부터.</p></div><div class="bxs-seg" role="radiogroup" aria-label="권한">${[['ask', '하나하나 묻기'], ['auto', '자동 허용'], ['bypass', '모두 허용']].map(([k, v]) => `<button type="button" role="radio" aria-checked="${perm === k}" data-perm="${k}">${v}</button>`).join('')}</div></div></div>`);   // 상태를 못 읽으면 칸을 숨김(허용된 것을 「꺼짐」으로 보이지 않게)
   };
   const ENGP = [['claude', 'Claude'], ['codex', 'ChatGPT (Codex)']];
   const engSecs = N => {
@@ -883,9 +883,12 @@
     const prevClick = async e => {
       const ft = e.target.closest('[data-feat]');
       if (ft){ ft.disabled = true; try { await api('POST', 'api/me/devices/' + encodeURIComponent(ft.dataset.dev) + '/feature', {what: ft.dataset.feat, on: ft.dataset.on === '1'}); toast('기기에 보냈어요 — 곧 바뀌어요'); } catch (err) { toast(err.message); } return render(); }
-      if (e.target.closest('[data-perm]')){
-        if (perm !== 'bypass' && !await confirmBox('<b>묻지 않고 일하게 할까요?</b><br>보더가 여는 창의 Claude Code 가 파일 고치기 · 명령 실행을 하나하나 묻지 않고 해요. 그 기기의 파일을 바꾸거나 지울 수 있으니, 중요한 자료가 있는 기기라면 허용하지 마세요. 다음에 여는 창부터 적용되고, 언제든 여기서 끌 수 있어요.', '허용')) return;
-        try { await api('POST', 'api/me/engine/perm', {mode: perm === 'bypass' ? 'ask' : 'bypass'}); } catch (err) { toast(err.message); } return render();
+      const pm = e.target.closest('[data-perm]');
+      if (pm){
+        const to = pm.dataset.perm;
+        if (to === perm) return;
+        if (to === 'bypass' && !await confirmBox('<b>모두 허용할까요?</b><br>보더가 여는 창의 Claude Code 가 파일 고치기 · 명령 실행을 하나하나 묻지 않고 해요. 그 기기의 파일을 바꾸거나 지울 수 있으니, 중요한 자료가 있는 기기라면 허용하지 마세요. 다음에 여는 창부터 적용되고, 언제든 여기서 바꿀 수 있어요. (안전한 일만 알아서 하게 하려면 「자동 허용」을 고르세요.)', '허용')) return;
+        try { await api('POST', 'api/me/engine/perm', {mode: to}); } catch (err) { toast(err.message); } return render();
       }
       const ip = e.target.closest('[data-ip]');
       if (ip){ if (!prompt) return toast('일시적인 오류가 발생했어요'); try { await navigator.clipboard.writeText(prompt); } catch { return toast('일시적인 오류가 발생했어요'); }

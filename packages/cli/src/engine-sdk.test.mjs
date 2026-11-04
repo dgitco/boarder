@@ -34,6 +34,15 @@ function fakeCodex() {
 }
 beforeEach(() => { calls = []; S._reset(); S._inject.claude = fakeClaude(); S._inject.codex = fakeCodex(); fs.rmSync(path.join(process.env.BOARDER_HOME, 'sdk-windows.json'), { force: true }); });
 
+test('claude: 권한 모드 — auto 는 permissionMode auto, ask 는 기본(허락 없는 도구는 막힘)', async () => {
+  await S.open(cfg, { id: 'ew_pa', name: 'pa', cwd: path.join(home, 'wpa'), prompt: 'x', perm: 'auto' });
+  assert.equal(calls[0].options.permissionMode, 'auto');
+  assert.ok(!calls[0].options.allowDangerouslySkipPermissions);
+  calls = [];
+  await S.open(cfg, { id: 'ew_pk', name: 'pk', cwd: path.join(home, 'wpk'), prompt: 'x', perm: 'ask' });
+  assert.equal(calls[0].options.permissionMode, undefined);
+});
+
 test('claude: open → state → send → park → reopen(같은 대화) → close', async () => {
   const o = await S.open(cfg, { id: 'ew_c1', name: 'one', cwd: path.join(home, 'w1'), prompt: 'hello', perm: 'bypass', system: 'sys' });
   assert.equal(o.session_id, 'cs-1');

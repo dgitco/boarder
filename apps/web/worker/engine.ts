@@ -51,7 +51,7 @@ export async function ownerCfg(db: D1Database, owner: string) {
   const r = await db.prepare("SELECT e.perm_mode, e.perm_at, e.rules, (SELECT json_extract(data, '$.rules.one_goal') FROM node_setting WHERE owner = ?1 AND json_valid(data)) og FROM (SELECT ?1 AS o) x LEFT JOIN engine_owner e ON e.owner = x.o").bind(owner).first<{ perm_mode: string | null; perm_at: number | null; rules: string | null; og: number | null }>();
   let rules = { ...RULES }; try { rules = { ...RULES, ...(r?.rules ? JSON.parse(r.rules) : {}) }; } catch {}
   if (r?.og === 0 || r?.og === 1) rules.one_goal = r.og === 1;
-  return { perm: r?.perm_mode === "bypass" ? "bypass" as const : "ask" as const, perm_at: r?.perm_at ?? null, rules };
+  return { perm: (r?.perm_mode === "bypass" ? "bypass" : r?.perm_mode === "auto" ? "auto" : "ask") as "ask" | "auto" | "bypass", perm_at: r?.perm_at ?? null, rules };
 }
 // 엔진이 붙어 있는 그 사람 기기(가장 최근 연락, 2분 안)
 export async function liveDevice(db: D1Database, owner: string, forPrimary = false) {
