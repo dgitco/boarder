@@ -476,7 +476,13 @@ async function ownSend(cmd) {
     if (r.full) throw new Error(`${Q.PER_WINDOW_MAX} board messages are already waiting for that window — this one was not put in; send it again once it catches up`);
     return { queued: true };
   }
-  await ownInject(h, a.text);
+  try { await ownInject(h, a.text); }
+  catch (e) {
+    if (!/someone is typing|asking something/.test(String(e?.message || ''))) throw e;
+    const r = Q.push(id, a.text, { cmd: cmd.id || '', handle: h });
+    if (r.full) throw e;
+    return { queued: true };
+  }
   return {};
 }
 const cmdDone = (id, body) => id ? api('POST', `/api/device/cmds/${encodeURIComponent(id)}`, body).catch(() => null) : null;

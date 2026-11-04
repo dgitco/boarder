@@ -25,9 +25,9 @@ const device = (db: DatabaseSync, owner: string, createdAt: number, id = "devA00
   db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope) VALUES (?,?,?,?,?,?,?,?)").run(id, owner, "laptop", "", `h-${id}`, createdAt, createdAt, "full");
 
 // index.ts memberCardPush 와 같은 길: localTools 의 onCard → memberPushWanted 가 true 인 것만 「보냄」
-function rig(D1: D1Database) {
+function rig(D1: D1Database, wide = false) {
   const sent: string[] = [], waits: Promise<unknown>[] = [];
-  const run = localTools(D1, A, "일 창", "https://board.example", "", c => { waits.push(memberPushWanted(D1, A, c).then((ok: boolean) => { if (ok) sent.push(c.question); })); });
+  const run = localTools(D1, A, "일 창", "https://board.example", "", c => { waits.push(memberPushWanted(D1, A, c, wide).then((ok: boolean) => { if (ok) sent.push(c.question); })); });
   return { sent, ask: async (a: Record<string, unknown>) => { await run("inbox_ask", { choices: ["A"], ...a }); await Promise.all(waits); } };
 }
 
@@ -75,4 +75,21 @@ test("비밀 넣기 허용 카드: 온보딩 30분 안이어도 1건(에이전�
   assert.equal(await memberPushWanted(D1, A, { id: "1793170372.000002", question: "보통" }), false);
   const e = fakeD1();
   assert.equal(await memberPushWanted(e.D1, A, { id: "1793170372.000003", question: "급함", urgent: true, at: Date.now() }), true);
+});
+
+test("넓힘을 켠 회원: 새 카드는 다 1건씩(보통 결정 · 질문 · 승인 · 할 일 · urgent) · 온보딩 30분 안 · 옛 글은 그래도 0", async () => {
+  const { D1, db } = fakeD1(); device(db, A, Date.now() - 2 * HOUR);
+  const r = rig(D1, true);
+  await r.ask({ question: "보통 결정" });
+  await r.ask({ question: "보통 질문", kind: "question" });
+  await r.ask({ question: "결제 장애", urgent: true });
+  await r.ask({ question: "급한 할 일", kind: "todo", urgent: true });
+  await r.ask({ question: "배포 승인", kind: "approval" });
+  await r.ask({ question: "어제 질문", asked_at: new Date(Date.now() - 24 * HOUR).toISOString() });
+  await r.ask({ question: "옛 표시", backlog: true });
+  assert.deepEqual(r.sent, ["보통 결정", "보통 질문", "결제 장애", "급한 할 일", "배포 승인"]);
+  const q = fakeD1(); device(q.db, A, Date.now() - 60_000);
+  const r2 = rig(q.D1, true);
+  await r2.ask({ question: "밀린 결정" });
+  assert.deepEqual(r2.sent, []);
 });

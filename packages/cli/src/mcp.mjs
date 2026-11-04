@@ -1,6 +1,6 @@
 import readline from 'node:readline';
 import { server } from './config.mjs';
-import { windowToken } from './window.mjs';
+import { windowKey, windowToken } from './window.mjs';
 
 export async function mcp() {
   let tok = null;
@@ -23,6 +23,13 @@ export async function mcp() {
         const text = await r.text();
         if (!text.trim()) return;   // 알림(notification)은 답 없음
         if (!r.ok) { let e; try { e = JSON.parse(text).error; } catch {} return fail(msg.id, typeof e === 'string' ? e : `Boarder ${r.status}`); }
+        if (msg.method === 'tools/call' && /^(?:inbox_say|chat_say|boarder_execute_write)$/.test(String(msg.params?.name || ''))) {
+          const replies = (r.headers.get('content-type') || '').includes('text/event-stream') ? text.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trim()) : [text];
+          if (replies.some(line => { try { const j = JSON.parse(line); return j.id === msg.id && j.result && !j.result.isError && !j.error; } catch { return false; } })) {
+            const T = await import('./turn.mjs');
+            T.recordReply([process.env.BOARDER_WINDOW, process.env.TMUX_PANE, windowKey().key], msg.params.name, msg.params.arguments || {});
+          }
+        }
         if ((r.headers.get('content-type') || '').includes('text/event-stream')) {
           for (const l of text.split('\n')) if (l.startsWith('data:')) process.stdout.write(l.slice(5).trim() + '\n');
         } else process.stdout.write(text.trim() + '\n');

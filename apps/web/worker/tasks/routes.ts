@@ -40,8 +40,12 @@ export function mountTasks(host: Hono<any>, who: Who, paneOf: (id: string) => st
     if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
     const me = await who(c); if (!me) return c.json({ ok: false, error: "로그인" }, 401);
     if (+(c.req.header("content-length") || 0) > 16_000) return c.json({ ok: false, error: "너무 큼" }, 413);
-    const view = checkView(await c.req.json().catch(() => null));
+    const body = await c.req.json().catch(() => null), view = checkView(body);
     if (!view) return c.json({ ok: false, error: "보기 설정이 올바르지 않아요" }, 400);
+    if ((body as Record<string, unknown>).nav === undefined) {
+      const was = await c.env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>().catch(() => null);
+      view.nav = readView(json<{ taskview?: unknown } | null>(was?.data, {})?.taskview).nav;
+    }
     await c.env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('taskview', json(?2)), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.taskview', json(?2)), updated_at = ?3").bind(me, JSON.stringify(view), Date.now()).run();
     return c.json({ ok: true, view });
   });

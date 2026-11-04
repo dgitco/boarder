@@ -6,7 +6,9 @@ export const GROUP_KO: Record<typeof GROUPS[number], string> = { tree: "부서 �
 export const SORTS = ["status", "updated", "name"] as const;
 export const SORT_KO: Record<typeof SORTS[number], string> = { status: "막힌 것 먼저", updated: "최근 바뀐 순", name: "이름 순" };
 
+export type NavLink = { name: string; href: string };
 export type View = {
+  nav: NavLink[];                 // 내 사이드바 메뉴(순서 그대로) — 빈 목록 = 기본 메뉴(Tasks.tsx NAV, 모두 같음). 고친 사람만 제 목록
   group: typeof GROUPS[number];   // 왼쪽 목록을 무엇으로 묶나
   sort: typeof SORTS[number];
   states: Status[];               // 거르개: 보일 상태
@@ -19,23 +21,41 @@ export type View = {
   showLine: boolean;
 };
 export const DEFAULT_VIEW: View = {
-  group: "tree", sort: "status", states: ["working", "blocked", "waiting"], mine: [], mineFields: ["막힌 것"],
+  nav: [], group: "tree", sort: "status", states: ["working", "blocked", "waiting"], mine: [], mineFields: ["막힌 것"],
   rowFields: [], mainFields: ["종류", "우선", "마지막 진전"], sideFields: ["맡은 창", "다음 할 일", "막힌 것"], showBody: true, showLine: true,
 };
 
 const words = (v: unknown, max: number, len: number) => Array.isArray(v) && v.length <= max && v.every(x => typeof x === "string" && x.trim() && x.length <= len) ? [...new Set(v.map(x => String(x).trim()))] : null;
+// 같은 보드 경로 또는 HTTPS 주소만. //host · 역슬래시 · 제어문자 · 사용자정보는 거부.
+function checkNav(v: unknown): NavLink[] | null {
+  if (!Array.isArray(v) || v.length > 12) return null;
+  const links: NavLink[] = [];
+  for (const x of v) {
+    if (!x || typeof x !== "object" || typeof x.name !== "string" || typeof x.href !== "string") return null;
+    const name = x.name.trim(), href = x.href.trim();
+    if (!name || name.length > 80 || !href || href.length > 500 || /[\u0000-\u0020\u007f\\]/.test(href)) return null;
+    if (href.startsWith("/")) { if (href.startsWith("//")) return null; }
+    else { try { const u = new URL(href); if (u.protocol !== "https:" || u.username || u.password) return null; } catch { return null; } }
+    links.push({ name, href });
+  }
+  return links;
+}
 /** 저장할 보기 검사 — 틀린 칸이 하나라도 있으면 null(저장하지 않음). 빠진 칸은 기본값. */
 export function checkView(v: unknown): View | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>, d = DEFAULT_VIEW;
   const group = o.group ?? d.group, sort = o.sort ?? d.sort, showBody = o.showBody ?? d.showBody, showLine = o.showLine ?? d.showLine;
   if (!GROUPS.includes(group as never) || !SORTS.includes(sort as never) || typeof showBody !== "boolean" || typeof showLine !== "boolean") return null;
+  const nav = checkNav(o.nav === undefined ? d.nav : o.nav);
+  if (!nav) return null;
   const states = o.states ?? d.states;
   if (!Array.isArray(states) || !states.every(s => STATUSES.includes(s as never))) return null;
   const mine = words(o.mine ?? d.mine, 10, 40), mineFields = words(o.mineFields ?? d.mineFields, 20, 40), rowFields = words(o.rowFields ?? d.rowFields, 20, 40), mainFields = words(o.mainFields ?? d.mainFields, 20, 40), sideFields = words(o.sideFields ?? d.sideFields, 20, 40);
   if (!mine || !mineFields || !rowFields || !mainFields || !sideFields) return null;
-  return { group: group as View["group"], sort: sort as View["sort"], states: [...new Set(states as Status[])], mine, mineFields, rowFields, mainFields, sideFields, showBody, showLine };
+  return { nav, group: group as View["group"], sort: sort as View["sort"], states: [...new Set(states as Status[])], mine, mineFields, rowFields, mainFields, sideFields, showBody, showLine };
 }
+/** 편집칸 글: 저장값이 바뀌었을 때 고치는 중이 아니면(지난 저장값 그대로면) 새 저장값, 고치는 중이면 내 글 그대로 — 60초 다시 읽기가 입력을 덮지 않게 */
+export const nextDraft = (draft: string, lastSaved: string, saved: string) => draft === lastSaved ? saved : draft;
 /** 저장된 값 읽기 — 옛 꼴 · 망가진 값이면 기본값(화면이 깨지지 않게). */
 export const readView = (v: unknown): View => checkView(v ?? {}) || DEFAULT_VIEW;
 

@@ -1,0 +1,2877 @@
+{
+ "보관된 옛 보고자 · 단위 없음": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 0,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "보관된 옛 보고자 · goal": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 0,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "보관된 옛 보고자 · agent": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 0,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "400줄 밖 보고자(보관 안 된 노드) · 단위 없음": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 0,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 1,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "400줄 밖 보고자(보관 안 된 노드) · goal": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 0,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 1,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "400줄 밖 보고자(보관 안 된 노드) · agent": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 0,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 1,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "옛 보고자 서른(줄은 90일 전) · 단위 없음": {
+  "nodes": [
+   {
+    "id": "n_ae9c7ff3d4b0",
+    "name": "old29",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old29"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000029,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_14b460860298",
+    "name": "old28",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old28"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000028,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_5efb49d460df",
+    "name": "old27",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old27"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000027,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_8b52b996ff45",
+    "name": "old26",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old26"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000026,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_1eb33c811035",
+    "name": "old25",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old25"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000025,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_54ab41e09927",
+    "name": "old24",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old24"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000024,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_d48733cc1977",
+    "name": "old23",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old23"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000023,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_35992b8dba00",
+    "name": "old22",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old22"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000022,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_dd8c0e261a56",
+    "name": "old21",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old21"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000021,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_c33a2e6fa6ca",
+    "name": "old20",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old20"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000020,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_ea4258632d12",
+    "name": "old19",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old19"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000019,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_1ab4e730dc1e",
+    "name": "old18",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old18"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000018,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_fee52d746b3b",
+    "name": "old17",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old17"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000017,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_283c3b5bd4ea",
+    "name": "old16",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old16"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000016,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_834274c5628b",
+    "name": "old15",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old15"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000015,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_49b7d9f89e77",
+    "name": "old14",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old14"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000014,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_5fc7fe1cadee",
+    "name": "old13",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old13"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000013,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_7dd4b26b4c17",
+    "name": "old12",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old12"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000012,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_5651fd251c9a",
+    "name": "old11",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old11"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000011,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_15fa1ca383ac",
+    "name": "old10",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old10"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000010,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_2e459b183403",
+    "name": "old9",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old9"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000009,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_1981931cc088",
+    "name": "old8",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old8"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000008,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_37d91077dd29",
+    "name": "old7",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old7"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000007,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_7ffab5743447",
+    "name": "old6",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old6"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000006,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_bbcac56a968c",
+    "name": "old5",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old5"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000005,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_97c41f66c32c",
+    "name": "old4",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old4"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000004,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_932d061edd85",
+    "name": "old3",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old3"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000003,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_35ea3baab070",
+    "name": "old2",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old2"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000002,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_23d1b31cc83c",
+    "name": "old1",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000001,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_68217201307e",
+    "name": "old0",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "win:mac:old0"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1785424000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "win:mac:old29",
+    "node": "n_ae9c7ff3d4b0",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old28",
+    "node": "n_14b460860298",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old27",
+    "node": "n_5efb49d460df",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old26",
+    "node": "n_8b52b996ff45",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old25",
+    "node": "n_1eb33c811035",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old24",
+    "node": "n_54ab41e09927",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old23",
+    "node": "n_d48733cc1977",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old22",
+    "node": "n_35992b8dba00",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old21",
+    "node": "n_dd8c0e261a56",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old20",
+    "node": "n_c33a2e6fa6ca",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old19",
+    "node": "n_ea4258632d12",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old18",
+    "node": "n_1ab4e730dc1e",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old17",
+    "node": "n_fee52d746b3b",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old16",
+    "node": "n_283c3b5bd4ea",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old15",
+    "node": "n_834274c5628b",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old14",
+    "node": "n_49b7d9f89e77",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old13",
+    "node": "n_5fc7fe1cadee",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old12",
+    "node": "n_7dd4b26b4c17",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old11",
+    "node": "n_5651fd251c9a",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old10",
+    "node": "n_15fa1ca383ac",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old9",
+    "node": "n_2e459b183403",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old8",
+    "node": "n_1981931cc088",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old7",
+    "node": "n_37d91077dd29",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old6",
+    "node": "n_7ffab5743447",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old5",
+    "node": "n_bbcac56a968c",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old4",
+    "node": "n_97c41f66c32c",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old3",
+    "node": "n_932d061edd85",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old2",
+    "node": "n_35ea3baab070",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old1",
+    "node": "n_23d1b31cc83c",
+    "how": "auto"
+   },
+   {
+    "item": "win:mac:old0",
+    "node": "n_68217201307e",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 30,
+   "nodes": 30,
+   "missing": 0,
+   "fixed": 30,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "옛 보고자 서른(줄은 90일 전) · goal": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 30,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 30,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 30,
+   "notes": []
+  }
+ },
+ "옛 보고자 서른(줄은 90일 전) · agent": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 30,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 30,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 30,
+   "notes": []
+  }
+ },
+ "업무 창 닫힘 7시간 · 단위 없음": {
+  "nodes": [
+   {
+    "id": "tk_12",
+    "name": "#12 고침",
+    "area": "기타",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "window:m:1"
+    ],
+    "counts": {
+     "window": 0,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1793171200000,
+    "created_at": 1793200000000,
+    "archived": true
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:1",
+    "node": "tk_12",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "업무 창 닫힘 7시간 · goal": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 1,
+   "notes": []
+  }
+ },
+ "업무 창 닫힘 7시간 · agent": {
+  "nodes": [],
+  "map": [],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 0,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 1,
+   "notes": []
+  }
+ },
+ "떼기 뒤 다시 묶기 · 단위 없음": {
+  "nodes": [
+   {
+    "id": "n_d071185af403",
+    "name": "#12 고침",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:1",
+    "node": "n_d071185af403",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "떼기 뒤 다시 묶기 · goal": {
+  "nodes": [
+   {
+    "id": "n_d071185af403",
+    "name": "#12 고침",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:1",
+    "node": "n_d071185af403",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "떼기 뒤 다시 묶기 · agent": {
+  "nodes": [
+   {
+    "id": "n_d071185af403",
+    "name": "r",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:1"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:1",
+    "node": "n_d071185af403",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "스레드 하나만 사람이 옮김 · 단위 없음": {
+  "nodes": [
+   {
+    "id": "n_a",
+    "name": "기능 A 만들기",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:2",
+     "session:claude:a"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 1,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_x",
+    "name": "a",
+    "area": "r",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "thread:slack:1"
+    ],
+    "counts": {
+     "window": 0,
+     "session": 0,
+     "thread": 1,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:2",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "session:claude:a",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "thread:slack:1",
+    "node": "n_x",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 3,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "스레드 하나만 사람이 옮김 · goal": {
+  "nodes": [
+   {
+    "id": "n_a",
+    "name": "기능 A 만들기",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:2",
+     "session:claude:a"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 1,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_x",
+    "name": "a",
+    "area": "r",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "thread:slack:1"
+    ],
+    "counts": {
+     "window": 0,
+     "session": 0,
+     "thread": 1,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:2",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "session:claude:a",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "thread:slack:1",
+    "node": "n_x",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 3,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "스레드 하나만 사람이 옮김 · agent": {
+  "nodes": [
+   {
+    "id": "n_a",
+    "name": "r",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:2",
+     "session:claude:a"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 1,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:2"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_x",
+    "name": "a",
+    "area": "r",
+    "state": "parked",
+    "why": "6시간 넘게 조용해 주차 — 다시 일하면 살아나요",
+    "items": [
+     "thread:slack:1"
+    ],
+    "counts": {
+     "window": 0,
+     "session": 0,
+     "thread": 1,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:2",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "session:claude:a",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "thread:slack:1",
+    "node": "n_x",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 3,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "창 하나를 사람이 옮김 · 단위 없음": {
+  "nodes": [
+   {
+    "id": "n_a",
+    "name": "a",
+    "area": "r",
+    "state": "idle",
+    "why": "열린 창 없음",
+    "items": [
+     "session:claude:a",
+     "thread:slack:1"
+    ],
+    "counts": {
+     "window": 0,
+     "session": 1,
+     "thread": 1,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_x",
+    "name": "기능 A 만들기",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:2"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "session:claude:a",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "thread:slack:1",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:2",
+    "node": "n_x",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 3,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "창 하나를 사람이 옮김 · goal": {
+  "nodes": [
+   {
+    "id": "n_x",
+    "name": "기능 A 만들기",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:2"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_a",
+    "name": "a",
+    "area": "r",
+    "state": "done",
+    "why": "열린 창 없음",
+    "items": [
+     "session:claude:a",
+     "thread:slack:1"
+    ],
+    "counts": {
+     "window": 0,
+     "session": 1,
+     "thread": 1,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": true
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:2",
+    "node": "n_x",
+    "how": "pin"
+   },
+   {
+    "item": "session:claude:a",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "thread:slack:1",
+    "node": "n_a",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 3,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "창 하나를 사람이 옮김 · agent": {
+  "nodes": [
+   {
+    "id": "n_a",
+    "name": "r",
+    "area": "기타",
+    "state": "idle",
+    "why": "열린 창 없음",
+    "items": [
+     "session:claude:a"
+    ],
+    "counts": {
+     "window": 0,
+     "session": 1,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_x",
+    "name": "기능 A 만들기",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:2"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:2"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "session:claude:a",
+    "node": "n_a",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:2",
+    "node": "n_x",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 3,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 1,
+   "empty": 0,
+   "history": 1,
+   "notes": []
+  }
+ },
+ "같은 session 두 창 · 단위 없음": {
+  "nodes": [
+   {
+    "id": "n_2ead5219863e",
+    "name": "일 하나",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:3"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_fffc033020ab",
+    "name": "일 둘",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:4"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:3",
+    "node": "n_2ead5219863e",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:4",
+    "node": "n_fffc033020ab",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 2,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "같은 session 두 창 · goal": {
+  "nodes": [
+   {
+    "id": "n_2ead5219863e",
+    "name": "일 하나",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:3"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_fffc033020ab",
+    "name": "일 둘",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:4"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:3",
+    "node": "n_2ead5219863e",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:4",
+    "node": "n_fffc033020ab",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 2,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "같은 session 두 창 · agent": {
+  "nodes": [
+   {
+    "id": "n_2ead5219863e",
+    "name": "일 하나",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:3"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:3"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_fffc033020ab",
+    "name": "일 둘",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:4"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:4"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:3",
+    "node": "n_2ead5219863e",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:4",
+    "node": "n_fffc033020ab",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 2,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "같은 session 두 창 각자 옮김 · 단위 없음": {
+  "nodes": [
+   {
+    "id": "n_p",
+    "name": "일 하나",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:3"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_q",
+    "name": "일 둘",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:4"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:3",
+    "node": "n_p",
+    "how": "pin"
+   },
+   {
+    "item": "window:m:4",
+    "node": "n_q",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 2,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "같은 session 두 창 각자 옮김 · goal": {
+  "nodes": [
+   {
+    "id": "n_p",
+    "name": "일 하나",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:3"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_q",
+    "name": "일 둘",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:4"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:3",
+    "node": "n_p",
+    "how": "pin"
+   },
+   {
+    "item": "window:m:4",
+    "node": "n_q",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 2,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "같은 session 두 창 각자 옮김 · agent": {
+  "nodes": [
+   {
+    "id": "n_p",
+    "name": "일 하나",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:3"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:3"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_q",
+    "name": "일 둘",
+    "area": "기타",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:4"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:4"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:3",
+    "node": "n_p",
+    "how": "pin"
+   },
+   {
+    "item": "window:m:4",
+    "node": "n_q",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 2,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "손잡이 session id 만 같은 두 창 · 단위 없음": {
+  "nodes": [
+   {
+    "id": "n_ea72a39391a6",
+    "name": "다른 기기에서 이어 연 창",
+    "area": "기타",
+    "state": "working",
+    "why": "다른 기기에서 이어 연 창 도는 중",
+    "items": [
+     "window:m:7"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_15fa34169b9f",
+    "name": "이어 연 창 둘",
+    "area": "기타",
+    "state": "working",
+    "why": "이어 연 창 둘 도는 중",
+    "items": [
+     "window:m:8"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:7",
+    "node": "n_ea72a39391a6",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:8",
+    "node": "n_15fa34169b9f",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 2,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "손잡이 session id 만 같은 두 창 · goal": {
+  "nodes": [
+   {
+    "id": "n_ea72a39391a6",
+    "name": "다른 기기에서 이어 연 창",
+    "area": "기타",
+    "state": "working",
+    "why": "다른 기기에서 이어 연 창 도는 중",
+    "items": [
+     "window:m:7"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_15fa34169b9f",
+    "name": "이어 연 창 둘",
+    "area": "기타",
+    "state": "working",
+    "why": "이어 연 창 둘 도는 중",
+    "items": [
+     "window:m:8"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:7",
+    "node": "n_ea72a39391a6",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:8",
+    "node": "n_15fa34169b9f",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 2,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "손잡이 session id 만 같은 두 창 · agent": {
+  "nodes": [
+   {
+    "id": "n_ea72a39391a6",
+    "name": "다른 기기에서 이어 연 창",
+    "area": "기타",
+    "state": "working",
+    "why": "다른 기기에서 이어 연 창 도는 중",
+    "items": [
+     "window:m:7"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:7"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_15fa34169b9f",
+    "name": "이어 연 창 둘",
+    "area": "기타",
+    "state": "working",
+    "why": "이어 연 창 둘 도는 중",
+    "items": [
+     "window:m:8"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:8"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:7",
+    "node": "n_ea72a39391a6",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:8",
+    "node": "n_15fa34169b9f",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 2,
+   "nodes": 2,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "옮긴 창 제목에 업무 번호 · 단위 없음": {
+  "nodes": [
+   {
+    "id": "n_p",
+    "name": "#12 고침",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:5"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:5",
+    "node": "n_p",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "옮긴 창 제목에 업무 번호 · goal": {
+  "nodes": [
+   {
+    "id": "n_p",
+    "name": "#12 고침",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:5"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:5",
+    "node": "n_p",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "옮긴 창 제목에 업무 번호 · agent": {
+  "nodes": [
+   {
+    "id": "n_p",
+    "name": "#12 고침",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:5"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:5"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:5",
+    "node": "n_p",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "보통 회원 보고자 둘과 역할 창 · 단위 없음": {
+  "nodes": [
+   {
+    "id": "n_r",
+    "name": "rep1",
+    "area": "기타",
+    "state": "idle",
+    "why": "a",
+    "items": [
+     "win:m:rep1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_1e0c2b4e4d7c",
+    "name": "rep2",
+    "area": "기타",
+    "state": "idle",
+    "why": "b",
+    "items": [
+     "win:m:rep2"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_21b51082f99c",
+    "name": "rep1",
+    "area": "기타",
+    "state": "idle",
+    "why": "c",
+    "items": [
+     "win:n:rep1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_1f934f79bffc",
+    "name": "팀장",
+    "area": "x",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:6"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "win:m:rep1",
+    "node": "n_r",
+    "how": "auto"
+   },
+   {
+    "item": "win:m:rep2",
+    "node": "n_1e0c2b4e4d7c",
+    "how": "auto"
+   },
+   {
+    "item": "win:n:rep1",
+    "node": "n_21b51082f99c",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:6",
+    "node": "n_1f934f79bffc",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 4,
+   "nodes": 4,
+   "missing": 0,
+   "fixed": 3,
+   "mixed": 0,
+   "moved": 2,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "보통 회원 보고자 둘과 역할 창 · goal": {
+  "nodes": [
+   {
+    "id": "n_r",
+    "name": "rep1",
+    "area": "기타",
+    "state": "idle",
+    "why": "a",
+    "items": [
+     "win:m:rep1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   },
+   {
+    "id": "n_1e0c2b4e4d7c",
+    "name": "rep2",
+    "area": "기타",
+    "state": "idle",
+    "why": "b",
+    "items": [
+     "win:m:rep2"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_21b51082f99c",
+    "name": "rep1",
+    "area": "기타",
+    "state": "idle",
+    "why": "c",
+    "items": [
+     "win:n:rep1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 1,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   },
+   {
+    "id": "n_1f934f79bffc",
+    "name": "팀장",
+    "area": "x",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:6"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "win:m:rep1",
+    "node": "n_r",
+    "how": "auto"
+   },
+   {
+    "item": "win:m:rep2",
+    "node": "n_1e0c2b4e4d7c",
+    "how": "auto"
+   },
+   {
+    "item": "win:n:rep1",
+    "node": "n_21b51082f99c",
+    "how": "auto"
+   },
+   {
+    "item": "window:m:6",
+    "node": "n_1f934f79bffc",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 4,
+   "nodes": 4,
+   "missing": 0,
+   "fixed": 3,
+   "mixed": 0,
+   "moved": 2,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "보통 회원 보고자 둘과 역할 창 · agent": {
+  "nodes": [
+   {
+    "id": "n_r",
+    "name": "팀장",
+    "area": "x",
+    "state": "idle",
+    "why": "a",
+    "items": [
+     "window:m:6",
+     "win:m:rep1",
+     "win:m:rep2",
+     "win:n:rep1"
+    ],
+    "counts": {
+     "window": 4,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 3,
+     "card": 0,
+     "main": "window:m:6"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1785424000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:6",
+    "node": "n_r",
+    "how": "auto"
+   },
+   {
+    "item": "win:m:rep1",
+    "node": "n_r",
+    "how": "auto"
+   },
+   {
+    "item": "win:m:rep2",
+    "node": "n_r",
+    "how": "auto"
+   },
+   {
+    "item": "win:n:rep1",
+    "node": "n_r",
+    "how": "auto"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 4,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 3,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "업무 노드로 옮긴 항목(옛 길) · 단위 없음": {
+  "nodes": [
+   {
+    "id": "tk_12",
+    "name": "#12 고침",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:1",
+    "node": "tk_12",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "업무 노드로 옮긴 항목(옛 길) · goal": {
+  "nodes": [
+   {
+    "id": "tk_12",
+    "name": "#12 고침",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:1",
+    "node": "tk_12",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ },
+ "업무 노드로 옮긴 항목(옛 길) · agent": {
+  "nodes": [
+   {
+    "id": "tk_12",
+    "name": "#12 고침",
+    "area": "r",
+    "state": "idle",
+    "why": "쉬는 중",
+    "items": [
+     "window:m:1"
+    ],
+    "counts": {
+     "window": 1,
+     "session": 0,
+     "thread": 0,
+     "todo": 0,
+     "task": 0,
+     "log": 0,
+     "card": 0,
+     "main": "window:m:1"
+    },
+    "updated_at": 1793200000000,
+    "created_at": 1793200000000,
+    "archived": false
+   }
+  ],
+  "map": [
+   {
+    "item": "window:m:1",
+    "node": "tk_12",
+    "how": "pin"
+   }
+  ],
+  "primary": null,
+  "audit": {
+   "items": 1,
+   "nodes": 1,
+   "missing": 0,
+   "fixed": 0,
+   "mixed": 0,
+   "moved": 0,
+   "empty": 0,
+   "history": 0,
+   "notes": []
+  }
+ }
+}

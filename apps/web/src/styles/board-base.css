@@ -29,6 +29,7 @@ header h1{font-size:15px;font-weight:600;margin:0}
 #pushp .ps{font-weight:600}
 #pushp .ph{color:var(--muted);font-size:13px;margin-top:4px}
 #pushp .pb{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+#pushp .pph{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:13px}
 .hpill{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:999px;border:1px solid var(--line);font-size:12.5px;color:var(--soft);background:var(--surface);white-space:nowrap}
 .hpill:hover{border-color:var(--muted);color:var(--ink)}
 .hpill b{font-family:var(--mono);font-weight:500}

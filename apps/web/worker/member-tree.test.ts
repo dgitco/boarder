@@ -167,14 +167,14 @@ test("여러 층: 부서(열 머리) → 업무 → 하위 업무 → 그 밑 �
   const at = (id: string, name: string, area: string, ago: number) => db.prepare("INSERT INTO mnode(owner, id, name, area, state, why, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)").run(A, id, name, area, "idle", "", T, Date.now() - ago);
   at("n_sales", "Sales", "Sales", 50_000); at("n_lead", "팀장", "acme", 50_000);
   // 묶기 순서 = updated_at 최근 먼저 — 가장 깊은 노드가 먼저 읽히게(위 노드가 아직 제 열로 안 옮겨졌을 때)
-  at("n_deep", "하위의 하위", "", 1_000); at("n_sub", "단계 정의", "", 2_000); at("n_task", "세일즈 덱 확정", "", 3_000); at("n_t2", "영업 CRM", "", 4_000);
+  at("n_deep", "하위의 하위", "", 1_000); at("n_sub", "단계 정의", "", 2_000); at("n_task", "예시 문서 확정", "", 3_000); at("n_t2", "영업 CRM", "", 4_000);
   db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { n_sales: "top", n_task: "n_sales", n_t2: "n_sales", n_sub: "n_task", n_deep: "n_sub" } }), T);
   const d = await data(d1, A, null) as any;
   const p = (w: string) => d.panes.find((x: any) => x.win === w), col = d.areas.find((a: any) => a.lead_name === "Sales").key;
-  assert.deepEqual(["세일즈 덱 확정", "영업 CRM", "단계 정의", "하위의 하위"].map(w => p(w).area), [col, col, col, col], "사슬 끝까지 부서 열");
-  assert.equal(p("세일즈 덱 확정").up, undefined, "열 머리 바로 밑은 up 없음(예전 그대로 한 층)");
+  assert.deepEqual(["예시 문서 확정", "영업 CRM", "단계 정의", "하위의 하위"].map(w => p(w).area), [col, col, col, col], "사슬 끝까지 부서 열");
+  assert.equal(p("예시 문서 확정").up, undefined, "열 머리 바로 밑은 up 없음(예전 그대로 한 층)");
   assert.equal(p("영업 CRM").up, undefined);
-  assert.equal(p("단계 정의").up, p("세일즈 덱 확정").pane);
+  assert.equal(p("단계 정의").up, p("예시 문서 확정").pane);
   assert.equal(p("하위의 하위").up, p("단계 정의").pane);
   assert.equal(p("Sales").up, undefined, "열 머리는 up 없음");
 });

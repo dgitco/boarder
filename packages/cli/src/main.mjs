@@ -117,6 +117,7 @@ async function call(tool, args) {
   if (r.status === 401) { w = await windowToken({ fresh: true }); r = await go(w.token); }
   const j = await r.json().catch(() => ({ error: `Boarder ${r.status}` }));
   if (!r.ok) { console.error(j.error || r.status); process.exit(1); }
+  if (/^(?:inbox_say|chat_say|boarder_execute_write)$/.test(tool)) { const T = await import('./turn.mjs'); T.recordReply([process.env.BOARDER_WINDOW, process.env.TMUX_PANE, windowKey().key], tool, args); }   // 코드 모드 안의 답도(turn.mjs sayCalls)
   console.log(JSON.stringify(j));
   if (tool === 'inbox_wait' && j.state === 'open') process.exit(2);
 }
@@ -136,9 +137,9 @@ async function readStdin(ms = 3000) {
   try { for await (const d of process.stdin) out += d; } catch {}
   clearTimeout(t); return out;
 }
-async function postReply(text, prompt, T) {
+async function postReply(plan) {
   const w = await windowToken({ timeoutMs: 4000 });   // 훅 한도(setup 의 Stop 20초) 안에 — 매달린 망이어도 4 + 6초
-  const [tool, args] = T.replyCall(prompt, text);
+  const [tool, args] = plan;
   const r = await fetch(`${server()}/api/agent/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${w.token}` }, body: JSON.stringify(args), signal: AbortSignal.timeout(6000) });
   return r.ok;
 }
@@ -148,16 +149,15 @@ async function turnHook(kind, arg) {
   if (kind === 'codex-turn') {   // Codex notify: 마지막 인자 하나가 JSON(type agent-turn-complete · thread-id · input-messages · last-assistant-message)
     let j; try { j = JSON.parse(arg || ''); } catch { return; }
     if (j?.type !== 'agent-turn-complete') return;
-    const keys = [process.env.BOARDER_WINDOW, j['thread-id']];
-    for (const prompt of (Array.isArray(j['input-messages']) ? j['input-messages'] : []).slice().reverse()) {
-      const text = T.replyFor({ keys, prompt, at: 0, reply: j['last-assistant-message'] });
-      if (text) return void await postReply(text, prompt, T);
-    }
+    const keys = [process.env.BOARDER_WINDOW, j['thread-id'], windowKey().key];
+    const prompt = (Array.isArray(j['input-messages']) ? j['input-messages'] : []).filter(p => typeof p === 'string');
+    const plan = T.replyPlan({ keys, prompt, at: 0, reply: j['last-assistant-message'] });
+    if (plan) await postReply(plan);
     return;
   }
   let j; try { j = JSON.parse(await readStdin()); } catch { return; }
   if (!j?.transcript_path || !j?.session_id) return;
-  const keys = [process.env.BOARDER_WINDOW, j.session_id];
+  const keys = [process.env.BOARDER_WINDOW, j.session_id, windowKey().key];
   if (!T.hasMark(keys)) return;   // 보드에서 온 턴이 아니면 기록을 읽지 않음(턴마다 수백 MB 를 읽던 것)
   // 마지막 답이 기록에 늦게 써질 수 있어 잠깐 다시 읽음. 훅이 마지막 답을 주면(last_assistant_message) 그것을 씀
   let t = null;
@@ -168,8 +168,8 @@ async function turnHook(kind, arg) {
     await new Promise(r => setTimeout(r, 500));
   }
   if (!t) return;
-  const text = T.replyFor({ keys, ...t });
-  if (text && !t.said) await postReply(text, t.prompt, T);   // 창이 그 턴에 스스로 boarder chat · say 로 답했으면 또 올리지 않음
+  const plan = T.replyPlan({ keys, ...t });
+  if (plan) await postReply(plan);   // 창이 그 턴에 스스로 boarder chat · say 로 답했으면 또 올리지 않음
 }
 
 async function promptHook() {

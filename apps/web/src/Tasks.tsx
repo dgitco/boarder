@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_VIEW, doneOf, GROUPS, GROUP_KO, SORTS, SORT_KO, STATUSES, STATUS_KO, isMine, kidsOf, roots, sorted, visibleIds, type Status, type TaskRow, type View } from "../worker/tasks/rules";
+import { DEFAULT_VIEW, checkView, readView, doneOf, GROUPS, GROUP_KO, SORTS, SORT_KO, STATUSES, STATUS_KO, isMine, kidsOf, nextDraft, roots, sorted, visibleIds, type NavLink, type Status, type TaskRow, type View } from "../worker/tasks/rules";
+
+// 기본 메뉴(모두 같음) — 내 메뉴(view.nav)를 고친 사람만 제 목록, 빈 목록이면 이것
+const NAV: NavLink[] = ([["/", "노드"], ["/#arts", "캔버스"], ["/tasks", "업무"], ["/#inbox", "결정 · 할 일"]] as const).map(([href, name]) => ({ href, name }));
+const navOf = (v: View) => v.nav.length ? v.nav : NAV;
+const navText = (nav: NavLink[]) => nav.map(n => `${n.name} | ${n.href}`).join("\n");
 
 const DOT: Record<Status, string> = { working: "bg-[var(--dgit-green)]", blocked: "bg-[var(--danger)] rotate-45 rounded-[2px]", waiting: "border-2 border-[var(--dgit-amber)] bg-transparent", done: "bg-[var(--muted)]", cancelled: "bg-[var(--line)]" };
 const BOX: Record<Status, string> = { working: "bg-[var(--dgit-green-bg)]", blocked: "bg-[var(--dgit-red-bg)]", waiting: "bg-[var(--dgit-amber-bg)]", done: "bg-[var(--hover)]", cancelled: "bg-[var(--hover)]" };
@@ -27,7 +32,7 @@ export function Tasks() {
   const load = useCallback(async () => {
     const at = seq.current, r = await fetch("/api/me/tasks", { credentials: "include" }).catch(() => null), j = r ? await r.json().catch(() => null) as { ok?: boolean; tasks?: TaskRow[]; view?: View; error?: string } | null : null;
     if (!r?.ok || !j?.tasks) { setErr(j?.error || "불러오지 못했어요"); return; }
-    setErr(""); setTasks(j.tasks); if (j.view && at === seq.current && !saving.current) put(j.view);
+    setErr(""); setTasks(j.tasks); if (j.view && at === seq.current && !saving.current) put(readView(j.view));
   }, []);
   useEffect(() => { load(); const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 60000); return () => clearInterval(t); }, [load]);
   const save = async (change: View | ((v: View) => View)) => {
@@ -83,7 +88,7 @@ function Side({ tasks, shown, view, saveErr, q, setQ, onlyMine, setOnlyMine, shu
     : sorted(shown, view.sort).map(t => row(t, 0, []));
   return (
     <aside className="flex min-h-0 flex-col bg-[var(--bg)] px-3 pt-3 md:rounded-r-2xl md:bg-[var(--hover)]">
-      <nav className="mb-2 flex flex-col text-[14px]">{[["/", "노드"], ["/#arts", "캔버스"], ["/tasks", "업무"], ["/#inbox", "결정 · 할 일"]].map(([h, n]) => <a key={n} href={h} className={`rounded-lg px-2 py-1.5 ${n === "업무" ? "bg-[var(--line)] font-semibold" : "hover:bg-[var(--line)]"}`}>{n}{n === "업무" ? <span className="float-right text-[12.5px] font-normal text-[var(--accent)]">{tasks.filter(t => !t.closed).length}</span> : null}</a>)}</nav>
+      <nav className="mb-2 flex flex-col text-[14px]">{navOf(view).map(({ href, name }, i) => <a key={i} href={href} className={`rounded-lg px-2 py-1.5 ${href === "/tasks" ? "bg-[var(--line)] font-semibold" : "hover:bg-[var(--line)]"}`}>{name}{href === "/tasks" ? <span className="float-right text-[12.5px] font-normal text-[var(--accent)]">{tasks.filter(t => !t.closed).length}</span> : null}</a>)}</nav>
       <div className="flex items-center gap-2 px-1.5 pb-2"><h1 className="m-0 flex-1 text-[13px] font-semibold">업무</h1><button className="text-[12px] text-[var(--muted)] hover:underline" onClick={openSetting}>보기 설정</button></div>
       <input value={q} onChange={e => setQ(e.target.value)} placeholder="업무 찾기" className="mb-2 h-9 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-[13.5px]" />
       <div className="flex flex-wrap gap-1 pb-2">
@@ -203,6 +208,23 @@ function Right({ t, view }: { t: TaskRow; view: View }) {
   );
 }
 
+function NavSetting({ view, save }: { view: View; save: (v: View | ((x: View) => View)) => void }) {
+  const saved = navText(navOf(view)), last = useRef(saved);
+  const [draft, setDraft] = useState(saved), [err, setErr] = useState("");
+  useEffect(() => { setDraft(d => nextDraft(d, last.current, saved)); last.current = saved; }, [saved]);
+  const apply = () => {
+    const nav = draft.split("\n").filter(l => l.trim()).map(l => { const at = l.indexOf("|"); return { name: at < 0 ? "" : l.slice(0, at).trim(), href: at < 0 ? "" : l.slice(at + 1).trim() }; });
+    if (!checkView({ ...view, nav })) { setErr("메뉴는 12개까지예요. 이름과 보드 경로(/) 또는 https:// 주소를 확인해 주세요."); return; }
+    setErr(""); save(v => ({ ...v, nav: navText(nav) === navText(NAV) ? [] : nav }));   // 기본과 같으면 빈 목록(기본을 따라감)
+  };
+  return <fieldset className="m-0 border-0 p-0"><legend className="mb-1 text-[13px] font-semibold">사이드바 메뉴</legend>
+    <p className="mb-2 mt-0 text-[12px] text-[var(--muted)]">한 줄에 이름 | 주소를 적어요. 줄을 옮기면 순서가 바뀌고, 지우면 메뉴에서 빠져요.</p>
+    <textarea aria-label="사이드바 메뉴" rows={7} value={draft} onChange={e => setDraft(e.target.value)} className="w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2 text-[12px]" />
+    {err ? <p className="text-[12px] text-[var(--danger)]">{err}</p> : null}
+    <button className="mt-1 rounded-lg border border-[var(--line)] px-3 py-1 text-[13px]" onClick={apply}>메뉴 저장</button>
+  </fieldset>;
+}
+
 function Setting({ view, fields, save, close, err }: { view: View; fields: string[]; save: (v: View | ((x: View) => View)) => void; close: () => void; err: string }) {
   const Pick = ({ k, title }: { k: "mineFields" | "rowFields" | "mainFields" | "sideFields"; title: string }) => (
     <fieldset className="m-0 border-0 p-0"><legend className="mb-1 p-0 text-[13px] font-semibold">{title}</legend><div className="flex flex-wrap gap-x-3 gap-y-1">{fields.map(f => <label key={f} className="inline-flex items-center gap-1.5 text-[13px]"><input type="checkbox" checked={view[k].includes(f)} onChange={e => save({ ...view, [k]: e.target.checked ? [...view[k], f] : view[k].filter(x => x !== f) })} />{f}</label>)}</div></fieldset>
@@ -215,6 +237,7 @@ function Setting({ view, fields, save, close, err }: { view: View; fields: strin
         <label className="flex items-center gap-2 text-[13.5px]"><span className="w-20 font-semibold">묶는 기준</span><select className="h-9 flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2" value={view.group} onChange={e => save({ ...view, group: e.target.value as View["group"] })}>{GROUPS.map(g => <option key={g} value={g}>{GROUP_KO[g]}</option>)}</select></label>
         <label className="flex items-center gap-2 text-[13.5px]"><span className="w-20 font-semibold">순서</span><select className="h-9 flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2" value={view.sort} onChange={e => save({ ...view, sort: e.target.value as View["sort"] })}>{SORTS.map(g => <option key={g} value={g}>{SORT_KO[g]}</option>)}</select></label>
         <label className="flex items-center gap-2 text-[13.5px]"><span className="w-20 font-semibold">내 차례 낱말</span><input key={view.mine.join()} className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-2" defaultValue={view.mine.join(", ")} onBlur={e => save({ ...view, mine: e.target.value.split(",").map(x => x.trim()).filter(Boolean) })} placeholder="쉼표로 나눠요" /></label>
+        <NavSetting view={view} save={save} />
         <Pick k="mineFields" title="내 차례를 볼 칸" />
         <Pick k="rowFields" title="목록 줄에 더 보일 칸" />
         <Pick k="mainFields" title="가운데에 보일 칸" />

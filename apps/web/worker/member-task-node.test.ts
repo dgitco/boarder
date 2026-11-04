@@ -24,7 +24,7 @@ const node = (db: DatabaseSync, id: string, name: string, state: string, task: o
 
 test("업무 노드 판에 task(상태 다섯 · 상태 한 줄 · 이슈 · 칩), 보통 노드 판엔 없음", async () => {
   const { db, d1 } = fakeD1();
-  node(db, "tk_a", "덱 확정", "idle", { state: "waiting", line: "확인 대기 — 새 판 한 장", body: "설명", issue: "#1969", confirm: true });
+  node(db, "tk_a", "덱 확정", "idle", { state: "waiting", line: "확인 대기 — 새 판 한 장", body: "설명", issue: "#9002", confirm: true });
   node(db, "tk_b", "단계 정의", "blocked", { state: "blocked", line: "요금 숫자 결정 대기", body: "", issue: "" });
   node(db, "tk_c", "영업 CRM", "working", { state: "working", line: "", body: "", issue: "" });
   node(db, "n_w", "보통 노드", "working", null);
@@ -34,7 +34,7 @@ test("업무 노드 판에 task(상태 다섯 · 상태 한 줄 · 이슈 · 칩
   db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ task_dots: true, parent: { tk_dept: "top", tk_a: "tk_dept", tk_b: "tk_a" } }), T);
   const d = await data(d1, A, null) as any, p = (w: string) => d.panes.find((x: any) => x.win === w);
   assert.deepEqual(p("Sales").task.chips, [], "밑에 업무를 둔 노드(부서)는 창이 없어도 담당 없음 칩 없음");
-  assert.deepEqual(p("덱 확정").task, { state: "waiting", line: "확인 대기 — 새 판 한 장", issue: "#1969", chips: ["confirm"] }, "하위 업무가 있으면 담당 없음 칩 없음");
+  assert.deepEqual(p("덱 확정").task, { state: "waiting", line: "확인 대기 — 새 판 한 장", issue: "#9002", chips: ["confirm"] }, "하위 업무가 있으면 담당 없음 칩 없음");
   assert.deepEqual(p("단계 정의").task, { state: "blocked", line: "요금 숫자 결정 대기", issue: "", chips: ["unassigned"] });
   assert.deepEqual(p("영업 CRM").task, { state: "working", line: "", issue: "", chips: ["parked"] }, "붙은 창이 주차면 「쉬는 중」, 창이 있으니 담당 없음은 아님");
   assert.equal(p("보통 노드").task, undefined);
@@ -91,7 +91,7 @@ test("부서가 있는 영역의 머리는 부서 — 더 최근에 움직인 �
 
 test("업무 상태 다섯 꼴은 켠 사람만(설정 › 노드 task_dots, 기본 꺼짐 = 지금 점)", async () => {
   const { db, d1 } = fakeD1();
-  node(db, "tk_a", "덱 확정", "idle", { state: "waiting", line: "확인 대기", body: "", issue: "#1969", confirm: true });
+  node(db, "tk_a", "덱 확정", "idle", { state: "waiting", line: "확인 대기", body: "", issue: "#9002", confirm: true });
   const off = await data(d1, A, null) as any;
   assert.equal(off.panes.find((x: any) => x.win === "덱 확정").tk, true, "점 설정이 꺼져도 업무 노드 표시는 실음 — 왼쪽 칸에서 뺄 때 씀");
   assert.equal(off.panes.find((x: any) => x.win === "덱 확정").task, undefined, "설정이 없으면 task 를 안 실음 — 화면은 지금 점");

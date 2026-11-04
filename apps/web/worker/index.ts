@@ -71,7 +71,7 @@ import * as memberInbox from "./member-inbox";
 import * as nodeTodo from "./node-todo";
 import * as memberFiles from "./member-files";
 import { importedWindow, queueToImported } from "./member-imported";
-import { claimEndpoint, memberPushWanted, releaseEndpoint, type PushCard } from "./member-push";
+import { claimEndpoint, releaseEndpoint, routeCard, routeLine, type PushCard, type PushLine } from "./member-push";
 import * as emoji from "./emoji";
 import * as memberSearch from "./member-search";
 import { newMeter, meterEnv, meterProps, sampleOf } from "./perf";
@@ -516,7 +516,7 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
       return `${c.env.PUBLIC_URL}/api/agent/result/${id}`;
     },
     owner, person: who.owner || "",   // person = 봉함 DEK 주인(주인 '')
-    ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)), splitSender(c.env, who.owner)) } : {}),
+    ...(who.owner ? { local: localTools(c.env.DB, who.owner, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)), splitSender(c.env, who.owner), line => c.executionCtx.waitUntil(memberLinePush(c.env, who.owner!, line))) } : {}),
     host: who.host, win: who.win || who.pane,
     conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", card: who.owner ? (card: { id: string; question: string }) => c.executionCtx.waitUntil(memberCardPush(c.env, who.owner!, card)) : undefined, catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
   };
@@ -912,7 +912,7 @@ app.post("/api/me/nodeset", async c => {
     const me = s.user.email.toLowerCase(), patch = prefsPatch(b.prefs);
     if (!patch) return c.json({ ok: false, error: "값" }, 400);
     await savePrefs(c.env.DB, me, patch);
-    if (patch.primary_item !== undefined || patch.park_on !== undefined || patch.park_h !== undefined) await regroup(c.env as never, me);   // 노드 · 메인 봇 판이 바로 바뀌게
+    if (patch.primary_item !== undefined || patch.park_on !== undefined || patch.park_h !== undefined || patch.task_channels !== undefined || patch.task_repo !== undefined) await regroup(c.env as never, me);
     return c.json({ ok: true, prefs: await readPrefs(c.env.DB, me) });
   }
   if (!b.values || typeof b.values !== "object") return c.json({ ok: false, error: "값" }, 400);
@@ -1291,14 +1291,14 @@ app.get("/api/me/onboarding", async c => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   return c.json(await onboarding(c.env.DB, s.user.email.toLowerCase(), { server: c.env.PUBLIC_URL, push: await ledger.f7On(c.env.DB, "member_push").catch(() => false) }), 200, { "cache-control": "no-store" });
 });
-const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1" };
+const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1" };
 app.get("/api/me/ui", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const rs = (await c.env.DB.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(s.user.email.toLowerCase()).all<{ k: string; v: string }>()).results || [];
   const out: Record<string, string> = {}; for (const r of rs) { const k = r.k.slice(3); if (UI_PREF[k]?.(r.v)) out[k] = r.v; }
   return c.json(out, 200, { "cache-control": "no-store" });
 });
-app.post("/api/me/ui", async c => {   // { k: "theme" | "accent" | "still" | "favblink", v }
+app.post("/api/me/ui", async c => {   // { k: "theme" | "accent" | "still" | "favblink" | "tapthread", v }
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const { k, v } = await c.req.json<{ k?: string; v?: string }>().catch(() => ({} as { k?: string; v?: string }));
@@ -2373,7 +2373,17 @@ app.post("/api/admin/sales-digest", async c => {
   return c.json({ ok: true, ...(await runDigest(c.env.DB, c.env.PUBLIC_URL, salesSend(c.env), { only, dry: !!b.dry })) });
 });
 const memberCardPush = async (env: Env, me: string, card: PushCard) => {
-  try { if (await memberPushWanted(env.DB, me, card) && await ledger.f7On(env.DB, "member_push")) await memberPusher(env, me)?.mNotify(me.toLowerCase(), { id: card.id, question: card.question }); } catch (e) { console.log(JSON.stringify({ ev: "member_push", error: String(e).slice(0, 200) })); }
+  try { if (await ledger.f7On(env.DB, "member_push")) { const pu = memberPusher(env, me); if (pu) await routeCard(env.DB, me, card, pu); } }
+  catch (e) { console.log(JSON.stringify({ ev: "member_push", error: String(e).slice(0, 200) })); }
+};
+// 에이전트 글 한 줄(넓힘을 켠 회원만, member-push.ts routeLine): 내 글에 온 답 · 나를 부름은 바로 한 통(key log:<줄>), 그 밖 진행 글은 묶음(5분에 한 통 「새 글 n」, 설정에서 끔).
+// 켠 기기가 없거나 넓힘이 꺼졌으면(기본) 글을 가르지도 않음 — 기본 회원은 main 과 같게 글 알림 0
+const memberLinePush = async (env: Env, me: string, line: PushLine) => {
+  try {
+    if (!(await ledger.f7On(env.DB, "member_push"))) return;
+    if (!(await env.DB.prepare("SELECT 1 x FROM member_push_ep WHERE owner = ? LIMIT 1").bind(me.toLowerCase()).first())) return;
+    const pu = memberPusher(env, me); if (pu) await routeLine(env.DB, me, line, pu);
+  } catch (e) { console.log(JSON.stringify({ ev: "member_push_line", error: String(e).slice(0, 200) })); }
 };
 // 회원 웹 푸시(pushRoute 와 같은 답 꼴): 칸 = 세션 메일 · 원천 = 그 사람 board_card. POST 는 주인 길과 같은 x-hb 문 + 회원 쓰기와 같은 sameSite(다른 사이트 폼 · 링크 막기)
 async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: URL) {
@@ -2382,12 +2392,13 @@ async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: U
   if (c.req.method === "GET" || c.req.method === "HEAD") {
     if (p === "/sw.js") return new Response(c.req.method === "HEAD" ? null : PU.SW, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff" } });
     if (p === "/api/push/key") return c.json({ key: await pu.key() }, 200, { "cache-control": "no-store" });
+    if (p === "/api/push/prefs") { const r = await pu.mPrefs(me); return c.json(r[1], r[0] as 200, { "cache-control": "no-store" }); }   // 알림 범위 넓힘 · 진행 글 묶음 · 끔(사람마다, 기본 급한 것만)
     let d = p; try { d = decodeURIComponent(p); } catch {}
     const m = /^\/api\/push\/resolve\/([\w:.-]{1,80})$/.exec(d);   // 회원 카드는 바뀌지 않음 — 그 사람 카드면 그 글 자리(Primary 채팅의 카드 글)
     if (m) return c.json(await memberBoard.pushLoc(c.env.DB, me, m[1]), 200, { "cache-control": "no-store" });   // 회원 보드 길(member-board.get)과 같은 셈 — w:<n> 카드도
     return c.json({ error: "not found" }, 404);
   }
-  const fn = ({ "/api/push/subscribe": 1, "/api/push/unsubscribe": 1, "/api/push/test": 1, "/api/push/ack": 1 } as Record<string, number>)[p];
+  const fn = ({ "/api/push/subscribe": 1, "/api/push/unsubscribe": 1, "/api/push/test": 1, "/api/push/ack": 1, "/api/push/prefs": 1 } as Record<string, number>)[p];
   if (c.req.method !== "POST" || !fn) return c.json({ error: "not found" }, 404);
   if (c.req.header("x-hb") !== "1" || !sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
   const raw = new Uint8Array(await c.req.arrayBuffer());
@@ -2403,6 +2414,7 @@ async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: U
     if (r[1].new) c.executionCtx.waitUntil(pu.mTrial(me, { endpoint: ep }, true).catch(() => null));   // 새로 켠 기기엔 바로 시험 알림 1건(주인과 같게)
   } else if (p === "/api/push/unsubscribe") { r = await pu.mUnsubscribe(me, b); if (r[0] === 200) await releaseEndpoint(c.env.DB, me, String(b.endpoint ?? "")).catch(() => {}); }
   else if (p === "/api/push/test") r = await pu.mTrial(me, b);
+  else if (p === "/api/push/prefs") r = await pu.mSetPrefs(me, b);
   else r = await pu.mAck(me, b);
   return c.json(r[1], r[0] as 200);
 }

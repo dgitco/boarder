@@ -62,8 +62,9 @@ async function hookWorld(fn) {
   const B = process.env.BOARDER_HOME; fs.mkdirSync(B, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(B, 'device.json'), JSON.stringify({ token: 'bxd_made_up', device_id: 'd1', server: `http://127.0.0.1:${srv.address().port}` }));
   const env = { HOME: TMP, BOARDER_HOME: B, BOARDER_WINDOW: 'ew_team01', BOARDER_WINDOW_NAME: '팀장', PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin` };
-  const hook = (args, stdin) => new Promise(res => { const c = spawn(process.execPath, [BIN, 'hook', ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] }); let out = '', err = ''; c.stdout.on('data', d => out += d); c.stderr.on('data', d => err += d); c.on('close', code => res({ code, out, err })); c.stdin.end(stdin || ''); });
-  try { await fn({ hook, posts }); } finally { srv.close(); }
+  const cli = (args, stdin) => new Promise(res => { const c = spawn(process.execPath, [BIN, ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] }); let out = '', err = ''; c.stdout.on('data', d => out += d); c.stderr.on('data', d => err += d); c.on('close', code => res({ code, out, err })); c.stdin.end(stdin || ''); });
+  const hook = (args, stdin) => cli(['hook', ...args], stdin);
+  try { await fn({ hook, cli, posts }); } finally { srv.close(); }
 }
 
 test('hook stop: 보드가 넣은 글로 연 턴 → 그 창 토큰으로 inbox_log reply 한 번, 출력 없음', async () => {
@@ -190,7 +191,7 @@ test('hasMark: 이 창 표지가 없으면 false(기록을 읽지 않고 끝), �
 test('promptLine: 맡긴 글 첫 줄 → 노드 상태 줄 — 머리 떼기 · 가림 · 60자, 보드 글 · 시스템 글 · 빗금 명령은 없음', () => {
   const { promptLine } = T;
   assert.equal(promptLine('이번 달 분기 자료 확인해 줘\n자세한 건 아래'), '요청: 이번 달 분기 자료 확인해 줘');
-  assert.equal(promptLine('[팀장 → 새 담당 · #2736 온보딩 끝까지] 당신은 대표 태스크 #2736 을 맡아요'), '요청: 당신은 대표 태스크 #2736 을 맡아요');
+  assert.equal(promptLine('[팀장 → 새 담당 · #2736 예시 일 하나] 당신은 대표 태스크 #2736 을 맡아요'), '요청: 당신은 대표 태스크 #2736 을 맡아요');
   assert.equal(promptLine('[팀장 17:44]\n새 대표 태스크를 맡깁니다.'), '요청: 새 대표 태스크를 맡깁니다.', '머리 뒤가 비면 다음 줄');
   assert.equal(promptLine('[보드 · 영업 담당 · 스레드 1793000000.000001] 자료 받았어요'), null, '보드에서 넣은 글은 이미 채널에 보임');
   assert.equal(promptLine('<task-notification>끝남</task-notification>'), null);
@@ -212,4 +213,167 @@ test('hook prompt: 사람이 맡긴 글 → 그 창 토큰으로 inbox_log progr
     await hook(['prompt'], '{ 깨진 JSON');
     assert.equal(posts.length, 1);
   });
+});
+
+test('hook stop: bundled two threads replies to last thread', async () => {
+  await hookWorld(async ({ hook, posts }) => {
+    const a = '[보드 · 예시 팀장 · 스레드 1793000000.000701] 첫 부탁', b = '[보드 · 예시 팀장 · 스레드 1793000000.000702] 마지막 부탁', p = a + '\n\n' + b;
+    T.markTurn(['ew_team01', SID], a); T.markTurn(['ew_team01', SID], b);
+    const f = path.join(TMP, 'bundle.jsonl'); fs.writeFileSync(f, transcript(p, '마지막 부탁 답'));
+    await hook(['stop'], JSON.stringify({ session_id: SID, transcript_path: f }));
+    assert.deepEqual(posts.map(x => [x.tool, x.body]), [['inbox_say', { thread_id: '1793000000.000702', text: '마지막 부탁 답\n— 끝' }]]);
+  });
+});
+
+test('hook stop: unrelated boarder say does not suppress target thread reply', async () => {
+  await hookWorld(async ({ hook, posts }) => {
+    const p = '[보드 · 예시 팀장 · 스레드 1793000000.000711] 확인';
+    T.markTurn(['ew_team01', SID], p);
+    const rows = transcript(p, '요청하신 답').trim().split('\n').map(JSON.parse);
+    rows[3].message.content[1].input = { command: 'boarder say 1793000000.000712 "다른 일 알림"' };
+    const f = path.join(TMP, 'unrelated-say.jsonl'); fs.writeFileSync(f, rows.map(line).join('\n'));
+    await hook(['stop'], JSON.stringify({ session_id: SID, transcript_path: f }));
+    assert.deepEqual(posts.map(x => x.body), [{ thread_id: '1793000000.000711', text: '요청하신 답\n— 끝' }]);
+  });
+});
+
+test('hook codex-turn: successful say suppresses only same thread and consumes bundled marks', async () => {
+  await hookWorld(async ({ hook, cli, posts }) => {
+    const a = '[보드 · 예시 팀장 · 스레드 1793000000.000721] 첫째';
+    const b = '[보드 · 예시 팀장 · 스레드 1793000000.000722] 둘째';
+    T.markTurn(['ew_team01', 'th-dedupe'], a); T.markTurn(['ew_team01', 'th-dedupe'], b);
+    assert.equal((await cli(['say', '1793000000.000721', '첫째 답'])).code, 0);
+    const notify = JSON.stringify({ type: 'agent-turn-complete', 'thread-id': 'th-dedupe', 'input-messages': [a, b], 'last-assistant-message': '둘째 답' });
+    await hook(['codex-turn', notify]);
+    assert.deepEqual(posts.map(x => x.body), [{ thread_id: '1793000000.000721', text: '첫째 답' }, { thread_id: '1793000000.000722', text: '둘째 답' }]);
+    await hook(['codex-turn', notify]);
+    assert.equal(posts.length, 2, '한 턴의 앞 표지도 소비해 중복 notify 는 새 답을 내지 않음');
+    T.markTurn(['ew_team01', 'th-dedupe'], b);
+    assert.equal((await cli(['say', '1793000000.000722', '이미 답했어요'])).code, 0);
+    await hook(['codex-turn', notify]);
+    assert.equal(posts.length, 3, '같은 스레드의 성공한 say 는 터미널 답을 다시 올리지 않음');
+  });
+});
+
+test('replyPlan: injection remembers thread even when transcript head was changed', () => {
+  const at = Date.now();
+  T.markTurn(['ew_remember'], '[보드 · 예시 팀장 · 카드 1793000000.000731] 부탁', at);
+  assert.deepEqual(T.replyPlan({ keys: ['ew_remember'], prompt: '하네스가 글 머리를 잘랐어요', at, reply: '카드 답' }), ['inbox_say', { thread_id: '1793000000.000731', text: '카드 답' }]);
+  assert.equal(T.replyPlan({ keys: ['ew_remember'], prompt: '자율 다음 턴', at: at + 1000, reply: '새 글' }), null);
+});
+
+test('hook stop: successful same-thread say suppresses terminal duplicate, failed say does not', async () => {
+  await hookWorld(async ({ hook, posts }) => {
+    const p = '[보드 · 예시 팀장 · 스레드 1793000000.000741] 확인';
+    for (const failed of [false, true]) {
+      T.markTurn(['ew_team01', SID], p);
+      const rows = transcript(p, '최종 답').trim().split('\n').map(JSON.parse);
+      rows[3].message.content[1].input = { command: 'boarder say 1793000000.000741 "답"' };
+      rows[4].message.content[0].is_error = failed;
+      const f = path.join(TMP, `same-say-${failed}.jsonl`); fs.writeFileSync(f, rows.map(line).join('\n'));
+      await hook(['stop'], JSON.stringify({ session_id: SID, transcript_path: f }));
+      assert.equal(posts.length, failed ? 1 : 0);
+    }
+  });
+});
+
+
+test('takeTurn: identical independent inputs consume one marker per occurrence', () => {
+  const p = '[보드 · 예시 팀장 · 스레드 1793000000.000751] 같은 부탁';
+  const now = Date.now();
+  T.markTurn(['ew_identical'], p, now); T.markTurn(['ew_identical'], p, now + 1);
+  assert.equal(T.takeTurn(['ew_identical'], p, 0), true);
+  assert.equal(T.hasMark(['ew_identical']), true, '다음 독립 턴의 같은 글 표지는 남김');
+  assert.equal(T.takeTurn(['ew_identical'], p, 0), true);
+  assert.equal(T.takeTurn(['ew_identical'], p, 0), false);
+  T.markTurn(['ew_identical'], p, now); T.markTurn(['ew_identical'], p, now + 1); T.markTurn(['ew_identical'], p, now + 2);
+  assert.deepEqual(T.replyPlan({ keys: ['ew_identical'], prompt: p + '\n\n' + p, reply: '묶음 답' }), ['inbox_say', { thread_id: '1793000000.000751', text: '묶음 답' }]);
+  assert.equal(T.hasMark(['ew_identical']), true, '묶음에 든 두 번만 소비하고 세 번째는 남김');
+  assert.equal(T.takeTurn(['ew_identical'], p, 0), true);
+  assert.equal(T.hasMark(['ew_identical']), false);
+});
+
+const TH = '1793000000.000801', QH = '[보드 · 예시 팀장 · 스레드 ' + TH + '] 이 글 봐 주세요';
+const said = (name, input) => [{ type: 'tool_use', id: 'x', name, input }];
+test('리뷰 1: 코드 모드(boarder_execute_write)로 같은 스레드에 답했으면 터미널 답을 또 올리지 않음 — 다른 스레드 · 모르는 스레드는 올림', () => {
+  const K = ['ew_code1'], X = 'mcp__boarder__boarder_execute_write';
+  const plan = s => { T.markTurn(K, QH); return T.replyPlan({ keys: K, prompt: QH, at: 0, reply: '답', said: s }); };
+  for (const input of [
+    { tool: 'inbox_say', arguments: { thread_id: TH, text: '답' } },
+    { name: 'inbox_say', arguments: { thread_id: TH, text: '답' } },
+    { calls: [{ tool: 'inbox_log', arguments: { kind: 'progress', text: 'x' } }, { tool: 'inbox_say', arguments: { thread_id: TH, text: '답' } }] },
+    { code: `async () => { await tools.call("inbox_say", { thread_id: "${TH}", text: "답" }); }` },
+    { code: 'async () => tools.call("inbox_say", { thread_id: input.t, text: "답" })', input: { t: TH } },
+  ]) assert.equal(plan(said(X, input)), null, JSON.stringify(input));
+  const other = ['inbox_say', { thread_id: TH, text: '답' }];
+  assert.deepEqual(plan(said(X, { tool: 'inbox_say', arguments: { thread_id: '1793000000.000899', text: '다른 일' } })), other);
+  assert.equal(plan(said(X, { code: 'async () => { for (const t of input.ts) await tools.call("inbox_say", { thread_id: t, text: "x" }); }' })), null, '스레드를 못 읽는 스크립트는 main 처럼 답한 것으로(두 번 안 나가게)');
+  // MCP 프록시 · CLI 가 남기는 답 기록도 같은 꼴
+  T.markTurn(K, QH); T.recordReply(K, 'boarder_execute_write', { tool: 'inbox_say', arguments: { thread_id: TH, text: '답' } });
+  assert.equal(T.replyPlan({ keys: K, prompt: QH, at: 0, reply: '답' }), null);
+  assert.deepEqual(T.sayCalls('boarder_execute_write', { calls: [{ tool: 'chat_say', arguments: { text: 'a' } }] }), [['chat_say', { text: 'a' }]]);
+  assert.deepEqual(T.sayCalls('boarder_execute', { tool: 'inbox_say', arguments: { thread_id: TH, text: 'a' } }), [], '읽기 전용 실행은 답이 아님');
+});
+
+test('자리를 글자로 못 읽은 답은 main 처럼 답한 것으로 — 두 번 안 나감(main 은 낱말만 있어도 셌음)', () => {
+  const K = ['ew_said_parity'];
+  const plan = s => { T.markTurn(K, QH); return T.replyPlan({ keys: K, prompt: QH, at: 0, reply: '답', said: s }); };
+  for (const command of [`cd ~/w && boarder say ${TH} "답"`, `npx boarder say ${TH} "답"`, 'T=' + TH + '; boarder say "$T" "답"', 'boarder say "$T" "답"']) assert.equal(plan(said('Bash', { command })), null, command);
+  assert.equal(plan(said('mcp__boarder__boarder_execute_write', { code: `const t="${TH}"; await tools.call("inbox_say",{thread_id:t,text:"답"})` })), null, '변수 스레드 코드 모드');
+  assert.deepEqual(plan(said('Bash', { command: 'boarder say 1793000000.000899 "다른 일"' })), ['inbox_say', { thread_id: TH, text: '답' }], '글자로 다른 스레드면 그대로 올림');
+  assert.deepEqual(plan(said('Bash', { command: 'git status' })), ['inbox_say', { thread_id: TH, text: '답' }], '답과 상관없는 명령');
+  T.markTurn(K, QH); T.recordReply(K, 'boarder_execute_write', { code: 'tools.call("inbox_say",{thread_id:t,text:"x"})' });
+  assert.deepEqual(T.replyPlan({ keys: K, prompt: QH, at: 0, reply: '답' }), ['inbox_say', { thread_id: TH, text: '답' }], '자리를 모르는 답은 기록에 안 남김');
+});
+
+test('리뷰 2: 본문에 인용된 보드 머리는 답 자리 · 대기열 열쇠를 바꾸지 않음(첫 줄 머리만)', async () => {
+  const { threadKey, JOIN } = await import('./engine/queue.mjs');
+  const q1 = QH + '\n어제 받은 글 그대로:\n[보드 · 다른 팀 · 스레드 1793000000.000001] 지난주 답 어디 갔나요';
+  const q2 = QH + '\n[보드 · Primary] 예전 글';
+  const q3 = '[보드 · Primary · 스레드 ' + TH + '] 물음\n[보드 · 예시 팀장] 이 줄이 창에 찍혔어요';
+  assert.deepEqual(T.parseHead(q1), { channel: '예시 팀장', thread: TH });
+  assert.deepEqual(T.parseHead(q2), { channel: '예시 팀장', thread: TH });
+  assert.deepEqual(T.parseHead(q3), { primary: true, thread: TH });
+  assert.equal(threadKey(q1), 'thread:' + TH); assert.equal(threadKey(q2), 'thread:' + TH); assert.equal(threadKey(q3), 'primary:' + TH);
+  for (const q of [q1, q2]) { T.markTurn(['ew_quote'], q); assert.deepEqual(T.replyPlan({ keys: ['ew_quote'], prompt: q, at: 0, reply: '답' }), ['inbox_say', { thread_id: TH, text: '답' }]); }
+  T.markTurn(['ew_quote'], q3); assert.deepEqual(T.replyPlan({ keys: ['ew_quote'], prompt: q3, at: 0, reply: '답' }), ['chat_say', { text: '답', thread: TH }]);
+  // 대기열 묶음(같은 열쇠 글만 JOIN): 첫 줄 머리 = 마지막 글 머리 → 같은 자리
+  const b = [QH, '[보드 · 예시 팀장 · 스레드 ' + TH + '] 하나 더'].join(JOIN);
+  assert.equal(threadKey(b), 'thread:' + TH);
+  T.markTurn(['ew_quote'], b); assert.deepEqual(T.replyPlan({ keys: ['ew_quote'], prompt: b, at: 0, reply: '묶음 답' }), ['inbox_say', { thread_id: TH, text: '묶음 답' }]);
+});
+
+test('리뷰 7: 다른 창의 답 기록이 아무리 많아도 진행 중 턴의 표지를 밀어내지 않음', () => {
+  const K = ['ew_cap_me'], O = ['ew_cap_other'], now = Date.now();
+  T.markTurn(K, QH, now);
+  for (let i = 0; i < 60; i++) T.recordReply(O, 'chat_say', { thread: '1793000000.00' + (1000 + i), text: 'x' }, now + i);   // 표지 없는 창의 say
+  T.markTurn(O, '[보드 · 다른 창] 일', now);
+  for (let i = 0; i < 60; i++) T.recordReply(O, 'chat_say', { thread: '1793000000.00' + (2000 + i), text: 'x' }, now + 100 + i);   // 표지 있는 창의 say 60번
+  assert.equal(T.hasMark(K, now + 200), true);
+  assert.deepEqual(T.replyPlan({ keys: K, prompt: QH, at: now + 1000, reply: '답' }), ['inbox_say', { thread_id: TH, text: '답' }]);
+  T.replyPlan({ keys: O, prompt: '[보드 · 다른 창] 일', at: 0, reply: 'x' });
+});
+
+test('후속: Codex input-messages 가 [보드 글, 터미널 글] · [터미널 글, 보드 글] 이어도 보드 글 자리로 답 한 번', async () => {
+  const K = ['ew_codex_mix'];
+  for (const msgs of [[QH, '이것도 같이 봐 줘'], ['먼저 친 글', QH]]) {
+    T.markTurn(K, QH);
+    assert.deepEqual(T.replyPlan({ keys: K, prompt: msgs, at: 0, reply: '답' }), ['inbox_say', { thread_id: TH, text: '답' }], JSON.stringify(msgs));
+    assert.equal(T.hasMark(K), false);
+  }
+  await hookWorld(async ({ hook, posts }) => {
+    T.markTurn(['ew_team01', 'th-mix'], QH);
+    await hook(['codex-turn', JSON.stringify({ type: 'agent-turn-complete', 'thread-id': 'th-mix', 'input-messages': [QH, '이것도 같이'], 'last-assistant-message': '둘 다 봤어요' })]);
+    assert.deepEqual(posts.map(x => [x.tool, x.body]), [['inbox_say', { thread_id: TH, text: '둘 다 봤어요' }]]);
+  });
+});
+
+test('후속: Primary 스레드 글에 스레드 없이 chat_say 로 답했으면 터미널 답을 또 올리지 않음', () => {
+  const K = ['ew_prim'], P = '[보드 · Primary · 스레드 ' + TH + '] 물음';
+  T.markTurn(K, P); T.recordReply(K, 'chat_say', { text: '맨 위 답' });
+  assert.equal(T.replyPlan({ keys: K, prompt: P, at: 0, reply: '터미널 답' }), null);
+  T.markTurn(K, P);
+  assert.equal(T.replyPlan({ keys: K, prompt: P, at: 0, reply: '터미널 답', said: said('mcp__boarder__chat_say', { text: '맨 위 답' }) }), null);
+  T.markTurn(K, '[보드 · 예시 팀장 · 스레드 ' + TH + '] 노드 글'); T.recordReply(K, 'chat_say', { text: 'Primary 맨 위' });
+  assert.deepEqual(T.replyPlan({ keys: K, prompt: '[보드 · 예시 팀장 · 스레드 ' + TH + '] 노드 글', at: 0, reply: '노드 답' }), ['inbox_say', { thread_id: TH, text: '노드 답' }], '노드 스레드 글은 Primary 답으로 막지 않음');
 });

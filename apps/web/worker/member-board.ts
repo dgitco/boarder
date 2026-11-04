@@ -6,6 +6,7 @@ import { primaryPick, notChat, type Item } from "./importer/group";
 import { prefsOf } from "./node-prefs";
 import { history, topics, promiseRows } from "./member-views";
 import { splitMarks, splitMove } from "./member-split";
+import { frontDoorNode, readFrontDoor } from "./front-door";
 
 type R = Record<string, any>;
 const FREQ = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];   // owner-read FREQ_DEFAULT
@@ -30,7 +31,7 @@ export function paneOfId(id: string) {
 export const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;
 const kst = (ms: number) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(ms);
 
-type Node = { id: string; pane: string; name: string; area: string; state: string; why: string; updated_at: number; archived_at: number | null; wins: Set<string>; windows: R[]; convos: R[] };
+type Node = { id: string; pane: string; name: string; area: string; state: string; why: string; updated_at: number; archived_at: number | null; wins: Set<string>; windows: R[]; convos: R[]; aliases?: { id: string; name: string }[] };
 
 export type Face = { seed: string; hue: number; photo?: string };
 const FACE_SEEDS = ["mochi", "pebble", "nova", "tofu", "echo", "kiwi", "company lead", "DGit lead", "personal lead", "shop lead", "luma", "bean"];   // botpick.js SEEDS
@@ -122,10 +123,12 @@ async function fresh0(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
 }
 
 const closeStaleConnect = (db: D1Database, me: string) => db.prepare("UPDATE board_card SET state = 'closed', done = '만료' WHERE owner = ? AND state = 'open' AND kind LIKE 'connect:%' AND at < ?").bind(me, Date.now() - CONNECT_TTL).run().catch(() => {});   // 10분 지난 「연결하기」 카드(connect-card.ts)
+// 앞단 설정(node_setting.data.front_door.pairs[].name — front-door.ts)의 노드 이름들. 설정 없음 · 망가진 값이면 빈 목록
+const FRONT_NAMES = "SELECT json_extract(p.value, '$.name') FROM node_setting s, json_each(CASE WHEN json_valid(s.data) THEN CASE WHEN json_type(s.data, '$.front_door.pairs') = 'array' THEN json_extract(s.data, '$.front_door.pairs') END END) p WHERE s.owner = ?";
 export async function load(db: D1Database, me: string) {
   await closeStaleConnect(db, me);
   const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb, cx] = await db.batch([
-    db.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, Date.now() - 24 * 3600_000),
+    db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ? OR COALESCE(NULLIF(pinned_name, ''), name) IN (${FRONT_NAMES})) ORDER BY updated_at DESC`).bind(me, Date.now() - 24 * 3600_000, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle, (SELECT d.revoked_at IS NOT NULL FROM device d WHERE d.id = imp_item.device_id) rv FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
@@ -143,12 +146,15 @@ export async function load(db: D1Database, me: string) {
   const itemOfWin = new Map<string, string>(); for (const i of items.values()) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(i.win, i.key);
   const nodeOfItem = new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)]));
   const engMain = (ew.results as R[]).some(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state));
-  const pp = primaryPick([...items.values()].filter(i => !i.rv) as unknown as Item[], prefsOf((ns.results[0] as R | undefined)?.data).primary_item, engMain);
+  const prefs = prefsOf((ns.results[0] as R | undefined)?.data), fd = prefs.front_door, tcOn = prefs.task_channels;   // 앞단 · 채널 = 태스크는 켠 사람만(node-prefs.ts)
+  const pp = primaryPick([...items.values()].filter(i => !i.rv) as unknown as Item[], prefs.primary_item, engMain);
   const primary = pp.primary as unknown as R | null;
   const primKeys = new Set<string>(primary ? [String(primary.key), ...(primary.session ? [String(primary.session)] : [])] : []);
-  const isPrimWin = (win: string) => !!primary?.win && (keyOfWin.get(win) || win) === primary.win;
-  const nodes: Node[] = (nd.results as R[]).map(n => ({ id: n.id, pane: paneOfId(n.id), name: String(n.pinned_name || n.name || "노드"), area: String(n.area || "").trim(), state: n.state, why: n.why || "", updated_at: n.updated_at, archived_at: n.archived_at, wins: new Set<string>(), windows: [], convos: [] }));
+  const isOriginalPrimWin = (win: string) => !!primary?.win && (keyOfWin.get(win) || win) === primary.win;
+  const nodes: Node[] = (nd.results as R[]).map(n => ({ id: n.id, pane: paneOfId(n.id), name: String(n.pinned_name || n.name || "노드"), area: String(n.area || "").trim(), state: n.state, why: n.why || "", updated_at: n.updated_at, archived_at: n.archived_at, wins: new Set<string>(), windows: [], convos: [], aliases: (json<{ aliases?: { id: string; name: string }[] }>(n.counts, {}).aliases || []).filter(a => a && typeof a.id === "string" && typeof a.name === "string") })).filter(n => !n.archived_at || n.archived_at > Date.now() - 24 * 3600_000 || frontDoorNode(fd, n));
   const byId = new Map(nodes.map(n => [n.id, n]));
+  // 옛 채널에 다른 창이 남거나 다시 열렸으면 그 채널의 주소·사람 글은 제자리를 지킴.
+  for (const n of nodes) n.aliases = n.aliases?.filter(a => !nodes.some(other => !other.archived_at && (other.id === a.id || other.name === a.name)));
   for (const [item, node] of nodeOfItem) {
     const n = byId.get(node); if (!n || primKeys.has(item)) continue;
     const i = items.get(item);
@@ -156,16 +162,33 @@ export async function load(db: D1Database, me: string) {
     if (i && (i.kind === "session" || i.kind === "thread") && i.title) n.convos.push(i);   // 들여온 대화 — 노드 채팅에 글로(convoMsg)
     const w = i ? i.win : item.startsWith("win:") ? item.slice(4) : null; if (w) n.wins.add(w);
   }
-  const mains = new Map((nd.results as R[]).map(n => [String(n.id), json<{ main?: string }>(n.counts, {}).main || ""]));
-  for (const n of nodes) { const m = mains.get(n.id); if (m) n.windows.sort((a, b) => Number(b.key === m) - Number(a.key === m)); }
-  const nodeOfWin = (win: string) => { if (isPrimWin(win)) return null; const k = keyOfWin.get(win) || win, item = itemOfWin.get(k) || `win:${k}`; return byId.get(nodeOfItem.get(item) || "") || null; };
-  const mainWin = pp.explicit ? null : (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
-  const engineNodes = (ew.results as R[]).filter(w => w.kind === "role" && !nodes.some(n => n.name === w.name || n.wins.has(w.name)));
+  // 앞단으로 고른 노드(설정 front_door)는 Primary 의 별칭 — 트리 · 채널에는 따로 안 그림
+  const frontNodes = nodes.filter(n => frontDoorNode(fd, n));
   const onlyPrim = (id: string) => { let p = 0, o = 0; for (const [k, v] of nodeOfItem) if (v === id) primKeys.has(k) ? p++ : o++; return p > 0 && o === 0; };
   const closedIds = new Set(json<{ closed?: string[] }>((ns.results[0] as R | undefined)?.data, {}).closed || []);
-  const shown = (primary ? nodes.filter(n => !onlyPrim(n.id)) : nodes).filter(n => !closedIds.has(n.id));
+  const shown = (primary ? nodes.filter(n => !onlyPrim(n.id)) : nodes).filter(n => !closedIds.has(n.id) && !frontNodes.includes(n));
+  // 업무 노드의 옛 채널 별칭(채널 = 태스크를 켠 사람만 생김 — importer/routes.ts)
+  const aliasNode = (name: string, id = "") => nodes.find(n => !n.archived_at && n.id.startsWith("tk_") && n.aliases?.some(a => id ? a.id === id : a.name === name || paneOfId(a.id) === name || a.id === name));
+  const resolveNode = (name: string, id = "") => aliasNode(name, id) || (id ? shown.find(n => n.id === id) : undefined) || shown.find(n => n.name === name || n.pane === name);
+  const mains = new Map((nd.results as R[]).map(n => [String(n.id), json<{ main?: string }>(n.counts, {}).main || ""]));
+  for (const n of nodes) { const m = mains.get(n.id); if (m) n.windows.sort((a, b) => Number(b.key === m) - Number(a.key === m)); }
+  const nodeOfWin = (win: string) => { if (isOriginalPrimWin(win)) return null; const k = keyOfWin.get(win) || win, item = itemOfWin.get(k) || `win:${k}`; return byId.get(nodeOfItem.get(item) || (tcOn ? nodeOfItem.get(`window:${k}`) : undefined) || "") || aliasNode(win) || frontNodes.find(n => n.name === win) || null; };
+  // 앞단은 한 창이라고 추정하지 않음 — 고른 노드들을 Primary의 별칭으로 읽되 원본/전송 창은 보존.
+  const frontWins = new Set<string>();
+  for (const n of frontNodes) {
+    frontWins.add(n.name); for (const w of n.wins) frontWins.add(w);
+    for (const [key, id] of nodeOfItem) if (id === n.id) {
+      const item = items.get(key); if (item?.win) frontWins.add(String(item.win));
+      else if (/^(?:window|win):/.test(key)) frontWins.add(key.replace(/^(?:window|win):/, ""));
+    }
+    for (const [name, win] of keyOfWin) if (frontWins.has(win)) frontWins.add(name);
+  }
+  const front = fd && frontNodes.length ? { name: fd.name, pane: PRIMARY, aliases: [fd.name, ...fd.aliases, ...frontNodes.flatMap(n => [n.name, n.pane])], wins: frontWins, nodes: frontNodes } : null;
+  const isPrimWin = (win: string) => isOriginalPrimWin(win) || frontWins.has(win) || frontNodes.includes(nodeOfWin(win)!);
+  const mainWin = pp.explicit ? null : (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
+  const engineNodes = (ew.results as R[]).filter(w => w.kind === "role" && !nodes.some(n => n.name === w.name || n.wins.has(w.name)));
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
-  return { defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefsOf((ns.results[0] as R | undefined)?.data).task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
+  return { resolveNode, front, frontDoor: fd, taskChannels: tcOn, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
     parents: parentsOf((ns.results[0] as R | undefined)?.data), faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
@@ -195,7 +218,7 @@ async function withReacts(db: D1Database, me: string, out: R[]) {
 const STATE: Record<string, string> = { working: "일하는 중", busy: "일하는 중", starting: "일하는 중", opening: "일하는 중", background: "뒤 작업 중" };
 
 const PSTATE: Record<string, string> = { working: "일하는 중", question: "질문" };
-export async function data(db: D1Database, me: string, bot: { name?: string } | null, pre?: Awaited<ReturnType<typeof load>>) {
+export async function data(db: D1Database, me: string, bot: { name?: string } | null, pre?: Awaited<ReturnType<typeof load>> | null) {
   const L = pre || await load(db, me), now = Date.now(), nowMin = Math.floor(now / 60_000) * 60_000, ago = (ms: number) => Math.max(0, Math.round((nowMin - ms) / 60_000));
   const line = (r: R) => ({ id: r.id, ago: ago(r.at), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 220), handled: false, short: cut(r.text, 60), short_ok: true, title: cut(r.text, 30) });
   const logsOf = (n: Node | null, wins?: string[]) => L.logs.filter(r => !inPrim(r) && r.kind !== "me" && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n : wins!.includes(r.win)));
@@ -206,7 +229,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
       hist: o.rows.filter(r => nowMin - r.at < 86_400_000).reverse().map(r => ({ m: ago(r.at), k: KIND_KO[r.kind] || r.kind })), topics: [], pri: priOf(L.pri, o.win), owner: !!blk,
       watch: !blk && o.rows[0]?.kind === "status" && nowMin - Number(o.rows[0].at) < 86_400_000 ? cut(o.rows[0].text, 60) : "" };   // 막힘 동안은 막힘이 먼저
   };
-  const mainName = bot?.name || "Primary";
+  const mainName = L.frontDoor?.name || bot?.name || "Primary";   // 앞단 설정(front_door)이 있으면 그 이름
   // 메인 봇 판: 엔진 메인 창이 있으면 그 상태, 없으면 있던 primary 창(들여온 것)의 상태 · 폴더 — 그 창이 보드에 올린 보고 줄도 봇 줄로
   const P = L.primary;
   const panes: R[] = [pane({ pane: PRIMARY, win: mainName, kind: "primary", state: STATE[L.mainWin?.state] || (P && PSTATE[P.state]) || "쉼", cwd: L.mainWin ? "" : P?.cwd, branch: L.mainWin ? "" : P?.branch,
@@ -227,7 +250,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     const pn: R = pane({ pane: n.pane, win: n.name, kind: "lead", state: STATE[n.state] || (n.state === "turn" ? "질문" : "쉼"), cwd: w0?.cwd, branch: w0?.branch, rows });
     const tk = tasks.get(n.id);
     if (tk && !tk.issue && L.parents[n.id] === TOP) pn.tkdept = true;
-    if (tk) pn.tk = true;   // 업무 노드 표시(점 설정과 무관) — 왼쪽 채널 · 에이전트 칸은 대화 자리라 빼고, 트리 · /tasks 에서 봄
+    if (tk) pn.tk = true;   // 업무 노드는 왼쪽 채널, 부서는 에이전트 칸(점 설정과 무관)
     if (tk) {
       const chips = [...(tk.confirm ? ["confirm"] : []), ...(!w0 ? (hasKid.has(n.id) ? [] : ["unassigned"]) : n.windows.every(w => w.state === "parked") ? ["parked"] : [])];
       if (chips.length) pn.tkChips = chips;
@@ -323,7 +346,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     for (const a of dfl) { const f = hf.get(String(a.name))!; a.avatar = f; const hp = panes.find(p => p.pane === a.lead); if (hp) hp.avatar = f; }
   }
   const known = new Set(panes.map(p => p.pane)), dp = L.defaultNode?.pane || (/^ew_/.test(L.primaryWin) ? paneOfId(L.primaryWin) : ""), dflt = dp && known.has(dp) ? dp : PRIMARY,
-    toPane = (win: string) => { const n = L.nodeOfWin(win); return n && known.has(n.pane) ? n.pane : dflt; };
+    toPane = (win: string) => { if (L.front && L.isPrimWin(win)) return PRIMARY; const n = L.nodeOfWin(win); return n && known.has(n.pane) ? n.pane : dflt; };
   const nameN = new Map<string, number>(); for (const n of L.nodes) nameN.set(n.name, (nameN.get(n.name) || 0) + 1);
   const cardCh = (win: string) => { const n = L.nodeOfWin(win); return n && known.has(n.pane) && nameN.get(n.name) === 1 ? "n:" + n.name : "primary"; };
   const decisions: R[] = [], cardlist: R[] = [];
@@ -354,9 +377,14 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const { promises, to_check } = await promiseRows(db, me, promPane, nowMin);
   return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 60_000) * 60, open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
-    cards: [], cardlist, cardsdone, attn: null, relinks: {}, todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
+    cards: [], cardlist, cardsdone, attn: null, relinks: {}, ...nodeAliases(L.nodes), ...(L.taskChannels ? { task_channels: true } : {}), ...(L.front ? { front_door: { name: L.front.name, pane: L.front.pane, aliases: L.front.aliases } } : {}), todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
 }
 
+// 업무 노드의 옛 채널 별칭 → 그 업무 판(채널 = 태스크를 켠 사람만 생김). 없으면 칸도 안 넣음(꺼진 사람의 판이 예전과 같게)
+function nodeAliases(nodes: Node[]) {
+  const m = Object.fromEntries(nodes.filter(n => !n.archived_at).flatMap(n => (n.aliases || []).flatMap(a => [[a.id, n.pane], [a.name, n.pane], [paneOfId(a.id), n.pane]])));
+  return Object.keys(m).length ? { node_aliases: m } : {};
+}
 export const QUIET = new Set(["status", "start", "progress", "done"]);
 function msg(r: R, my: string, mainName: string) {
   const mine = r.win === ME || r.kind === "me";   // me = 노드 채팅에서 내가 그 창에 넣은 글
@@ -387,7 +415,7 @@ export async function pushLoc(db: D1Database, me: string, ts: string) {
 }
 export async function channelOf(db: D1Database, me: string, win: string) {
   const L = await load(db, me);
-  return L.nodeOfWin(win)?.name || L.engineNodes.find(w => w.name === win)?.name || L.nodes.find(n => n.name === win)?.name || win;
+  return L.front && L.isPrimWin(win) ? L.front.name : L.nodeOfWin(win)?.name || L.engineNodes.find(w => w.name === win)?.name || L.nodes.find(n => n.name === win)?.name || win;
 }
 export async function nodeRoot(db: D1Database, me: string, ts: string) {
   const m = /^(\d{10})\.(\d{6})$/.exec(ts); if (!m) return null;
@@ -449,10 +477,10 @@ export function convoFold(n: Node, mainName: string, my = ME) {
 }
 async function nodeThread(db: D1Database, me: string, raw: string, ts: string, my = ME, nodeId = "") {   // nodeId = 노드 번호(업무 화면 — 같은 이름 노드가 있어도 그 노드로). 내 노드 안에서만 찾음
   const t = raw.replace(/^\d+\s+/, "").trim(), L = await load(db, me);
-  const n = (nodeId ? L.nodes.find(x => x.id === nodeId) : undefined) || L.nodes.find(x => x.name === raw) || L.nodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
+  const allNodes = [...L.nodes, ...(L.front?.nodes || [])], n = L.resolveNode(raw, nodeId) || L.resolveNode(t) || (nodeId ? allNodes.find(x => x.id === nodeId) : undefined) || allNodes.find(x => x.name === raw) || allNodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
   if (!n && !ew) return null;
-  const home = n ? n.name : String(ew!.name), ch = "n:" + raw;
-  const mineWin = (win: string, kind?: string) => n ? L.nodeOfWin(win) === n || (kind === "me" && win === n.name) : win === ew!.name;
+  const aliased = !!n && !!L.front?.nodes.includes(n), home = aliased ? L.front!.name : n ? n.name : String(ew!.name), ch = aliased ? "primary" : "n:" + raw;
+  const mineWin = (win: string, kind?: string) => n ? L.nodeOfWin(win) === n || (kind === "me" && (win === n.name || n.aliases?.some(a => a.name === win))) : win === ew!.name;
   const card = await cardBy(db, me, ts);
   if (card) {
     if (!mineWin(String(card.win))) return null;
@@ -466,10 +494,12 @@ async function nodeThread(db: D1Database, me: string, raw: string, ts: string, m
   const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, ts).all<R>()).results;
   return { channel: ch, root: ts, owner: null, home, messages: await splitMarks(db, me, [{ ...withThread(msg(r, my, String(r.win)), said, my), ch }, ...said.map(x => ({ ...msg(x, my, String(x.win)), thread: ts, ch }))], my, L) };   // 나눠 온 몫 글이면 split_from
 }
-async function primaryRows(db: D1Database, me: string, before?: string) {
+async function primaryRows(db: D1Database, me: string, before?: string, pre?: Awaited<ReturnType<typeof load>> | null) {
   const m = before ? /^(\d{10})\.(\d{6})$/.exec(before) : null, sec = m ? Number(m[1]) * 1000 : 0;
-  return (await db.prepare(`SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary'${m ? " AND (at < ? OR (at < ? AND id % 1000000 < ?))" : ""} ORDER BY at DESC, id DESC LIMIT 101`)
-    .bind(me, ...(m ? [sec, sec + 1000, Number(m[2])] : [])).all<R>()).results;
+  const wins = [...(pre?.front?.wins || [])];
+  const aliases = wins.length ? " OR (win IN (SELECT value FROM json_each(?)) AND (thread IS NULL OR thread = ''))" : "";
+  return (await db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? ${wins.length ? NOT_CHAT : ""} AND (thread = 'primary'${aliases})${m ? " AND (at < ? OR (at < ? AND id % 1000000 < ?))" : ""} ORDER BY at DESC, id DESC LIMIT 101`)
+    .bind(me, ...(wins.length ? [JSON.stringify(wins)] : []), ...(m ? [sec, sec + 1000, Number(m[2])] : [])).all<R>()).results;
 }
 
 export async function paneRows(db: D1Database, me: string, pane: string) {
@@ -497,7 +527,7 @@ export async function sessTarget(db: D1Database, me: string, pane: string) {
 export async function sessLog(db: D1Database, me: string, pane: string, mainName: string, my = ME) {
   const s = await sessTarget(db, me, pane); if (!s) return null;
   const L = s.L, inCard = (r: R) => CARD_TS.test(String(r.thread || ""));
-  const rows = s.kind === "main" ? (await primaryRows(db, me)).filter(r => r.win !== "보더")
+  const rows = s.kind === "main" ? (await primaryRows(db, me, undefined, L)).filter(r => r.win !== "보더")
     : L.logs.filter(r => !inPrim(r) && !inCard(r) && !OWN.test(r.win) && (s.kind === "node" ? L.nodeOfWin(r.win) === s.node || (r.kind === "me" && r.win === s.node!.name) : r.win === s.ew!.name));
   const messages = rows.slice(0, 200).map(r => msg(r, my, s.kind === "main" ? mainName : String(r.win))).reverse();
   const live = !["closed", "failed", "gone", "parked", "done"].includes(String(s.state || ""));
@@ -567,7 +597,9 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
 }
 async function getInner(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>)): Promise<Response | null> {
   // 내 이름(who): 글 이름이 나가는 채팅 길에서만 읽음 — 함수면 그때 한 번(index.ts 는 user 표를 읽는 함수로 넘김, /api/data 폴링엔 안 읽음)
-  const p = url.pathname, mainName = bot?.name || "Primary", my = myName(me, typeof who === "function" ? (/^\/api\/(chat\/|nodechat$|sesslog$)/.test(p) ? await who().catch(() => null) : null) : who);
+  // 앞단 설정(front_door)은 채팅 · 노드 채팅 · 세션 길에서만 읽음(작은 읽기 하나 — /api/data 는 load 가 읽음)
+  const fd = /^\/api\/(chat\/primary|nodechat$|sesslog$)/.test(url.pathname) ? await readFrontDoor(db, me) : null;
+  const p = url.pathname, mainName = fd?.name || bot?.name || "Primary", my = myName(me, typeof who === "function" ? (/^\/api\/(chat\/|nodechat$|sesslog$)/.test(p) ? await who().catch(() => null) : null) : who);
   const j = (o: unknown, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" } });
   if (p === "/api/data") {   // 보드처럼 ETag — 안 바뀌면 빈 304(20초 폴링)
     const b = JSON.stringify(await data(db, me, bot)), t = await etag(b), h = { etag: t, "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" };
@@ -605,7 +637,7 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
     if (m[1] !== "primary") return j({ channel: m[1], messages: [], more: false, cursor: null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
     if (m[2]) {
       if (FOLD_TS.test(m[2])) {
-        const L = await load(db, me), f = L.nodes.map(n => convoFold(n, mainName, my)).find(x => x?.root.ts === m![2]);
+        const L = await load(db, me), f = [...L.nodes, ...(L.front?.nodes || [])].map(n => convoFold(n, mainName, my)).find(x => x?.root.ts === m![2]);
         if (f) return j({ channel: "primary", root: m[2], owner: null, messages: [f.root, ...f.replies] });
       }
       const card = await cardBy(db, me, m[2]);
@@ -613,6 +645,11 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
         const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, m[2]).all<R>()).results;
         const replies = [...said.map(r => ({ at: Number(r.at), m: { ...msg(r, my, String(r.win)), thread: m![2] } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card, my) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch: "primary" }));
         return j({ channel: "primary", root: m[2], owner: null, messages: await withReacts(db, me, [{ ...cardMsg(card, said, my), ch: "primary" }, ...replies]) });
+      }
+      const L = fd ? await load(db, me) : null;
+      for (const n of L?.front?.nodes || []) {
+        const old = await nodeThread(db, me, n.name, m[2], my, n.id);
+        if (old) return j(old);
       }
       const pr = await primaryRoot(db, me, m[2]);
       if (pr) {
@@ -622,21 +659,30 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
       const rows = await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary' AND id % 1000000 = ? AND at >= ? AND at < ?").bind(me, Number(m[2].split(".")[1]), Number(m[2].split(".")[0]) * 1000, Number(m[2].split(".")[0]) * 1000 + 1000).all<R>();
       return j({ channel: "primary", root: m[2], owner: null, messages: rows.results.map(r => msg(r, my, mainName)) });
     }
-    const rows = await primaryRows(db, me, url.searchParams.get("before") || undefined), page = rows.slice(0, 100);
+    const L = fd ? await load(db, me) : null, rows = await primaryRows(db, me, url.searchParams.get("before") || undefined, L), page = rows.slice(0, 100);
     const th = await primaryReplies(db, me, page.filter(r => r.win === ME).map(r => tsOf(r.at, r.id)));   // 내 글마다 스레드 답 수 · 마지막 답
-    const msgs = page.map(r => withPrimaryThread(msg(r, my, mainName), th.get(tsOf(r.at, r.id)), mainName, my)).reverse();
+    const msgs = page.map(r => r.thread === "primary" ? withPrimaryThread(msg(r, my, mainName), th.get(tsOf(r.at, r.id)), mainName, my) : withThread(msg(r, my, mainName), threadReplies(L?.logs || [], tsOf(r.at, r.id)), my)).reverse();
+    if (!url.searchParams.get("before") && L?.front) {
+      for (const n of L.front.nodes) { const fold = convoFold(n, mainName, my); if (fold) msgs.unshift(fold.root); }
+      // 닫힌 카드도 옛 노드 채팅처럼 계속 보임. Primary 카드 스레드의 답/승인은 기존 길.
+      const cards = (await db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results;
+      msgs.push(...cards.filter(c => CARD_TS.test(String(c.id)) && L.isPrimWin(String(c.win))).map(c => ({ ...cardMsg(c, L.logs.filter(r => r.thread === c.id), my), ch: "primary" })));
+    }
+    if (L?.front) msgs.sort((a, b) => a.ts.localeCompare(b.ts));
     await withReacts(db, me, msgs);
     await splitMarks(db, me, msgs, my);   // 나눈 내 글 = 갈래 칩(splits, 주인 owner-read splitMarks 꼴)
-    return j({ channel: "primary", messages: msgs, more: rows.length > 100, cursor: msgs.length ? msgs[0].ts : null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
+    return j({ channel: "primary", messages: msgs, more: rows.length > 100, cursor: page.length ? tsOf(page.at(-1)!.at, page.at(-1)!.id) : null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
   }
   if (p === "/api/nodechat") {
     const raw = String(url.searchParams.get("w") || "").trim(), t = raw.replace(/^\d+\s+/, "").trim();
     if (!t) return j({ error: "노드 이름" }, 400);
     const byId = String(url.searchParams.get("id") || "");   // 업무 화면: 같은 이름 노드가 있어도 그 노드로(내 노드 안에서만)
-    const L = await load(db, me), n = (byId ? L.nodes.find(x => x.id === byId) : undefined) || L.nodes.find(x => x.name === raw) || L.nodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
+    const L = await load(db, me);
+    if (L.front && (byId ? L.front.nodes.some(n => n.id === byId) : L.front.aliases.includes(raw))) return get(db, me, bot, new URL("/api/chat/primary", url), emoji, undefined, my);
+    const n = L.resolveNode(raw, byId) || L.resolveNode(t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
     const inCard = (r: R) => CARD_TS.test(String(r.thread || ""));
     const stuck = new Map(((await db.prepare("SELECT id, state, at FROM engine_cmd WHERE owner = ? AND verb IN ('send','reopen','assign') AND state IN ('queued','taken','sending','failed','waiting')").bind(me).all<R>()).results).filter(c => c.state === "failed" || c.state === "waiting" || Date.now() - Number(c.at) > 60_000).map(c => ["cmd:" + c.id, c.state === "waiting"]));
-    const rows = L.logs.filter(r => !inPrim(r) && !inCard(r) && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n || (r.kind === "me" && r.win === n.name) : ew ? r.win === ew.name : false)).slice(0, 300).reverse();
+    const rows = L.logs.filter(r => !inPrim(r) && !inCard(r) && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n || (r.kind === "me" && (r.win === n.name || n.aliases?.some(a => a.name === r.win))) : ew ? r.win === ew.name : false)).slice(0, 300).reverse();
     // 카드 글은 답하거나 닫혀도 채널에 남음 — 할 일 목록(load)과 따로 읽음
     await closeStaleConnect(db, me);
     const cards = (await db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results
@@ -706,17 +752,24 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     const bk = /^w:(\d+)$/.exec(String((b.blocker as R | undefined)?.ref || ""));
     if (bk) return post(db, me, "/api/answer", { item: "w" + bk[1], text });
     let pane = String(b.pane || "");
+    const FL = await readFrontDoor(db, me) ? await load(db, me) : null, alias = FL?.front && (pane && pane !== PRIMARY ? FL.front.nodes.some(n => n.pane === pane) : FL.front.aliases.includes(String(b.channel || "").replace(/^n:/, "")));
+    if (alias && !b.thread) return { path: "/api/me/chat", body: { text } };
     if (/^n:/.test(String(b.channel || "")) && CARD_TS.test(String(b.thread || ""))) {
       const raw = String(b.channel).slice(2), t = raw.replace(/^\d+\s+/, "").trim(), L0 = await load(db, me);
-      const n0 = L0.nodes.find(x => x.name === raw) || L0.nodes.find(x => x.name === t), e0 = n0 ? null : L0.engineNodes.find(x => x.name === raw || x.name === t);
+      const oldNodes = [...L0.nodes, ...(L0.front?.nodes || [])], n0 = L0.resolveNode(raw) || L0.resolveNode(t) || oldNodes.find(x => x.name === raw) || oldNodes.find(x => x.name === t), e0 = n0 ? null : L0.engineNodes.find(x => x.name === raw || x.name === t);
       pane = n0 ? n0.pane : e0 ? paneOfId(e0.id) : pane;
     }
+    if ((!pane || pane === PRIMARY) && b.thread && FL?.front) {
+      const root = await nodeRoot(db, me, String(b.thread));
+      const n = root ? FL.nodeOfWin(String(root.win)) : null;
+      if (n && FL.front.nodes.includes(n)) pane = n.pane;
+    }
     if (pane && pane !== PRIMARY) {
-      const L = await load(db, me), n = L.nodes.find(x => x.pane === pane);
+      const L = await load(db, me), n = [...L.nodes, ...(L.front?.nodes || [])].find(x => x.pane === pane);
       const root = CARD_TS.test(String(b.thread || "")) ? await nodeRoot(db, me, String(b.thread)) : null;
       const ew0 = n ? null : L.engineNodes.find(x => paneOfId(x.id) === pane);
       const chName = n ? n.name : ew0 ? String(ew0.name) : "";
-      const inChan = (r: R) => n ? L.nodeOfWin(String(r.win)) === n || (r.kind === "me" && r.win === n.name) : ew0 ? r.win === ew0.name : false;
+      const inChan = (r: R) => n ? L.nodeOfWin(String(r.win)) === n || (r.kind === "me" && (r.win === n.name || n.aliases?.some(a => a.name === r.win))) : ew0 ? r.win === ew0.name : false;
       const thread = root && inChan(root) ? String(b.thread) : undefined;
       if (b.thread && !thread && !FOLD_TS.test(String(b.thread))) return { error: "없는 스레드예요", status: 404 };   // 들여온 대화 접은 글 스레드는 예전처럼 채널로
       const head = boardHead({ channel: chName, thread });

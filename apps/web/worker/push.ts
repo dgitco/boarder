@@ -212,7 +212,7 @@ self.addEventListener('notificationclick', e => {
 // 제목은 늘 M_TITLE. 주소는 주인과 같은 ./?open=card:<id> — 열린 창이면 pushOpen, 없으면 첫 화면이 resolve 로 그 글을 엶
 export const M_TITLE = "내 차례", M_BURST = 3, M_WINDOW = 60_000, M_SUBS = 10;
 export function memberMsg(r: { id: string; question: string; url?: string; title?: string }): Msg {
-  return { title: r.title || M_TITLE, body: cut(String(r.question || "").trim(), 180) || "새 카드", url: r.url && /^\.\/[a-z]/.test(r.url) ? r.url : `./?open=card:${r.id}`, tag: `card:${r.id}` };
+  return { title: r.title || M_TITLE, body: cut(String(r.question || "").trim(), 180) || "새 카드", url: r.url && /^\.\/([a-z]|\?open=[\w:.-]+$|$)/.test(r.url) ? r.url : `./?open=card:${r.id}`, tag: r.id.startsWith("log:") ? r.id : `card:${r.id}` };
 }
 // 한 시간대에 카드가 많이 생기면 같은 tag 로 바꿔 끼워 알림 한 통으로(1분에 M_BURST 넘으면)
 export function memberBurst(prev: { t: number; n: number } | null, now: number, m: Msg): { state: { t: number; n: number }; msg: Msg } {

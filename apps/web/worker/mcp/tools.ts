@@ -33,7 +33,7 @@ export const SCHEMAS = {
     recommend: z.string().regex(/^[A-F]$/).optional(),
     kind: z.enum(["decision", "approval", "question", "todo"]).default("decision"),
     urgency: z.enum(["incident", "today", "normal"]).default("normal"),
-    urgent: z.boolean().default(false),   // 회원 폰 알림(member-push.ts): 켜진 카드만 보냄
+    urgent: z.boolean().default(false),   // 회원 폰 알림(member-push.ts): 기본은 켜진 카드만 보냄 — 종 칸에서 넓힘을 켠 사람은 새 카드면 다 감
     asked_at: z.union([z.number().positive(), safe(40)]).optional(),   // 밀린 질문의 원래 시각(ms · 초 · ISO) — 만든 때보다 10분 넘게 앞서면 알림 안 감
     backlog: z.boolean().default(false),   // 옛 글(밀린 질문 다시 올림, 시각 모름) — 알림 안 감
     due: safe(40).optional(),
@@ -76,7 +76,7 @@ export const onlyReads = (n: string) => READS.has(n);
 // 보이는 설명(boarder_search · boarder_describe) — 입력 꼴은 zod 와 같게 손으로(작아서)
 const CORE_TOOLS: (Tool & { name: ToolName })[] = [
   { name: "inbox_ask", title: "Ask the human a decision",
-    description: "Put a decision card in front of the human: a one-line question (bold conclusion, ≤80 chars ideal), 1–6 choices like \"A: plan — why\", the recommended letter first. Returns card_id and thread_id; with wait_s it waits for the answer. urgency incident/today also notifies at once. urgent=true sends a phone notification — set it ONLY when a person must handle it right now: a security incident, a customer-facing outage, or a schedule that must be acted on now (default false: the card just waits on the board). When re-posting an older/backlog question (e.g. catching up after setup), pass asked_at (its original time) or backlog=true so it does not notify. Ask only what only the human can decide.",
+    description: "Put a decision card in front of the human: a one-line question (bold conclusion, ≤80 chars ideal), 1–6 choices like \"A: plan — why\", the recommended letter first. Returns card_id and thread_id; with wait_s it waits for the answer. urgency incident/today also notifies at once. urgent=true sends a phone notification (people who widened their alerts also get other new cards) — set it ONLY when a person must handle it right now: a security incident, a customer-facing outage, or a schedule that must be acted on now (default false: the card just waits on the board). When re-posting an older/backlog question (e.g. catching up after setup), pass asked_at (its original time) or backlog=true so it does not notify. Ask only what only the human can decide.",
     inputSchema: { type: "object", properties: { question: { type: "string" }, choices: { type: "array", items: { type: "string" } }, recommend: { type: "string", description: "e.g. A" }, kind: { type: "string", enum: ["decision", "approval", "question", "todo"] }, urgency: { type: "string", enum: ["incident", "today", "normal"] }, urgent: { type: "boolean", description: "Phone notification. Only when a person must handle it now: security incident, customer-facing outage, a schedule that must be acted on now. Default false" }, asked_at: { type: "string", description: "Original time of a backlog question (ISO or epoch ms) — no notification if older than 10 min" }, backlog: { type: "boolean", description: "Re-posting an older question — no notification" }, due: { type: "string" }, thread: { type: "string", description: "Thread ts to post the card under" }, body: { type: "string", description: "Context under the question (short)" }, wait_s: { type: "number", description: "0–600" } }, required: ["question", "choices"] },
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "inbox_wait", title: "Wait for the human's answer",
@@ -92,7 +92,7 @@ const CORE_TOOLS: (Tool & { name: ToolName })[] = [
     inputSchema: { type: "object", properties: { card_id: { type: "string" }, done: { type: "string" }, replaced_by: { type: "string" } }, required: ["card_id", "done"] },
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "inbox_say", title: "Post in a thread",
-    description: "Post a message (markdown) in a thread the human reads — results, evidence. Doesn't notify. thread_id = a card id, or the id after 「스레드」 in a board message head like [보드 · <channel> · 스레드 <id>] — answer there.",
+    description: "Post a message (markdown) in a thread the human reads — results, evidence. Doesn't notify by default (people who widened their alerts get replies in threads they wrote in or answered at once, other posts batched). thread_id = a card id, or the id after 「스레드」 in a board message head like [보드 · <channel> · 스레드 <id>] — answer there.",
     inputSchema: { type: "object", properties: { thread_id: { type: "string" }, text: { type: "string" } }, required: ["thread_id", "text"] },
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "inbox_status", title: "Set your status line",

@@ -1,3 +1,4 @@
+import { taskIssueFor } from "./task-repo";
 import { cleanPins, savePins } from "../side-order";
 import { deviceFeatures } from "./device-engine";
 import type { Context, Hono } from "hono";
@@ -74,7 +75,7 @@ const json = <T>(v: string | null | undefined, d: T): T => { try { return v ? JS
 
 export async function regroup(env: Env, owner: string) {
   const t = now();
-  const [it, lg, cd, mp, nd, wn, ns, rl, em] = await env.DB.batch([
+  const [it, lg, cd, mp, nd, wn, ns, rl, em, tk] = await env.DB.batch([
     env.DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, CASE WHEN kind = 'window' THEN handle END handle, (SELECT d.revoked_at IS NOT NULL FROM device d WHERE d.id = imp_item.device_id) rv FROM imp_item WHERE owner = ?").bind(owner),
     env.DB.prepare(`SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) AND kind != 'me' ${notChat("board_log")} ORDER BY at DESC LIMIT 400`).bind(owner),
     env.DB.prepare(`SELECT id, win, state, question, at FROM board_card WHERE owner = ? ${notChat("board_card")} ORDER BY at DESC LIMIT 200`).bind(owner),
@@ -84,6 +85,7 @@ export async function regroup(env: Env, owner: string) {
     env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT name FROM role WHERE owner = ? UNION SELECT name FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed','gone')").bind(owner, owner),
     env.DB.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(owner),   // 보더 메인 봇이 떠 있나(있으면 들여온 primary 는 노드)
+    env.DB.prepare("SELECT id, name, pinned_name, task, counts, archived_at FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(owner),
   ]);
   const items = (it.results as (Item & { refs: string })[]).map(r => ({ ...r, refs: json<string[]>(r.refs as unknown as string, []) }));
   const winNames = Object.fromEntries((wn.results as { pane: string; win: string }[]).map(r => [r.pane, r.win]));
@@ -93,8 +95,10 @@ export async function regroup(env: Env, owner: string) {
   const cards = (cd.results as { win: string }[]).filter(c => !own(c.win)).map(c => ({ ...c, win: keyOf(c.win) }));
   const raw = (ns.results[0] as { data?: string } | undefined)?.data;
   const set = json<{ archive_h?: number; unit?: Unit }>(raw, {}), archiveH = set.archive_h ?? 6, pref = prefsOf(raw);
+  const taskRows = (pref.task_channels ? tk.results : []) as { id: string; name: string; pinned_name: string | null; task: string; counts: string; archived_at: number | null }[];
+  const tasks = taskRows.map(n => ({ id: n.id, name: n.pinned_name || n.name, issue: taskIssueFor(pref.task_repo, json<{ issue?: string }>(n.task, {}).issue || ""), archived_at: n.archived_at }));
   const r = await group({ items, logs: logs as never, cards: cards as never, prev: mp.results as never, prevNodes: nd.results as never, winNames, now: t, archiveH, unit: set.unit, engineMain: em.results.length > 0, agents: (rl.results as { name: string }[]).map(x => x.name),
-    primaryItem: pref.primary_item, parkH: parkHOf(pref) });
+    primaryItem: pref.primary_item, parkH: parkHOf(pref), taskChannels: pref.task_channels, tasks, reportRepo: pref.task_repo || undefined });
   const keep = new Set(r.nodes.map(n => n.id));
   const was = new Map((mp.results as { item: string; node: string; how: string }[]).map(m => [m.item, m]));
   const st: D1PreparedStatement[] = [];
@@ -110,6 +114,21 @@ export async function regroup(env: Env, owner: string) {
       "INSERT INTO mnode(owner, id, name, area, state, why, counts, created_at, updated_at, archived_at) VALUES (?,?,?,?,?,?,?,?,?,?) " +
       "ON CONFLICT(owner, id) DO UPDATE SET name = excluded.name, area = excluded.area, state = excluded.state, why = excluded.why, counts = excluded.counts, updated_at = excluded.updated_at, archived_at = excluded.archived_at")
       .bind(owner, n.id, n.name, n.area, n.state, n.why, counts, n.created_at, n.updated_at, arch));
+  }
+  for (const n of pref.task_channels ? r.nodes.filter(n => n.id.startsWith("tk_")) : []) {
+    const row = taskRows.find(t => t.id === n.id); if (!row || row.archived_at) continue;
+    const counts = json<Record<string, unknown>>(row.counts, {});
+    const aliases = new Map((Array.isArray(counts.aliases) ? counts.aliases : []).filter(a => a && typeof a.id === "string" && typeof a.name === "string" && !keep.has(a.id)).map(a => [a.id, a]));
+    for (const key of n.items) {
+      const before = was.get(key)?.node, prev = before && old.get(before);
+      if (prev && !keep.has(before) && before !== n.id && !before.startsWith("tk_") && !before.startsWith("sl_")) aliases.set(before, { id: before, name: prev.name });
+    }
+    const live = n.items.map(k => items.find(i => i.key === k)).filter((i): i is (typeof items)[number] => !!i && i.kind === "window" && !i.gone_at && i.state !== "gone" && i.engine !== "report")
+      .sort((a, b) => (b.state_at || b.seen_at) - (a.state_at || a.seen_at) || a.key.localeCompare(b.key));
+    if (!live.some(i => i.key === counts.main)) { if (live[0]) counts.main = live.find(i => i.key === n.counts.main)?.key || live[0].key; else delete counts.main; }
+    if (aliases.size) counts.aliases = [...aliases.values()]; else delete counts.aliases;
+    const next = JSON.stringify(counts);
+    if (next !== row.counts) st.push(env.DB.prepare("UPDATE mnode SET counts = ? WHERE owner = ? AND id = ?").bind(next, owner, n.id));
   }
   // 다 빠진 노드는 보관(지우지 않음 — 이름 · 기록이 남게)
   for (const o of old.values()) if (!keep.has(o.id) && !o.archived_at) st.push(env.DB.prepare("UPDATE mnode SET archived_at = ?, state = 'done' WHERE owner = ? AND id = ?").bind(set.unit ? Math.min(t, o.updated_at || t) : t, owner, o.id));

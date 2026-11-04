@@ -4,7 +4,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
-import { query, route } from "./member-search.ts";
+import { register } from "node:module";
+register("./test-hooks.mjs", import.meta.url);
+const { query, route } = await import("./member-search.ts");
 
 // 메모리 SQLite 가짜 D1 — 진짜 마이그레이션을 차례로 올림(표 이름 · 칸이 운영과 같게). 부른 SQL · 값은 seen 에 남김
 const MIG = new URL("../migrations/", import.meta.url);

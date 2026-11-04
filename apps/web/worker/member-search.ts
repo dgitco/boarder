@@ -1,4 +1,6 @@
 
+import { frontDoorFromData, frontDoorId } from "./front-door";
+
 type R = Record<string, any>;
 const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;   // 보더 자신의 줄(member-board OWN 과 같음)
 const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;   // member-board 채팅 글 ts 와 같음 — 찾은 글로 바로 가는 자리
@@ -31,7 +33,7 @@ export async function query(db: D1Database, me: string, q0: string, o: { sem?: b
   const like = terms.map(t => "%" + t.replace(/[\\%_]/g, m => "\\" + m) + "%");
   const all = (col: string) => terms.map(() => `lower(${col}) LIKE ? ESCAPE '\\'`).join(" AND ");
   const CARD = "question || ' ' || COALESCE(body, '') || ' ' || COALESCE(answer, '')", NODE = "COALESCE(pinned_name, '') || ' ' || name || ' ' || why";
-  const [lg, cd, td, nd, tk, it, mi, ns] = await db.batch([
+  const [lg, cd, td, nd, tk, it, mi, ns, fs] = await db.batch([
     db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND ${all("text")} ${NC_LOG} ORDER BY at DESC LIMIT 200`).bind(me, ...like),
     db.prepare(`SELECT rowid AS n, id, win, question, body, answer, state, at, answered_at FROM board_card WHERE owner = ? AND ${all(CARD)} ${NC_CARD} ORDER BY at DESC LIMIT 60`).bind(me, ...like),
     db.prepare(`SELECT key, title, state, state_at, seen_at FROM imp_item WHERE owner = ? AND kind = 'todo' AND gone_at IS NULL AND ${all("title")} ORDER BY seen_at DESC LIMIT 30`).bind(me, ...like),
@@ -40,13 +42,16 @@ export async function query(db: D1Database, me: string, q0: string, o: { sem?: b
     db.prepare("SELECT key, kind, win FROM imp_item WHERE owner = ?").bind(me),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT id, name, pinned_name, state, why, updated_at FROM mnode WHERE owner = ?").bind(me),
+    db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),   // 앞단(설정 front_door) — 없으면 아무 일도 안 함
   ]);
+  const fd = frontDoorFromData((fs.results[0] as R | undefined)?.data);
   const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(r.win, r.pane);
   const itemOfWin = new Map<string, string>(); for (const i of it.results as R[]) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(i.win, i.key);
   const nodeOfItem = new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)]));
   const nodeById = new Map((ns.results as R[]).map(n => [String(n.id), n]));
   const nameOf = (n: R) => String(n.pinned_name || n.name || "노드");
-  const nodeOfWin = (win: string) => { const k = keyOfWin.get(win) || win, item = itemOfWin.get(k) || `win:${k}`; return nodeById.get(nodeOfItem.get(item) || "") || null; };
+  const isFront = (n: R | null) => !!n && frontDoorId(fd, String(n.id), nameOf(n));
+  const nodeOfWin = (win: string) => { const k = keyOfWin.get(win) || win, item = itemOfWin.get(k) || `win:${k}`; return nodeById.get(nodeOfItem.get(item) || "") || [...nodeById.values()].find(n => isFront(n) && nameOf(n) === win) || null; };
 
   const phrase = terms.join(" "), flat = (t: unknown) => String(t ?? "").toLowerCase().replace(/\s+/g, " ");
   const whole = (t: unknown) => terms.length < 2 || flat(t).includes(phrase);   // 낱말이 붙어 맞은 글이 먼저
@@ -55,14 +60,14 @@ export async function query(db: D1Database, me: string, q0: string, o: { sem?: b
   const nodeHit = new Map<string, { n: R; s: number; hit?: R }>();
   const via = (n: R | null, hit: R, s: number) => { if (!n) return; const x = nodeHit.get(n.id) || { n, s: 0 }; x.s += x.hit ? s / 5 : s; x.hit ??= hit; nodeHit.set(n.id, x); };
   const toChat = (r: R, w = 0.5) => {
-    const prim = r.thread === "primary" || /^p:/.test(String(r.thread || "")), mine = r.win === ME || r.kind === "me", n = prim ? null : nodeOfWin(r.win);
-    const at = Number(r.at) / 1000, text = snip(r.text, terms), title = prim ? (mine ? ME : r.win === "보더" ? "보더" : "Primary") : n ? nameOf(n) : String(r.win);
+    const home = nodeOfWin(r.win), alias = isFront(home), prim = alias || r.thread === "primary" || /^p:/.test(String(r.thread || "")), mine = r.win === ME || r.kind === "me", n = prim ? null : home;
+    const at = Number(r.at) / 1000, text = snip(r.text, terms), title = alias ? fd!.name : prim ? (mine ? ME : r.win === "보더" ? "보더" : "Primary") : n ? nameOf(n) : String(r.win);
     const ts = tsOf(Number(r.at), Number(r.id)), th0 = String(r.thread || ""), thread = /^p:\d{10}\.\d{6}$/.test(th0) ? th0.slice(2) : /^\d{10}\.\d{6}$/.test(th0) ? th0 : null;
     via(n, { kind: "log", text, at, ts, thread }, w);
     return { id: "m:" + r.id, kind: prim ? "chat" : "log", title, text, ch: "primary", node: n ? nameOf(n) : null, ts, thread, at, w: whole(r.text) };
   };
   const toCard = (c: R, w = 0.7) => {
-    const n = nodeOfWin(c.win), at = Number(c.answered_at || c.at) / 1000, text = snip([c.body, c.answer].filter(Boolean).join(" · ") || c.question, terms);
+    const home = nodeOfWin(c.win), n = isFront(home) ? null : home, at = Number(c.answered_at || c.at) / 1000, text = snip([c.body, c.answer].filter(Boolean).join(" · ") || c.question, terms);
     via(n, { kind: "card", text: String(c.question), at }, w);
     return { id: "c:" + c.id, kind: "card", title: String(c.question), text, ch: "primary", node: n ? nameOf(n) : null, ts: "w:" + c.n, thread: null, state: c.state === "open" ? "open" : "done", ckind: "decision", at, w: whole(c.question) };
   };
@@ -115,8 +120,9 @@ export async function query(db: D1Database, me: string, q0: string, o: { sem?: b
   const bySem = (a: R[]) => a.sort((x, y) => y.s - x.s).map(({ s, ...x }) => x);
   const mix = <T,>(lex: T[], sem: T[], n: number) => { const ss = sem.slice(0, Math.max(2, n - lex.length)); return [...lex.slice(0, n - ss.length), ...ss]; };
   const chats = mix<R>(lexChats, bySem(semChats), 8), cards = mix<R>(lexCards, bySem(semCards), 6);
-  const nodes = [...nodeHit.values()].sort((a, b) => b.s - a.s || Number(b.n.updated_at) - Number(a.n.updated_at)).slice(0, 6).map(({ n, hit }) => ({
-    id: "n:" + nameOf(n), title: nameOf(n), area: "primary", state: n.state, turn: TURN[n.state], line: hit ? undefined : String(n.why || "") || undefined, line_at: hit ? undefined : Number(n.updated_at) / 1000, hit: hit || null,
+  const nodeHits = [...nodeHit.values()].filter((x, i, all) => !isFront(x.n) || all.findIndex(y => isFront(y.n)) === i);
+  const nodes = nodeHits.sort((a, b) => b.s - a.s || Number(b.n.updated_at) - Number(a.n.updated_at)).slice(0, 6).map(({ n, hit }) => ({
+    id: "n:" + (isFront(n) ? fd!.name : nameOf(n)), title: isFront(n) ? fd!.name : nameOf(n), area: "primary", state: n.state, turn: TURN[n.state], line: hit ? undefined : String(n.why || "") || undefined, line_at: hit ? undefined : Number(n.updated_at) / 1000, hit: hit || null,
     ...(semNodes.has(String(n.id)) ? { sem: 1 } : {}),
   }));
   const strip = (a: R[]) => a.map(({ w, ...x }) => x);

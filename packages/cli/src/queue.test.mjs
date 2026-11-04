@@ -38,8 +38,8 @@ process.exit(1);`);
 fakeBin('ps', `process.stdout.write(Object.values(s.tmux).map(p => '  ' + p.pid + ' 1 claude --resume x').join('\\n') + '\\n');`);
 fakeBin('herdr', `const j = o => { process.stdout.write(JSON.stringify({ result: o })); process.exit(0); };
 if (a[0] === 'agent' && a[1] === 'list') { if (s.herdrDown) { process.stderr.write('{"error":{"code":"down","message":"down"}}'); process.exit(1); } return j({ agents: Object.entries(s.herdr).map(([pane_id, x]) => ({ pane_id, agent_status: x.status })) }); }
-if (a[0] === 'pane' && a[1] === 'read') { process.stdout.write('> '); process.exit(0); }
-if (a[0] === 'agent' && a[1] === 'prompt') { (s.herdr[a[2]].sent ||= []).push(a[3]); save(); return j({}); }
+if (a[0] === 'pane' && a[1] === 'read') { process.stdout.write(s.herdr[a[2]]?.screen || '> '); process.exit(0); }
+if (a[0] === 'agent' && a[1] === 'prompt') { const p = s.herdr[a[2]]; if (p.asking) { process.stderr.write(JSON.stringify({ error: { code: 'agent_blocked', message: 'asking something' } })); process.exit(1); } if (p.stopped) { process.stderr.write(JSON.stringify({ error: { code: 'agent_not_found', message: 'stopped' } })); process.exit(1); } (p.sent ||= []).push(a[3]); save(); return j({}); }
 process.exit(1);`);
 const own = o => fs.writeFileSync(OWN, JSON.stringify({ tmux: {}, herdr: {}, ...o }));
 const ownGet = () => JSON.parse(fs.readFileSync(OWN, 'utf8'));
@@ -280,4 +280,36 @@ test('들여온 창: 오래 기다림 · AI 도구가 멈춘 창은 서버에 no
   await I.flushOwn(); await I.flushOwn();
   assert.equal(cmdPosts.length, 1, '닫힌 창 한 줄(한 번만)'); assert.match(cmdPosts[0][1].note, /stopped/);
   assert.equal(Q.makeQueue('import-queue.json').pending('tmux-own:%8'), 1, '버리지 않음');
+});
+
+
+test('ownSend: idle → typing/asking race queues the original command, then delivers once when clear', async () => {
+  for (const blocked of [{ screen: '────────\n❯ unfinished human input\n────────\n' }, { asking: true }]) {
+    reset(); own({ herdr: { h_typing: { status: 'idle', ...blocked } } });
+    const h = { engine: 'herdr-own', pane: 'h_typing', session_id: SID };
+    const text = '[보드 · 예시 팀장 · 스레드 1793000000.000070] race';
+    cmdsQ.push({ id: 'cmd_typing', verb: 'send', args: { item: 'w_typing', handle: h, text, post: true } });
+    await I.drainOnce({ quiet: true });
+    assert.deepEqual(cmdPosts, [['cmd_typing', { ok: true, item: { queued: true } }]]);
+    const q = Q.makeQueue('import-queue.json');
+    assert.equal(q.pending('herdr-own:h_typing'), 1);
+    assert.equal(q.load()['herdr-own:h_typing'][0].cmd, 'cmd_typing');
+    assert.deepEqual(ownGet().herdr.h_typing.sent || [], []);
+    own({ herdr: { h_typing: { status: 'idle' } } });
+    cmdPosts.length = 0;
+    await I.flushOwn(); await I.flushOwn();
+    assert.deepEqual(ownGet().herdr.h_typing.sent, [text]);
+    assert.deepEqual(cmdPosts, [['cmd_typing', { ok: true }]]);
+    assert.equal(q.pending('herdr-own:h_typing'), 0);
+    assert.equal(T.hasMark([h.session_id]), true);
+  }
+});
+
+test('ownSend: stopped window errors are not queued as temporary typing', async () => {
+  reset(); own({ herdr: { h_stopped: { status: 'idle', stopped: true } } });
+  cmdsQ.push({ id: 'cmd_stopped', verb: 'send', args: { handle: { engine: 'herdr-own', pane: 'h_stopped' }, text: 'hello' } });
+  await I.drainOnce({ quiet: true });
+  assert.equal(cmdPosts[0][1].ok, false);
+  assert.match(cmdPosts[0][1].error, /stopped/);
+  assert.equal(Q.makeQueue('import-queue.json').pending('herdr-own:h_stopped'), 0);
 });

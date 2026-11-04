@@ -171,7 +171,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     meRedraw();
   }).catch(() => {});
   const rankOf = v => typeof priRank === 'function' ? priRank(v) : 2.5;
-  const myNodes = () => (typeof panes !== 'undefined' ? panes : []).filter(p => !p.tk && !['primary', 'arealead', 'helper'].includes(p.kind) && !(window.HB_CH && typeof MHEAD !== 'undefined' && MHEAD.has(p.pane)))   // 회원 열 머리는 「에이전트」 칸에(두 번 안 나오게)
+  // 업무 노드를 왼쪽 채널에 올리는 것은 설정 › 노드 「채널 = 태스크」를 켠 사람만(D.task_channels) — 끈 사람은 예전처럼 업무는 트리 · /tasks 에서
+  const myNodes = () => (typeof panes !== 'undefined' ? panes : []).filter(p => ((typeof D !== 'undefined' && D?.task_channels) ? !p.tkdept : !p.tk) && !['primary', 'arealead', 'helper'].includes(p.kind) && (((typeof D !== 'undefined' && D?.task_channels) && p.tk) || !(window.HB_CH && typeof MHEAD !== 'undefined' && MHEAD.has(p.pane))))   // 회원 열 머리는 「에이전트」 칸에(두 번 안 나오게)
     .map((p, i) => [p, i]).sort((a, b) => rankOf(a[0].pri) - rankOf(b[0].pri) || a[1] - b[1]).map(x => x[0]);
   function rowPanes(){ try { return new Set((attnRows() || []).map(rowPane)); } catch { return new Set(myNodes().filter(p => nodeRows(p.pane).length).map(p => p.pane)); } }   // 함수 선언 — 위의 lists() 가 먼저 불려도 됨
   const rcSig = () => recent().map(r => r.id + (r.title || '')).join('|') + '#' + (typeof attnCount === 'function' ? attnCount() : 0)
@@ -359,7 +360,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const FS = {r: null, t: 0, n: 0};
   const agoS = at => { const s = Math.max(0, Date.now() / 1000 - (+at || 0)); return !at ? '' : s < 90 ? '방금' : s < 3600 ? Math.round(s / 60) + '분 전' : s < 86400 ? Math.round(s / 3600) + '시간 전' : Math.round(s / 86400) + '일 전'; };
   const winT = x => String(x?.win || '').replace(/^\d+\s*/, '');
+  const frontAlias = t => typeof D !== 'undefined' && D?.front_door?.aliases?.includes(t);
   function nodeGo(t, ts, th){
+    if (frontAlias(t)){ openChan('primary', th); if (ts && typeof nodeFlash === 'function') nodeFlash(th || ts); return; }
+    const aliasPane = typeof D !== 'undefined' && D?.node_aliases?.[t]; if (aliasPane && byPane[aliasPane]) t = winT(byPane[aliasPane]);
     const p = Object.values(byPane).find(x => winT(x) === t), k = p ? '' : Object.keys(parkBy).find(id => winT(parkBy[id]) === t);
     if (ts && typeof openNode === 'function'){   // 스레드 답은 뿌리 글로 굴리고 스레드를 엶(읽지 않음 글 누르기와 같은 길)
       const r = openNode(p ? p.pane : k || t, th || ts);
@@ -471,7 +475,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const ROUTE = /^#(chat\/|art\/|node\/|w\/|inbox$)/;
   const MVv = () => MV.el && document.body.contains(MV.el) && MV.el === S.artEl ? S.art : null;
   const nodeKey = p => { if (/^g:/.test(p || '')) return p.slice(2); const x = (typeof byPane !== 'undefined' && byPane[p]) || (typeof parkBy !== 'undefined' && parkBy[p]); const n = x && typeof nodeTitle === 'function' ? nodeTitle(x) : ''; return n || p; };   // 닫힌 노드(g:<이름>)는 이름만
-  const nodePane = a => (typeof byPane !== 'undefined' && byPane[a]) ? a : (typeof liveNode === 'function' && liveNode(a)?.pane) || '';
+  const nodePane = a => { const alias = typeof D !== 'undefined' && D?.node_aliases?.[a]; if (alias && typeof byPane !== 'undefined' && byPane[alias]) return alias; return (typeof byPane !== 'undefined' && byPane[a]) ? a : (typeof liveNode === 'function' && liveNode(a)?.pane) || ''; };
   function want(){
     const a = MVv(); if (a) return '#art/' + a;
     if (!ans.hidden && cur){
@@ -539,6 +543,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       }
       else if (k === 'chat' && a){ moved = true; history.replaceState(history.state, '', '#' + (S.ib || current)); }   // 없는 채널 = 열 화면이 없음 → 지금 보기 주소로 바꿈(쌓지 않음 — 뒤로 가기가 이 주소로 돌아와 갇히지 않게)
       else if (k === 'inbox'){ if (cur?.chan !== 'i:turn'){ ibClose(); window.HBInbox?.openFeed('turn'); } }
+      else if (k === 'node' && frontAlias(a)){ ibClose(); openChan('primary', b); }
       else if (k === 'node'){ const got = !!nodePane(a) || await linkUntil(() => nodePane(a) || (typeof panes !== 'undefined' && panes.length ? '-' : '')) && !!nodePane(a), pa = nodePane(a);
         if (!got && gen === G){ if (typeof openNode === 'function' && typeof nodeName === 'function' && nodeName(a)){ await openNode(a); await nodeTh(b, gen); } else linkFail(); }   // 닫힌 노드는 이름으로(보드 openNode)
         else if (got && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash()) && !(cur?.page && cur.p === pa)){ ibClose(); openAns({p: pa, page: true}); }

@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "d892c6f7a53d";
+window.HB_VER = "0dac36d01a71";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -180,6 +180,7 @@ header h1{font-size:15px;font-weight:600;margin:0}
 #pushp .ps{font-weight:600}
 #pushp .ph{color:var(--muted);font-size:13px;margin-top:4px}
 #pushp .pb{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+#pushp .pph{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:13px}
 #pushp .pb button{border:0;border-radius:999px;padding:7px 14px;font:inherit;font-size:13.5px;background:var(--sunk);color:var(--ink);cursor:pointer}
 #pushp .pb button.pri{background:var(--accent);color:#fff}
 #pushp .pb button:disabled{opacity:.5;cursor:default}
@@ -1252,7 +1253,8 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
 
 @media (hover:none){.tools,.pop{display:none!important}
   #mchatbox .cfeed .msg{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;transition:background-color .12s}
-  #mchatbox .cfeed .msg.lp{background:var(--hover)}}
+  #mchatbox .cfeed .msg.lp{background:var(--hover)}
+  html.hb-tapth #mchatbox #cfeed .msg[data-mts]{cursor:pointer;-webkit-tap-highlight-color:transparent}}   
 .sscrim{position:fixed;inset:0;z-index:44;background:var(--scrim);touch-action:none}
 .msheet{position:fixed;left:0;right:0;bottom:0;margin:0 auto;max-width:560px;z-index:45;background:var(--surface);border-radius:18px 18px 0 0;box-shadow:0 -8px 40px var(--shadow);
   padding:8px 14px calc(14px + env(safe-area-inset-bottom,0px));max-height:85vh;overflow:auto;animation:sup .2s ease-out}
@@ -8519,7 +8521,45 @@ document.addEventListener("click", (e) => {
     CS.pop = null;
     return openThread(o.dataset.cch, o.dataset.copen);
   }
+  const tg = tapThread(t, e);
+  if (tg) {
+    stop();
+    CS.pop = null;
+    return openThread(tg.k, tg.ts);
+  }
 }, true);
+const tapOn = () => {
+  try {
+    return localStorage.getItem("hb-tapthread") === "1";
+  } catch (e) {
+    return false;
+  }
+};
+try {
+  document.documentElement.classList.toggle("hb-tapth", tapOn());
+} catch (e) {
+}
+let tapP = null;
+document.addEventListener("pointerdown", (e) => {
+  tapP = e.pointerType === "mouse" ? null : { x: e.clientX, y: e.clientY };
+}, { capture: true, passive: true });
+const TAP_SKIP = '.spl, a, button, input, textarea, select, label, summary, details, img, video, audio, iframe, pre, [role="button"], [tabindex], [contenteditable=""], [contenteditable="true"], [data-media], [data-fcopy], [data-zoom], [data-gochan], [data-bxp], [data-bxch], [data-npri], [data-cxpand], .mention, .fcard, .mfiles, .vn, .vmemo, .medit, .btns, .reacts, .fwd';
+function tapThread(t, e) {
+  if (!tapOn() || !touchUI() || CS.edit || !t?.closest) return null;
+  const p = tapP;
+  tapP = null;
+  if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 10) return null;
+  const g = t.closest(".msg[data-mts]");
+  if (!g || g.dataset.min || !g.closest("#mchatbox #cfeed") || g.closest("#cthfeed, .ibi")) return null;
+  if (g.classList.contains("sending") || g.classList.contains("gone")) return null;
+  const sk = t.closest(TAP_SKIP);
+  if (sk && g.contains(sk)) return null;
+  const sel = window.getSelection?.();
+  if (sel && !sel.isCollapsed && String(sel).trim()) return null;
+  const ts = g.dataset.mts, k = g.dataset.mk, m = findMsgs(ts)[0];
+  if (!k || !ts || m?.ledger) return null;
+  return { k, ts: g.dataset.mroot || ts };
+}
 document.addEventListener("paste", (e) => {
   const okM = (e.target.id === "talk" || e.target.id === "other") && !!e.target.closest?.("#ans .ccomp.flow .box")?.querySelector(".plus");
   if (!okM && (!chatOn() || !["cnew", "cth"].includes(e.target.id))) return;
@@ -10390,6 +10430,7 @@ async function pushInit() {
   if (pushSub || lsGet("hb-push-off") || pageMode()) return;
   pushSheet();
 }
+let pushPrefs = { wide: false, progress: "digest" };
 function pushPanel() {
   let el = $("#pushp");
   if (el) {
@@ -10399,14 +10440,36 @@ function pushPanel() {
   el = document.createElement("div");
   el.id = "pushp";
   document.body.append(el);
+  if (window.HB_MEMBER && pushSub) fetch("api/push/prefs", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+    if (j && j.ok && el.isConnected) {
+      pushPrefs = { wide: j.wide === true, progress: j.progress || "digest" };
+      draw();
+    }
+  }).catch(() => {
+  });
   const draw = (msg = "") => {
     const denied = PUSH_OK && Notification.permission === "denied";
-    el.innerHTML = IOS && !STANDALONE ? `<div class="ps">아이폰은 홈 화면 앱에서만 알림이 와요</div><div class="ph">Safari 공유 → 홈 화면에 추가 → 홈 화면의 보드 앱을 열고 여기서 알림을 켜요.</div>` : !PUSH_OK ? `<div class="ps">이 브라우저는 웹 푸시를 못 받아요</div>` : `<div class="ps">이 기기 알림: ${pushSub ? "켜짐" : pageMode() ? "켜짐 — 보드가 열려 있을 때" : denied ? "막힘" : "꺼짐"}</div><div class="ph">${denied ? "설정에서 이 앱 알림을 허용해야 켤 수 있어요." : window.HB_MEMBER ? "내 차례 새 카드만 와요. 누르면 그 카드가 열려요." : "급한 일(장애·오늘 마감·곧 만료 링크)과 내 차례 새 카드만 와요. 누르면 그 카드가 열려요."}</div>${msg ? `<div class="ph">${esc(msg)}</div>` : ""}
-         <div class="pb">${pushSub || pageMode() ? '<button data-pa="test" class="pri">시험 알림</button><button data-pa="off">끄기</button>' : `<button data-pa="on" class="pri"${denied ? " disabled" : ""}>알림 켜기</button>`}</div>`;
+    el.innerHTML = IOS && !STANDALONE ? `<div class="ps">아이폰은 홈 화면 앱에서만 알림이 와요</div><div class="ph">Safari 공유 → 홈 화면에 추가 → 홈 화면의 보드 앱을 열고 여기서 알림을 켜요.</div>` : !PUSH_OK ? `<div class="ps">이 브라우저는 웹 푸시를 못 받아요</div>` : `<div class="ps">이 기기 알림: ${pushSub ? "켜짐" : pageMode() ? "켜짐 — 보드가 열려 있을 때" : denied ? "막힘" : "꺼짐"}</div><div class="ph">${denied ? "설정에서 이 앱 알림을 허용해야 켤 수 있어요." : window.HB_MEMBER ? pushPrefs.wide ? "결정·할 일 새 카드, 내 글에 온 답, 나를 부르는 글이 바로 와요. 누르면 그 자리가 열려요." : "내 차례 새 카드만 와요. 누르면 그 카드가 열려요." : "급한 일(장애·오늘 마감·곧 만료 링크)과 내 차례 새 카드만 와요. 누르면 그 카드가 열려요."}</div>${msg ? `<div class="ph">${esc(msg)}</div>` : ""}
+         <div class="pb">${pushSub || pageMode() ? '<button data-pa="test" class="pri">시험 알림</button><button data-pa="off">끄기</button>' : `<button data-pa="on" class="pri"${denied ? " disabled" : ""}>알림 켜기</button>`}</div>` + (window.HB_MEMBER && pushSub ? `<div class="ps pph">결정·할 일·답도 받기</div><div class="pb"><button data-pw="0"${!pushPrefs.wide ? ' class="pri" aria-pressed="true"' : ""}>급한 것만</button><button data-pw="1"${pushPrefs.wide ? ' class="pri" aria-pressed="true"' : ""}>받기</button></div>` + (pushPrefs.wide ? `<div class="ps pph">그 밖의 진행 글</div><div class="pb"><button data-pp="digest"${pushPrefs.progress === "digest" ? ' class="pri" aria-pressed="true"' : ""}>5분마다 묶어서</button><button data-pp="off"${pushPrefs.progress === "off" ? ' class="pri" aria-pressed="true"' : ""}>받지 않음</button></div>` : "") : "");
   };
   draw();
   el.addEventListener("click", async (e) => {
     e.stopPropagation();
+    const pw = e.target.closest("[data-pw]"), pp = e.target.closest("[data-pp]");
+    if (pw || pp) {
+      const was = pushPrefs, ch = pw ? { wide: pw.dataset.pw === "1" } : { progress: pp.dataset.pp };
+      if (pw ? ch.wide === was.wide : ch.progress === was.progress) return;
+      pushPrefs = { ...was, ...ch };
+      draw();
+      const j = await pushPost("api/push/prefs", ch).catch(() => ({}));
+      if (!j.ok) {
+        pushPrefs = was;
+        draw(ERR);
+        return;
+      }
+      draw(pw ? ch.wide ? "결정·할 일 새 카드와 답도 바로 와요." : "급한 것만 와요." : ch.progress === "off" ? "진행 글 알림을 껐어요." : "진행 글은 5분마다 묶어서 와요.");
+      return;
+    }
     const b = e.target.closest("[data-pa]");
     if (!b) return;
     b.disabled = true;

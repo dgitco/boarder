@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Hono } from "hono";
 registerHooks({ resolve(spec, ctx, next) { try { return next(spec, ctx); } catch (e) { if (spec.startsWith(".")) return next(spec + ".ts", ctx); throw e; } } });
 const { mountTasks } = await import("./routes.ts");
-const { DEFAULT_VIEW, checkView, roots, isMine, visibleIds, doneOf } = await import("./rules.ts");
+const { DEFAULT_VIEW, checkView, roots, isMine, visibleIds, doneOf, nextDraft } = await import("./rules.ts");
 
 function setup() {
   const db = new DatabaseSync(":memory:");
@@ -103,4 +103,36 @@ test("끝난 지 하루가 지난 업무는 chat_off(대화 길이 그 노드를
   node(A, "tk_1", {}); node(A, "tk_2", {}, { archived: Date.now() - 3600_000 }); node(A, "tk_3", {}, { archived: Date.now() - 2 * 86400_000 });
   const j = await (await call(A, "GET", "/api/me/tasks")).json() as any, off = (id: string) => j.tasks.find((t: any) => t.id === id).chat_off;
   assert.deepEqual([off("tk_1"), off("tk_2"), off("tk_3")], [false, false, true]);
+});
+
+test("메뉴: 기본은 빈 목록(모두 같은 기본 메뉴 — 특정 사람 링크 없음), 내 순서·이름·삭제만 저장, 다른 사람 보기·설정 보존", async () => {
+  const { call, db } = setup();
+  db.prepare("insert into node_setting values (?,?,?)").run(A, JSON.stringify({ taskview: { group: "status" }, pins: ["keep"] }), 1);
+  const get = async (who: string) => ((await (await call(who, "GET", "/api/me/tasks")).json()) as any).view;
+  const old = await get(A);
+  assert.equal(old.group, "status");
+  assert.deepEqual(old.nav, []); assert.deepEqual(DEFAULT_VIEW.nav, []);
+  const nav = [{ name: "내 업무", href: "/tasks" }, { name: "콘솔", href: "https://example.com/runners/live" }];
+  assert.equal((await call(A, "PUT", "/api/me/tasks/view", { ...old, nav })).status, 200);
+  assert.deepEqual((await get(A)).nav, nav);
+  assert.deepEqual((await get(B)).nav, DEFAULT_VIEW.nav);
+  assert.deepEqual(JSON.parse((db.prepare("select data from node_setting where owner = ?").get(A) as any).data).pins, ["keep"]);
+  // 잘못된 주소·꼴은 저장하지 않음. 실행 코드나 외부 프로토콜을 메뉴로 열 수 없음.
+  for (const bad of [null, "x", [{}], [{ name: "", href: "/" }], Array(13).fill(nav[0]),
+    ...["javascript:alert(1)", "data:text/html,test", "//example.com", "/\\example.com", "https://a@example.com", "https://example.com/\ntest"].map(href => [{ name: "x", href }])]) {
+    assert.equal((await call(A, "PUT", "/api/me/tasks/view", { ...old, nav: bad })).status, 400, JSON.stringify(bad));
+    assert.deepEqual((await get(A)).nav, nav);
+  }
+  const { nav: _drop, ...noNav } = old;
+  assert.equal((await call(A, "PUT", "/api/me/tasks/view", { ...noNav, group: "none" })).status, 200);
+  assert.deepEqual((await get(A)).nav, nav); assert.equal((await get(A)).group, "none");
+  assert.equal((await call(A, "PUT", "/api/me/tasks/view", { ...old, nav: [] })).status, 200);
+  assert.deepEqual((await get(A)).nav, []);
+});
+
+test("메뉴 편집칸: 60초 다시 읽기(같은 저장값)는 입력을 안 덮고, 고치는 중이 아니면 새 저장값을 받음", () => {
+  const saved = "노드 | /", mine = "노드 | /\n콘솔 | https://example.com";
+  assert.equal(nextDraft(mine, saved, saved), mine);
+  assert.equal(nextDraft(mine, saved, "업무 | /tasks"), mine);
+  assert.equal(nextDraft(saved, saved, "업무 | /tasks"), "업무 | /tasks");
 });

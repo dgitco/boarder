@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import * as P from "./push";
 import { f7On } from "./ledger";
+import { DIGEST_MS, PROGRESS_PREFS, SENT_KEEP, digestMsg, type ProgressPref } from "./member-push";
 
 type Env = { DB: D1Database; VAPID_PRIVATE?: string };
 const EVERY = 10_000, LOG_MAX = 3000;
@@ -13,7 +14,8 @@ export type PushApi = {
 };
 // 회원 칸(이름 = 회원 메일, index.ts memberPusher): 늘 그 사람 메일(세션)을 첫 값으로 — 칸에 적힌 주인과 다르면 거절
 export type MemberPushApi = {
-  key(): Promise<string>; mSubscribe(me: string, b: unknown): Promise<Res>; mUnsubscribe(me: string, b: unknown): Promise<Res>; mTrial(me: string, b: unknown, welcome?: boolean): Promise<Res>; mAck(me: string, b: unknown): Promise<Res>; mLog(me: string): Promise<unknown[] | null>; mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }): Promise<Res>;
+  key(): Promise<string>; mSubscribe(me: string, b: unknown): Promise<Res>; mUnsubscribe(me: string, b: unknown): Promise<Res>; mTrial(me: string, b: unknown, welcome?: boolean): Promise<Res>; mAck(me: string, b: unknown): Promise<Res>; mLog(me: string): Promise<unknown[] | null>; mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }, key?: string, opt?: { wide?: boolean }): Promise<Res>;
+  mDigest(me: string): Promise<Res>; mPrefs(me: string): Promise<Res>; mSetPrefs(me: string, b: unknown): Promise<Res>;
 };
 
 async function rows(db: D1Database) {
@@ -142,13 +144,14 @@ export class Pusher extends DurableObject<Env> {
   // 알람: 10초마다 늘(꺼져 있어도 본 것을 따라감). 처음 거는 것은 ensure(릴레이 sync · 화면 길이 부름)
   async ensure() { if ((await this.ctx.storage.getAlarm()) == null) await this.ctx.storage.setAlarm(Date.now() + 1000); return true; }
   async alarm() {
+    if (this.member()) { await this.mFlush(); return; }   // 회원 칸: 진행 글 묶음 한 통(아래) — 주인 틱을 돌리지 않고, 다시 걸지도 않음(다음 진행 글이 검)
     try { await this.tickNow(); }
     catch (e) { this.log({ ev: "error", err: `${(e as Error)?.name}: ${(e as Error)?.message}`.slice(0, 200) }); }
     await this.ctx.storage.setAlarm(Date.now() + EVERY);
   }
 
   // ---------- 회원 칸(초대 계정, 이름 = 회원 메일) ----------
-  // 원천은 회원 카드를 만든 요청(mNotify)뿐 — wl_* · 주인 상태는 안 읽고, 알람을 안 걸음. 스위치 member_push 는 부르는 쪽(index.ts)이 봄
+  // 원천은 회원 카드 · 글을 만든 요청(mNotify · mDigest)뿐 — wl_* · 주인 상태는 안 읽음. 알람은 넓힘을 켠 회원의 진행 글 묶음 한 번만(다시 안 걸음). 스위치 member_push 는 부르는 쪽(index.ts)이 봄
   private member() { return this.ctx.storage.sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'member'").toArray()[0]?.v || null; }
   // 이 칸의 주인 = 처음 부른 회원 메일(세션). 다른 메일이 부르면 거절 — 칸 이름이 메일이라 실제로는 안 생기지만 한 번 더
   private bind(me: string) {
@@ -199,18 +202,75 @@ export class Pusher extends DurableObject<Env> {
     if (!this.bind(me)) return null;
     return this.ctx.storage.sql.exec<{ at: string; ev: string }>("SELECT at, ev FROM log ORDER BY id DESC LIMIT 40").toArray().map(r => ({ at: r.at, ...JSON.parse(r.ev) }));
   }
-  // 새 카드 한 장: 카드를 만든 요청이 그 자리에서 부름. 구독이 없으면 할 일 없음(이 칸은 알람을 안 씀)
-  mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }): Promise<Res> {
+  // 새 카드 한 장 · 답 · 부름: 그 사건을 만든 요청이 그 자리에서 부름. 구독이 없으면 할 일 없음.
+  // key = 사건 이름(card:<id> · log:<줄 id>) — 이미 보낸 key 면 안 보냄(같은 사건 두 번 안 감, 최근 SENT_KEEP 개 기억)
+  private sentKeys(): string[] { const v = this.ctx.storage.sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'sent'").toArray()[0]?.v; try { return v ? JSON.parse(v) : []; } catch { return []; } }
+  mNotify(me: string, card: { id: string; question: string; url?: string; title?: string }, key?: string, opt?: { wide?: boolean }): Promise<Res> {
     return this.lock(async () => {
       if (!this.bind(me)) return this.no();
+      if (opt?.wide && !this.prefs().wide) return [200, { ok: true, sent: 0, scope: "urgent" }] as Res;   // key 도 안 적음 — 나중에 켜도 그 사건은 지나간 것
+      if (key) {
+        const sent = this.sentKeys();
+        if (sent.includes(key)) return [200, { ok: true, sent: 0, dup: true }] as Res;
+        this.ctx.storage.sql.exec("INSERT INTO kv(k, v) VALUES ('sent', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", JSON.stringify([...sent, key].slice(-SENT_KEEP)));   // 보내기 전에 적음 — 두 요청이 겹쳐도 한 통
+      }
       if (!this.subs().length || !(await this.vapid())) return [200, { ok: true, sent: 0 }] as Res;
-      const sql = this.ctx.storage.sql, cur = sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'burst'").toArray()[0]?.v;
-      const { state, msg } = P.memberBurst(cur ? JSON.parse(cur) : null, Date.now(), P.memberMsg(card));
-      sql.exec("INSERT INTO kv(k, v) VALUES ('burst', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", JSON.stringify(state));
+      let msg = P.memberMsg(card);
+      if (!card.id.startsWith("log:")) {
+        const sql = this.ctx.storage.sql, cur = sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'burst'").toArray()[0]?.v;
+        const b = P.memberBurst(cur ? JSON.parse(cur) : null, Date.now(), msg);
+        sql.exec("INSERT INTO kv(k, v) VALUES ('burst', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", JSON.stringify(b.state));
+        msg = b.msg;
+      }
       let res = await this.send(msg);
       // 알람이 없어 일시 실패는 여기서 한 번만 다시(같은 tag 라 받은 기기에는 두 통이 안 됨)
       if (res.some(([, c]) => typeof c !== "number" || c === 429 || c >= 500)) { await new Promise(r => setTimeout(r, 4000)); res = await this.send(msg); }
       return [200, { ok: true, sent: res.length }] as Res;
+    });
+  }
+
+  private prefs(): { wide: boolean; progress: ProgressPref } {
+    const v = this.ctx.storage.sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'prefs'").toArray()[0]?.v;
+    try { const o = v ? JSON.parse(v) : {}; return { wide: o.wide === true, progress: PROGRESS_PREFS.includes(o.progress) ? o.progress : "digest" }; } catch { return { wide: false, progress: "digest" }; }
+  }
+  mDigest(me: string): Promise<Res> {
+    return this.lock(async () => {
+      if (!this.bind(me)) return this.no();
+      const pr = this.prefs();
+      if (!pr.wide || pr.progress === "off" || !this.subs().length) return [200, { ok: true, n: 0 }] as Res;
+      const sql = this.ctx.storage.sql, cur = sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'digest'").toArray()[0]?.v;
+      const n = (cur ? Number(JSON.parse(cur).n) || 0 : 0) + 1;
+      sql.exec("INSERT INTO kv(k, v) VALUES ('digest', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", JSON.stringify({ n }));
+      if ((await this.ctx.storage.getAlarm()) == null) await this.ctx.storage.setAlarm(Date.now() + DIGEST_MS);
+      return [200, { ok: true, n }] as Res;
+    });
+  }
+  /** 알람(회원 칸): 쌓인 진행 글 수를 한 통으로 보내고 비움. 그 사이 끔으로 바꿨으면 버림 */
+  mFlush(): Promise<[string, P.Code][]> {
+    return this.lock(async () => {
+      const sql = this.ctx.storage.sql, cur = sql.exec<{ v: string }>("SELECT v FROM kv WHERE k = 'digest'").toArray()[0]?.v;
+      sql.exec("DELETE FROM kv WHERE k = 'digest'");
+      const n = cur ? Number(JSON.parse(cur).n) || 0 : 0;
+      const pr = this.prefs();
+      if (!n || !pr.wide || pr.progress === "off") return [];
+      return this.send(digestMsg(n));
+    });
+  }
+  mPrefs(me: string): Promise<Res> { return this.lock(async () => this.bind(me) ? [200, { ok: true, ...this.prefs() }] as Res : this.no()); }
+  // 주는 칸만 바꿈(wide · progress). 넓힘을 끄거나 진행 off 면 쌓인 묶음을 버림
+  mSetPrefs(me: string, b: { wide?: unknown; progress?: unknown }): Promise<Res> {
+    return this.lock(async () => {
+      if (!this.bind(me)) return this.no();
+      const cur = this.prefs(), has = (k: string) => b != null && typeof b === "object" && k in b;
+      if (!has("wide") && !has("progress")) return [400, { ok: false, error: "wide 나 progress 를 주세요" }] as Res;
+      if (has("wide") && typeof b.wide !== "boolean") return [400, { ok: false, error: "wide 는 true · false" }] as Res;
+      if (has("progress") && !PROGRESS_PREFS.includes(b.progress as ProgressPref)) return [400, { ok: false, error: "progress 는 digest · off 중 하나" }] as Res;
+      const next = { wide: has("wide") ? b.wide as boolean : cur.wide, progress: has("progress") ? b.progress as ProgressPref : cur.progress };
+      const sql = this.ctx.storage.sql;
+      sql.exec("INSERT INTO kv(k, v) VALUES ('prefs', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", JSON.stringify(next));
+      if (!next.wide || next.progress === "off") sql.exec("DELETE FROM kv WHERE k = 'digest'");
+      this.log({ ev: "prefs", ...next });
+      return [200, { ok: true, ...next }] as Res;
     });
   }
 

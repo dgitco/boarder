@@ -40,7 +40,7 @@
   }
   applyAccent();
   if (!window.HB_BLOB) document.addEventListener('DOMContentLoaded', applyAccent);
-  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1']];   // favblink: 파비콘 눈 깜빡만 따로(움직임 줄이기와 별개, 기본 켜짐)
+  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '0']];
   const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
   const uiSave = (k, v) => fetch('api/me/ui', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({k, v})}).catch(() => {});
   window.bxUiSave = uiSave;   // 보드 위 테마 단추(board.html)도 같은 길
@@ -48,6 +48,7 @@
     const t = lsGet('hb-theme') || 'system';
     if (typeof theme !== 'undefined' && typeof applyTheme === 'function'){ theme = t; applyTheme(); } else if (t === 'system') R.removeAttribute('data-theme'); else R.setAttribute('data-theme', t);
     R.classList.toggle('bx-still', lsGet('hb-still') === '1');
+    R.classList.toggle('hb-tapth', lsGet('hb-tapthread') === '1');   // 보드 글 줄을 누를 수 있는 것으로(board.html CSS)
     applyAccent();
   };
   fetch('api/me/ui', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => {
@@ -653,7 +654,9 @@
       const opts = ['auto', 'none', ...wins.map(w => w.key)]; if (!opts.includes(P.primary_item)) opts.push(P.primary_item);
       return `<div class="bxs-sech">메인 봇</div><div class="bxs-list"><div class="bxs-li"><div><b>메인 봇 창</b><span>Primary 채팅 · 보더 알림이 가는 창이에요. 내 tmux · Herdr 창 중에서 고르거나 보더 메인 봇을 써요 · 지금: ${esc(now)}</span></div>`
         + `<select class="bxs-in sm bxs-sel" data-npr aria-label="메인 봇 창">${opts.map(k => `<option value="${esc(k)}"${k === P.primary_item ? ' selected' : ''}>${esc(primLabel(k))}</option>`).join('')}</select></div></div>`
-        + `<div class="bxs-sech">업무 노드</div><div class="bxs-list"><div class="bxs-li"><div><b>업무 상태 다섯 꼴</b><span>업무 노드 점을 진행 · 막힘 · 기다림 · 완료 · 취소 다섯 꼴로 그려요. 끄면 지금 점 그대로예요. 주차 · 담당 없음 · 확인 대기 표지는 늘 붙어요</span></div>${sw(!!P.task_dots, 'data-ntd', '업무 상태 다섯 꼴')}</div></div>`
+        + `<div class="bxs-sech">업무 노드</div><div class="bxs-list"><div class="bxs-li"><div><b>업무 상태 다섯 꼴</b><span>업무 노드 점을 진행 · 막힘 · 기다림 · 완료 · 취소 다섯 꼴로 그려요. 끄면 지금 점 그대로예요. 주차 · 담당 없음 · 확인 대기 표지는 늘 붙어요</span></div>${sw(!!P.task_dots, 'data-ntd', '업무 상태 다섯 꼴')}</div>`
+        + `<div class="bxs-li"><div><b>채널 = 태스크</b><span>장부의 업무(#번호)를 채널로 써요 — 그 업무의 창 · 세션 · 보고가 업무 채널에 모이고, 열린 업무가 왼쪽 채널에 떠요. 끄면 예전 묶기 그대로예요${P.task_repo ? ' · 번호만 있는 업무의 리포: ' + esc(P.task_repo) : ''}</span></div>${sw(!!P.task_channels, 'data-ntc', '채널 = 태스크')}</div>`
+        + (P.front_door ? `<div class="bxs-li"><div><b>앞단 하나</b><span>${esc(P.front_door.name)} — 고른 노드 ${(P.front_door.pairs || []).length}개를 메인 봇 채팅 한 칸으로 읽어요(설정 API 로 바꿔요)</span></div><span class="bxs-mut">켬</span></div>` : '') + `</div>`
         + `<div class="bxs-sech">주차</div><div class="bxs-list"><div class="bxs-li"><div><b>조용한 노드 주차</b><span>창 · 세션 · 보고 줄이 이만큼 조용하면 노드를 주차로 보여요(창은 안 닫음 — 다시 일하면 바로 살아나요)</span></div>`
         + `<div class="bxs-row" style="flex-wrap:nowrap">${P.park_on ? `<select class="bxs-in sm bxs-sel" data-nph aria-label="주차까지 조용한 시간">${[...new Set([...PARK_HS, P.park_h])].sort((x, y) => x - y).map(h => `<option value="${h}"${h === P.park_h ? ' selected' : ''}>${hrs(h)} 조용하면</option>`).join('')}</select>` : '<span class="bxs-mut">끔</span>'}${sw(P.park_on, 'data-npo', '조용한 노드 주차')}</div></div></div>`
         + `<div class="bxs-sech">하네스 묶음 <span class="bxs-mut">처음엔 Owner 방식 그대로 — 끄고 고쳐 써요</span></div><div class="bxs-list">${(j.bundle_keys || []).map(k => `<div class="bxs-li"><div><b>${esc(BUN_KO[k]?.[0] || k)}</b><span>${esc(BUN_KO[k]?.[1] || '')}</span></div>${sw(!!(P.bundles || {})[k], `data-nbn="${esc(k)}"`, BUN_KO[k]?.[0] || k)}</div>`).join('')}</div>`
@@ -714,6 +717,7 @@
       if (e.target.closest('[data-nmore]')) { more = true; return draw(); }
       const cp = e.target.closest('[data-cp]'); if (cp) return copy(cp.dataset.cp, '명령을');
       if (e.target.closest('[data-ntd]')) { const was = !!j.prefs.task_dots; j.prefs.task_dots = !was; draw(); return savePref({task_dots: !was}, () => { j.prefs.task_dots = was; }); }
+      if (e.target.closest('[data-ntc]')) { const was = !!j.prefs.task_channels; j.prefs.task_channels = !was; draw(); return savePref({task_channels: !was}, () => { j.prefs.task_channels = was; }); }
       if (e.target.closest('[data-npo]')) { const was = j.prefs.park_on; j.prefs.park_on = !was; draw(); return savePref({park_on: !was}, () => { j.prefs.park_on = was; }); }
       const bn = e.target.closest('[data-nbn]');
       if (bn) { const k = bn.dataset.nbn; if (!j.prefs.bundles) j.prefs.bundles = {}; const was = !!j.prefs.bundles[k]; j.prefs.bundles[k] = !was; draw(); return savePref({bundles: {[k]: !was}}, () => { j.prefs.bundles[k] = was; }); }
@@ -811,13 +815,15 @@
     const cur = () => { try { return localStorage.getItem('hb-theme') || 'system'; } catch { return 'system'; } };
     const still = () => { try { return localStorage.getItem('hb-still') === '1'; } catch { return false; } };
     const favb = () => { try { return localStorage.getItem('hb-favblink') !== '0'; } catch { return true; } };   // 파비콘 눈 깜빡(기본 켜짐)
+    const tapt = () => { try { return localStorage.getItem('hb-tapthread') === '1'; } catch { return false; } };   // 폰에서 글을 누르면 스레드(기본 꺼짐)
     let draw = () => {
       el.innerHTML = header('모양', '내 계정에 저장돼 다른 기기에서도 같아요.')
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>테마</b><p class="bxs-mut">시스템은 기기 설정(라이트 · 다크)을 따라요</p></div><div class="bxs-seg" role="radiogroup" aria-label="테마">${TH.map(([k, v]) => `<button type="button" role="radio" aria-checked="${cur() === k}" data-th="${k}">${v}</button>`).join('')}</div></div></div>`
         + accCard()
         + '<div class="bxs-card" data-pins></div>'
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>움직임 줄이기</b><p class="bxs-mut">블롭 · 파비콘 깜빡임 · 화면 전환 움직임을 멈춰요(기기의 움직임 줄이기도 따라요)</p></div>${sw(still(), `data-st="${still() ? 0 : 1}"`, '움직임 줄이기')}</div></div>`
-        + `<div class="bxs-card"><div class="bxs-row between"><div><b>파비콘 눈 깜빡</b><p class="bxs-mut">브라우저 탭 아이콘이 5초마다 눈을 깜빡여요. 끄면 탭 아이콘만 멈추고 다른 움직임은 그대로예요</p></div>${sw(favb(), `data-fb="${favb() ? 0 : 1}"`, '파비콘 눈 깜빡')}</div></div>`;
+        + `<div class="bxs-card"><div class="bxs-row between"><div><b>파비콘 눈 깜빡</b><p class="bxs-mut">브라우저 탭 아이콘이 5초마다 눈을 깜빡여요. 끄면 탭 아이콘만 멈추고 다른 움직임은 그대로예요</p></div>${sw(favb(), `data-fb="${favb() ? 0 : 1}"`, '파비콘 눈 깜빡')}</div></div>`
+        + `<div class="bxs-card"><div class="bxs-row between"><div><b>폰에서 글을 누르면 스레드 열기</b><p class="bxs-mut">휴대폰에서 채널 글을 짧게 누르면 그 글 스레드가 열려요. 끄면 길게 눌러 메뉴에서 회신해요. 컴퓨터(마우스)는 그대로예요</p></div>${sw(tapt(), `data-tt="${tapt() ? 0 : 1}"`, '폰에서 글을 누르면 스레드 열기')}</div></div>`;
       pinsDraw(el);
     };
     const setAcc = (v, redraw = true) => {
@@ -835,6 +841,8 @@
       if (t){ try { localStorage.setItem('hb-theme', t.dataset.th); } catch {} uiSave('theme', t.dataset.th); if (typeof theme !== 'undefined'){ theme = t.dataset.th; applyTheme(); } else if (t.dataset.th === 'system') R.removeAttribute('data-theme'); else R.setAttribute('data-theme', t.dataset.th); return draw(); }
       const fb = e.target.closest('[data-fb]');
       if (fb){ try { localStorage.setItem('hb-favblink', fb.dataset.fb); } catch {} uiSave('favblink', fb.dataset.fb); return draw(); }
+      const tt = e.target.closest('[data-tt]');
+      if (tt){ try { localStorage.setItem('hb-tapthread', tt.dataset.tt); } catch {} uiSave('tapthread', tt.dataset.tt); R.classList.toggle('hb-tapth', tt.dataset.tt === '1'); return draw(); }
       const m = e.target.closest('[data-st]');
       if (m){ try { localStorage.setItem('hb-still', m.dataset.st); } catch {} uiSave('still', m.dataset.st); R.classList.toggle('bx-still', m.dataset.st === '1'); return draw(); }
     };
