@@ -135,3 +135,19 @@ test("하네스 규칙 one_goal: 그 사람이 설정에서 고른 값이 엔진
   assert.equal((await ownerCfg(s.env.DB, MEMBER)).rules.one_goal, false);
   assert.equal((await ownerCfg(s.env.DB, "nobody@example.test")).perm, "ask", "줄 없는 사람도 기본값");
 });
+
+test("다시 묶기(regroup)도 폐기한 기기의 primary 창을 메인 봇으로 안 고름 — 끊은 기기 표시(rv)가 그 질의에 붙는지(device_id 칸)", async () => {
+  const { regroup } = await import("./importer/routes.ts");
+  const pick = async (revoke: boolean) => {
+    const s = setup({ title: "primary", handle: { engine: "herdr-own", pane: "p1", primary: true } });
+    if (revoke) s.db.prepare("UPDATE device SET revoked_at = ? WHERE id = ?").run(T, DEV);
+    const q = (sql: string, args: unknown[] = []): any => ({ sql, bind: (...a: unknown[]) => q(sql, a),
+      all: async () => ({ results: s.db.prepare(sql).all(...(args as never[])) }), first: async () => s.db.prepare(sql).get(...(args as never[])) ?? null,
+      run: async () => { const r = s.db.prepare(sql).run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes) } }; } });
+    const DB = { prepare: (sql: string) => q(sql), batch: async (ss: any[]) => { const out = []; for (const x of ss) out.push(/^\s*(select|with)/i.test(x.sql) ? await x.all() : await x.run()); return out; } };
+    await regroup({ ...s.env, DB } as never, MEMBER);
+    return !!s.db.prepare("SELECT 1 FROM mnode_item WHERE owner = ? AND item = ?").get(MEMBER, "window:lap:herdr:p1");   // 메인 봇으로 뽑힌 창은 노드에 안 묶임(group.ts)
+  };
+  assert.equal(await pick(false), false, "살아 있는 기기의 primary 창 = 메인 봇 → 노드에 안 묶임");
+  assert.equal(await pick(true), true, "폐기한 기기 창은 메인 봇이 아님 → 보통 창처럼 노드에 묶임");
+});

@@ -3,6 +3,7 @@ import { regroup } from "./importer/routes";
 import { parseConnectKind, titleOf, readsOf, oauthApi, CONNECT_TTL } from "./connectors/connect-card";
 import { boardHead, withHead } from "./board-head";
 import { primaryPick, notChat, type Item } from "./importer/group";
+import { REVOKED, withRv } from "./importer/revoked";
 import { prefsOf, tidyOn } from "./node-prefs";
 import { history, topics, promiseRows } from "./member-views";
 import { splitMarks, splitMove } from "./member-split";
@@ -132,10 +133,10 @@ const LOG_MAX = 600;
 const FRONT_NAMES = "SELECT json_extract(p.value, '$.name') FROM node_setting s, json_each(CASE WHEN json_valid(s.data) THEN CASE WHEN json_type(s.data, '$.front_door.pairs') = 'array' THEN json_extract(s.data, '$.front_door.pairs') END END) p WHERE s.owner = ?";
 export async function load(db: D1Database, me: string) {
   await closeStaleConnect(db, me);
-  const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb, cx] = await db.batch([
+  const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb, cx, rvd] = await db.batch([
     db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ? OR COALESCE(NULLIF(pinned_name, ''), name) IN (${FRONT_NAMES})) ORDER BY updated_at DESC`).bind(me, Date.now() - 24 * 3600_000, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
-    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle, (SELECT d.revoked_at IS NOT NULL FROM device d WHERE d.id = imp_item.device_id) rv FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
+    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
     db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT ${LOG_MAX}`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
     db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
@@ -145,8 +146,9 @@ export async function load(db: D1Database, me: string) {
     db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me),
     db.prepare("SELECT owner, seed, hue, photo FROM member_bot WHERE owner IN (?, ?)").bind(me, meKey(me)),
     db.prepare("SELECT id, win, kind, question, at, answered_at FROM board_card WHERE owner = ? AND state = 'closed' ORDER BY at DESC LIMIT 50").bind(me),
+    REVOKED(db, me),
   ]);
-  const items = new Map((it.results as R[]).map(r => [String(r.key), r]));
+  const items = new Map(withRv(it.results as R[], rvd.results as { id: string }[]).map(r => [String(r.key), r]));
   const keyOfWin = new Map<string, string>(), keysOfWin = new Map<string, string[]>();
   for (const r of tk.results as R[]) { keyOfWin.set(r.win, r.pane); (keysOfWin.get(r.win) || keysOfWin.set(r.win, []).get(r.win)!).unshift(r.pane); }
   const itemOfWin = new Map<string, string>(); for (const i of items.values()) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(i.win, i.key);

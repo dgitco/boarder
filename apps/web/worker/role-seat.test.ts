@@ -296,3 +296,14 @@ test("두 역할의 옛 창(past)이 같아도 win: pin 은 한 자리만(먼저
   const p2 = seatPlan({ seats, items: [W("m:a"), W("m:b")], tasks, map: [...map, { item: "win:m:old", node: "tk_tech", how: "pin" }] });
   assert.deepEqual(p2.pins, [], "두 번째 묶기에서 다른 자리로 안 옮김");
 });
+
+test("끊은 기기의 창은 자리에 안 붙음 — 자리 판정 · 다시 묶기 질의에 끊은 기기 표시(rv, device_id 칸)가 붙는지", async () => {
+  const { db, call } = await seed();
+  db.prepare("UPDATE device SET revoked_at = ? WHERE id = ?").run(Date.now(), "dev1");
+  const r = await call("POST", "/api/device/roles", { roles: SEATS1 });
+  assert.equal(r.status, 200, await r.clone().text());
+  const j = await r.json() as any;
+  for (const s of j.seats) assert.notEqual(s.why, "붙음", `${s.name}: 끊은 기기 창은 산 창이 아님`);
+  const g = await (await call("GET", "/api/device/roles")).json() as any;
+  for (const s of g.seats || []) assert.notEqual(s.why, "붙음", `GET ${s.name}`);
+});

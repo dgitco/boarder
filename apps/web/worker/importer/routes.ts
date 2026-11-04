@@ -1,4 +1,5 @@
 import { taskIssueFor } from "./task-repo";
+import { REVOKED, withRv } from "./revoked";
 import { cleanPins, readPins, savePins } from "../side-order";
 import { deviceFeatures } from "./device-engine";
 import type { Context, Hono } from "hono";
@@ -78,8 +79,8 @@ const json = <T>(v: string | null | undefined, d: T): T => { try { return v ? JS
 
 export async function regroup(env: Env, owner: string) {
   const t = now();
-  const [it, lg, cd, mp, nd, wn, ns, rl, em, tk] = await env.DB.batch([
-    env.DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, CASE WHEN kind = 'window' THEN handle END handle, (SELECT d.revoked_at IS NOT NULL FROM device d WHERE d.id = imp_item.device_id) rv FROM imp_item WHERE owner = ?").bind(owner),
+  const [it, lg, cd, mp, nd, wn, ns, rl, em, tk, rvd] = await env.DB.batch([
+    env.DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, device_id, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ?").bind(owner),
     env.DB.prepare(`SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) AND kind != 'me' ${notChat("board_log")} ORDER BY at DESC LIMIT 400`).bind(owner),
     env.DB.prepare(`SELECT id, win, state, question, at FROM board_card WHERE owner = ? ${notChat("board_card")} ORDER BY at DESC LIMIT 200`).bind(owner),
     env.DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(owner),
@@ -89,8 +90,9 @@ export async function regroup(env: Env, owner: string) {
     env.DB.prepare("SELECT name FROM role WHERE owner = ? UNION SELECT name FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed','gone')").bind(owner, owner),
     env.DB.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(owner),   // 보더 메인 봇이 떠 있나(있으면 들여온 primary 는 노드)
     env.DB.prepare("SELECT id, name, pinned_name, task, counts, archived_at FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(owner),
+    REVOKED(env.DB, owner),
   ]);
-  const items = (it.results as (Item & { refs: string })[]).map(r => ({ ...r, refs: json<string[]>(r.refs as unknown as string, []) }));
+  const items = withRv(it.results as (Item & { refs: string })[], rvd.results as { id: string }[]).map(r => ({ ...r, refs: json<string[]>(r.refs as unknown as string, []) }));
   const winNames = Object.fromEntries((wn.results as { pane: string; win: string }[]).map(r => [r.pane, r.win]));
   const keyOf = paneOf(wn.results as { pane: string; win: string }[]);
   const own = (w: string) => w === IMPORT_WIN || /(^|:)boarder(-|:)import$/.test(w);
@@ -164,13 +166,14 @@ export async function regroup(env: Env, owner: string) {
 /** 자리마다 지금 판정(묶기 뒤 값으로 — 이미 붙었으면 「붙음」) */
 async function seatState(DB: D1Database, me: string, seats: ReturnType<typeof seatsFromData>) {
   if (!seats.length) return [];
-  const [it, tk, mp] = await DB.batch([
-    DB.prepare("SELECT key, kind, win, session, engine, gone_at, state, state_at, seen_at, (SELECT d.revoked_at IS NOT NULL FROM device d WHERE d.id = imp_item.device_id) rv FROM imp_item WHERE owner = ? AND kind IN ('window','session')").bind(me),
+  const [it, tk, mp, rvd] = await DB.batch([
+    DB.prepare("SELECT key, kind, win, session, engine, gone_at, state, state_at, seen_at, device_id FROM imp_item WHERE owner = ? AND kind IN ('window','session')").bind(me),
     DB.prepare("SELECT id, name, pinned_name, archived_at, counts FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(me),
     DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(me),
+    REVOKED(DB, me),
   ]);
   const raw = new Map(seats.map(s => [s.name, s]));
-  return seatPlan({ seats, items: it.results as never, tasks: tk.results as never, map: mp.results as never }).seats.map(r => { const s = raw.get(r.name); return { ...r, ...(s?.primary ? { primary: true } : {}), ...(s?.fold?.length ? { fold: s.fold } : {}) }; });
+  return seatPlan({ seats, items: withRv(it.results as { device_id?: unknown }[], rvd.results as { id: string }[]) as never, tasks: tk.results as never, map: mp.results as never }).seats.map(r => { const s = raw.get(r.name); return { ...r, ...(s?.primary ? { primary: true } : {}), ...(s?.fold?.length ? { fold: s.fold } : {}) }; });
 }
 /** 보드 기록에 남길 자리표 한 줄 */
 const seatsLine = (seats: ReturnType<typeof seatsFromData>) => seats.map(s => `${s.name} = ${s.win}${s.primary ? "(메인 봇)" : ""}`).join(", ") || "없음";
