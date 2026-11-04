@@ -140,7 +140,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const qa = !ans.hidden && cur?.chan, ss = typeof openGpt !== 'function' ? '' : `<div class="bx-sech"><button type="button" class="bx-sec bx-fh" data-fold="ss" aria-expanded="${!SB.fold.ss}">세션${I.fold}</button><button type="button" class="bx-secadd" data-chatnew aria-label="새 세션" title="새 세션"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>`
       + `<div class="bx-sbody" data-sec="ss"${SB.fold.ss ? ' hidden' : ''}>${chats().map(c => `<button type="button" class="bx-it bx-chat" data-chat="${esc(c.sid)}" title="${esc(c.title)}"${qa === 'q:' + c.sid ? ' aria-current="page"' : ''}><span>${esc(c.title)}</span></button>`).join('')}</div>`;
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
-    const pins = (SB.pins || []).map(p => `<button type="button" class="bx-it" data-pin="${esc(p.id)}" title="${esc(p.title || p.id)}">${I.canvas}<span>${esc(p.title || p.id)}</span></button>`).join('');
+    const pins = (SB.pins || []).map(p => `<button type="button" class="bx-it" data-sidepin="${esc(p.id)}" title="${esc(p.title || p.id)}">${I.canvas}<span>${esc(p.title || p.id)}</span></button>`).join('');
     const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas') + pins;
     const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
     const part = {ib: sec('ib', '모아 보기', ib), nd: chs, ch: ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
@@ -269,7 +269,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const me = e.target.closest('[data-me]'); if (me) return meOpen(me);
     if (e.target.closest('[data-chatnew]')){ closeDr(); ibClose(); return openGpt('q:new'); }
     const q = e.target.closest('[data-chat]'); if (q){ closeDr(); ibClose(); return openGpt('q:' + q.dataset.chat); }
-    const pin = e.target.closest('[data-pin]'); if (pin){ closeDr(); const id = pin.dataset.pin; if (ARTS[id]){ if (!ans.hidden) closeAns(); return openArt(id); } return void window.open('/art/' + encodeURIComponent(id) + '/', '_blank', 'noopener'); }
+    const pin = e.target.closest('[data-sidepin]'); if (pin){ closeDr(); const id = pin.dataset.sidepin; if (ARTS[id]){ if (!ans.hidden) closeAns(); return openArt(id); } return void window.open('/art/' + encodeURIComponent(id) + '/', '_blank', 'noopener'); }
     const a = e.target.closest('[data-art]'); if (a){ closeDr(); if (!ARTS[a.dataset.art]) return lists(); if (!ans.hidden) closeAns(); return openArt(a.dataset.art); }
     const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go);
   });
