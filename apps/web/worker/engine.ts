@@ -16,7 +16,7 @@ const LIVE = ["opening", "starting", "busy", "idle", "waiting", "background"];
 /** 봉투 스위치 이름의 사람(주인 메일들 → '' = envelope:owner) — 엔진 DO 는 기기 주인 메일을 들고 있음 */
 export const flagOwner = (env: { ALLOW_EMAILS?: string }, owner: string) => String(env.ALLOW_EMAILS || "").split(",").map(s => s.trim().toLowerCase()).includes(owner.trim().toLowerCase()) ? "" : owner;
 const hhmm = (at: number) => new Date(at).toISOString().slice(11, 16) + " UTC";
-const rid = (p: string) => p + [...crypto.getRandomValues(new Uint8Array(12))].map(b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
+export const rid = (p: string) => p + [...crypto.getRandomValues(new Uint8Array(12))].map(b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
 export const engineOf = (env: EngEnv, device: string) => env.ENGINE.get(env.ENGINE.idFromName(`dev:${device}`));
 export class EngineError extends Error { constructor(public code: number, msg: string) { super(msg); } }
 
@@ -48,8 +48,30 @@ export async function promptsOf(db: D1Database, owner: string): Promise<{ mainHe
   return { mainHello: p.main ?? MAIN_HELLO, roles: p.roles ?? DEFAULT_ROLES };
 }
 export const MAIN_HELLO = `[Boarder] Boarder just started you as the person's main bot. Greet them in one or two sentences with boarder chat and ask what they would like their AI agents to do. If the board has top-level nodes (parent = "top"), split only among those nodes; recipients may split further only to their own direct children, never to another branch. With no top-level nodes, keep the existing routing.`;
-export function rolePrompt(name: string, instructions: string, oneGoal = true) {
-  return `[Boarder] You are the "${name}" agent. Your job: ${instructions}${oneGoal ? ONE_GOAL_ROLE : ""}
+/** 역할 표 perms(권한) 를 사람이 읽을 글로: 들여오기(importer/proposal.ts)가 서브에이전트 tools 칸을 그대로 넣어 JSON 배열 · 객체, YAML 흐름 꼴([Read, Grep]),
+ *  도구 이름만 쉼표로 늘어놓은 꼴(Read, Grep, Bash(git:*))이 올 수 있음 — 그 꼴이면 「쓸 수 있는 도구: …」, 아니면 적힌 글 그대로. 저장 값은 안 바꿈(화면에서 고치면 글로 저장) */
+const TOOL_NAME = /^(?:[A-Z][A-Za-z0-9]*(?:\([^()]*\))?|mcp__[\w*-]+)$/;
+export function permsText(raw: unknown): string {
+  const s = String(raw ?? "").trim(); if (!s) return "";
+  const tools = (xs: unknown[]) => { const t = xs.map(x => typeof x === "string" ? x.trim() : JSON.stringify(x)).filter(Boolean); return t.length ? `쓸 수 있는 도구: ${t.join(", ")}` : ""; };
+  if (/^[\[{]/.test(s)) {
+    try {
+      const v = JSON.parse(s);
+      if (Array.isArray(v)) return tools(v);
+      if (v && typeof v === "object") return Object.entries(v).map(([k, x]) => `${k}: ${Array.isArray(x) ? x.map(y => typeof y === "string" ? y : JSON.stringify(y)).join(", ") : typeof x === "string" ? x : JSON.stringify(x)}`).join("\n");
+    } catch {}
+    const m = /^\[([^[\]]*)\]$/.exec(s);
+    if (m) return tools(m[1].split(",").map(x => x.trim().replace(/^["']|["']$/g, "")));
+  }
+  const xs = s.split(",").map(x => x.trim());
+  return xs.length > 1 && xs.every(x => TOOL_NAME.test(x)) ? tools(xs) : s;
+}
+/** 권한 · 보고 라인(role.perms · role.supervise)은 비어 있으면 안 넣음 — 두 칸이 비면 예전 글과 글자 하나까지 같음(role-edit.test.ts) */
+export type RoleMore = { perms?: string | null; supervise?: string | null };
+export function rolePrompt(name: string, instructions: string, oneGoal = true, more: RoleMore = {}) {
+  const perms = permsText(more.perms), sup = String(more.supervise ?? "").trim();
+  const extra = (perms ? `\nPermissions (tools, connectors, what you must not do): ${perms}` : "") + (sup ? `\nReporting line (who you report to, who reviews your work, when to bring things to the person): ${sup}` : "");
+  return `[Boarder] You are the "${name}" agent. Your job: ${instructions}${oneGoal ? ONE_GOAL_ROLE : ""}${extra}
 Report on the person's Boarder board as you work: run \`boarder log start "<one line>"\` now, \`boarder log progress "<where things stand>"\` at each big step, \`boarder ask "<question>" --choice "<A>" --choice "<B>"\` only for decisions they must make, \`boarder log blocked "<why, who can unblock>"\` when stuck, and \`boarder log done "<result>"\` when finished. Write board lines in the person's language. Start now.`;
 }
 const WAKE = `[Boarder] This window has been quiet for a while. Write where things stand with boarder log progress, then keep going. If you are stuck, boarder log blocked "<why>"; if you are finished, boarder log done "<result>".`;
@@ -214,6 +236,7 @@ export class Engine extends DurableObject<EngEnv> {
         const mine = (await db.prepare("SELECT id FROM engine_window WHERE owner = ? AND device_id = ? AND kind = 'main' AND state NOT IN ('closed','failed')").bind(owner, device).all<{ id: string }>()).results;
         for (const w of mine) await this.close(w.id).catch(() => null);
       } else { await this.ensureMain(owner, device); this.ctx.waitUntil(this.seedRoles(owner).catch(() => null)); }   // 응답 길(flush · drain)을 안 막음
+      this.ctx.waitUntil(this.openPending(owner).catch(() => null));   // 엔진이 꺼진 동안 설정에서 만든 역할의 창
 
       await this.flush();   // 꺼져 있던 동안 쌓인 채팅 · 카드 답
       this.ctx.waitUntil(this.drainCmds().catch(() => null));
@@ -290,6 +313,26 @@ export class Engine extends DurableObject<EngEnv> {
     }
     await sysLine(db, owner, opened ? `기본 역할 ${opened}개(${defaults.map(r => r.name).join(" · ")})를 만들었어요` : `기본 역할을 만들었지만 창은 못 열었어요${why ? ` — ${why}` : ""}`).catch(() => null);
     return { seeded: defaults.length, opened };
+  }
+  /** 설정 「새 역할」을 엔진이 꺼진 동안 만든 역할(role.engine.pending = 1): 엔진이 붙으면(hello) 이 기기에 창을 엶 — 먼저 차지한 한 번만, 못 열면 다시 미룸 */
+  async openPending(owner: string) {
+    const db = this.env.DB, { device, harness } = await this.who();
+    if (harness || !device || !this.online()) return { opened: 0 };
+    const rs = (await db.prepare("SELECT id, name, instructions, perms, supervise, engine FROM role WHERE owner = ? AND (CASE WHEN json_valid(engine) THEN json_extract(engine, '$.pending') END) = 1 ORDER BY created_at LIMIT 10").bind(owner).all<{ id: string; name: string; instructions: string; perms: string; supervise: string; engine: string }>()).results;
+    let opened = 0;
+    for (const r of rs) {
+      if (await openedLastHour(db, owner) >= OPEN_PER_HOUR) break;
+      if (await sameGoalWindow(db, owner, r.name, { liveOnly: true })) continue;
+      const claim = await db.prepare("UPDATE role SET engine = json_set(engine, '$.pending', 0, '$.device', ?) WHERE owner = ? AND id = ? AND (CASE WHEN json_valid(engine) THEN json_extract(engine, '$.pending') END) = 1").bind(device, owner, r.id).run();
+      if (!claim.meta.changes) continue;
+      let cwd = `~/boarder/${r.id}`; try { cwd = JSON.parse(r.engine).cwd || cwd; } catch {}
+      try { await openRole(this.env, owner, device, r.id, { name: r.name, instructions: r.instructions, perms: r.perms, supervise: r.supervise, cwd }, "pending", o => this.open(o)); opened++; }
+      catch {
+        await db.batch([db.prepare("UPDATE role SET engine = json_set(engine, '$.pending', 1) WHERE owner = ? AND id = ? AND json_valid(engine)").bind(owner, r.id),
+          db.prepare("UPDATE engine_window SET state = 'closed', state_at = ? WHERE owner = ? AND role_id = ? AND state = 'failed'").bind(Date.now(), owner, r.id)]).catch(() => null);
+      }
+    }
+    return { opened };
   }
   async ensureMain(owner: string, device: string) {
     const db = this.env.DB;
@@ -426,11 +469,11 @@ export class Engine extends DurableObject<EngEnv> {
     const claim = await this.env.DB.prepare("UPDATE engine_window SET state = 'starting', state_at = ?, woke_at = NULL, note = NULL WHERE id = ? AND state IN ('parked','gone')").bind(Date.now(), id).run();
     if (!claim.meta.changes) { if (text && LIVE.includes((await this.row(id))?.state || "")) return this.pend({ id, text, at: Date.now(), k }); throw new EngineError(1, "다시 열 수 없는 창이에요"); }
     const cfg = await ownerCfg(this.env.DB, w.owner);
-    const role = w.role_id ? await this.env.DB.prepare("SELECT name, instructions, updated_at FROM role WHERE owner = ? AND id = ?").bind(w.owner, w.role_id).first<{ name: string; instructions: string; updated_at: number | null }>() : null;
+    const role = w.role_id ? await this.env.DB.prepare("SELECT name, instructions, perms, supervise, updated_at FROM role WHERE owner = ? AND id = ?").bind(w.owner, w.role_id).first<{ name: string; instructions: string; perms: string; supervise: string; updated_at: number | null }>() : null;
     const fresh = !!role && Number(role.updated_at || 0) > (Number(h.role_at) || w.created_at || 0);
     const resumeText = text || `[Boarder] This window was parked and is open again. Continue from your last board line.`;
     const { role_at: _roleAt, ...dh } = h;   // 받은 시각은 서버 몫 — 기기 손잡이로 안 보냄(되돌아와 새 값을 덮지 않게)
-    try { await this.cmd("reopen", { id, handle: { ...dh, ...(role ? { name: role.name } : {}), perm: cfg.perm }, text: fresh ? `${rolePrompt(role!.name, role!.instructions, cfg.rules.one_goal !== false)}\n\n${resumeText}` : resumeText }); }
+    try { await this.cmd("reopen", { id, handle: { ...dh, ...(role ? { name: role.name } : {}), perm: cfg.perm }, text: fresh ? `${rolePrompt(role!.name, role!.instructions, cfg.rules.one_goal !== false, role!)}\n\n${resumeText}` : resumeText }); }
     catch (e) {
       const st = await this.cmd("state", { id }).catch(() => null), s = String(st?.state || "");
       if (/^(busy|idle|waiting|background|starting)$/.test(s)) {
@@ -670,15 +713,39 @@ export async function approveDraft(env: EngEnv, owner: string, draftId: string) 
   const cwd = d.cwd || `~/boarder/${roleId}`;
   await db.prepare("INSERT INTO role(owner, id, name, instructions, intake, engine, source, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(owner, roleId, d.name, d.instructions, d.brief, JSON.stringify({ device: dev, engine: "tmux", model: MODEL, cwd }), "bot", now, now).run();
   let w: { id: string };
-  const { rules } = await ownerCfg(db, owner).catch(() => ({ rules: RULES }));
-  try { w = await engineOf(env, dev).open({ owner, kind: "role", role_id: roleId, name: d.name, cwd, prompt: rolePrompt(d.name, d.instructions, rules.one_goal !== false) }); }
+  try { w = await openRole(env, owner, dev, roleId, { name: d.name, instructions: d.instructions, cwd }, "approved"); }
   catch (e) {
     await db.batch([db.prepare("UPDATE role_draft SET state = 'draft', role_id = NULL, updated_at = ? WHERE id = ?").bind(Date.now(), d.id), db.prepare("DELETE FROM role WHERE owner = ? AND id = ?").bind(owner, roleId)]);
     throw e;
   }
-  await sysLine(db, owner, `「${d.name}」 창을 열었어요`, w.id);
-  await noteMain(env, owner, `[Boarder] The person approved the role "${d.name}" and Boarder opened its window. Tell them in one line with boarder chat.`).catch(() => null);   // 메인 봇도 알게
   return { role_id: roleId, window: w.id };
+}
+export type RoleSpec = { name: string; instructions: string; cwd: string } & RoleMore;
+export async function openRole(env: EngEnv, owner: string, dev: string, roleId: string, r: RoleSpec, how: "approved" | "created" | "pending", open?: (o: Parameters<Engine["open"]>[0]) => Promise<{ id: string }>) {
+  const db = env.DB, { rules } = await ownerCfg(db, owner).catch(() => ({ rules: RULES }));
+  const o = { owner, kind: "role" as const, role_id: roleId, name: r.name, cwd: r.cwd, prompt: rolePrompt(r.name, r.instructions, rules.one_goal !== false, r) };
+  const w = open ? await open(o) : await engineOf(env, dev).open(o);
+  await sysLine(db, owner, `「${r.name}」 창을 열었어요`, w.id).catch(() => null);
+  // 메인 봇도 알게. 미뤄 둔 역할(엔진 DO 안 hello)은 같은 DO 를 다시 부르지 않게 알리지 않음 — 시스템 줄은 남음
+  if (how !== "pending") await noteMain(env, owner, `[Boarder] The person ${how === "approved" ? "approved" : "made in Boarder settings"} the role "${r.name}" and Boarder opened its window. Tell them in one line with boarder chat.`).catch(() => null);
+  return w;
+}
+export const OPEN_PER_HOUR = 30;
+export const openedLastHour = async (db: D1Database, owner: string) => (await db.prepare("SELECT count(*) AS n FROM engine_window WHERE owner = ? AND created_at > ?").bind(owner, Date.now() - 3600_000).first<{ n: number }>())?.n || 0;
+export const pendingRoles = async (db: D1Database, owner: string) => (await db.prepare("SELECT count(*) AS n FROM role WHERE owner = ? AND (CASE WHEN json_valid(engine) THEN json_extract(engine, '$.pending') END) = 1").bind(owner).first<{ n: number }>())?.n || 0;
+export async function sameGoalWindow(db: D1Database, owner: string, name: string, o: { liveOnly?: boolean } = {}): Promise<{ name: string; id: string | null; pending: boolean } | null> {
+  const cfg = await db.prepare("SELECT (SELECT rules FROM engine_owner WHERE owner = ?1) rules, (SELECT json_extract(data, '$.rules.one_goal') FROM node_setting WHERE owner = ?1 AND json_valid(data)) og").bind(owner).first<{ rules: string | null; og: number | null }>().catch(() => null);
+  let oneGoal = true; try { oneGoal = JSON.parse(cfg?.rules || "{}").one_goal !== false; } catch {}
+  if (cfg?.og === 0 || cfg?.og === 1) oneGoal = cfg.og === 1;
+  if (!oneGoal) return null;
+  const norm = (t: string) => String(t || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const live = (await db.prepare("SELECT r.name, w.id FROM role r JOIN engine_window w ON w.role_id = r.id AND w.owner = r.owner WHERE r.owner = ? AND w.state NOT IN ('closed','failed') AND w.device_id IN (SELECT id FROM device WHERE revoked_at IS NULL)").bind(owner).all<{ name: string; id: string }>()).results;
+  const w = live.find(x => norm(x.name) === norm(name));
+  if (w) return { name: w.name, id: w.id, pending: false };
+  if (o.liveOnly) return null;
+  const wait = (await db.prepare("SELECT id, name FROM role WHERE owner = ? AND (CASE WHEN json_valid(engine) THEN json_extract(engine, '$.pending') END) = 1").bind(owner).all<{ id: string; name: string }>()).results;
+  const p = wait.find(x => norm(x.name) === norm(name));
+  return p ? { name: p.name, id: null, pending: true } : null;
 }
 
 export async function harnessDevice(db: D1Database) {

@@ -1,4 +1,4 @@
-import { editRoleFromDevice } from "./role-edit";
+import { editRoleFromDevice, sameGoalWindow } from "./role-edit";
 import type { EngEnv } from "./engine";
 import { nodeRoot, primaryRoot, primaryThread } from "./member-board";
 import { overdue } from "./member-views";
@@ -83,15 +83,9 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
         return { ...r, sent };
       }
       case "role_draft": {
-        const cfg = await db.prepare("SELECT (SELECT rules FROM engine_owner WHERE owner = ?1) rules, (SELECT json_extract(data, '$.rules.one_goal') FROM node_setting WHERE owner = ?1 AND json_valid(data)) og").bind(owner).first<{ rules: string | null; og: number | null }>().catch(() => null);
-        let oneGoal = true; try { oneGoal = JSON.parse(cfg?.rules || "{}").one_goal !== false; } catch {}
-        if (cfg?.og === 0 || cfg?.og === 1) oneGoal = cfg.og === 1;
-        const norm = (t: string) => String(t || "").replace(/\s+/g, " ").trim().toLowerCase();
-        if (oneGoal) {
-          const live = (await db.prepare("SELECT r.name, w.id FROM role r JOIN engine_window w ON w.role_id = r.id AND w.owner = r.owner WHERE r.owner = ? AND w.state NOT IN ('closed','failed') AND w.device_id IN (SELECT id FROM device WHERE revoked_at IS NULL)").bind(owner).all<{ name: string; id: string }>()).results;
-          const same = live.find(x => norm(x.name) === norm(a.name));
-          if (same) return { refused: true, same_role: same.name, window: same.id, why: `「${same.name}」 role already has a window — one role = one goal. Hand the ask to it with chat_split (one part for that role) instead of drafting it again.` };
-        }
+        // 노드 = 목표: 같은 이름의 역할 창이 살아 있으면 새 역할 대신 그 창으로(감독 기본값 one_goal, 설정에서 끔) — 설정 「새 역할」과 같은 판정(role-edit.ts)
+        const same = await sameGoalWindow(db, owner, a.name);
+        if (same) return { refused: true, same_role: same.name, window: same.id, why: same.pending ? `「${same.name}」 role already exists and opens its window when the engine starts — one role = one goal. Don't draft it again; tell the person it is waiting for the engine.` : `「${same.name}」 role already has a window — one role = one goal. Hand the ask to it with chat_split (one part for that role) instead of drafting it again.` };
         const id = `rd_${Date.now().toString(36)}${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`, now = Date.now();
         await db.batch([
           db.prepare("UPDATE role_draft SET state = 'revised', updated_at = ? WHERE owner = ? AND name = ? AND state = 'draft'").bind(now, owner, a.name),   // 같은 이름 초안을 다시 올리면 옛 카드는 「고침」

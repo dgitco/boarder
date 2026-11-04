@@ -26,7 +26,7 @@ export { Engine } from "./engine";
 export { Search } from "./search";
 export { Pusher } from "./push-do";
 import { mountRoleEdit, toolError } from "./role-edit";
-import { engineOf, chatToMain, approveDraft, deliverTo, ownerCfg, sysLine, RULES, engineSend, ownerWindows, harnessDevice, liveDevice, type Engine } from "./engine";
+import { engineOf, chatToMain, approveDraft, deliverTo, ownerCfg, sysLine, RULES, engineSend, ownerWindows, harnessDevice, liveDevice, openedLastHour, OPEN_PER_HOUR, type Engine } from "./engine";
 import shellJs from "./legacy/shell.js?raw";
 import shellCss from "./legacy/shell.css?raw";
 import installSh from "./install/install.sh?raw";
@@ -1750,8 +1750,7 @@ app.post("/api/engine/open", async c => {
   const db = c.env.DB, dev = b.device ? String(b.device) : d.id;
   const ok = await db.prepare("SELECT 1 FROM device WHERE id = ? AND owner = ? AND revoked_at IS NULL AND scope = 'full' AND engine_at > ?").bind(dev, d.owner, Date.now() - 120_000).first();
   if (!ok) return c.json({ ok: false, error: "엔진이 켜진 내 기기가 아니에요" }, 409);
-  const n = (await db.prepare("SELECT count(*) AS n FROM engine_window WHERE owner = ? AND created_at > ?").bind(d.owner, Date.now() - 3600_000).first<{ n: number }>())?.n || 0;
-  if (n >= 30) return c.json({ ok: false, error: "한 시간에 30창까지예요" }, 429);
+  if (await openedLastHour(db, d.owner) >= OPEN_PER_HOUR) return c.json({ ok: false, error: `한 시간에 ${OPEN_PER_HOUR}창까지예요` }, 429);   // 설정 「새 역할」(role-edit.ts)과 같은 한도
   try {
     const r = await engineOf(c.env, dev).open({ owner: d.owner, kind: "role", name, cwd, prompt, ...(config_dir ? { config_dir } : {}) });
     await sysLine(db, d.owner, `「${name}」 창을 기기(${line(d.name, 40) || "이름 없음"})에서 바로 열었어요`, r.id).catch(() => null);
