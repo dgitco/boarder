@@ -10,7 +10,7 @@ import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } 
 import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, type Bot } from "./install";
 import { BUNDLE_KEYS } from "./harness-bundles";
 import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
-import { cleanPins, cleanSide, readPins, readSide, savePins, saveSide } from "./side-order";
+import { cleanHide, cleanPins, cleanSide, readHide, readPins, readSide, saveHide, savePins, saveSide } from "./side-order";
 import * as pc from "./person-custom";
 import * as artView from "./art-view";
 import * as agentFace from "./agent-face";
@@ -1098,12 +1098,18 @@ app.post("/api/me/avatar", async c => {
 app.get("/api/me/side", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const me = s.user.email.toLowerCase();
-  return c.json({ side: await readSide(c.env.DB, me), pins: await readPins(c.env.DB, me) }, 200, { "cache-control": "no-store" });
+  return c.json({ side: await readSide(c.env.DB, me), pins: await readPins(c.env.DB, me), hide: await readHide(c.env.DB, me) }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/side", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  const b = Object(await c.req.json().catch(() => ({}))) as { side?: unknown; pins?: unknown };
+  const b = Object(await c.req.json().catch(() => ({}))) as { side?: unknown; pins?: unknown; hide?: unknown };
+  if (b.hide !== undefined) {
+    const hide = cleanHide(b.hide);
+    if (!hide) return c.json({ ok: false, error: "값" }, 400);
+    await saveHide(c.env.DB, s.user.email.toLowerCase(), hide);
+    return c.json({ ok: true, hide });
+  }
   if (b.pins !== undefined) {
     const pins = cleanPins(b.pins);
     if (!pins) return c.json({ ok: false, error: "캔버스 주소가 틀렸거나 12개를 넘었어요" }, 400);

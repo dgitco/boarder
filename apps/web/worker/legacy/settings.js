@@ -810,6 +810,20 @@
       if (id) save([...PINS, {id, title}]);
     };
   };
+  let HIDE = null;
+  const TOPS = [['node', '노드'], ['canvas', '캔버스'], ['feed', '피드']];
+  const hideDraw = async el => {
+    const box0 = el.querySelector('[data-tops]');
+    if (!HIDE) try { HIDE = (await api('GET', 'api/me/side')).hide || []; } catch (e) { if (box0) box0.innerHTML = `<b>사이드바 맨 위 줄</b><p class="bxs-err">${esc(e.message)}</p>`; return; }
+    const box = el.querySelector('[data-tops]'); if (!box) return;
+    box.innerHTML = `<b>사이드바 맨 위 줄</b><p class="bxs-mut">끈 줄은 왼쪽 칸 · 휴대폰 서랍에서 빠져요. 그 화면은 주소로 그대로 열려요</p>`
+      + TOPS.map(([k, v]) => `<div class="bxs-row between"><span>${v}</span>${sw(!HIDE.includes(k), `data-top="${k}"`, v + ' 보이기')}</div>`).join('');
+    box.onclick = async e => {
+      const b = e.target.closest('[data-top]'); if (!b) return;
+      const k = b.dataset.top, next = HIDE.includes(k) ? HIDE.filter(x => x !== k) : [...HIDE, k];
+      try { HIDE = (await api('POST', 'api/me/side', {hide: next})).hide; window.dispatchEvent(new CustomEvent('hbhide', {detail: HIDE})); hideDraw(el); } catch (er) { toast(er.message); }
+    };
+  };
   PAGES.look = async el => {
     const TH = [['system', '시스템'], ['light', '라이트'], ['dark', '다크']];
     const cur = () => { try { return localStorage.getItem('hb-theme') || 'system'; } catch { return 'system'; } };
@@ -820,11 +834,12 @@
       el.innerHTML = header('모양', '내 계정에 저장돼 다른 기기에서도 같아요.')
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>테마</b><p class="bxs-mut">시스템은 기기 설정(라이트 · 다크)을 따라요</p></div><div class="bxs-seg" role="radiogroup" aria-label="테마">${TH.map(([k, v]) => `<button type="button" role="radio" aria-checked="${cur() === k}" data-th="${k}">${v}</button>`).join('')}</div></div></div>`
         + accCard()
+        + '<div class="bxs-card" data-tops></div>'
         + '<div class="bxs-card" data-pins></div>'
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>움직임 줄이기</b><p class="bxs-mut">블롭 · 파비콘 깜빡임 · 화면 전환 움직임을 멈춰요(기기의 움직임 줄이기도 따라요)</p></div>${sw(still(), `data-st="${still() ? 0 : 1}"`, '움직임 줄이기')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>파비콘 눈 깜빡</b><p class="bxs-mut">브라우저 탭 아이콘이 5초마다 눈을 깜빡여요. 끄면 탭 아이콘만 멈추고 다른 움직임은 그대로예요</p></div>${sw(favb(), `data-fb="${favb() ? 0 : 1}"`, '파비콘 눈 깜빡')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>폰에서 글을 누르면 스레드 열기</b><p class="bxs-mut">휴대폰에서 채널 글을 짧게 누르면 그 글 스레드가 열려요. 끄면 길게 눌러 메뉴에서 회신해요. 컴퓨터(마우스)는 그대로예요</p></div>${sw(tapt(), `data-tt="${tapt() ? 0 : 1}"`, '폰에서 글을 누르면 스레드 열기')}</div></div>`;
-      pinsDraw(el);
+      hideDraw(el); pinsDraw(el);
     };
     const setAcc = (v, redraw = true) => {
       const old = ACC(); if (v === old) return;

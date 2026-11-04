@@ -100,8 +100,9 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const SIDE_DEF = af => ['ib', ...(af ? ['ch', 'nd'] : ['nd', 'ch']), 'rc', 'ss', 'xc'];
   const sideOrder = af => { const d = SIDE_DEF(af), o = (SB.order || []).filter(k => d.includes(k)); for (const k of d) if (!o.includes(k)) o.splice(Math.min(d.indexOf(k), o.length), 0, k); return o; };
   window.addEventListener('hbpins', e => { SB.pins = e.detail; saveSB(); lists(); });   // 설정 › 모양에서 고침
+  window.addEventListener('hbhide', e => { SB.hide = e.detail; saveSB(); lists(); });
   const sideSave = o => { SB.order = o; saveSB(); fetch('api/me/side', {method: 'POST', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({side: o})}).catch(() => {}); };
-  fetch('api/me/side', {cache: 'no-store'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.side) && JSON.stringify(j.side) !== JSON.stringify(SB.order || null)){ SB.order = j.side; saveSB(); if (on()) lists(); } if (j && Array.isArray(j.pins) && JSON.stringify(j.pins) !== JSON.stringify(SB.pins || [])){ SB.pins = j.pins; saveSB(); if (on()) lists(); } }).catch(() => {});   // 다른 기기에서 바꾼 순서
+  fetch('api/me/side', {cache: 'no-store'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.side) && JSON.stringify(j.side) !== JSON.stringify(SB.order || null)){ SB.order = j.side; saveSB(); if (on()) lists(); } if (j && Array.isArray(j.pins) && JSON.stringify(j.pins) !== JSON.stringify(SB.pins || [])){ SB.pins = j.pins; saveSB(); if (on()) lists(); } if (j && Array.isArray(j.hide) && JSON.stringify(j.hide) !== JSON.stringify(SB.hide || [])){ SB.hide = j.hide; saveSB(); if (on()) lists(); } }).catch(() => {});   // 다른 기기에서 바꾼 순서
   // 끌기: 칸 머리(접기 단추)를 누른 채 6px 넘게 움직이면 끌기 — 놓은 자리 위아래로 칸을 옮김. 덜 움직이면 그대로 접기
   document.addEventListener('pointerdown', e => {
     const h = e.button === 0 && e.target.closest?.('.bx-sbsc .bx-sec[data-fold]:not(.bx-sub)'); if (!h) return;
@@ -150,7 +151,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       + `<div class="bx-sbody" data-sec="ss"${SB.fold.ss ? ' hidden' : ''}>${chats().map(c => `<button type="button" class="bx-it bx-chat" data-chat="${esc(c.sid)}" title="${esc(c.title)}"${qa === 'q:' + c.sid ? ' aria-current="page"' : ''}><span>${esc(c.title)}</span></button>`).join('')}</div>`;
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const pins = (SB.pins || []).map(p => `<button type="button" class="bx-it" data-sidepin="${esc(p.id)}" title="${esc(p.title || p.id)}">${I.canvas}<span>${esc(p.title || p.id)}</span></button>`).join('');
-    const head = it('node', I.node, '노드', '', top === 'node') + it('canvas', I.canvas, '캔버스', '', top === 'canvas') + it('feed', I.feed, '피드', '', top === 'feed') + pins;
+    const hid = new Set(Array.isArray(SB.hide) ? SB.hide : []), top1 = (k, icon, label) => hid.has(k) ? '' : it(k, icon, label, '', top === k);
+    const head = top1('node', I.node, '노드') + top1('canvas', I.canvas, '캔버스') + top1('feed', I.feed, '피드') + pins;
     const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = TS ? (tks ? sec('nd', '태스크', tks) : '') : nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
     const part = {ib: sec('ib', '모아 보기', ib), nd: chs, ch: ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
     const body = '<div class="bx-sbsc">' + head + sideOrder(agentsFirst).map(k => part[k] || '').join('') + '</div>';

@@ -28,6 +28,25 @@ export async function savePins(db: D1Database, owner: string, pins: Pin[]) {
     .bind(owner, JSON.stringify({ pins }), Date.now(), JSON.stringify(pins)).run();
 }
 
+export const HIDE_KEYS = ["node", "canvas", "feed"] as const;
+/** 받은 값 → 저장할 목록(틀리면 null, 빈 배열은 「다 보임」). 모르는 · 겹친 열쇠는 버림 */
+export function cleanHide(v: unknown): string[] | null {
+  if (!Array.isArray(v) || v.length > 10) return null;
+  const out: string[] = [];
+  for (const k of v) if (typeof k === "string" && (HIDE_KEYS as readonly string[]).includes(k) && !out.includes(k)) out.push(k);
+  return out;
+}
+/** 저장한 적 없거나 깨졌으면 빈 목록(다 보임) */
+export async function readHide(db: D1Database, owner: string): Promise<string[]> {
+  const r = await db.prepare(`SELECT json_extract(${BASE}, '$.hide') s FROM node_setting WHERE owner = ?`).bind(owner).first<{ s: string | null }>().catch(() => null);
+  if (!r?.s) return [];
+  try { return cleanHide(JSON.parse(r.s)) ?? []; } catch { return []; }
+}
+export async function saveHide(db: D1Database, owner: string, hide: string[]) {
+  await db.prepare(`INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(${BASE}, '$.hide', json(?4)), updated_at = ?3`)
+    .bind(owner, JSON.stringify({ hide }), Date.now(), JSON.stringify(hide)).run();
+}
+
 /** 받은 값 → 저장할 순서(틀리면 null) */
 export function cleanSide(v: unknown): string[] | null {
   if (!Array.isArray(v) || v.length > 20) return null;
