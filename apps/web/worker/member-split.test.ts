@@ -30,6 +30,90 @@ function setup() {
 const get = async (D1: D1Database, me: string, path: string) => (await (await MB.get(D1, me, { name: "모찌" }, new URL("https://x" + path), async () => null, undefined, "김") as Response).json()) as any;
 const PARTS = [{ node: "매출 보고", text: "매출 보고 자료 모아 주고" }, { node: "메일 비서", text: "메일함에 온 견적 답장도 써 줘" }];
 
+function treeSetup() {
+  const s = setup(), now = Date.now();
+  for (const [id, name, state] of [["n-person", "개인 비서", "idle"], ["n-mail", "메일 정리", "parked"], ["n-deep", "증빙 정리", "working"], ["n-loose", "혼자 일", "working"]])
+    s.db.prepare("INSERT INTO mnode(owner, id, name, state, created_at, updated_at) VALUES (?,?,?,?,?,?)").run(A, id, name, state, now, now);
+  s.db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, created_at) VALUES (?,?,?,?,?,?,?)").run("ew_main01", A, "d1", "main", "메인 봇", "idle", now);
+  s.db.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?)").run(A, "win:신고 담당 창", "n-1", "auto");
+  s.db.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").run(A, "메일 정리", "blocked", "메일 권한 확인 중", now);
+  s.db.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?)").run(A, "win:메일 정리", "n-mail", "auto");
+  s.db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { "n-1": "top", ew_mail01: "top", "n-person": "top", "n-2": "n-1", "n-mail": "ew_mail01", "n-deep": "n-2", "n-3": "n-1" } }), now);
+  return s;
+}
+
+test("트리 나누기: top 셋이 있으면 메인 봇은 그 셋만 — 자식 · 혼자 일 · id · 판 번호 우회도 쓰기 전에 거절", async () => {
+  const { db, D1, root } = treeSetup();
+  const sent: string[] = [];
+  const tool = localTools(D1, A, "메인 봇", "https://x", "test:ew_main01", undefined, async p => { sent.push(p); return { state: "in" }; });
+  const count = () => Number(db.prepare("SELECT count(*) n FROM board_log").get()!.n), before = count();
+  for (const node of ["자료 정리", "n-2", MB.paneOfId("n-2"), "혼자 일"])
+    await assert.rejects(tool("chat_split", { thread: root, parts: [PARTS[0], { node, text: "잘못된 몫" }] }), /맨 위 노드/);
+  assert.equal(count(), before); assert.equal(sent.length, 0);
+  const ok = await tool("chat_split", { thread: root, parts: [...PARTS, { node: "개인 비서", text: "개인 일정" }] }) as any;
+  assert.equal(ok.splits.length, 3); assert.equal(sent.length, 3);
+});
+
+test("트리 나누기: 받은 노드 창은 자기 직접 자식에게 재분배, 원글 스레드 유지 · 여러 층 · 중복 건너뜀", async () => {
+  const { D1, root } = treeSetup(), sent: string[] = [];
+  await localTools(D1, A, "메인 봇", "https://x")("chat_split", { thread: root, parts: [PARTS[0]] });
+  const tool = localTools(D1, A, "신고 담당 창", "https://x", "", undefined, async (_p, text) => { sent.push(text); return { state: "in" }; });
+  const parts = [{ node: "자료 정리", text: "자료 정리 부탁" }];
+  const r = await tool("chat_split", { thread: root, parts }) as any;
+  assert.deepEqual(r.splits.map((x: any) => x.node), ["매출 보고", "자료 정리"]);
+  assert.match(sent[0], new RegExp(`스레드 ${root.replace(".", "\\.")}`));
+  assert.match(sent[0], /당신 밑 노드:.*증빙 정리/);
+  const again = await tool("chat_split", { thread: root, parts }) as any;
+  assert.deepEqual(again.skipped, ["자료 정리"]); assert.equal(sent.length, 1);
+  const child = await localTools(D1, A, "자료 정리", "https://x")("chat_split", { thread: root, parts: [{ node: "증빙 정리", text: "증빙 부탁" }] }) as any;
+  assert.equal(child.splits.at(-1).node, "증빙 정리");
+});
+
+test("트리 나누기: 받은 창도 남의 가지 · 다른 top · 손자 · 자기 자신으로는 못 넘기고, 받기 전에는 자식에게도 못 넘김", async () => {
+  const { db, D1, root } = treeSetup();
+  const tool = localTools(D1, A, "신고 담당 창", "https://x");
+  await assert.rejects(tool("chat_split", { thread: root, parts: [{ node: "자료 정리", text: "x" }] }), /받은/);
+  await localTools(D1, A, "메인 봇", "https://x")("chat_split", { thread: root, parts: [PARTS[0]] });
+  const before = Number(db.prepare("SELECT count(*) n FROM board_log").get()!.n);
+  for (const node of ["메일 정리", "메일 비서", "증빙 정리", "매출 보고", "혼자 일"])
+    await assert.rejects(tool("chat_split", { thread: root, parts: [{ node: "자료 정리", text: "가능한 몫" }, { node, text: "x" }] }), /자식 노드/);
+  await assert.rejects(localTools(D1, A, "모르는 창", "https://x")("chat_split", { thread: root, parts: [PARTS[1]] }), /보낸 창/);
+  assert.equal(Number(db.prepare("SELECT count(*) n FROM board_log").get()!.n), before);
+});
+
+test("트리 나누기: 전달문에 직접 자식 이름 · 현재 상태만, 엔진 역할 창도 재분배 가능", async () => {
+  const { D1, root } = treeSetup(), sent: string[] = [];
+  const tool = localTools(D1, A, "메인 봇", "https://x", "", undefined, async (_p, text) => { sent.push(text); return { state: "in" }; });
+  await tool("chat_split", { thread: root, parts: PARTS });
+  assert.match(sent[0], /당신 밑 노드:.*자료 정리/);
+  assert.doesNotMatch(sent[0], /증빙 정리|메일 정리|옛 일/);
+  assert.match(sent[1], /당신 밑 노드:.*메일 정리 · 막힘/);
+  assert.ok(sent.every(text => !/[\n\r]/.test(text)), "창 입력은 한 줄");
+  const r = await localTools(D1, A, "메일 비서", "https://x", "test:ew_mail01")("chat_split", { thread: root, parts: [{ node: "메일 정리", text: "메일 부탁" }] }) as any;
+  assert.equal(r.splits.at(-1).node, "메일 정리");
+});
+
+test("트리 나누기: top 없으면 부모 설정이 있어도 기존대로 어느 노드든, 다른 회원의 top 설정은 영향 없음", async () => {
+  const { db, D1, root } = setup(), sent: string[] = [];
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(A, JSON.stringify({ parent: { "n-2": "n-1" } }), Date.now());
+  db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(B, JSON.stringify({ parent: { "n-9": "top" } }), Date.now());
+  const r = await localTools(D1, A, "이전 창", "https://x", "", undefined, async (_p, text) => { sent.push(text); return { state: "in" }; })("chat_split", { thread: root, parts: [{ node: "자료 정리", text: "x" }, PARTS[1]] }) as any;
+  assert.deepEqual(r.splits.map((x: any) => x.node), ["자료 정리", "메일 비서"]);
+  assert.ok(sent.every(text => !text.includes("당신 밑 노드")), "top 없는 보드에는 자식으로 제한하는 안내도 붙이지 않음");
+});
+
+test("트리 나누기: 사람이 고른 들여온 메인 창도 top으로 나눔 · 메인과 이름이 같은 역할 창은 토큰 id로 구별", async () => {
+  const { db, D1, root } = treeSetup(), now = Date.now();
+  db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, created_at) VALUES (?,?,?,?,?,?,?)").run("ew_same01", A, "d1", "role", "메인 봇", "idle", now);
+  await assert.rejects(localTools(D1, A, "메인 봇", "https://x", "test:ew_same01")("chat_split", { thread: root, parts: [PARTS[0]] }), /받은/);
+  db.prepare("INSERT INTO imp_item(owner, key, kind, engine, title, state, win, seen_at) VALUES (?,?,?,?,?,?,?,?)").run(A, "window:lap:chief", "window", "tmux-own", "비서실장", "working", "lap:chief", now);
+  db.prepare("INSERT INTO agent_token(hash, pane, win, owner, created_at) VALUES (?,?,?,?,?)").run("fake", "lap:chief", "메인 담당", A, now);
+  db.prepare("UPDATE node_setting SET data = json_set(data, '$.primary_item', ?) WHERE owner = ?").run("window:lap:chief", A);
+  const main = localTools(D1, A, "메인 담당", "https://x", "lap:chief");
+  await assert.rejects(main("chat_split", { thread: root, parts: [{ node: "자료 정리", text: "x" }] }), /맨 위 노드/);
+  assert.equal((await main("chat_split", { thread: root, parts: [PARTS[0]] }) as any).ok, true);
+});
+
 test("chat_split: 원글 splits(주인 꼴 node · pane · post · at · state) · 노드 채널 몫 글 split_from, 같은 노드 다시는 건너뜀", async () => {
   const { D1, root } = setup();
   const tool = localTools(D1, A, "메인 봇", "https://board.example");
@@ -174,4 +258,15 @@ test("queueToImported post: 켜면 args.post = true(보내기 · 다시 열기 �
   const args = (id: string) => JSON.parse(String((db.prepare("SELECT args FROM engine_cmd WHERE id = ?").get(id) as any).args));
   assert.equal(args(a).post, true); assert.equal(args(b).post, true);
   assert.ok(!("post" in args(c)), "기본은 표지 없음");
+});
+
+test("트리 나누기: 다른 가지에 같은 이름 노드가 있어도 허용된 자식으로 감 — 잘못 거절하지 않음", async () => {
+  const { db, D1, root } = treeSetup(), now = Date.now();
+  db.prepare("INSERT INTO mnode(owner, id, name, state, created_at, updated_at) VALUES (?,?,?,?,?,?)").run(A, "n-dup0", "자료 정리", "idle", now, now);
+  db.prepare("UPDATE node_setting SET data = json_set(data, '$.parent.\"n-dup0\"', 'n-person') WHERE owner = ?").run(A);
+  db.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?)").run(A, "win:개인 비서 창", "n-person", "auto");
+  await localTools(D1, A, "메인 봇", "https://x")("chat_split", { thread: root, parts: [{ node: "개인 비서", text: "개인 일정" }] });
+  const r = await localTools(D1, A, "개인 비서 창", "https://x")("chat_split", { thread: root, parts: [{ node: "자료 정리", text: "개인 장부 부탁" }] }) as any;
+  assert.ok(r.splits.some((x: any) => x.node === "자료 정리"));
+  assert.equal((db.prepare("SELECT node_id FROM member_split WHERE owner = ? ORDER BY log_id DESC LIMIT 1").get(A) as any).node_id, "n-dup0");
 });

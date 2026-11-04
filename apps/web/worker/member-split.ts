@@ -1,4 +1,4 @@
-import { load, primaryRoot, paneOfId, inPrim, OWN, CARD_TS } from "./member-board";
+import { load, primaryRoot, paneOfId, inPrim, OWN, CARD_TS, TOP } from "./member-board";
 import { dropRef } from "./task-convo";
 
 type R = Record<string, any>;
@@ -7,6 +7,7 @@ type Target = { id: string; name: string; pane: string };
 export type Split = { node: string; pane: string; post: string; at: number; state: string };
 
 const STATES: Record<string, string> = { start: "진행 중", progress: "진행 중", blocked: "막힘", decision: "내 차례", done: "끝" };
+const NODE_STATES: Record<string, string> = { working: "진행 중", busy: "진행 중", starting: "진행 중", opening: "진행 중", turn: "질문", idle: "쉼", parked: "주차", waiting: "기다림", background: "뒤 작업 중" };
 const DEAD = new Set(["closed", "failed", "gone"]);
 const norm = (s: unknown) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -72,17 +73,29 @@ export async function splitMarks(db: D1Database, me: string, msgs: R[], my: stri
 }
 
 /** 메인 봇 chat_split: 내 Primary 글(thread) 하나를 노드마다 몫 글로. 같은 노드에 이미 몫이 있으면 건너뜀. → 그 원글의 칩 목록 */
-export async function splitAdd(db: D1Database, me: string, root: string, parts: { node: string; text: string }[]) {
+export async function splitAdd(db: D1Database, me: string, root: string, parts: { node: string; text: string }[], caller: { win: string; key: string; wid: string | null }) {
   if (!(await primaryRoot(db, me, root))) throw new Error("없는 글 — 이 사람 Primary 채팅의 사람 글 id 만(「[보드 · Primary · 스레드 <id>]」의 id)");
   const L = await load(db, me);
   const got = parts.map(p => ({ p, t: targetOf(L, p.node) }));
   const bad = got.filter(x => !x.t).map(x => x.p.node);
   if (bad.length) throw new Error(`없는 노드: ${bad.join(", ")} — 보드의 노드 · role_list 의 역할 창 이름만`);
   const have = new Set(((await db.prepare(`${ROWS} AND s.root_ts = ?2`).bind(me, root).all<R>()).results).map(r => String(r.node_id)));
-  const skipped: string[] = [], added: { node: string; pane: string; text: string }[] = [], now = Date.now(), st: D1PreparedStatement[] = [];
+  const targets = liveTargets(L), tops = targets.filter(t => L.parents[t.id] === TOP);
+  if (tops.length) {
+    const main = caller.wid ? caller.wid === L.mainWin?.id : L.isPrimWin(caller.win) || caller.win === L.mainWin?.name;
+    const id = L.nodeOfWin(caller.key)?.id || L.nodeOfWin(caller.win)?.id || targetOf(L, caller.wid || caller.win)?.id;
+    if (!main && !id) throw new Error("보낸 창의 노드를 찾을 수 없어요 — 메인 봇이나 이 글을 받은 노드 창에서 나눠 주세요");
+    if (!main && !have.has(id!)) throw new Error("이 글을 받은 노드 창에서만 자식 노드로 다시 나눌 수 있어요");
+    const allowed = new Set((main ? tops : targets.filter(t => L.parents[t.id] === id)).map(t => t.id));
+    for (const g of got) if (!allowed.has(g.t!.id)) { const alt = targets.find(t => allowed.has(t.id) && (norm(t.name) === norm(g.t!.name) || norm(t.name) === norm(g.p.node))); if (alt) g.t = alt; }
+    const outside = got.filter(x => !allowed.has(x.t!.id)).map(x => x.t!.name);
+    if (outside.length) throw new Error(`${main ? "맨 위 노드" : "보낸 창의 직접 자식 노드"}로만 나눌 수 있어요: ${outside.join(", ")} — 허용: ${targets.filter(t => allowed.has(t.id)).map(t => t.name).join(", ") || "없음"}`);
+  }
+  const skipped: string[] = [], added: { node: string; pane: string; text: string; children?: { name: string; state: string }[] }[] = [], now = Date.now(), st: D1PreparedStatement[] = [];
   for (const { p, t } of got) {
     if (have.has(t!.id)) { skipped.push(t!.name); continue; }
-    have.add(t!.id); added.push({ node: t!.name, pane: t!.pane, text: p.text });
+    const children = tops.length ? targets.filter(x => L.parents[x.id] === t!.id).map(x => ({ name: x.name, state: stateOf(L, x.id) || NODE_STATES[String(L.byId.get(x.id)?.state || L.engineNodes.find(w => w.id === x.id)?.state)] || "상태 미상" })) : undefined;
+    have.add(t!.id); added.push({ node: t!.name, pane: t!.pane, text: p.text, children });
     // 몫 글 줄과 이음을 한 batch 로(이음은 방금 넣은 줄의 id · ts — 줄만 남고 칩이 없는 일이 없게)
     st.push(db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, t!.name.slice(0, 120), "me", p.text, null, now, null),
       db.prepare("INSERT INTO member_split(owner, root_ts, log_id, post_ts, node_id, at) SELECT owner, ?, id, CAST(at / 1000 AS INTEGER) || '.' || printf('%06d', id % 1000000), ?, ? FROM board_log WHERE rowid = last_insert_rowid() AND owner = ?").bind(root, t!.id, now, me));

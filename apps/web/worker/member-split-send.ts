@@ -10,9 +10,10 @@ export type SplitSend = (pane: string, text: string) => Promise<{ state: SplitSt
 
 const one = (s: unknown, n: number) => String(s ?? "").replace(/[\x00-\x1f\x7f-\x9f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 
-export function splitText(root: string, part: string, why?: string | null) {
+export function splitText(root: string, part: string, why?: string | null, children?: { name: string; state: string }[]) {
   const w = one(why, 160);
-  return `${boardHead({ thread: root })} [Boarder chat] (나눔 — 메인 봇이 이 사람의 Primary 글에서 이 창 몫만 넘김${w ? ` · 까닭: ${w}` : ""}) ${one(part, 3000)}`
+  return `${boardHead({ thread: root })} [Boarder chat] (나눔 — 상위 에이전트가 이 사람의 Primary 글에서 이 창 몫만 넘김${w ? ` · 까닭: ${w}` : ""}) ${one(part, 3000)}`
+    + (children ? ` (당신 밑 노드: ${children.length ? children.map(c => `${one(c.name, 120)} · ${one(c.state, 40)}`).join(" / ") : "없음"}. 필요하면 \`boarder split ${root} --part "<자식 노드>: <그 노드 몫>"\`로 직접 자식에게만 다시 나누세요. 다른 가지로는 넘기지 마세요.)` : "")
     + ` (Answer the person under their original message with \`boarder chat --thread ${root} "<text>"\` — it shows in their Primary chat under that message. Short, in their language.)`;
 }
 

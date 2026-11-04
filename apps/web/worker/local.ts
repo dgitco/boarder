@@ -76,10 +76,10 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
         await log("say", a.text, primaryThread(a.thread), { tool: "chat_say" }); return { ok: true };
       }
       case "chat_split": {
-        const { added, ...r } = await splitAdd(db, owner, a.thread, a.parts);
+        const { added, ...r } = await splitAdd(db, owner, a.thread, a.parts, { win, key, wid });
         if (!send) return r;
         const sent = [];
-        for (const p of added) sent.push({ node: p.node, ...(await send(p.pane, splitText(a.thread, p.text, a.why))) });
+        for (const p of added) sent.push({ node: p.node, ...(await send(p.pane, splitText(a.thread, p.text, a.why, p.children))) });
         return { ...r, sent };
       }
       case "role_draft": {
