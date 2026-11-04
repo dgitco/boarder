@@ -53,6 +53,8 @@ test("회원 A 는 자기 글만: 노드 · 결정 · 할 일 · 장부 · Prima
   assert.match(r.cards.find(c => c.ckind === "decision")!.ts, /^w:\d+$/);   // 보드 cardlist 와 같은 열쇠(w:<rowid>)
   assert.deepEqual(r.chats.map(m => [m.kind, m.title]).sort(), [["chat", "나"], ["log", "에이 회의록 정리"]]);
   assert.ok(!/비이|주인/.test(texts(r)), "B · 주인 줄이 섞임");
+  for (const m of r.chats) assert.match(m.ts, /^\d{10}\.\d{6}$/, "찾은 글로 바로 가는 자리");
+  if (r.nodes[0].hit?.kind === "log") assert.match(String(r.nodes[0].hit.ts), /^\d{10}\.\d{6}$/);
 });
 
 test("회원 B 글 · 주인 줄은 회원 A 에게 0건", async () => {
@@ -108,4 +110,16 @@ test("「세션」 칸 대화 창(kind chat) 줄 · 카드는 낱말 찾기 · �
   const s = await query(d1, A, "늦어진 문제", { sem: true, ai });
   assert.ok(s.chats.some(c => c.sem === 1), "뜻 찾기가 돎");
   assert.ok(!/대화에서|대화 답|대화 창/.test(texts(s)), "대화 줄 · 카드가 뜻 찾기에 나옴");
+});
+
+test("Primary 스레드 답(thread p:<뿌리>)은 찾기 답에 뿌리 ts 로 — 화면이 그 스레드를 엶", async () => {
+  const { db, d1 } = fakeD1();
+  const log = db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES(?,?,?,?,?,?)");
+  log.run(A, "나", "me", "스레드뿌리찾기 뿌리 글", "primary", T);
+  log.run(A, "나", "me", "스레드답찾기 답 글", "p:1793300000.000001", T + 5000);
+  const r = await query(d1, A, "스레드답찾기") as any;
+  const m = r.chats.find((x: any) => /스레드답찾기/.test(x.text));
+  assert.ok(m, "답 글이 찾힘");
+  assert.equal(m.thread, "1793300000.000001", "p: 를 뗀 뿌리 ts");
+  assert.match(m.ts, /^\d{10}\.\d{6}$/);
 });

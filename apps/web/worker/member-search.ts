@@ -1,6 +1,7 @@
 
 type R = Record<string, any>;
 const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;   // 보더 자신의 줄(member-board OWN 과 같음)
+const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;   // member-board 채팅 글 ts 와 같음 — 찾은 글로 바로 가는 자리
 const ME = "나";
 const notChat = (t: string) => `AND (${t}.wid IS NULL OR ${t}.wid NOT IN (SELECT id FROM engine_window WHERE owner = ${t}.owner AND kind = 'chat'))`;
 const NC_LOG = notChat("board_log"), NC_CARD = notChat("board_card");
@@ -56,8 +57,9 @@ export async function query(db: D1Database, me: string, q0: string, o: { sem?: b
   const toChat = (r: R, w = 0.5) => {
     const prim = r.thread === "primary" || /^p:/.test(String(r.thread || "")), mine = r.win === ME || r.kind === "me", n = prim ? null : nodeOfWin(r.win);
     const at = Number(r.at) / 1000, text = snip(r.text, terms), title = prim ? (mine ? ME : r.win === "보더" ? "보더" : "Primary") : n ? nameOf(n) : String(r.win);
-    via(n, { kind: "log", text, at }, w);
-    return { id: "m:" + r.id, kind: prim ? "chat" : "log", title, text, ch: "primary", node: n ? nameOf(n) : null, thread: null, at, w: whole(r.text) };
+    const ts = tsOf(Number(r.at), Number(r.id)), th0 = String(r.thread || ""), thread = /^p:\d{10}\.\d{6}$/.test(th0) ? th0.slice(2) : /^\d{10}\.\d{6}$/.test(th0) ? th0 : null;
+    via(n, { kind: "log", text, at, ts, thread }, w);
+    return { id: "m:" + r.id, kind: prim ? "chat" : "log", title, text, ch: "primary", node: n ? nameOf(n) : null, ts, thread, at, w: whole(r.text) };
   };
   const toCard = (c: R, w = 0.7) => {
     const n = nodeOfWin(c.win), at = Number(c.answered_at || c.at) / 1000, text = snip([c.body, c.answer].filter(Boolean).join(" · ") || c.question, terms);

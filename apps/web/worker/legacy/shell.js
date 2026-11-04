@@ -353,9 +353,15 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const FS = {r: null, t: 0, n: 0};
   const agoS = at => { const s = Math.max(0, Date.now() / 1000 - (+at || 0)); return !at ? '' : s < 90 ? '방금' : s < 3600 ? Math.round(s / 60) + '분 전' : s < 86400 ? Math.round(s / 3600) + '시간 전' : Math.round(s / 86400) + '일 전'; };
   const winT = x => String(x?.win || '').replace(/^\d+\s*/, '');
-  function nodeGo(t){
-    const p = Object.values(byPane).find(x => winT(x) === t); if (p) return openAns({p: p.pane, page: true});
-    const k = Object.keys(parkBy).find(id => winT(parkBy[id]) === t); if (k) return openAns({p: k, page: true});
+  function nodeGo(t, ts, th){
+    const p = Object.values(byPane).find(x => winT(x) === t), k = p ? '' : Object.keys(parkBy).find(id => winT(parkBy[id]) === t);
+    if (ts && typeof openNode === 'function'){   // 스레드 답은 뿌리 글로 굴리고 스레드를 엶(읽지 않음 글 누르기와 같은 길)
+      const r = openNode(p ? p.pane : k || t, th || ts);
+      if (th && typeof openThread === 'function') Promise.resolve(r).then(() => openThread('n:' + t, th));
+      return;
+    }
+    if (p) return openAns({p: p.pane, page: true});
+    if (k) return openAns({p: k, page: true});
     if (typeof openNode === 'function') return openNode(t);
     HBR.go('#settings/nodes');
   }
@@ -371,12 +377,12 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const out = [], sc = SC();
     if (sc) r = {...r, nodes: (r.nodes || []).filter(n => sc.area(n.area)), cards: [], chats: [], arts: (r.arts || []).filter(a => sc.folder(a.folder))};
     for (const n of r.nodes || []) out.push({g: '노드', n: n.title, i: I.hash, tag: n.turn, hot: /^내 차례/.test(n.turn || ''),
-      sub: [n.line || (n.hit && n.hit.text), agoS(n.line_at || (n.hit && n.hit.at))].filter(Boolean).join(' · '), go: () => nodeGo(n.title)});
+      sub: [n.line || (n.hit && n.hit.text), agoS(n.line_at || (n.hit && n.hit.at))].filter(Boolean).join(' · '), go: () => nodeGo(n.title, n.hit?.ts, n.hit?.thread)});
     for (const c of r.cards || []) out.push({g: '결정 · 할 일', n: c.title, i: I.flag, tag: c.state === 'open' ? (KIND[c.ckind] || '열림') : '닫힘', hot: c.state === 'open',
       sub: [c.text, c.node, agoS(c.at)].filter(Boolean).join(' · '), go: () => cardGo(c)});
     for (const m of r.chats || []) out.push({g: '대화', n: m.text, i: m.kind === 'log' ? I.node : blob(m.title === 'Owner' ? 'Owner' : (AREA_NAME[m.ch] || m.ch || ''), 18),
       sub: [m.kind === 'log' ? m.title + ' 장부' : (m.title + ' · ' + (AREA_NAME[m.ch] || m.ch || '')), m.kind !== 'log' && m.node, agoS(m.at)].filter(Boolean).join(' · '),
-      go: () => m.kind === 'log' ? nodeGo(m.title) : openChan(CH.includes(m.ch) ? m.ch : 'primary', m.thread)});
+      go: () => { if (m.kind === 'log') return nodeGo(m.title, m.ts, m.thread); openChan(CH.includes(m.ch) ? m.ch : 'primary', m.thread); if (!m.thread && m.ts && typeof nodeFlash === 'function') nodeFlash(m.ts); }});
     for (const a of r.arts || []) { const id = a.id.slice(2); out.push({g: '캔버스', n: a.title, i: `<i class="ki k-${esc(a.akind || 'doc')}"></i>`, sub: [a.folder, agoS(a.at)].filter(Boolean).join(' · '), go: () => ARTS[id] ? openArt(id) : toast('그 캔버스를 찾지 못했어요')}); }
     return out;
   }
