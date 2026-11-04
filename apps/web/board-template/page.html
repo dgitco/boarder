@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "83880ff46f16";
+window.HB_VER = "2f8b44d6e88c";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1870,6 +1870,19 @@ p.mdi{padding-left:1em;text-indent:-1em}
 @media (max-width:640px){.ibfeed > .ibi,.ibfeed > .ibrows{width:calc(100% - 20px)}.ibth{padding-left:0}.ibth.ibbox{padding-left:12px;padding-right:12px}.ibctx{margin-left:16px}.ibgh{padding-right:12px}.ibgh .ibrd{height:28px;padding:0 10px}}
 .ibi.wait .tools,.ibi.wait .reacts .add{display:none}   
 .ibi.wait .reacts,.ibi.wait .btns{pointer-events:none}
+
+.ah .who .ibvw{display:inline-flex;gap:2px;padding:2px;border-radius:999px;background:var(--sunk);flex:none}
+.ah .who .ibvw button{height:24px;padding:0 10px;border:0;border-radius:999px;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.ah .who .ibvw button[aria-selected="true"]{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--line)}
+.ah .who .ibmgt{white-space:nowrap}
+@media (max-width:640px){.ah .who:has(.ibhn){flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.ah .who .ibhn{display:none}}
+.ibtip{position:fixed;z-index:80;background:#17171a;color:#f3f5f7;border-radius:16px;padding:12px;box-shadow:0 18px 50px rgba(0,0,0,.35);font-size:14px;line-height:20px}
+.ibtip .ibtipa{position:absolute;top:-7px;width:14px;height:14px;background:#17171a;transform:rotate(45deg);border-radius:2px}
+.ibtip .ibtipg{display:flex;gap:6px;justify-content:center;align-items:center;height:86px;border-radius:10px;background:linear-gradient(135deg,#c9b8ff,#f7d6c4 55%,#ee9b78);margin-bottom:10px}
+.ibtip .ibtipg span{padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.8);color:#333;font-size:12px}.ibtip .ibtipg span.on{background:#17171a;color:#fff;font-weight:600}
+.ibtip b{display:block;font-size:15px;font-weight:600;margin-bottom:3px}.ibtip p{margin:0;color:#b8b8bf;font-size:13.5px;line-height:19px}
+.ibtip button{display:block;margin:10px 0 0 auto;height:30px;padding:0 13px;border:0;border-radius:999px;background:#f3f5f7;color:#17171a;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}
+.inbr.ibdn{opacity:.55}.inbr.ibdn .ud,.inbr.ibdn .un{display:none}
 </style></head><body>
 
 <div class="wrap">
@@ -11061,6 +11074,41 @@ setInterval(() => {
   let HOVROW = null;
   const FD = {}, FQ = { list: [], busy: 0, want: /* @__PURE__ */ new Set(), at: /* @__PURE__ */ new Map(), ch: /* @__PURE__ */ new Map(), n: /* @__PURE__ */ new Map() }, VIS = /* @__PURE__ */ new Map();
   const CHEV = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5l3 3 3-3"/></svg>';
+  const VK = "hb-ib-view", MK = "hb-ib-merge", TIPK = "hb-ib-tip";
+  const lsGet = (k, d) => {
+    try {
+      return localStorage.getItem(k) ?? d;
+    } catch (e) {
+      return d;
+    }
+  }, lsSet = (k, v) => {
+    try {
+      localStorage.setItem(k, v);
+    } catch (e) {
+    }
+  };
+  const VIEW = (() => {
+    try {
+      return { turn: "list", unread: "open", ...JSON.parse(lsGet(VK, "{}")) };
+    } catch (e) {
+      return { turn: "list", unread: "open" };
+    }
+  })();
+  const expanded = (f) => (f.k === "unread" || f.k === "turn") && VIEW[f.k] === "open";
+  const merged = () => lsGet(MK, "") === "1";
+  let BOTH = false;
+  const unRank = (x) => {
+    try {
+      return priRank((byPane[x.pane] || parkBy[x.pane] || {}).pri);
+    } catch (e) {
+      return 2.5;
+    }
+  };
+  function algo(xs) {
+    const r = new Map(turnRows().map((x, i) => [x.ts, i]));
+    const a = (x) => r.has(x.ts) ? r.get(x.ts) : 1e6, turn = (x) => x.cstate !== void 0;
+    return [...xs].sort((p, q) => turn(q) - turn(p) || (turn(p) ? a(p) - a(q) : 0) || unRank(p) - unRank(q) || (+q.at || 0) - (+p.at || 0));
+  }
   const fk = (ch) => ch === "i:saved" ? "saved" : ch === "i:drafts" ? "drafts" : ch === "i:turn" ? "turn" : "unread";
   const thOf = (x) => x.thread || x.ts;
   const idOf = (k, x) => k === "saved" || k === "turn" ? x.ts : k === "drafts" ? x.key : thOf(x);
@@ -11077,7 +11125,15 @@ setInterval(() => {
       f.items = f.items.filter((x) => live.has(x.ts));
       for (const k of [...f.keys.keys()]) if (!live.has(k)) f.keys.delete(k);
     }
-    for (const x of S[f.k]) {
+    if (f.k === "unread" && f.items.some((x) => x.cstate !== void 0)) {
+      const live = new Set(turnItems().map((x) => x.ts));
+      for (const x of [...f.items]) if (x.cstate !== void 0 && !live.has(x.ts)) {
+        f.items.splice(f.items.indexOf(x), 1);
+        f.keys.delete(idOf(f.k, x));
+      }
+    }
+    const extra = f.k === "unread" && merged() && BOTH ? turnItems().filter((x) => !S.unread.some((y) => thOf(y) === thOf(x))) : [];
+    for (const x of [...S[f.k], ...extra]) {
       const id = idOf(f.k, x), o = f.keys.get(id);
       if (o) {
         if ((+x.at || 0) > (+o.at || 0)) f.done.delete(id);
@@ -11113,7 +11169,7 @@ setInterval(() => {
   const STEP = 3;
   const order = (f) => groups(f).flatMap(([c, xs]) => f.fold.has(c) ? [] : xs);
   function nextBatch(f) {
-    if (f.k !== "unread" || f.batch || FD[f.k] !== f) return;
+    if (!expanded(f) || f.batch || FD[f.k] !== f) return;
     const sh = f.shown || (f.shown = /* @__PURE__ */ new Set()), xs = order(f).filter((x) => !sh.has(idOf(f.k, x))).slice(0, STEP);
     if (!xs.length) return;
     f.batch = { ths: xs.map(thOf), ids: xs.map((x) => idOf(f.k, x)), at: Date.now() };
@@ -11177,9 +11233,9 @@ setInterval(() => {
     const wrap = (inner) => `<div class="ibi${done}${stale}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${inner}</div>`;
     const one = "";
     const R = (m, inTh2) => lng(f, m, msgHTML(m, ch, inTh2));
-    if (f.k === "saved" && x.thread) {
+    if ((f.k === "saved" || f.k === "turn") && x.thread) {
       const m = ms.find((y) => y.ts === x.ts);
-      return wrap(`<button class="ibctx" data-copen="${esc(th)}" data-cch="${esc(ch)}">${ICON.reply}<span>스레드 답글</span><b>${tx(plain80(root.text))}</b></button>${m ? R(m, true) : `<div class="iberr">지운 글이에요</div>`}`);
+      return wrap(`<button class="ibctx" data-copen="${esc(th)}" data-cch="${esc(ch)}">${ICON.reply}<span>${f.k === "turn" ? "스레드에서" : "스레드 답글"}</span><b>${tx(plain80(root.text))}</b></button>${m ? R(m, true) : `<div class="iberr">지운 글이에요</div>`}`);
     }
     const r0 = R({ ...root, owner: t.owner || root.owner, replies: 0, unread: false }, false);
     const inTh = CS.th?.ts === th && CS.at === "i:unread" && !CS.th?.side;
@@ -11194,20 +11250,25 @@ setInterval(() => {
     const from = open ? 0 : Math.max(0, cut - 1), shown = rest.slice(from), hid = from;
     const names = [...new Set(real.map(NM).reverse())].slice(0, 3);
     const more = hid ? `<button class="ibmore" data-ibmore="${esc(id)}"><span class="ravs">${names.map((n) => avatar(n, initials(n))).join("")}</span><b>${hid}개의 추가 댓글 표시</b></button>` : open && cut > 1 ? `<button class="ibmore" data-ibless="${esc(id)}"><b>답글 접기</b></button>` : "";
-    const sep = '<div class="newsep ibnew" role="separator"><span>새 항목</span></div>';
+    const sep = f.k === "turn" ? "" : '<div class="newsep ibnew" role="separator"><span>새 항목</span></div>';
     return wrap(`${r0}<div class="ibth">${more}${shown.map((m, i) => (from + i === cut ? sep : "") + R(m, true)).join("")}</div>${one}<div class="ibth ibbox">${box}</div>`);
   }
   function rowsHTML(f) {
     const by = f.k === "saved" || f.k === "turn" ? (x) => +x.saved_at || +x.at || 0 : (x) => +x.at || 0;
-    const xs = [...f.items].sort((a, b) => by(b) - by(a));
+    const xs = f.k === "turn" && !S.doneOn || f.k === "unread" ? algo(f.items) : [...f.items].sort((a, b) => by(b) - by(a));
     return `<div class="inbl ibrows">${xs.map((x) => {
-      const i = f.items.indexOf(x), h = row(f.k, x, i);
+      const i = f.items.indexOf(x), h0 = row(f.k, x, i), h = f.done.has(idOf(f.k, x)) ? h0.replace('<div class="inbr', '<div class="inbr ibdn') : h0;
       const hv = HOVROW === idOf(f.k, x) ? h.replace('<div class="inbr', '<div class="inbr hov') : h;
       return f.sel === idOf(f.k, x) ? hv.replace('<div class="inbr', '<div aria-current="true" class="inbr on') : hv;
     }).join("")}</div>`;
   }
   async function openRow(f, x) {
     f.sel = idOf(f.k, x);
+    if (f.k === "unread") {
+      markDone(f, [idOf(f.k, x)]);
+      CS.flash = { ts: x.ts, until: Date.now() + 2600 };
+      return openThread(x.chan, thOf(x), false, true);
+    }
     if (f.k === "drafts") await draftPull();
     if (f.k === "saved" || f.k === "turn") {
       CS.flash = { ts: x.ts, until: Date.now() + 2600 };
@@ -11242,6 +11303,7 @@ setInterval(() => {
     return s.length > 80 ? s.slice(0, 79) + "…" : s;
   };
   function groups(f) {
+    if (expanded(f)) return f.items.length ? [["", f.k === "turn" && S.doneOn ? [...f.items].sort((a, b) => (+b.saved_at || +b.at || 0) - (+a.saved_at || +a.at || 0)) : algo(f.items)]] : [];
     const by = /* @__PURE__ */ new Map();
     for (const x of f.items) {
       const g = by.get(x.chan) || [];
@@ -11254,7 +11316,7 @@ setInterval(() => {
   function feedHTML(ch) {
     const f = fstate(ch);
     if (!f.items.length) fsync(f);
-    if (f.k !== "unread") return `<div class="cmain ibmain">${fwrapIb(!S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : f.items.length ? rowsHTML(f) : emptyOf(f.k === "turn" && S.doneOn ? "turnDone" : f.k))}</div>`;
+    if (!expanded(f)) return `<div class="cmain ibmain">${fwrapIb(!S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : f.items.length ? rowsHTML(f) : emptyOf(f.k === "turn" && S.doneOn ? "turnDone" : f.k))}</div>`;
     const gs = groups(f), sh = f.shown || /* @__PURE__ */ new Set(), more = gs.some(([c, xs]) => !f.fold.has(c) && xs.some((x) => !sh.has(idOf(f.k, x))));
     const body = !S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : !gs.length ? emptyOf(f.k) : gs.map(([c, all]) => {
       const vis = all.filter((x) => sh.has(idOf(f.k, x)));
@@ -11263,6 +11325,7 @@ setInterval(() => {
       const ids = xs.map((x) => idOf(f.k, x)), left = ids.filter((i) => !f.done.has(i)).length, fold = f.fold.has(c);
       const n = f.k === "unread" ? xs.reduce((a, x) => a + (f.done.has(idOf(f.k, x)) ? 0 : x.kind === "thread" ? Math.max(1, x.n || 1) : 1), 0) : xs.length;
       const act = f.k !== "unread" || left ? "" : '<span class="ibok">읽음</span>';
+      if (!c) return vis.map((x) => itemHTML(f, x)).join("");
       return `<div class="ibgh${left || f.k !== "unread" ? "" : " done"}" data-at="g:${esc(c)}"><button class="ibft" data-ibfold="${esc(c)}" aria-expanded="${!fold}">${CHEV}<b>${esc(gname(c))}</b></button><span class="ibgn">${f.k === "unread" && !left ? "" : n + (f.k === "unread" ? "개 메시지" : "개")}</span>${act}</div>` + (fold ? "" : vis.map((x) => itemHTML(f, x)).join(""));
     }).join("") + (S.ok && more ? `<div class="ibnext" data-ibnext>${LOADING}</div>` : "");
     return `<div class="cmain ibmain">${fwrapIb(body)}</div>`;
@@ -11271,7 +11334,10 @@ setInterval(() => {
   function feedHead(ch) {
     const f = FD[fk(ch)], k = fk(ch);
     const left = k === "unread" ? f ? f.items.filter((x) => !f.done.has(idOf(k, x))).length : S.unread.length : k === "turn" ? S.doneOn ? S.turn.length : turnRows().length : S[k].length;
-    return `<span class="ibhn">${left || ""}</span>${k === "unread" && left ? '<button class="ibrall" data-ibrall>모두 읽음</button>' : ""}${k === "turn" ? `<button class="ibflt" data-ibdone aria-pressed="${S.doneOn}">끝난 것</button>` : ""}`;
+    const pick = k === "unread" || k === "turn";
+    const seg = !pick ? "" : `<span class="ibvw" role="tablist" aria-label="보기">${[["open", "펼쳐보기"], ["list", "목록"]].map(([v, l]) => `<button role="tab" aria-selected="${VIEW[k] === v}" data-ibview="${v}">${l}</button>`).join("")}</span>`;
+    const mg = !pick ? "" : merged() ? `<span class="ibvw ibmg" role="tablist" aria-label="거르개">${[["turn", "결정"], ["unread", "읽지 않음"], ["both", "둘 다"]].map(([v, l]) => `<button role="tab" aria-selected="${v === "both" ? k === "unread" && BOTH : v === k && !BOTH}" data-ibmg="${v}">${l}</button>`).join("")}</span><button class="ibflt ibmgt" data-ibmerge aria-pressed="true">합쳐 보기 끄기</button>` : '<button class="ibflt ibmgt" data-ibmerge aria-pressed="false">합쳐 보기</button>';
+    return `${mg}${seg}<span class="ibhn">${left || ""}</span>${k === "unread" && left ? '<button class="ibrall" data-ibrall>모두 읽음</button>' : ""}${k === "turn" ? `<button class="ibflt" data-ibdone aria-pressed="${S.doneOn}">끝난 것</button>` : ""}`;
   }
   let IO = null, ioRoot = null;
   const OBS = /* @__PURE__ */ new Set();
@@ -11281,21 +11347,47 @@ setInterval(() => {
     if (!hd || !hd.querySelector(".ibhn")) return;
     const tmp = document.createElement("div");
     tmp.innerHTML = feedHead(CS.at);
-    hd.querySelectorAll(".ibhn, .ibrall, .ibflt").forEach((e) => e.remove());
+    hd.querySelectorAll(".ibhn, .ibrall, .ibflt, .ibvw").forEach((e) => e.remove());
     hd.append(...tmp.childNodes);
+  }
+  let TIP = null;
+  function tipClose(seen = true) {
+    TIP?.remove();
+    TIP = null;
+    clearInterval(tipClose.t);
+    if (seen) lsSet(TIPK, "1");
+  }
+  function tipShow() {
+    if (TIP?.isConnected || lsGet(TIPK, "")) return;
+    const a = document.querySelector("#ans > .ah .ibmgt");
+    if (!a || !a.offsetParent) return;
+    const r = a.getBoundingClientRect(), W = Math.min(300, innerWidth - 24);
+    TIP = document.createElement("div");
+    TIP.className = "ibtip";
+    TIP.setAttribute("role", "dialog");
+    TIP.setAttribute("aria-label", "합쳐 보기 안내");
+    TIP.style.cssText = `width:${W}px;left:${Math.max(12, Math.min(innerWidth - W - 12, r.left + r.width / 2 - W / 2))}px;top:${r.bottom + 12}px`;
+    TIP.innerHTML = `<i class="ibtipa" style="left:${r.left + r.width / 2 - Math.max(12, Math.min(innerWidth - W - 12, r.left + r.width / 2 - W / 2)) - 7}px"></i><div class="ibtipg"><span>결정</span><span>읽지 않음</span><span class="on">둘 다</span></div><b>한 페이지로 합쳐 볼 수 있어요</b><p>결정과 읽지 않음을 거르개로 오가요. 위 탭으로 펼쳐보기와 목록도 골라요. 끄면 지금처럼 따로 봐요.</p><button data-ibtipok>알겠어요</button>`;
+    document.body.append(TIP);
+    TIP.querySelector("[data-ibtipok]").addEventListener("click", () => tipClose());
+    clearInterval(tipClose.t);
+    tipClose.t = setInterval(() => {
+      if (!document.querySelector("#ans > .ah .ibmgt")?.offsetParent) tipClose(false);
+    }, 500);
   }
   function feedAfter(fe) {
     const f = FD[fk(CS.at)];
     if (!f) return;
     MIO?.disconnect();
-    const mo = f.k === "unread" && fe.querySelector("[data-ibnext]");
+    const mo = expanded(f) && fe.querySelector("[data-ibnext]");
     if (mo) {
       MIO = new IntersectionObserver((es) => {
         if (es.some((e) => e.isIntersecting)) nextBatch(f);
       }, { root: fe, rootMargin: "300px" });
       MIO.observe(mo);
     }
-    if (f.k !== "unread") {
+    tipShow();
+    if (!expanded(f)) {
       headUpd();
       return;
     }
@@ -11344,7 +11436,7 @@ setInterval(() => {
     if (grew) redraw();
   }
   function markDone(f, ids) {
-    const xs = ids.map((i) => f.keys.get(i)).filter((x) => x && !f.done.has(idOf(f.k, x)));
+    const xs = ids.map((i) => f.keys.get(i)).filter((x) => x && x.cstate === void 0 && !f.done.has(idOf(f.k, x)));
     if (!xs.length) return;
     for (const x of xs) f.done.add(idOf(f.k, x));
     const live = xs.filter((x) => S.unread.some((y) => y.ts === x.ts || x.thread && y.thread === x.thread));
@@ -11397,6 +11489,47 @@ setInterval(() => {
       viewChat(true);
       return toHead(c);
     }
+    const vw = t.closest("[data-ibview]");
+    if (vw) {
+      stop();
+      VIEW[f.k] = vw.dataset.ibview;
+      lsSet(VK, JSON.stringify(VIEW));
+      f.shown = /* @__PURE__ */ new Set();
+      f.batch = null;
+      f.sel = null;
+      if (expanded(f) && typeof closeThread === "function") try {
+        closeThread();
+      } catch (e2) {
+      }
+      else if (expanded(f)) CS.th = null;
+      viewChat(true);
+      return expanded(f) && nextBatch(f);
+    }
+    if (t.closest("[data-ibmerge]")) {
+      stop();
+      const on2 = !merged();
+      lsSet(MK, on2 ? "1" : "");
+      BOTH = false;
+      f.items = [];
+      f.keys.clear();
+      fsync(f);
+      tipClose();
+      return viewChat(true);
+    }
+    const mgb = t.closest("[data-ibmg]");
+    if (mgb) {
+      stop();
+      const v = mgb.dataset.ibmg;
+      BOTH = v === "both";
+      S.doneOn = false;
+      if (fk(CS.at) !== (v === "turn" ? "turn" : "unread")) return openFeed(v === "turn" ? "turn" : "unread");
+      f.items = [];
+      f.keys.clear();
+      f.shown = /* @__PURE__ */ new Set();
+      fsync(f);
+      viewChat(true);
+      return expanded(f) && nextBatch(f);
+    }
     if (t.closest("[data-ibdone]")) {
       stop();
       S.doneOn = !S.doneOn;
@@ -11410,7 +11543,7 @@ setInterval(() => {
     }
     if (t.closest("[data-ibrall]")) {
       stop();
-      const add = f.items.map((x) => idOf(f.k, x)).filter((i) => !f.done.has(i));
+      const add = f.items.filter((x) => x.cstate === void 0).map((x) => idOf(f.k, x)).filter((i) => !f.done.has(i));
       add.forEach((i) => f.done.add(i));
       read(S.unread, true).then((ok) => {
         if (!ok) {
@@ -11420,7 +11553,7 @@ setInterval(() => {
       });
       return viewChat(true);
     }
-    if (f.k !== "unread") {
+    if (!expanded(f)) {
       const op = t.closest("#cfeed [data-iopen]");
       if (op) {
         stop();
@@ -11433,7 +11566,7 @@ setInterval(() => {
         stop();
         return dropTodo(f.items[+tdd.dataset.itdrop], f);
       }
-      if (t.closest("#cfeed .rtools, #cfeed .imenu") && !t.closest("[data-idrop], [data-iedit], [data-isend]")) return;
+      if (t.closest("#cfeed .rtools, #cfeed .imenu") && !t.closest("[data-idrop], [data-iedit], [data-isend], [data-iread]")) return;
       const de = t.closest("#cfeed [data-iedit]");
       if (de) {
         stop();
@@ -11456,6 +11589,13 @@ setInterval(() => {
           f.keys.delete(x.key);
           if (f.sel === x.key) f.sel = null;
         }
+        return viewChat(true);
+      }
+      const ir = t.closest("#cfeed [data-iread]");
+      if (ir) {
+        stop();
+        const x = f.items[+ir.dataset.iread];
+        if (x) markDone(f, [idOf(f.k, x)]);
         return viewChat(true);
       }
       const rw = t.closest("#cfeed [data-irow]");
@@ -11552,8 +11692,8 @@ setInterval(() => {
     if (!g) return;
     e.preventDefault();
     e.stopPropagation();
-    markDone(f, g[1].filter(seen).map((x) => idOf("unread", x)));
-    if (g[1].every(seen)) f.fold.add(g[0]);
+    markDone(f, (g[0] ? g[1].filter(seen) : g[1].filter((x) => seen(x) && !f.done.has(idOf("unread", x))).slice(0, 1)).map((x) => idOf("unread", x)));
+    if (g[0] && g[1].every(seen)) f.fold.add(g[0]);
     viewChat(true);
   });
   subs.add(() => {
