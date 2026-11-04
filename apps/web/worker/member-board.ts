@@ -209,11 +209,12 @@ export async function load(db: D1Database, me: string) {
   const isPrimWin = (win: string) => isOriginalPrimWin(win) || frontWins.has(win) || frontNodes.includes(nodeOfWin(win)!);
   const mainWin = pp.explicit ? null : (ew.results as R[]).find(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state)) || null;
   const engineNodes = (ew.results as R[]).filter(w => w.kind === "role" && !nodes.some(n => n.name === w.name || n.wins.has(w.name)));
+  const roleWins = new Set((ew.results as R[]).filter(w => w.kind === "role" && !["closed", "failed", "gone"].includes(w.state)).map(w => String(w.name)));
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
   const tidy = tidyOn(prefs, roleNames.length), seatRole = new Map<string, string>();
   for (const n of nodes) { if (n.archived_at) continue; const x = seatRows.find(x => x.node ? x.node === n.id : n.id.startsWith("tk_") && n.name === x.name); if (x) seatRole.set(n.id, x.name); }
   const seatIds = new Set(seatRole.keys());
-  return { tidy, seatIds, seatRole, order: orderFromData((ns.results[0] as R | undefined)?.data), keysOf: (win: string) => keysOfWin.get(win) || [], winsOf, resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes,
+  return { tidy, seatIds, seatRole, order: orderFromData((ns.results[0] as R | undefined)?.data), keysOf: (win: string) => keysOfWin.get(win) || [], winsOf, resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes, roleWins,
     parents: parentsOf((ns.results[0] as R | undefined)?.data), faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
@@ -296,6 +297,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     const tk = tasks.get(n.id);
     if (tk && !tk.issue && L.parents[n.id] === TOP) pn.tkdept = true;
     if (tk) pn.tk = true;   // 업무 노드는 왼쪽 채널, 부서는 에이전트 칸(점 설정과 무관)
+    if (!tk && (L.roleWins.has(n.name) || [...n.wins].some(w => L.roleWins.has(w)))) pn.rolewin = true;
     if (tk) {
       const chips = [...(tk.confirm ? ["confirm"] : []), ...(!w0 ? (hasKid.has(n.id) ? [] : ["unassigned"]) : n.windows.every(w => w.state === "parked") ? ["parked"] : [])];
       if (chips.length) pn.tkChips = chips;
@@ -308,7 +310,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     const rows = logsOf(null, [w.name]), p = paneOfId(w.id);
     if (w.state === "parked") parked.push({ id: "c" + p.slice(1), name: w.name, area: "primary", msg: w.note || "주차", owner: false, ago: ago(w.state_at || w.created_at), stale: null, wait: "주차", topics: [], pri: priOf(L.pri, String(w.name)), pane: p, short: "주차", watch: "" });
     else if (["closed", "failed", "gone"].includes(w.state)) closed.push({ pane: p, win: w.name, ago: ago(w.closed_at || w.state_at || w.created_at), msg: w.note || "", area: "primary" });
-    else { panes.push(pane({ pane: p, win: w.name, kind: "lead", state: STATE[w.state] || "쉼", rows })); nodeOfPane.set(p, String(w.id)); }
+    else { panes.push({ ...pane({ pane: p, win: w.name, kind: "lead", state: STATE[w.state] || "쉼", rows }), rolewin: true }); nodeOfPane.set(p, String(w.id)); }
   }
   for (const p of panes) { const f = L.faces[nodeOfPane.get(p.pane) || ""]; if (f) p.avatar = f; }
   const areas: R[] = [{ key: "primary", name: "Primary", lead: PRIMARY, avatar: botFace }];

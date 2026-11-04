@@ -151,9 +151,11 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const MA2 = RS ? MA.filter(a => byPane[a.lead]?.tkdept && RS.includes(a.seat_name || AREA_NAME[a.key] || a.lead_name || a.name)) : MA;
     const pg = !ans.hidden && !!cur?.page && cur.p;
     const chP = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('');
-    const ch = chP + MA2.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('');
+    const RW = window.HB_MEMBER && !RS ? (typeof panes !== 'undefined' ? panes : []).filter(p => p && p.rolewin && p.kind === 'lead' && !p.tk && !MA2.some(a => a.lead === p.pane)) : [], RWP = new Set(RW.map(p => p.pane));
+    const ch = chP + MA2.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('')
+      + RW.map(p => it('node:' + p.pane, blob(nameOf(p), 20), esc(nameOf(p)), rowPanes().has(p.pane) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === p.pane)).join('');
     const rp = rowPanes();
-    const nd = myNodes().map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), rp.has(p.pane) ? `<i class="ud" aria-label="${window.HB_MEMBER ? '내 차례' : '내 차례'}"></i>` : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
+    const nd = myNodes().filter(p => !RWP.has(p.pane)).map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), rp.has(p.pane) ? `<i class="ud" aria-label="${window.HB_MEMBER ? '내 차례' : '내 차례'}"></i>` : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
     // 사이드 「태스크」(채널 = 태스크를 켠 회원, 서버 member-board taskSide): 채널 대신 #번호 · 제목 · 상태. 진행 중 · 최근 글 순, 끝난 것은 접힌 「끝난 태스크」 안. 누르면 그 태스크 대화(노드 화면)
     const TS = (typeof D === 'object' && Array.isArray(D?.task_side)) ? D.task_side : null;
     const tkIt = t => `<button type="button" class="bx-it bx-task" data-go="node:${esc(t.pane)}" title="${esc(t.issue + ' ' + t.name)}"${!ans.hidden && !!cur?.page && cur.p === t.pane ? ' aria-current="page"' : ''}><b class="bx-tkno">${esc(t.issue.replace(/^.*#/, '#'))}</b><span>${esc(t.name)}</span>${rp.has(t.pane) ? `<i class="ud" aria-label="내 차례"></i>` : ''}<em class="bx-tkst" data-st="${esc(t.state)}">${esc(t.state_ko || '')}</em></button>`;
