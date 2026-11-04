@@ -40,7 +40,7 @@
   }
   applyAccent();
   if (!window.HB_BLOB) document.addEventListener('DOMContentLoaded', applyAccent);
-  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '0']];
+  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '0'], ['sbw', 'hb-sbw', '0']];
   const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
   const uiSave = (k, v) => fetch('api/me/ui', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({k, v})}).catch(() => {});
   window.bxUiSave = uiSave;   // 보드 위 테마 단추(board.html)도 같은 길
@@ -50,6 +50,7 @@
     R.classList.toggle('bx-still', lsGet('hb-still') === '1');
     R.classList.toggle('hb-tapth', lsGet('hb-tapthread') === '1');   // 보드 글 줄을 누를 수 있는 것으로(board.html CSS)
     applyAccent();
+    window.BXSideW?.(+(lsGet('hb-sbw') || 0));   // 사이드바 폭(계정 값을 받아 바뀌었을 때)
   };
   fetch('api/me/ui', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => {
     if (!j || typeof j !== 'object') return;

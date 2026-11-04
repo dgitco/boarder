@@ -144,10 +144,10 @@ html.xnodes #bxx .xglass{z-index:40}
 html.xnodes:has(#ans:not([hidden])) #bxx .xglass,html.xnodes:has(#mview:not([hidden])) #bxx .xglass,html.xnodes:has(.bx-dr.open) #bxx .xglass{display:none}
 /* 데스크톱: 왼쪽 사이드바(264) + 본 칸 피드. 탭은 사이드바가 맡으니 아래 막대 · + 단추 없음 */
 @media (min-width:861px){
-  html.bx-x #bxx{left:264px}
+  html.bx-x #bxx{left:var(--bx-sbw,264px)}
   html.bx-x #bxx .xglass,html.bx-x #bxx .xfab{display:none}
   html.bx-x #bxx .xv:not([data-v="thread"]){padding-bottom:40px}
-  html.bx-x #bxx .xrep{left:264px}
+  html.bx-x #bxx .xrep{left:var(--bx-sbw,264px)}
   html.bx-x #bxx .xtoast{left:calc(50% + 132px);bottom:32px}
   html.bx-x.bx-col .bx-sb{display:flex}
   html.bx-x .bx-sb [data-sbcol],html.bx-x .bx-exp{display:none}

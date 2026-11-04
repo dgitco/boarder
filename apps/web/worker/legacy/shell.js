@@ -62,6 +62,19 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
 
   const sb = mk('nav', 'bx-sb'); sb.setAttribute('aria-label', '메뉴');
   const scrim = mk('div', 'bx-scrim');
+  const SBW = [200, 480], sbwSet = w => { if (w) R.style.setProperty('--bx-sbw', w + 'px'); else R.style.removeProperty('--bx-sbw'); };
+  const sbwKeep = w => { try { if (w) localStorage.setItem('hb-sbw', String(w)); else localStorage.removeItem('hb-sbw'); } catch {} window.bxUiSave?.('sbw', String(w || 0)); };
+  sbwSet((() => { try { const w = +localStorage.getItem('hb-sbw'); return w >= SBW[0] && w <= SBW[1] ? w : 0; } catch { return 0; } })());
+  const rz = mk('div', 'bx-sbrz'); rz.setAttribute('role', 'separator'); rz.setAttribute('aria-orientation', 'vertical'); rz.setAttribute('aria-label', '사이드바 폭 — 끌어서 바꾸고, 두 번 누르면 기본'); rz.title = '끌어서 사이드바 폭 바꾸기 · 두 번 누르면 기본'; rz.tabIndex = 0;
+  const sbwNow = () => parseInt(getComputedStyle(R).getPropertyValue('--bx-sbw')) || 264, clampW = w => Math.round(Math.min(SBW[1], Math.max(SBW[0], w)));
+  rz.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return; e.preventDefault(); rz.setPointerCapture(e.pointerId); R.classList.add('bx-sbdrag');
+    const mv = ev => sbwSet(clampW(ev.clientX)), up = () => { rz.removeEventListener('pointermove', mv); R.classList.remove('bx-sbdrag'); const w = sbwNow(); sbwKeep(w === 264 ? 0 : w); };
+    rz.addEventListener('pointermove', mv); rz.addEventListener('pointerup', up, {once: true}); rz.addEventListener('pointercancel', up, {once: true});
+  });
+  rz.addEventListener('dblclick', () => { sbwSet(0); sbwKeep(0); });
+  rz.addEventListener('keydown', e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; e.preventDefault(); const w = clampW(sbwNow() + (e.key === 'ArrowRight' ? 16 : -16)); sbwSet(w); sbwKeep(w === 264 ? 0 : w); });
+  window.BXSideW = w => sbwSet(w >= SBW[0] && w <= SBW[1] ? w : 0);   // settings.js 가 계정 값을 받으면 부름
   const dr = mk('nav', 'bx-dr'); dr.setAttribute('aria-label', '메뉴'); dr.setAttribute('role', 'dialog'); dr.setAttribute('aria-modal', 'true');
   const menu = mk('button', 'bx-menu bx-glass', I.menu); menu.type = 'button'; menu.setAttribute('aria-label', '메뉴');
   const cmb = mk('button', 'bx-chatmenu', I.menu); cmb.type = 'button'; cmb.setAttribute('aria-label', '메뉴');
@@ -73,7 +86,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const hr = document.querySelector('header .hr'), hrt = hr.querySelector('.hrt');
   hr.prepend(menu, seg);
   document.querySelector('.wrap header').after(ibox);
-  document.body.append(sb, scrim, dr, cmb);
+  document.body.append(sb, rz, scrim, dr, cmb);
   const exp = mk('button', 'bx-colb bx-exp'); exp.type = 'button'; exp.setAttribute('aria-label', '사이드바 펴기'); exp.title = '펴기'; exp.innerHTML = I.panel; exp.addEventListener('click', () => setCol(false)); document.body.append(exp);
   const tools = mk('div', 'bx-tools');
   function place(){
@@ -428,6 +441,12 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     q = q.trim().toLowerCase();
     const hit = s => !q || String(s || '').toLowerCase().includes(q);
     const out = [], sc = SC();
+    const kind = !!q && '태스크'.startsWith(q), tq = t => kind || t.keys.some(hit), ST = {working: '진행', blocked: '막힘', waiting: '기다림', done: '완료', cancelled: '취소'};
+    const no = x => String(x || '').replace(/^.*#/, '#'), tasks = new Map();
+    if (!sc && Array.isArray(FS.tb)) for (const t of FS.tb) if (t?.pane) tasks.set(t.pane, {n: [no(t.issue), t.name].filter(Boolean).join(' '), tag: ST[t.status] || '', hot: t.status === 'blocked', done: !!t.closed || t.status === 'done' || t.status === 'cancelled', sub: [...new Set([t.dept, t.owner, t.line].filter(Boolean))].join(' · '), keys: [t.issue, no(t.issue).slice(1), t.name, ST[t.status], t.dept, t.owner, t.line], pane: t.pane});
+    if (!sc && typeof D === 'object' && Array.isArray(D?.task_side)) for (const t of D.task_side) if (t?.pane && !tasks.has(t.pane)) tasks.set(t.pane, {n: [no(t.issue), t.name].filter(Boolean).join(' '), tag: t.state_ko || '', hot: t.state === 'blocked', done: !!t.done, sub: t.done ? '끝난 태스크' : '', keys: [t.issue, no(t.issue).slice(1), t.name, t.state_ko], pane: t.pane});
+    const tall = [...tasks.values()].sort((a, b) => Number(a.done) - Number(b.done));
+    for (const t of (q ? tall.filter(tq) : tall.filter(t => !t.done).slice(0, 5)).slice(0, kind ? 40 : 12)) out.push({g: '태스크', n: t.n, i: I.hash, tag: t.tag, hot: t.hot, sub: t.sub, go: () => go('node:' + t.pane)});
     for (const k of CH) if ((!sc || sc.ch(k)) && (hit(AREA_NAME[k]) || hit(k))) out.push({g: '에이전트', n: AREA_NAME[k], i: blob(AREA_NAME[k], 18), go: () => openChan(k)});
     for (const k of IBK) if ((!sc || k === 'unread' || k === 'turn') && q && hit(IBN[k])) out.push({g: '모아 보기', n: IBN[k], i: I[k], go: () => FEED(k) ? (ibClose(), window.HBInbox.openFeed(k)) : ibOpen(k)});   // 범위가 있으면 거르개가 걸린 둘만(초안 · 저장은 영역을 안 거름)
     const sr = q && FS.r && q.startsWith(FS.r.q.toLowerCase()) ? FS.r : null;   // 서버 답(앞 글자가 같으면 새 답이 올 때까지 그대로 — 깜빡임 없게)
@@ -438,7 +457,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const arts = Object.entries(ARTS || {}).map(([id, x]) => ({id, ...x})).filter(r => !sc || sc.folder(r.folder)).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
     for (const r of (q ? arts.filter(r => hit(r.title) || hit(r.id)) : arts.slice(0, 5))) out.push({g: q ? '캔버스' : '최근 캔버스', n: r.title || r.id, i: `<i class="ki k-${esc(r.kind || 'doc')}"></i>`, go: () => ARTS[r.id] && openArt(r.id)});
     if (sr){
-      const sv = serverItems(sr), names = new Set(sv.filter(r => r.g === '노드').map(r => r.n)), G = ['에이전트', '모아 보기', '노드', '결정 · 할 일', '대화', '캔버스', '최근 캔버스'];
+      const sv = serverItems(sr), names = new Set(sv.filter(r => r.g === '노드').map(r => r.n)), G = ['태스크', '에이전트', '모아 보기', '노드', '결정 · 할 일', '대화', '캔버스', '최근 캔버스'];
       return out.filter(r => r.g !== '노드' || !names.has(r.n)).concat(sv).map((r, i) => [r, i]).sort((a, b) => G.indexOf(a[0].g) - G.indexOf(b[0].g) || a[1] - b[1]).map(x => x[0]).slice(0, 60);
     }
     return out.slice(0, 40);
@@ -480,7 +499,13 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     findDraw(); clearTimeout(FS.t);
     if (q){ fsearch(q, false); FS.t = setTimeout(() => fsearch(q, true), 300); }   // 낱말 먼저, 300ms 뒤 뜻(회원도 — 자기 D1 최근 글을 Workers AI 로, member-search.ts)
   }
-  function findOpen(){ closeDr(); fin.value = ''; fsel = 0; FS.r = null; fd.hidden = false; findDraw(); fin.focus(); }
+  // 태스크 현황 요청(찾기 「태스크」 묶음): 기능을 켠 회원만, 찾기를 열 때 한 번(1분 안이면 그대로) — 못 받으면 사이드 태스크만
+  function tbLoad(){
+    if (!window.HB_MEMBER || !window.BXStatus?.feats?.()?.taskboard || Date.now() - (FS.tbAt || 0) < 60000) return;
+    FS.tbAt = Date.now();
+    fetch('api/me/taskboard', {cache: 'no-store', credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(j => { if (Array.isArray(j?.tasks)){ FS.tb = j.tasks; if (!fd.hidden) findDraw(); } }).catch(() => {});
+  }
+  function findOpen(){ closeDr(); fin.value = ''; fsel = 0; FS.r = null; fd.hidden = false; tbLoad(); findDraw(); fin.focus(); }
   function findClose(){ fd.hidden = true; }
   function findGo(i){ const r = fres[i]; if (!r) return; findClose(); S.ret = null; if (!ans.hidden) closeAns(); r.go(); }
   fin.addEventListener('input', findInput);
