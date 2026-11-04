@@ -43,7 +43,7 @@ export function cleanMetrics(raw: unknown) {
       p5: num(x.p5, 0, 100), r5: time(x.r5),
       p7: num(x.p7, 0, 100), r7: time(x.r7),       // 주간
       src: (["api", "cache"] as const).find(s => s === x.src),
-      acct: typeof x.acct === "string" && /^[a-z]$/.test(x.acct) ? x.acct : undefined, name: str(x.name, 20),
+      acct: str(x.acct, 30) || undefined, name: str(x.name, 20),   // 계정 글자는 자유 글자(화면이 이스케이프) · 길이만 제한
       rate: num(x.rate, 0, 100), out_at: time(x.out_at),
       credits: (c => Object.keys(c).length ? c : undefined)(drop({ limit: num(obj(x.credits).limit, 0, 1e6), used: num(obj(x.credits).used, 0, 1e6), left: num(obj(x.credits).left, 0, 1e6), expires: time(obj(x.credits).expires) })),
     });

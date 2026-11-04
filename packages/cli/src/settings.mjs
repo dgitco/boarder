@@ -1,0 +1,122 @@
+import { readFileSync } from 'node:fs';
+import { loadDevice, loadWindow, server } from './config.mjs';
+import { windowKey, windowToken } from './window.mjs';
+
+export const SETTINGS_HELP = `Board settings from this machine (show: any member machine · set: only after you allow this machine once on your board)
+  boarder settings allow [--wait <s>]     put a card 「기기 … 설정 바꾸기 허용?」 on your board and wait for 「허용」 (default 600 s; exit 0 allowed · 1 declined/expired · 2 timed out)
+  boarder settings show                   every value below and whether this machine may change them
+  boarder settings revoke                 this machine gives the permission back
+  boarder pins show | set <canvas id|url|id=title>… | set --none  sidebar pinned canvases (set replaces the list, 12 at most)
+  boarder task-channels show | set on|off                         「채널 = 태스크」: open work items (#123) become channels
+  boarder task-repo show | set <owner/repo> | set off             repo that a bare work number (#123) points to
+  boarder front-door show | set --name "<name>" --fold "<node>"… [--alias "<old name>"…] | set off
+                                                                  fold old front nodes into the Primary chat under one name
+  boarder primary-window show | set <window:…|ew_…> | set off     window that gets Primary chat messages instead of the main bot
+  boarder bot show | set --name "<name>"                          main bot name (look and pictures stay)
+  boarder roles show | set <file.json|->                          role seat chart [{name, win, node?, primary?, fold?}…]
+  boarder window show | renew                                     this window's key and name · get a new window token (never printed)
+  Every set prints {before, after, undo}: run undo to put the old value back.
+  The same permission also lets this machine upload screen scripts: \`boarder view overlay js\` and \`boarder harness wrapper ui on\` need it too.`;
+
+const COMMANDS = { pins: 'pins', 'task-channels': 'task_channels', 'task-repo': 'task_repo', 'front-door': 'front_door', 'primary-window': 'primary_window', bot: 'bot_name' };
+export const SETTINGS_COMMANDS = ['settings', ...Object.keys(COMMANDS), 'roles', 'window'];
+
+const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
+const out = j => console.log(JSON.stringify(j));
+const q = s => `'${String(s).replace(/'/g, `'\\''`)}'`;   // 되돌리는 명령의 셸 인용
+
+async function call(method, p, body) {
+  const d = loadDevice();
+  if (!d?.token) fail('This machine is not set up for Boarder yet — run `boarder setup --yes`.', 3);
+  const r = await fetch(`${server()}${p}`, { method, headers: { authorization: `Bearer ${d.token}`, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(60_000) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) fail('this machine was revoked, is not a member machine, or is watch-only — `boarder status`', 3);
+  if (r.status === 403 && j.error === 'not_allowed') fail(`not allowed: ${j.hint || 'run `boarder settings allow` and press 「허용」 on your board'}`, 77);
+  if (!r.ok || j.ok === false) fail(`${j.error || `server answered ${r.status}`}${j.missing ? ` (missing: ${j.missing.join(', ')})` : ''}`);
+  return j;
+}
+
+/** 되돌리는 명령(전 값으로 다시 set) */
+export function undoOf(cmd, before) {
+  const b = `boarder ${cmd} set`;
+  if (cmd === 'pins') return before?.length ? `${b} ${before.map(p => q(p.title && p.title !== p.id ? `${p.id}=${p.title}` : p.id)).join(' ')}` : `${b} --none`;   // 제목까지
+  if (cmd === 'task-channels') return `${b} ${before ? 'on' : 'off'}`;
+  if (cmd === 'task-repo' || cmd === 'primary-window') return `${b} ${before ? q(before) : 'off'}`;
+  if (cmd === 'front-door') {
+    if (!before) return `${b} off`;
+    // --fold 는 찾을 노드 이름이라 짝(pairs) 이름만 — aliases 에는 지금 없는 이름도 있어 그대로 쓰면 404. 짝에 없는 aliases 는 --alias 로 살림
+    const names = [...new Set(before.pairs.map(p => p.name))], aliases = before.aliases || [];
+    const fold = [...new Set([...aliases.filter(a => names.includes(a)), ...names])];
+    return `${b} --name ${q(before.name)} ${fold.map(n => `--fold ${q(n)}`).join(' ')}${aliases.some(a => !names.includes(a)) ? ` ${aliases.map(n => `--alias ${q(n)}`).join(' ')}` : ''}`;
+  }
+  if (cmd === 'bot') return before ? `${b} --name ${q(before)}` : null;   // 봇이 없던 때는 되돌릴 이름이 없음
+  return null;
+}
+/** 명령 인자 → 서버에 보낼 값. 틀리면 null(사용법) */
+export function valueOf(cmd, pos, flags) {
+  const v = pos[0];
+  if (cmd === 'pins') return flags.none ? [] : pos.length ? pos.map(x => { const m = /^([A-Za-z0-9_-]{4,64})=(.+)$/s.exec(x); return m ? { id: m[1], title: m[2] } : x; }) : null;
+  if (cmd === 'task-channels') return v === 'on' ? true : v === 'off' ? false : null;
+  if (cmd === 'task-repo') return v === 'off' ? '' : v || null;
+  if (cmd === 'primary-window') return v === 'off' ? null : v || undefined;
+  if (cmd === 'front-door') return v === 'off' ? null : flags.name && flags.fold?.length ? { name: flags.name, fold: flags.fold, ...(flags.alias?.length ? { aliases: flags.alias } : {}) } : undefined;
+  if (cmd === 'bot') return flags.name || null;
+  return undefined;
+}
+const readJsonArg = p => JSON.parse(p === '-' ? readFileSync(0, 'utf8') : readFileSync(p, 'utf8'));
+const seatIn = s => Object.fromEntries(Object.entries({ name: s.name, win: s.win, node: s.node, primary: s.primary, fold: s.fold }).filter(([, x]) => x !== undefined && x !== null && x !== false));
+
+async function allow(flags) {
+  const first = await call('POST', '/api/device/settings/allow', {});
+  if (first.allowed) return out({ ok: true, allowed: true, note: 'this machine may already change board settings' });
+  console.error(`A card 「설정 바꾸기 허용?」 is on your board — press 「허용」 there (card ${first.card_id}).`);
+  const until = Date.now() + (Number(flags.wait) || 600) * 1000;
+  for (;;) {
+    await new Promise(r => setTimeout(r, 3000));
+    const s = await call('GET', '/api/device/settings/allow');
+    if (s.allowed) return out({ ok: true, allowed: true, card_id: first.card_id });
+    if (!s.pending) { out({ ok: false, allowed: false, card_id: first.card_id, note: 'declined or expired' }); process.exit(1); }
+    if (Date.now() > until) { out({ ok: false, allowed: false, pending: true, card_id: first.card_id }); process.exit(2); }
+  }
+}
+
+export async function settingsCommand(cmd, sub, pos, flags) {
+  if (cmd === 'settings') {
+    if (sub === 'allow') return allow(flags);
+    if (sub === 'show') return out(await call('GET', '/api/device/settings'));
+    if (sub === 'revoke') return out(await call('DELETE', '/api/device/settings/allow'));
+    fail(SETTINGS_HELP, 64);
+  }
+  if (cmd === 'window') {
+    const w = windowKey();
+    if (sub === 'show') return out({ key: w.key, name: w.name, server: server(), token_saved: !!loadWindow(w.key)?.token, env_token: !!process.env.BOARDER_TOKEN?.trim() });
+    if (sub === 'renew') {
+      if (process.env.BOARDER_TOKEN?.trim()) fail('this window uses BOARDER_TOKEN from its environment — renew it where that token is made (the harness), not here');
+      const n = await windowToken({ fresh: true });
+      return out({ ok: true, key: n.key, name: n.name, note: 'new window token saved for this window (not shown); the old one for this window stops working' });
+    }
+    fail(SETTINGS_HELP, 64);
+  }
+  if (cmd === 'roles') {
+    if (sub === 'show') return out(await call('GET', '/api/device/roles'));
+    if (sub === 'set') {
+      if (!pos[0]) fail(SETTINGS_HELP, 64);
+      const raw = readJsonArg(pos[0]), roles = Array.isArray(raw) ? raw : raw?.roles;
+      if (!Array.isArray(roles)) fail('roles: a JSON list [{name, win, node?, primary?, fold?}…] or {"roles": […]}', 64);
+      const was = await call('GET', '/api/device/roles'), before = was.roles || (was.seats || []).map(seatIn);   // 옛 서버는 roles 칸이 없음
+      const frontBefore = (await call('GET', '/api/device/settings')).values?.front_door ?? null;
+      const r = await call('POST', '/api/device/roles', { roles });
+      // 앞단 접기: 이 표가 바꿨거나(front) 옛 표를 다시 올리면 fold 로 다시 채워지므로(before 의 fold) 전 값까지 되돌림
+      const undoFront = r.front || before.some(s => s.fold?.length) ? `\n${undoOf('front-door', frontBefore)}` : '';
+      return out({ ok: true, key: 'roles', before, after: r.seats, ...(r.front ? { front: r.front } : {}), front_door_before: frontBefore, undo: `boarder roles set - <<'JSON'\n${JSON.stringify(before)}\nJSON${undoFront}` });
+    }
+    fail(SETTINGS_HELP, 64);
+  }
+  const key = COMMANDS[cmd]; if (!key) fail(SETTINGS_HELP, 64);
+  if (sub === 'show') { const j = await call('GET', '/api/device/settings'); return out({ key, value: j.values?.[key] ?? null, allowed: !!j.allowed }); }
+  if (sub !== 'set') fail(SETTINGS_HELP, 64);
+  const value = valueOf(cmd, pos, flags);
+  if (value === undefined || (value === null && !['primary-window', 'front-door'].includes(cmd))) fail(SETTINGS_HELP, 64);
+  const r = await call('POST', '/api/device/settings', { key, value });
+  return out({ ok: true, key, before: r.before, after: r.after, undo: undoOf(cmd, r.before) });
+}

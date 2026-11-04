@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "7eb7745de93a";
+window.HB_VER = "cdd7aa413546";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -9944,6 +9944,10 @@ function artMsg(e) {
   } else if (e.source === f.contentWindow && e.data === "hb-art-meet") {
     const id = artId(f.src);
     if (id && LIVE && ARTS[id]?.kind === "canvas") document.body.classList.contains("meet") ? meetOff() : meetOn(id);
+  } else if (e.source === f.contentWindow && typeof e.data?.hbArtSeen === "string" && LIVE && /^[\w.-]{1,120}$/.test(e.data.hbArtSeen)) {
+    const id = artId(f.src);
+    if (id && ARTS[id]?.kind === "canvas") fetch("api/inbox", { method: "POST", credentials: "include", headers: { "content-type": "application/json", "x-hb": "1" }, body: JSON.stringify({ op: "deckseen", art: id, board: e.data.hbArtSeen }) }).then((r) => r.ok ? r.json() : null).then((j) => j?.n > 0 && window.HBInbox?.soon?.(), () => {
+    });
   } else if (e.source === f.contentWindow && e.data === "hb-art-pages") MV.ready = true;
   else if (e.source === f.contentWindow && typeof e.data?.hbArtBg === "string" && /^(#[0-9a-f]{3,8}|rgba?\([\d.,\s%]+\))$/i.test(e.data.hbArtBg)) {
     f.style.background = e.data.hbArtBg;

@@ -10,6 +10,7 @@ async function call(method, body) {
   const r = await fetch(`${server()}/api/device/overlay`, { method, headers: { authorization: `Bearer ${d.token}`, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(20000) });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401) throw new Error('this machine cannot change the screen (it must be a full-access machine of an owner or current member)');
+  if (r.status === 403 && j.error === 'not_allowed') throw new Error(`not allowed: ${j.hint || 'run `boarder settings allow` and press 「허용」 on your board'}`);   // js 는 내 로그인 화면에서 돌아 보드 허락 뒤만
   if (!r.ok || j.ok === false) throw new Error(j.error || `server answered ${r.status}`);
   return j;
 }
@@ -38,6 +39,7 @@ export async function overlayCommand(sub, args, { log = console.log } = {}) {
 
 export const OVERLAY_HELP = `  boarder view overlay css <file> | js <file>
                                     put your own CSS / JS on top of your board (your account only; 200KB each).
+                                    JS runs with your login, so a member machine needs \`boarder settings allow\` first (CSS and clearing do not).
                                     Priority: yours > the wrapper's > the code default. A broken one: open the board with ?no_overlay=1
   boarder view overlay show         sizes of yours and the wrapper's, and which applies
   boarder view overlay off          clear yours`;

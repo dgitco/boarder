@@ -39,7 +39,7 @@
 
 앞단 에이전트(비서실장 · 부서장)를 창 열쇠(기기 + 창 번호)가 아니라 역할 이름에 묶는다. 표: 역할 이름 → 지금 그 역할을 맡은 창(win). 저장은 `node_setting.data.roles`, 코드는 `apps/web/worker/role-seat.ts`.
 
-- 올리기: `POST /api/device/roles { "roles": [{ "name": "기술장", "win": "host1:ew_tech02" }, { "name": "비서실장", "win": "host2:ew_…", "primary": true }] }` — 기기 토큰(또는 같은 사이트의 내 화면). 표 전체를 바꾼다. 한 줄이라도 틀리면 400(반만 저장 안 함). `node: "tk_…"` 로 역할 노드를 직접 고를 수 있다(없으면 이름이 같은 열린 업무 노드 하나).
+- 올리기: `POST /api/device/roles { "roles": [{ "name": "기술장", "win": "host1:ew_tech02" }, { "name": "비서실장", "win": "host2:ew_…", "primary": true }] }` — 보드에서 「설정 바꾸기」를 허락받은 기기 토큰(`boarder settings allow`, [기기 설정](device-settings.md)) 또는 같은 사이트의 내 화면. 허락 없는 기기 토큰은 403. CLI 는 `boarder roles set <file.json>`. 표 전체를 바꾼다. 한 줄이라도 틀리면 400(반만 저장 안 함). `node: "tk_…"` 로 역할 노드를 직접 고를 수 있다(없으면 이름이 같은 열린 업무 노드 하나).
 - 읽기: `GET /api/device/roles` — 자리마다 판정(붙음 · 창이 아직 안 들어옴 · 역할 노드 없음 · 같은 이름 노드가 여럿 · 다른 역할이 이미 이 창).
 
 | 일 | 표 없음(기본) | 표 있음 |

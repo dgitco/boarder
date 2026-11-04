@@ -12,6 +12,7 @@ const srv = http.createServer((req, res) => {
   req.on('end', () => {
     res.setHeader('content-type', 'application/json');
     if (req.headers.authorization !== `Bearer ${TOKEN}`) { res.statusCode = 401; return res.end('{}'); }
+    if (req.url === '/api/device/overlay' && req.method === 'POST' && JSON.parse(body).set?.js === 'needs.grant()') { res.statusCode = 403; return res.end(JSON.stringify({ ok: false, error: 'not_allowed', hint: '이 기기는 허락이 없어요 — boarder settings allow' })); }
     if (req.url === '/api/device/overlay' && req.method === 'POST') { overlays.push(JSON.parse(body)); return res.end('{"ok":true}'); }
     if (req.url === '/api/device/overlay') return res.end(JSON.stringify({ ok: true, cssBytes: 3, jsBytes: 0, wrapper: { css: 1, js: 0, jsSha: null, side: false } }));
     res.statusCode = 404; res.end('{}');
@@ -43,6 +44,12 @@ async function inFixtureEnv(fn) {
   Object.assign(process.env, { HOME: H, BOARDER_HOME: B, XDG_CONFIG_HOME: path.join(H, '.config'), CODEX_HOME: path.join(H, '.codex') }); delete process.env.CLAUDE_CONFIG_DIR; delete process.env.BOARDER_CLAUDE_DIRS;
   try { return await fn(await import('./rules-block.mjs')); } finally { for (const [k, v] of Object.entries(keep)) if (v === undefined) delete process.env[k]; else process.env[k] = v; }
 }
+
+test('view overlay js: 허락 없는 기기는 안내(boarder settings allow)와 함께 실패', async () => {
+  const f = path.join(H, 'g.js'); fs.writeFileSync(f, 'needs.grant()');
+  const r = await cli(['view', 'overlay', 'js', f]);
+  assert.notEqual(r.code, 0); assert.match(r.err, /boarder settings allow/); assert.doesNotMatch(r.out, /set from/);
+});
 
 test('view overlay: css · js 올리기 · 보기 · 끄기는 내 칸(mine)으로', async () => {
   const f = path.join(H, 'a.css'); fs.writeFileSync(f, 'a{}');

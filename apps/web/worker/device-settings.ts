@@ -1,0 +1,199 @@
+import type { Context, Hono } from "hono";
+import { readPrefs, savePrefs, repoOf, type NodePrefs } from "./node-prefs";
+import { cleanPins, readPins, savePins, type Pin } from "./side-order";
+import { foldRows, frontDoorOf, type FrontDoor } from "./front-door";
+import { paneOfId } from "./member-board";
+
+type Env = { DB: D1Database; PUBLIC_URL: string };
+type C = Context<{ Bindings: Env }>;
+export type Dev = { id: string; owner: string; name: string };
+export type Hooks = {
+  device: (c: C) => Promise<Dev | null>;
+  ownWindow: (db: D1Database, me: string, target: string) => Promise<boolean>;
+  regroup: (env: Env, me: string) => Promise<unknown>;
+  card?: (env: Env, owner: string, card: { id: string; question: string }) => void;
+};
+
+export const TTL = 10 * 60_000;
+export const ALLOW = "허용", DENY = "거절";
+const MAX_PENDING = 3;
+export const MAX_DAY_CARDS = 5;   // 기기마다 하루 다섯(device-card.ts 와 같은 값)
+export const LOCK_MS = 24 * 3600_000;   // 거절 뒤 그 기기의 카드를 안 세우는 시간
+const DAY = 24 * 3600_000;
+export const NOT_ALLOWED_HINT = "이 기기는 설정을 바꿀 허락이 없어요 — boarder settings allow 로 보드에 허락 카드를 세우고 사람이 「허용」을 눌러요";
+export const KEYS = ["pins", "task_channels", "task_repo", "front_door", "primary_window", "bot_name"] as const;
+export type Key = typeof KEYS[number];
+export const LABEL: Record<Key, string> = { pins: "사이드바 고정 캔버스", task_channels: "채널 = 태스크", task_repo: "업무 저장소", front_door: "앞단 접기", primary_window: "기본 창", bot_name: "메인 봇 이름" };
+const NOSTORE = { "cache-control": "no-store" };
+const ctl = (s: unknown, n: number) => String(s ?? "").replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim().slice(0, n);
+const cardId = (now: number) => `${Math.floor(now / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
+const grantKey = (dev: string) => `cli_settings:${dev}`;
+const reqKey = (card: string) => `cli_settings_req:${card}`;
+const askedKind = (dev: string) => `cli_settings_asked:${dev}`, lockedKind = (dev: string) => `cli_settings_locked:${dev}`;   // device_card_event.kind — 새 기기 카드의 'asked' · 'locked' 와 안 섞임
+
+/** 이 기기가 설정 바꾸기를 허락받았는지 */
+export async function allowed(db: D1Database, me: string, dev: string) {
+  return !!(await db.prepare("SELECT 1 FROM user_pref WHERE owner = ? AND k = ?").bind(me, grantKey(dev)).first());
+}
+/** 기다리는 허락 요청(10분 안)이 있는지 — 이 기기 것만 */
+async function pendingOf(db: D1Database, me: string, dev: string, now = Date.now()) {
+  return !!(await db.prepare("SELECT 1 FROM user_pref WHERE owner = ? AND k LIKE 'cli\\_settings\\_req:%' ESCAPE '\\' AND v = ? AND at > ?").bind(me, dev, now - TTL).first());
+}
+/** 만료: 10분 넘은 요청의 열린 카드를 닫고 요청 줄을 지움(그 회원 것만) */
+async function sweep(db: D1Database, me: string, now = Date.now()) {
+  if (!(await db.prepare("SELECT 1 FROM user_pref WHERE owner = ? AND k LIKE 'cli\\_settings\\_req:%' ESCAPE '\\' AND at <= ? LIMIT 1").bind(me, now - TTL).first())) return;   // CLI 가 3초마다 읽으므로 치울 게 있을 때만 씀
+  await db.batch([
+    db.prepare("UPDATE board_card SET state = 'closed', done = '만료' WHERE owner = ?1 AND state = 'open' AND id IN (SELECT substr(k, 18) FROM user_pref WHERE owner = ?1 AND k LIKE 'cli\\_settings\\_req:%' ESCAPE '\\' AND at <= ?2)").bind(me, now - TTL),
+    db.prepare("DELETE FROM user_pref WHERE owner = ? AND k LIKE 'cli\\_settings\\_req:%' ESCAPE '\\' AND at <= ?").bind(me, now - TTL),
+  ]);
+}
+
+/** 카드 답 고리(/api/me/cards/:id/answer 뒤) — 허용이고 10분 안이고 그 기기가 아직 살아 있으면 허락을 남김. 카드는 닫음 */
+export async function onSettingsCardAnswered(env: { DB: D1Database }, me: string, id: string, now = Date.now()) {
+  const r = await env.DB.prepare("SELECT q.v dev, q.at, c.answer FROM user_pref q JOIN board_card c ON c.id = ?2 AND c.owner = q.owner WHERE q.owner = ?1 AND q.k = ?3").bind(me, id, reqKey(id)).first<{ dev: string; at: number; answer: string | null }>();
+  if (!r) return false;
+  const won = await env.DB.prepare("DELETE FROM user_pref WHERE owner = ? AND k = ?").bind(me, reqKey(id)).run();   // 먼저 요청을 잡음(두 답이 겹쳐도 한 번만)
+  if (!won.meta.changes) return true;
+  const live = await env.DB.prepare("SELECT 1 FROM device WHERE id = ? AND owner = ? AND revoked_at IS NULL AND scope = 'full'").bind(r.dev, me).first();
+  const ok = r.answer === ALLOW && now - r.at <= TTL && !!live;
+  if (ok) await env.DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(me, grantKey(r.dev), String(now), now).run();
+  const done = ok ? "허용함 — 이 기기에서 boarder 설정 명령을 쓸 수 있어요" : r.answer === ALLOW ? (live ? "만료" : "그 기기가 끊겨 허용하지 않았어요") : "거절함";
+  await env.DB.prepare("UPDATE board_card SET state = 'closed', done = ? WHERE id = ? AND owner = ? AND state = 'answered'").bind(done, id, me).run();
+  if (r.answer !== ALLOW) await env.DB.prepare("INSERT INTO device_card_event(email, kind, at) VALUES (?, ?, ?)").bind(me, lockedKind(r.dev), now).run();
+  return true;
+}
+/** 카드가 설정 허락 카드인지(답 길이 토큰 머리를 거절할 때) */
+export const isSettingsCard = async (env: { DB: D1Database }, me: string, id: string) => !!(await env.DB.prepare("SELECT 1 FROM user_pref WHERE owner = ? AND k = ?").bind(me, reqKey(id)).first());
+
+type Values = { pins: Pin[]; task_channels: boolean; task_repo: string; front_door: FrontDoor | null; primary_window: string | null; bot_name: string | null };
+async function readAll(db: D1Database, me: string): Promise<Values> {
+  const [p, pins, pw, bot] = await Promise.all([
+    readPrefs(db, me), readPins(db, me),
+    db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me).first<{ v: string }>(),
+    db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(me).first<{ name: string }>(),
+  ]);
+  return { pins, task_channels: p.task_channels, task_repo: p.task_repo, front_door: p.front_door, primary_window: pw?.v || null, bot_name: bot?.name ?? null };
+}
+const canvasId = (s: string) => { const t = s.trim(), m = /\/(?:art|canvas)\/([A-Za-z0-9_-]{4,64})\/?(?:[?#].*)?$/.exec(t); return m ? m[1] : t; };
+/** 보드 기록에 남길 짧은 값 */
+export const show = (k: Key, v: unknown) => v === null || v === "" ? "없음" : k === "pins" ? (v as Pin[]).map(p => p.id).join(", ") || "없음" : k === "front_door" ? `${(v as FrontDoor).name}(${(v as FrontDoor).pairs.map(p => p.name).join(" · ")})` : typeof v === "boolean" ? (v ? "켬" : "끔") : String(v);
+
+/** 그 회원 보드 기록에 「기기 ○○ 이 CLI 로 △△ 을 바꿨어요 — 전 → 후」 한 줄(실패해도 바꾸기는 그대로).
+ *  화면 덧씌우기 알림과 같은 시스템 줄(engine.ts sysLine 꼴: kind sys · thread primary) — 그냥 progress 줄이면 묶기가 「보더」라는 노드 칸을 새로 만듦 */
+export const logChange = (db: D1Database, me: string, device: string, label: string, before: string, after: string) =>
+  db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "보더", "sys", ctl(`기기 「${ctl(device, 60)}」 이 CLI 로 ${label} 을 바꿨어요 — 전: ${before} → 후: ${after}`, 600), "primary", Date.now()).run().catch(() => {});
+
+type Out = { after: unknown } | { error: string; status: 400 | 404 | 409; extra?: Record<string, unknown> };
+async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, cur: Values): Promise<Out> {
+  const DB = env.DB;
+  if (key === "pins") {
+    if (!Array.isArray(value)) return { error: "pins: 캔버스 id(또는 주소) 목록", status: 400 };
+    const titles = new Map(cur.pins.map(p => [p.id, p.title]));
+    // 글이면 주소 → id, 객체면 { id, title }(되돌리기가 제목까지 보냄 — CLI `<id>=<제목>`). 제목이 없으면 지금 목록의 제목을 이어 씀
+    const pins = cleanPins(value.map(x => { const o = (typeof x === "string" ? { id: x } : Object(x)) as { id?: unknown; title?: unknown }, id = canvasId(String(o.id ?? "")); return { id, title: (typeof o.title === "string" && o.title) || titles.get(id) || "" }; }));
+    if (!pins) return { error: "캔버스 주소가 틀렸거나 12개를 넘었어요", status: 400 };
+    await savePins(DB, me, pins);
+    return { after: pins };
+  }
+  if (key === "task_channels") {
+    if (typeof value !== "boolean") return { error: "task_channels: true | false", status: 400 };
+    await savePrefs(DB, me, { task_channels: value }); await h.regroup(env, me);   // 화면 길(/api/me/nodeset)과 같이 바로 다시 묶음
+    return { after: value };
+  }
+  if (key === "task_repo") {
+    const r = value === null ? "" : repoOf(value);
+    if (r === null) return { error: "task_repo: \"owner/repo\" (빈 값 = 지움)", status: 400 };
+    await savePrefs(DB, me, { task_repo: r }); await h.regroup(env, me);
+    return { after: r };
+  }
+  if (key === "front_door") {
+    if (value === null) { await savePrefs(DB, me, { front_door: null } as Partial<NodePrefs>); return { after: null }; }
+    const o = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    let fd: FrontDoor | null = null;
+    if (Array.isArray(o.fold)) {   // 이름으로 접기: 역할 자리표(/api/device/roles 의 fold)와 같은 찾기 — 이름이 정확히 같은 내 노드(업무 · Slack 노드 제외)
+      const names = [...new Set(o.fold.map(x => ctl(x, 80)).filter(Boolean))].slice(0, 8);
+      if (!names.length) return { error: "front_door.fold: 접을 노드 이름 목록", status: 400 };
+      const rows = await foldRows(DB, me, names);
+      const missing = names.filter(n => !rows.some(r => r.nm === n));
+      if (missing.length) return { error: "그 이름의 내 노드가 없어요 — 아무것도 안 바꿨어요", status: 404, extra: { missing } };
+      fd = frontDoorOf({ name: o.name, pairs: rows.map(r => ({ pane: paneOfId(r.id), name: r.nm })), aliases: Array.isArray(o.aliases) ? o.aliases : names });
+    } else fd = frontDoorOf(o);
+    if (!fd) return { error: "front_door: { name, fold: [노드 이름…] } 또는 null(끄기)", status: 400 };
+    await savePrefs(DB, me, { front_door: fd });
+    return { after: fd };
+  }
+  if (key === "primary_window") {
+    const t = value === null ? "" : typeof value === "string" ? value.trim().slice(0, 300) : null;
+    if (t === null) return { error: "primary_window: \"window:…\" | \"ew_…\" | null(메인 봇으로)", status: 400 };
+    if (!t) { await DB.prepare("DELETE FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me).run(); return { after: null }; }
+    if (!(await h.ownWindow(DB, me, t))) return { error: "내 살아 있는 창이 아니에요", status: 404 };
+    await DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(me, "primary_win", t, Date.now()).run();
+    return { after: t };
+  }
+  // bot_name: 이름만(모양 · 색 · 그림은 화면에서 만든 그대로). 아직 메인 봇을 안 만든 회원은 화면에서 먼저(그림이 있어야 하는 줄)
+  if (typeof value !== "string" || value.length > 200) return { error: "이름은 1–20자 글이에요", status: 400 };
+  const name = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
+  if (!name || [...name].length > 20) return { error: "이름은 1–20자예요", status: 400 };
+  const u = await DB.prepare("UPDATE member_bot SET name = ?, updated_at = ? WHERE owner = ?").bind(name, Date.now(), me).run();
+  if (!u.meta.changes) return { error: "메인 봇이 아직 없어요 — 보드 화면에서 먼저 만들어요", status: 409 };
+  return { after: name };
+}
+
+export function mountDeviceSettings(host: Hono<any>, h: Hooks) {
+  const app = host as unknown as Hono<{ Bindings: Env }>;
+  app.get("/api/device/settings", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+    const me = d.owner.toLowerCase();
+    await sweep(c.env.DB, me);
+    return c.json({ allowed: await allowed(c.env.DB, me, d.id), pending: await pendingOf(c.env.DB, me, d.id), values: await readAll(c.env.DB, me) }, 200, NOSTORE);
+  });
+  app.post("/api/device/settings", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+    const me = d.owner.toLowerCase();
+    if (!(await allowed(c.env.DB, me, d.id))) return c.json({ error: "not_allowed", hint: NOT_ALLOWED_HINT }, 403, NOSTORE);
+    const b = Object(await c.req.json().catch(() => ({}))) as { key?: unknown; value?: unknown };
+    const key = String(b.key ?? "") as Key;
+    if (!KEYS.includes(key)) return c.json({ error: `key: ${KEYS.join(" | ")}` }, 400, NOSTORE);
+    if (!("value" in b)) return c.json({ error: "value 가 없어요" }, 400, NOSTORE);
+    const cur = await readAll(c.env.DB, me), before = cur[key];
+    const r = await apply(c.env, h, me, key, b.value, cur);
+    if ("error" in r) return c.json({ error: r.error, ...(r.extra || {}) }, r.status, NOSTORE);
+    await logChange(c.env.DB, me, d.name, LABEL[key], show(key, before), show(key, r.after));
+    return c.json({ ok: true, key, before, after: r.after }, 200, NOSTORE);
+  });
+  app.get("/api/device/settings/allow", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+    const me = d.owner.toLowerCase();
+    await sweep(c.env.DB, me);
+    return c.json({ allowed: await allowed(c.env.DB, me, d.id), pending: await pendingOf(c.env.DB, me, d.id) }, 200, NOSTORE);
+  });
+  app.post("/api/device/settings/allow", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+    const me = d.owner.toLowerCase(), now = Date.now();
+    if (await allowed(c.env.DB, me, d.id)) return c.json({ allowed: true, pending: false }, 200, NOSTORE);
+    await sweep(c.env.DB, me, now);
+    const open = await c.env.DB.prepare("SELECT substr(k, 18) card FROM user_pref WHERE owner = ? AND k LIKE 'cli\\_settings\\_req:%' ESCAPE '\\' AND v = ? LIMIT 1").bind(me, d.id).first<{ card: string }>();
+    if (open) return c.json({ allowed: false, pending: true, card_id: open.card }, 200, NOSTORE);
+    const ev = await c.env.DB.prepare("SELECT sum(kind = ? AND at > ?) AS asked, sum(kind = ? AND at > ?) AS locked FROM device_card_event WHERE email = ?").bind(askedKind(d.id), now - DAY, lockedKind(d.id), now - LOCK_MS, me).first<{ asked: number | null; locked: number | null }>();
+    if ((ev?.locked ?? 0) > 0) return c.json({ error: "보드에서 이 기기의 허락 요청을 거절한 지 24시간이 안 됐어요 — 그 뒤에 다시 요청해요" }, 429, NOSTORE);
+    if ((ev?.asked ?? 0) >= MAX_DAY_CARDS) return c.json({ error: "이 기기는 오늘 허락 요청을 다섯 번 했어요 — 내일 다시 요청해요" }, 429, NOSTORE);
+    const n = await c.env.DB.prepare("SELECT count(*) n FROM user_pref WHERE owner = ? AND k LIKE 'cli\\_settings\\_req:%' ESCAPE '\\'").bind(me).first<{ n: number }>();
+    if ((n?.n ?? 0) >= MAX_PENDING) return c.json({ error: "기다리는 허락 요청이 너무 많아요 — 보드의 카드부터 답해요" }, 429, NOSTORE);
+    const id = cardId(now), name = ctl(d.name, 60) || "이름 없는 기기";
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM device_card_event WHERE at < ?").bind(now - 2 * DAY),
+      c.env.DB.prepare("INSERT INTO device_card_event(email, kind, at) VALUES (?, ?, ?)").bind(me, askedKind(d.id), now),
+      c.env.DB.prepare("INSERT INTO board_card(id, owner, win, question, choices, recommend, body, at) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(id, me, "보더", `기기 「${name}」 이 CLI 로 내 보드 설정을 바꾸려 해요 — 허용할까요?`, JSON.stringify([ALLOW, DENY]), null,
+          `허용하면 이 기기(그 기기의 에이전트 포함)가 boarder 명령으로 ${KEYS.map(k => LABEL[k]).join(" · ")} 과 역할 자리표를 바꾸고, 내 로그인 화면에서 도는 스크립트(화면 덧씌우기 js)도 올릴 수 있어요 — 스크립트는 내 화면에서 나처럼 움직이니 내 기기만 허용하세요. 바꿀 때마다 전 값이 이 보드 기록에 남아요. 기기를 끊으면 허락도 같이 끝나요. 내가 시킨 일이 아니면 「${DENY}」(하루 동안 이 기기의 요청이 다시 오지 않아요). 10분 안에 답하지 않으면 만료돼요.`, now),
+      c.env.DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").bind(me, reqKey(id), d.id, now),
+    ]);
+    h.card?.(c.env, me, { id, question: `기기 「${name}」 설정 바꾸기 허용?` });
+    return c.json({ allowed: false, pending: true, card_id: id }, 200, NOSTORE);
+  });
+  app.delete("/api/device/settings/allow", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+    const u = await c.env.DB.prepare("DELETE FROM user_pref WHERE owner = ? AND k = ?").bind(d.owner.toLowerCase(), grantKey(d.id)).run();
+    return c.json({ ok: true, was: !!u.meta.changes }, 200, NOSTORE);
+  });
+}

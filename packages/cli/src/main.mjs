@@ -12,6 +12,8 @@ import { connectCommand } from './connect.mjs';
 import { importCommand, IMPORT_HELP } from './importer.mjs';
 import { slackImport } from './slack-import.mjs';
 import { canvasCommand, CANVAS_HELP } from './canvas.mjs';
+import { SETTINGS_HELP, SETTINGS_COMMANDS } from './settings.mjs';
+import { TASKBOARD_HELP } from './taskboard.mjs';
 import { engineCommand, ENGINE_HELP } from './engine/cmd.mjs';
 import { enable, disable, uninstall, VIEW_HELP } from './view.mjs';
 import { secretCommand, SECRET_HELP } from './secret.mjs';
@@ -63,6 +65,9 @@ ${IMPORT_HELP}
 
 ${CANVAS_HELP}
 
+${SETTINGS_HELP}
+${TASKBOARD_HELP}
+
 ${WATCH_HELP}
 
 ${ENGINE_HELP}
@@ -78,7 +83,7 @@ Connect a service (Linear, Notion, GitHub, any MCP server)
 
 ${SESSION_HELP}`;
 
-const SECTION_HELP = { device: DEVICE_HELP, import: IMPORT_HELP, canvas: CANVAS_HELP, watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, secret: SECRET_HELP, enable: VIEW_HELP, disable: VIEW_HELP, harness: VIEW_HELP, view: VIEW_HELP, uninstall: VIEW_HELP };
+const SECTION_HELP = { device: DEVICE_HELP, import: IMPORT_HELP, canvas: CANVAS_HELP, ...Object.fromEntries(SETTINGS_COMMANDS.map(c => [c, SETTINGS_HELP])), watch: WATCH_HELP, engine: ENGINE_HELP, session: SESSION_HELP, profile: PROFILE_HELP, secret: SECRET_HELP, enable: VIEW_HELP, disable: VIEW_HELP, harness: VIEW_HELP, view: VIEW_HELP, uninstall: VIEW_HELP, taskboard: TASKBOARD_HELP };
 function wantsHelp(cmd, rest) {
   if (cmd === 'engine' && rest[0] === 'verify') return false;
   if (cmd === 'profile' && rest[0] === 'run') return rest[1] === '--help' || rest[1] === '-h';
@@ -91,9 +96,9 @@ function parse(rest) {
     const a = rest[i];
     if (!a.startsWith('--')) { pos.push(a); continue; }
     const k = a.slice(2);
-    if (['bg', 'no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay', 'force', 'dropped', 'all'].includes(k)) { flags[k] = true; continue; }
+    if (['bg', 'no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay', 'force', 'dropped', 'all', 'none'].includes(k)) { flags[k] = true; continue; }
     const v = rest[++i];
-    if (['choice', 'evidence', 'part'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
+    if (['choice', 'evidence', 'fold', 'alias', 'part'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
   }
   return { flags, pos };
 }
@@ -221,6 +226,8 @@ export async function main(argv) {
     if (cmd === 'watch') return await watchCommand(pos[0], flags);
     if (cmd === 'import' && pos[0] === 'slack') { const r = await slackImport(pos[1], flags); if (r.stopped) process.exitCode = 75; return; }   // 옛 Slack 글(채널 = 노드)
     if (cmd === 'canvas') return void await canvasCommand(pos[0], pos.slice(1), flags);
+    if (SETTINGS_COMMANDS.includes(cmd)) { const { settingsCommand } = await import('./settings.mjs'); return void await settingsCommand(cmd, pos[0], pos.slice(1), flags); }   // 내 보드 설정 읽기 · 바꾸기(바꾸기는 보드에서 이 기기를 허락한 뒤 — device-settings.ts)
+    if (cmd === 'taskboard') { const { taskboardCommand } = await import('./taskboard.mjs'); return void await taskboardCommand(pos[0], pos.slice(1)); }   // 태스크 현황 올리는 쪽(설정 › 기능에서 켠 계정)
     if (cmd === 'import') return await importCommand(flags);   // 들여오기 · 경우 (가)(A-2 · A-3 · A-4)
     if (cmd === 'restore') return await restore(pos[0], { only: csv(flags.only) });
     if (cmd === 'secret') return await secretCommand(pos[0], pos.slice(1), flags);

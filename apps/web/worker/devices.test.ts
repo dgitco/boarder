@@ -30,7 +30,8 @@ test("주인 계정 덧붙임(계정 글자 · 이름 · 기울기 · 바닥 예
   assert.deepEqual(a.credits, { limit: 250, used: 250.1, left: 0, expires: "2026-11-05T07:59:00+00:00" });
   assert.equal(a.accessToken, undefined); assert.equal(a.dir, undefined);
   const b = m.accounts[1] as Record<string, unknown>;
-  assert.equal(b.acct, undefined); assert.equal(b.rate, undefined);   // 글자 둘 · 범위 밖은 버림
+  assert.equal(b.acct, "bb"); assert.equal(b.rate, undefined);   // 계정 글자는 자유(길이만 제한) · 범위 밖 값은 버림
+  assert.equal((D.cleanMetrics({ accounts: [{ acct: "회사-work.2 " + "x".repeat(100) }, { acct: 7 }, { acct: "\u0000\u0001" }] }).accounts as Record<string, unknown>[]).map(a => a.acct === undefined ? a.acct : String(a.acct).length).join(), "30,,", "길이 제한 · 글자 아닌 값 · 빈 값은 칸 없음");
   assert.deepEqual(m.codex, { plan: "pro", p7: 1, r7: "2026-11-11T06:36:00.000Z", balance: 1000.5, at: "2026-11-04T08:05:24.143Z" });
   assert.equal("codex" in D.cleanMetrics({ accounts: [] }), false);
 });

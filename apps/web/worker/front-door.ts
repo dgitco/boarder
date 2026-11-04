@@ -34,3 +34,6 @@ export async function readFrontDoor(db: D1Database, owner: string) {
   const r = await db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner).first<{ data: string }>().catch(() => null);
   return frontDoorFromData(r?.data);
 }
+export async function foldRows(db: D1Database, owner: string, names: string[]) {
+  return (await db.prepare("SELECT id, nm FROM (SELECT id, COALESCE(NULLIF(pinned_name, ''), name) nm, ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(pinned_name, ''), name) ORDER BY archived_at IS NOT NULL, updated_at DESC) rn, archived_at, updated_at FROM mnode WHERE owner = ? AND id NOT LIKE 'tk\\_%' ESCAPE '\\' AND id NOT LIKE 'sl\\_%' ESCAPE '\\' AND COALESCE(NULLIF(pinned_name, ''), name) IN (SELECT value FROM json_each(?))) ORDER BY rn, archived_at IS NOT NULL, updated_at DESC LIMIT 8").bind(owner, JSON.stringify(names)).all<{ id: string; nm: string }>()).results;
+}

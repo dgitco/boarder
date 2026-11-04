@@ -3,7 +3,7 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
   const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
   const OFF = new Set(window.BX_FLAGS_OFF || []);
-  const MENU0 = [['계정', [['start', '시작하기'], ['profile', '프로필'], ['look', '모양'], ['devices', '기기']]], ['연결', [['connectors', '커넥터'], ['sessions', '세션'], ['profiles', 'CLI 프로필']]], ['에이전트', [['nodes', '노드']]], ['관리', [['emoji', '이모지'], ['invite', '사람 초대']]]];
+  const MENU0 = [['계정', [['start', '시작하기'], ['profile', '프로필'], ['look', '모양'], ['devices', '기기'], ['features', '기능']]], ['연결', [['connectors', '커넥터'], ['sessions', '세션'], ['profiles', 'CLI 프로필']]], ['에이전트', [['nodes', '노드']]], ['관리', [['emoji', '이모지'], ['invite', '사람 초대']]]];
   let OWNER = true;   // 관리 묶음은 관리자(주인)만 — api/me 의 owner 로 확인, 아니면 숨김
   const isMem = () => !!window.HB_MEMBER || !OWNER;   // 회원 화면(서버가 HB_MEMBER 를 넣음) — 시작하기는 회원만
   let MENU = [];
@@ -70,6 +70,7 @@
     profile: lu('user'), invite: lu('user-plus'),
     connectors: lu('code'), hooks: lu('zap'), profiles: lu('terminal'),
     devices: lu('monitor'),
+    features: lu('layout-grid'),   // 기능(상태 페이지 켜기/끄기)
     look: svg('<circle cx="10" cy="10" r="6.25"/><path d="M10 3.75v12.5"/><path d="M10 3.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor" stroke="none"/>'),   // 모양(테마)
     nodes: lu('network'),
     start: lu('list-checks'),   // 시작하기(회원 온보딩 점검표)
@@ -925,6 +926,28 @@
       st.busy = false; engDraw(box, st); return true;
     }
     return false;
+  };
+  // 기능: 사이드바 「피드」 밑 상태 페이지 둘(원하는 사람만 켬). 계정 값(api/me/features), 기본 꺼짐.
+  //   끄면 메뉴 줄이 사라지고 그 페이지 API 도 막혀요(서버 403). 서버에서 통째로 끈 기능(FLAGS_OFF)은 스위치가 잠김
+  PAGES.features = async el => {
+    const FT2 = [['taskboard', '태스크 현황', '요청마다 상태 · 담당 · PR · 대화를 한 페이지에서 봐요. 에이전트 쪽 도구가 올린 요청만 보여요'],
+      ['devboard', '기기 세션 현황', '내 기기마다 열린 창 · 상태 · 계정 · 부하를 한 페이지에서 봐요. 기기마다 보이기/숨기기를 고를 수 있어요']];
+    let F = null, busy = '';
+    const draw = () => {
+      el.innerHTML = header('기능', '켠 기능만 사이드바 「피드」 밑에 생겨요. 내 계정에 저장돼 다른 기기에서도 같아요.')
+        + (F ? FT2.map(([k, n, d]) => { const lock = (F.off || []).includes(k), on = !!F[k];
+          return `<div class="bxs-card"><div class="bxs-row between"><div><b>${esc(n)}</b><p class="bxs-mut">${esc(d)}${lock ? ' · 이 서버에서 꺼 둔 기능이에요' : ''}</p></div>${lock ? '' : sw(on, `data-ft2="${k}" data-on="${on ? 0 : 1}"${busy === k ? ' disabled' : ''}`, n)}</div></div>`; }).join('') : spin);
+    };
+    draw();
+    try { F = await api('GET', 'api/me/features'); } catch (e) { el.innerHTML = header('기능') + `<p class="bxs-mut">${esc(e.message)}</p>`; return; }
+    draw();
+    el.onclick = async e => {
+      const b = e.target.closest('[data-ft2]'); if (!b || busy) return;
+      busy = b.dataset.ft2; draw();
+      try { const j = await api('POST', 'api/me/features', {k: busy, on: b.dataset.on === '1'}); F = {...F, ...j}; dispatchEvent(new CustomEvent('bx-feat', {detail: F})); }
+      catch (er) { toast(er.message); }
+      busy = ''; draw();
+    };
   };
   PAGES.devices = async (el, id, live) => {
     const [{devices}, prompt, N, B] = await Promise.all([api('GET', 'api/me/devices'), fetch('api/install/prompt', {credentials: 'include'}).then(r => r.ok ? r.text() : '').catch(() => ''),

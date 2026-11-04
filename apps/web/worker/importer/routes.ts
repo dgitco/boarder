@@ -1,16 +1,17 @@
 import { taskIssueFor } from "./task-repo";
-import { cleanPins, savePins } from "../side-order";
+import { cleanPins, readPins, savePins } from "../side-order";
 import { deviceFeatures } from "./device-engine";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { group, pickUnit, notChat, type Item, type Unit } from "./group";
 import { prefsOf, parkHOf, savePrefs } from "../node-prefs";
-import { frontDoorOf } from "../front-door";
+import { foldRows, frontDoorOf, readFrontDoor } from "../front-door";
 import { seatsFromData, seatsOf, seatPlan } from "../role-seat";
 import { importedWindow, queueToImported } from "../member-imported";
 import { engineOf, widPane } from "../engine";
 import { paneOfId } from "../member-board";
 import { proposalFrom, applyProposal, imported, PROPOSAL_CHOICES, IMPORT_WIN } from "./proposal";
+import { allowed as settingsAllowed, LABEL as SETTING_LABEL, logChange, NOT_ALLOWED_HINT, show as showSetting } from "../device-settings";
 
 type Env = { DB: D1Database; PUBLIC_URL: string; [k: string]: unknown };
 type C = Context<{ Bindings: Env }>;
@@ -168,8 +169,11 @@ async function seatState(DB: D1Database, me: string, seats: ReturnType<typeof se
     DB.prepare("SELECT id, name, pinned_name, archived_at, counts FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(me),
     DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(me),
   ]);
-  return seatPlan({ seats, items: it.results as never, tasks: tk.results as never, map: mp.results as never }).seats;
+  const raw = new Map(seats.map(s => [s.name, s]));
+  return seatPlan({ seats, items: it.results as never, tasks: tk.results as never, map: mp.results as never }).seats.map(r => { const s = raw.get(r.name); return { ...r, ...(s?.primary ? { primary: true } : {}), ...(s?.fold?.length ? { fold: s.fold } : {}) }; });
 }
+/** 보드 기록에 남길 자리표 한 줄 */
+const seatsLine = (seats: ReturnType<typeof seatsFromData>) => seats.map(s => `${s.name} = ${s.win}${s.primary ? "(메인 봇)" : ""}`).join(", ") || "없음";
 
 function paneOf(rows: { pane: string; win: string }[]) {
   const m = new Map<string, string>(); for (const r of rows) m.set(r.win, r.pane);
@@ -321,34 +325,46 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
   });
 
   app.post("/api/device/pins", async c => {
-    const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);
+    const viaMe = h.sameSite(c) ? await h.member(c) : null, dev = viaMe ? null : await h.device(c), me = viaMe || dev?.owner || null;
+    if (!me) return c.json({ error: "기기 토큰" }, 401);
+    if (dev && !(await settingsAllowed(env(c).DB, dev.owner.toLowerCase(), dev.id))) return c.json({ error: "not_allowed", hint: NOT_ALLOWED_HINT }, 403);
     const pins = cleanPins((Object(await c.req.json().catch(() => ({}))) as { pins?: unknown }).pins);
     if (!pins) return c.json({ error: "캔버스 주소가 틀렸거나 12개를 넘었어요" }, 400);
+    const before = dev ? await readPins(env(c).DB, me) : null;
     await savePins(env(c).DB, me, pins);
+    if (dev && JSON.stringify(before) !== JSON.stringify(pins)) await logChange(env(c).DB, me.toLowerCase(), dev.name, SETTING_LABEL.pins, showSetting("pins", before), showSetting("pins", pins));   // 허락 카드가 약속한 기록(화면 길은 사람이 한 것이라 안 남김)
     return c.json({ ok: true, pins });
   });
   app.post("/api/device/roles", async c => {
-    const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);
+    const viaMe = h.sameSite(c) ? await h.member(c) : null, dev = viaMe ? null : await h.device(c), me = viaMe || dev?.owner || null;
+    if (!me) return c.json({ error: "기기 토큰" }, 401);
+    if (dev && !(await settingsAllowed(env(c).DB, dev.owner.toLowerCase(), dev.id))) return c.json({ error: "not_allowed", hint: NOT_ALLOWED_HINT }, 403);
     const b = await c.req.json<{ roles?: unknown }>().catch(() => ({} as { roles?: unknown }));
     const seats = seatsOf(b.roles);
     if (!seats) return c.json({ error: "roles: [{ name, win, node?, primary? }] — 32개까지, 역할 · 노드는 한 번씩, primary 는 하나" }, 400);
     const DB = env(c).DB;
+    const was = dev ? { seats: seatsFromData((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data), front: await readFrontDoor(DB, me) } : null;
     await DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('roles', json(?2)), ?3) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.roles', json(?2)), updated_at = ?3").bind(me, JSON.stringify(seats), now()).run();
     const ps = seats.find(s => s.primary && s.fold?.length);
     let front: { name: string; folded: string[]; missing: string[] } | null = null;
     if (ps) {
-      const rows = (await DB.prepare("SELECT id, COALESCE(NULLIF(pinned_name, ''), name) nm FROM mnode WHERE owner = ? AND id NOT LIKE 'tk\\_%' ESCAPE '\\' AND id NOT LIKE 'sl\\_%' ESCAPE '\\' AND COALESCE(NULLIF(pinned_name, ''), name) IN (SELECT value FROM json_each(?)) ORDER BY archived_at IS NOT NULL, updated_at DESC LIMIT 8").bind(me, JSON.stringify(ps.fold)).all<{ id: string; nm: string }>()).results;
+      const rows = await foldRows(DB, me, ps.fold!);
       const fd = frontDoorOf({ name: ps.name.slice(0, 40), pairs: rows.map(r => ({ pane: paneOfId(r.id), name: r.nm })), aliases: ps.fold });
       if (fd) await savePrefs(DB, me, { front_door: fd });
       front = { name: ps.name, folded: [...new Set(rows.map(r => r.nm))], missing: ps.fold!.filter(f => !rows.some(r => r.nm === f)) };
     }
     await regroup(env(c), me);
+    if (dev && was) {   // 허락 카드가 약속한 기록: 자리표 전 → 후, 앞단 접기가 바뀌었으면 그것도. 창이 안 옮겨 같은 표를 다시 올린 것은 안 남김
+      const owner = me.toLowerCase(), nowFront = await readFrontDoor(DB, me);
+      if (JSON.stringify(was.seats) !== JSON.stringify(seats)) await logChange(DB, owner, dev.name, "역할 자리표", seatsLine(was.seats), seatsLine(seats));
+      if (JSON.stringify(was.front) !== JSON.stringify(nowFront)) await logChange(DB, owner, dev.name, SETTING_LABEL.front_door, showSetting("front_door", was.front), showSetting("front_door", nowFront));
+    }
     return c.json({ ok: true, seats: await seatState(DB, me, seats), ...(front ? { front } : {}) });
   });
   app.get("/api/device/roles", async c => {
     const me = await closer(c, false); if (!me) return c.json({ error: "기기 토큰" }, 401);
     const DB = env(c).DB, seats = seatsFromData((await DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>())?.data);
-    return c.json({ ok: true, seats: await seatState(DB, me, seats) });
+    return c.json({ ok: true, seats: await seatState(DB, me, seats), roles: seats });   // roles = 저장된 표 그대로(되돌리기용), seats = 자리마다 판정
   });
   app.post("/api/device/tasks", async c => {
     const me = await closer(c, true); if (!me) return c.json({ error: "기기 토큰" }, 401);

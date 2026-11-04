@@ -152,7 +152,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const pins = (SB.pins || []).map(p => `<button type="button" class="bx-it" data-sidepin="${esc(p.id)}" title="${esc(p.title || p.id)}">${I.canvas}<span>${esc(p.title || p.id)}</span></button>`).join('');
     const hid = new Set(Array.isArray(SB.hide) ? SB.hide : []), top1 = (k, icon, label) => hid.has(k) ? '' : it(k, icon, label, '', top === k);
-    const head = top1('node', I.node, '노드') + top1('canvas', I.canvas, '캔버스') + top1('feed', I.feed, '피드') + pins;
+    const head = top1('node', I.node, '노드') + top1('canvas', I.canvas, '캔버스') + top1('feed', I.feed, '피드') + (window.BXStatus?.side?.(it, top) || '') + pins;
     const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = TS ? (tks ? sec('nd', '태스크', tks) : '') : nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
     const part = {ib: sec('ib', '모아 보기', ib), nd: chs, ch: ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
     const body = '<div class="bx-sbsc">' + head + sideOrder(agentsFirst).map(k => part[k] || '').join('') + '</div>';
@@ -187,7 +187,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   function rowPanes(){ try { return new Set((attnRows() || []).map(rowPane)); } catch { return new Set(myNodes().filter(p => nodeRows(p.pane).length).map(p => p.pane)); } }   // 함수 선언 — 위의 lists() 가 먼저 불려도 됨
   const rcSig = () => recent().map(r => r.id + (r.title || '')).join('|') + '#' + (typeof attnCount === 'function' ? attnCount() : 0)
     + '#' + (rp => myNodes().map(p => p.pane + nameOf(p) + (rp.has(p.pane) ? '*' : '')).join('|'))(rowPanes()) + (cur?.page ? '@' + cur.p : '') + '#' + chats().map(c => c.sid + c.title).join('|') + (!ans.hidden && cur?.chan?.startsWith('q:') ? '@' + cur.chan : '')
-    + ((typeof D === 'object' && Array.isArray(D?.task_side)) ? '#' + D.task_side.map(t => t.pane + t.issue + t.name + t.state + (t.done ? 'd' : '')).join('|') : '') + ((typeof D === 'object' && Array.isArray(D?.role_seats)) ? '#' + D.role_seats.join('|') : '')
+    + '#' + (window.BXStatus?.sig?.() || '') + ((typeof D === 'object' && Array.isArray(D?.task_side)) ? '#' + D.task_side.map(t => t.pane + t.issue + t.name + t.state + (t.done ? 'd' : '')).join('|') : '') + ((typeof D === 'object' && Array.isArray(D?.role_seats)) ? '#' + D.role_seats.join('|') : '')
     + (window.HB_CH ? '#' + ((typeof D === 'object' && D?.areas) || []).map(a => a.key + ':' + a.lead + ':' + (AREA_NAME[a.key] || a.lead_name || '')).join('|') : '');
   const loadChats = () => { fetch('api/chats', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.chats)){ window.HB_CHATS = j.chats; if (on()) lists(); } }).catch(() => {}); };
   loadChats(); setInterval(loadChats, 20000); window.addEventListener('hb-chats', () => { if (on()) lists(); setTimeout(loadChats, 1500); });
@@ -212,8 +212,9 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     }
     if (typeof window.HBOpenCard === 'function') window.HBOpenCard(th, {c: CH.includes(ch) ? ch : 'primary', t: th});
   }, true);
-  const active = () => R.classList.contains('bx-x') && !R.classList.contains('xnodes') ? 'feed' : S.ib || chatMode() ? 'chat' : current === 'arts' ? 'canvas' : 'node';
+  const active = () => window.BXStatus?.cur?.() ? 'pg:' + window.BXStatus.cur() : R.classList.contains('bx-x') && !R.classList.contains('xnodes') ? 'feed' : S.ib || chatMode() ? 'chat' : current === 'arts' ? 'canvas' : 'node';
   window.addEventListener('hbside', () => sync());
+  window.addEventListener('bx-stp', () => sync());   // 상태 페이지가 열리고 닫힘 · 켠 기능이 바뀜(status.js)
   function sync(){
     if (!on()) return;
     const act = active();
@@ -237,7 +238,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     sync();
   }
   function ibClose(){ if (!S.ib) return; ibM?.destroy(); ibM = null; S.ib = null; ibox.hidden = true; }
-  window.HB_VIEW_OFF = () => on() && (R.classList.contains('bx-chat') || R.classList.contains('bx-route') || R.classList.contains('bx-set') || !!S.ib || !!document.querySelector('#mview.full'));
+  window.HB_VIEW_OFF = () => on() && (R.classList.contains('bx-chat') || R.classList.contains('bx-route') || R.classList.contains('bx-set') || R.classList.contains('bx-stpg') || !!S.ib || !!document.querySelector('#mview.full'));
   let wakeQ = 0; const wakeLater = () => { if (!wakeQ) wakeQ = requestAnimationFrame(() => { wakeQ = 0; window.HBViewWake?.(); }); };
   new MutationObserver(wakeLater).observe(R, {attributes: true, attributeFilter: ['class']});
   new MutationObserver(wakeLater).observe(document.body, {childList: true});
@@ -263,6 +264,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   // ── 누르기
   function go(g){
     closeDr(); S.ret = null;
+    if (g.startsWith('pg:')){ ibClose(); if (!ans.hidden) closeAns(); window.BXFeed?.off?.(); return window.BXStatus?.open?.(g.slice(3)); }   // 상태 페이지(status.js) — 본 칸에 그 페이지
+    window.BXStatus?.close?.();   // 다른 곳으로 가면 상태 페이지는 닫음
     if (g === 'feed') return window.BXFeed ? window.BXFeed.on() : void (location.href = '/feed');   // 피드 = /feed(폰 · PC 같은 화면)
     if (g === 'find') return findOpen();
     if (g.startsWith('chan:')) return openChan(g.slice(5));
@@ -503,7 +506,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   function record(){
     recQ = 0;
     if (applying || backing || !on() || /^#settings(\/|$|\?)/.test(HBR.hash())) return;   // 설정 화면(settings.js)이 주소를 맡음
-    if (EMBED) return;
+    if (EMBED || window.BXStatus?.cur?.()) return;   // 상태 페이지(status.js)가 열려 있으면 주소는 그 페이지가 맡음
     const h = want(); if (HBR.same(h, HBR.hash())) return;
     if (/^#t=/.test(HBR.hash()) || !HBR.hash()) return history.replaceState(history.state, '', h);   // 보드 글 링크(#t=…)로 연 것은 그 자리를 바꿈
     if (history.state?.bx && history.state.from === h){ backing = setTimeout(() => { backing = 0; recLater(); }, 1500); return history.back(); }

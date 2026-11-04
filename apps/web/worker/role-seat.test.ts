@@ -34,11 +34,15 @@ function d1() {
 }
 
 const A = "member@example.com", B = "other@example.com";
-function app(D1: D1Database, who: { device?: string | null; member?: string | null; same?: boolean } = { device: A }) {
+// grant: 기기가 보드에서 「설정 바꾸기」 허락을 받은 채(device-settings.ts — 자리표 쓰기는 허락 뒤만). false 면 허락 없는 기기
+function app(D1: D1Database, who: { device?: string | null; member?: string | null; same?: boolean; grant?: boolean } = { device: A }) {
   const a = new Hono<any>();
   a.onError((e, c) => c.json({ error: String(e) }, 500));
   mountImport(a, { device: async () => who.device ? { id: "dev1", owner: who.device, name: "mini" } : null, member: async () => who.member ?? null, sameSite: () => who.same ?? false });
-  return (method: string, path: string, body?: unknown) => a.request(path, { method, headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }, { DB: D1, PUBLIC_URL: "https://example.test" });
+  return async (method: string, path: string, body?: unknown) => {
+    if (who.device && who.grant !== false) await D1.prepare("INSERT OR IGNORE INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").bind(who.device.toLowerCase(), "cli_settings:dev1", "1", 1).run();
+    return a.request(path, { method, headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }, { DB: D1, PUBLIC_URL: "https://example.test" });
+  };
 }
 const { post, paneOfId, paneLogs } = await import("./member-board.ts");
 const ENV = { DB: null as unknown as D1Database, PUBLIC_URL: "https://example.test" };
@@ -158,6 +162,9 @@ test("거절: 틀린 꼴 · 같은 역할 둘 · primary 둘 · 토큰 없음 ·
   await bad({ roles: [{ name: "가", win: "a:b", primary: true }, { name: "나", win: "a:c", primary: true }] });
   await bad({ roles: [{ name: "기술장", win: "a:b", node: "n_abc" }] });
   await bad({ roles: SEATS1 }, 401, app(D1, { device: null }));
+  await bad({ roles: SEATS1 }, 403, app(D1, { device: B, grant: false }));   // 보드 허락 없는 기기 토큰은 못 씀(device-settings.ts)
+  assert.equal((await app(D1, { device: B, grant: false })("GET", "/api/device/roles")).status, 200, "읽기는 허락 없이도");
+  assert.equal((await app(D1, { device: null, member: A, same: true })("POST", "/api/device/roles", { roles: SEATS1 })).status, 200, "같은 사이트 회원 화면은 허락 없이");
   await call("POST", "/api/device/roles", { roles: SEATS1 });
   const other = await app(D1, { device: B })("GET", "/api/device/roles");
   assert.deepEqual(((await other.json()) as any).seats, [], "다른 회원 표는 안 보임");
@@ -248,7 +255,7 @@ test("옛 앞단 세 칸 글이 Primary 에 시각 순 · 표지 붙어 · 원�
   at("host2:old_co", "회사 둘째 글", 4000);
   db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(A, "나", "chat", "내 Primary 글", "primary", T + 5000);
   at("host2:old_lead", "팀장 둘째 글", 6000);
-  const before = (db.prepare("SELECT COUNT(*) n FROM board_log WHERE owner = ?").get(A) as any).n;
+  const before = (db.prepare("SELECT COUNT(*) n FROM board_log WHERE owner = ? AND win != '보더'").get(A) as any).n;   // 기기가 표를 바꾼 기록 줄(보더)은 원본 글이 아님
   const r = await call("POST", "/api/device/roles", { roles: [{ name: "비서실장", win: "host2:ew_chief3", primary: true, fold: ["회사", "팀장", "Chief of Staff"] }, ...SEATS1] });
   assert.equal(r.status, 200, await r.clone().text());
   assert.deepEqual((await r.json() as any).front.missing, []);
@@ -260,7 +267,7 @@ test("옛 앞단 세 칸 글이 Primary 에 시각 순 · 표지 붙어 · 원�
   assert.ok(ours.every((m: any) => m.who === "owner" || m.name === "비서실장"));
   // 원본: 노드 · 글 그대로(세 칸 노드 남음, 글 수 같음)
   assert.equal((db.prepare("SELECT COUNT(*) n FROM mnode WHERE owner = ? AND id IN ('n_old_co','n_old_lead','n_old_cos')").get(A) as any).n, 3);
-  assert.equal((db.prepare("SELECT COUNT(*) n FROM board_log WHERE owner = ?").get(A) as any).n, before, "글을 지우지 않음");
+  assert.equal((db.prepare("SELECT COUNT(*) n FROM board_log WHERE owner = ? AND win != '보더'").get(A) as any).n, before, "글을 지우지 않음");
   // 왼쪽 목록에서 옛 칸은 숨김
   const d = await data(D1, A, { name: "비서실장" }) as any, names = d.panes.map((p: any) => p.win);
   assert.ok(!["회사", "팀장", "Chief of Staff"].some(n => names.includes(n)), JSON.stringify(names));

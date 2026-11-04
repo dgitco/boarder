@@ -86,12 +86,28 @@ async function usage(d, interactive, own) {
   return { ...(await ownerMod.ownerUsage(d, interactive, r)), ...(ownerMod.ownerExtra?.(d) || {}) };
 }
 
+const EXTRA = { acct: 30, name: 20, plan: 40, p5: 40, r5: 40, p7: 40, r7: 40, rate: 40, out_at: 40 };
+const fit = (v, n) => typeof v === 'number' ? (Number.isFinite(v) ? v : undefined) : typeof v === 'string' ? v.slice(0, n) : undefined;
+export function extraAccounts(accounts, file = process.env.BOARDER_USAGE_FILE || path.join(dir(), 'usage-extra.json')) {
+  const rows = existsSync(file) ? readJson(file) : null; if (!Array.isArray(rows)) return accounts;
+  const out = accounts.map(a => ({ ...a }));
+  for (const r of rows.slice(0, 8)) {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) continue;
+    const pick = Object.fromEntries(Object.entries(EXTRA).map(([k, n]) => [k, fit(r[k], n)]).filter(([, v]) => v !== undefined)), has = pick.p5 != null || pick.p7 != null;
+    const mail = typeof r.email === 'string' ? r.email.toLowerCase().slice(0, 200) : '';
+    const hit = mail ? out.find(a => (a.email || '').toLowerCase() === mail) : pick.acct ? out.find(a => a.acct === pick.acct) : null;
+    if (hit) Object.assign(hit, pick, has && hit.status === 'unknown' ? { status: 'ok' } : {});
+    else if (out.length < 8) out.push({ ...(mail ? { email: mail } : {}), status: has ? 'ok' : 'unknown', ...pick });
+  }
+  return out;
+}
+
 export async function collect({ interactive = false, own = false } = {}) {
   const [c, accounts] = await Promise.all([cpu(), Promise.all(claudeDirs(own).map(d => usage(d, interactive, own)))]);
   return {
     host: { name: os.hostname().split('.')[0], os: process.platform, arch: process.arch, uptime_s: Math.round(os.uptime()), cli: VERSION },
     mem: memory(), cpu: c, disk: df('/'), tmp: process.platform === 'linux' ? { pct: df('/tmp').pct } : {}, agents: agents(),
-    accounts: accounts.map(a => Object.fromEntries(Object.entries(a).filter(([, v]) => v !== undefined && v !== null))),
+    accounts: extraAccounts(accounts.map(a => Object.fromEntries(Object.entries(a).filter(([, v]) => v !== undefined && v !== null)))),   // + 사람이 둔 선택 칸(usage-extra.json)
     ...(own && ownerMod?.ownerCodex ? (cx => cx ? { codex: cx } : {})(ownerMod.ownerCodex()) : {}),   // 주인 기기만 Codex 한도 · 크레딧
   };
 }

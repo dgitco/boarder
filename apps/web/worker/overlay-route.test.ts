@@ -74,7 +74,7 @@ async function setup(o: { relay?: boolean } = {}) {
   const run = (sql: string, ...a: unknown[]) => (D1 as any).prepare(sql).bind(...a).run();
   await run("INSERT INTO invite(email, by_email, at) VALUES (?,?,?)", MEMBER, OWNER, Date.now());
   const dev = async (id: string, owner: string, scope: string, revoked = false) => run("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, revoked_at) VALUES (?,?,?,?,?,?,?,?,?)", id, owner, "내 노트북", "", await sha(DEV(id)), Date.now(), Date.now(), scope, revoked ? Date.now() : null);
-  await dev("a", MEMBER, "full"); await dev("w", MEMBER, "watch"); await dev("h", MEMBER, "harness"); await dev("r", MEMBER, "full", true); await dev("o", OWNER, "full"); await dev("x", "gone@example.test", "full");
+  await dev("a", MEMBER, "full"); await dev("b", MEMBER, "full"); await dev("w", MEMBER, "watch"); await dev("h", MEMBER, "harness"); await dev("r", MEMBER, "full", true); await dev("o", OWNER, "full"); await dev("x", "gone@example.test", "full");
   const q = async (sql: string, ...a: unknown[]) => (await (D1 as any).prepare(sql).bind(...a).first()) as Record<string, unknown> | null;
   const call = (path: string, init: RequestInit & { as?: string; tok?: string; site?: boolean; body?: unknown } = {}) => app.fetch(new Request("https://example.test" + path, {
     method: init.method || "POST", redirect: "manual",
@@ -86,7 +86,9 @@ async function setup(o: { relay?: boolean } = {}) {
     headers: { "content-type": "application/json", accept: "application/json", cookie: await cookie(who), ...(o.site ? { "x-hb": "1", "sec-fetch-site": "same-origin" } : {}) },
     ...(o.body !== undefined ? { body: JSON.stringify(o.body) } : {}),
   }), env as never, { waitUntil: (p: Promise<unknown>) => { pending.push(p); }, passThroughOnException() {} } as never).then(async r => { await Promise.all(pending.splice(0)); return r; });
-  return { q, call, web, run, env };
+  /** 그 기기가 보드 카드에서 「설정 바꾸기」 허락을 받은 채(카드 길 자체는 device-settings.test.ts) */
+  const grant = (id: string, owner = MEMBER) => run("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)", owner, `cli_settings:${id}`, "1", Date.now());
+  return { q, call, web, run, env, grant };
 }
 const CSS = { slot: "mine", set: { css: "a{color:red}" } };
 
@@ -178,6 +180,7 @@ test("래퍼 js: 동의 해시가 없거나 다르면 400(저장 안 됨), 맞�
     const r = await s.call("/api/device/overlay", { tok: "a", body: { slot: "wrapper", set: { js }, ...(consent ? { consent } : {}) } }); assert.equal(r.status, 400);
   }
   assert.equal(await s.q("SELECT 1 x FROM person_custom"), null);
+  await s.grant("a");
   assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "wrapper", set: { js }, consent: await sha(js) } })).status, 200);
   const row = await s.q("SELECT js, wjs, wjs_sha FROM person_custom WHERE owner = ?", MEMBER);
   assert.deepEqual([row?.js, row?.wjs, row?.wjs_sha], [null, js, await sha(js)]);
@@ -202,6 +205,7 @@ test("웹 길 같은 사이트 검사: x-hb 없으면 쓰기(POST · DELETE) 403
 
 test("DELETE: 기본은 내 칸만, ?all=1 이면 래퍼 칸(css · js · 사이드)까지", async () => {
   const s = await setup(), js = "1;";
+  await s.grant("a");
   await s.call("/api/device/overlay", { tok: "a", body: { slot: "wrapper", set: { css: "w{}", js, side: { side: ["ch"] } }, consent: await sha(js) } });
   await s.call("/api/device/overlay", { tok: "a", body: CSS });
   assert.equal((await s.web("/api/me/overlay", MEMBER, { method: "DELETE", site: true })).status, 200);
@@ -219,4 +223,57 @@ test("화면에 얹힘: 로그인한 그 사람 것만, ?no_overlay=1 이면 안
   assert.match(on, /id="hb-overlay-css"/); assert.match(on, /id="hb-overlay-js"/);
   const off = await (await s.web("/?no_overlay=1", OWNER)).text();
   assert.doesNotMatch(off, /hb-overlay/);
+});
+
+test("허락 없는 회원 기기: js 쓰기(내 칸 · 래퍼 칸, 동의 해시를 맞춰도) 403 · 값 안 바뀜 / css 와 같이 보내도 아무것도 안 씀", async () => {
+  const s = await setup(), js = "fetch('/api/me/cards/1.1/answer',{method:'POST',headers:{'x-hb':'1'},body:JSON.stringify({choice:'허용'})})";
+  for (const body of [{ slot: "mine", set: { js } }, { slot: "wrapper", set: { js }, consent: await sha(js) }, { slot: "mine", set: { css: "a{}", js } }]) {
+    const r = await s.call("/api/device/overlay", { tok: "a", body }); assert.equal(r.status, 403, JSON.stringify(body).slice(0, 60));
+    const j = await r.json() as { ok: boolean; error: string; hint: string };
+    assert.equal(j.error, "not_allowed"); assert.match(j.hint, /boarder settings allow/);
+  }
+  assert.equal(await s.q("SELECT 1 x FROM person_custom"), null, "아무것도 안 저장됨");
+  assert.equal(await s.q("SELECT 1 x FROM board_log WHERE owner = ? AND text LIKE '%화면 덧씌우기%'", MEMBER), null, "저장 안 했으면 알림 줄도 없음");
+});
+
+test("허락 뒤: 그 기기의 js 쓰기만 200 — 다른 기기로 안 번짐 · 거둔 뒤 다시 403", async () => {
+  const s = await setup(), js = "window.__m=1";
+  await s.grant("a");
+  assert.equal((await s.call("/api/device/overlay", { tok: "b", body: { slot: "mine", set: { js } } })).status, 403, "다른 기기는 따로 허락");
+  assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "mine", set: { js } } })).status, 200);
+  assert.equal((await s.q("SELECT js FROM person_custom WHERE owner = ?", MEMBER))?.js, js);
+  assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "wrapper", set: { js }, consent: await sha(js) } })).status, 200);
+  await s.run("DELETE FROM user_pref WHERE k = 'cli_settings:a'");
+  assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "mine", set: { js: "window.__m=2" } } })).status, 403, "거둔 뒤");
+  assert.equal((await s.q("SELECT js FROM person_custom WHERE owner = ?", MEMBER))?.js, js);
+});
+
+test("허락 없어도 되는 것: css · js 비우기(boarder view overlay off · ui off) · 지금과 같은 js 다시 보내기 · 읽기 · 주인 기기 · 같은 사이트 회원 화면", async () => {
+  const s = await setup(), js = "window.__k=1";
+  assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "mine", set: { css: "a{}" } } })).status, 200);
+  assert.equal((await s.call("/api/device/overlay", { method: "GET", tok: "a" })).status, 200);
+  assert.equal((await s.web("/api/me/overlay", MEMBER, { method: "POST", site: true, body: { js } })).status, 200, "회원 화면 길은 그대로");
+  assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "mine", set: { js } } })).status, 200, "지금 값과 같으면 바뀌는 게 없음");
+  assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "mine", set: { css: null, js: null } } })).status, 200, "끄기는 늘 됨");
+  assert.equal((await s.q("SELECT js FROM person_custom WHERE owner = ?", MEMBER))?.js || "", "");
+  assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "wrapper", set: { js: null } } })).status, 200, "래퍼 js 끄기도");
+  assert.equal((await s.call("/api/device/overlay", { tok: "o", body: { slot: "mine", set: { js } } })).status, 200, "주인 기기는 settings allow 가 막혀 있어 예외");
+  assert.equal((await s.call("/api/device/overlay", { tok: "o", body: { slot: "wrapper", set: { js, side: { pins: [{ id: "abcd1234", title: "x" }] } }, consent: await sha(js) } })).status, 200);
+});
+
+test("래퍼 side.pins: 허락 없으면 고정 캔버스 값을 바꾸는 쓰기 403(넣기 · 바꾸기 · 지우기) · 값 안 바뀜 / 순서만 · 같은 값은 200 / 허락 뒤 200", async () => {
+  const s = await setup(), pins = [{ id: "abcd1234", title: "캔버스" }], wside = async () => (await s.q("SELECT wside FROM person_custom WHERE owner = ?", MEMBER))?.wside as string | undefined;
+  const put = (side: unknown, tok = "a") => s.call("/api/device/overlay", { tok, body: { slot: "wrapper", set: { side } } });
+  assert.equal((await put({ pins })).status, 403);
+  assert.equal(await wside(), undefined, "안 바뀜");
+  assert.equal((await put({ side: ["ch"] })).status, 200, "칸 순서만은 그대로 됨");
+  await s.grant("a");
+  assert.equal((await put({ side: ["ch"], pins })).status, 200, "허락 뒤");
+  const saved = await wside(); assert.match(String(saved), /abcd1234/);
+  assert.equal((await put({ side: ["nd"], pins }, "b")).status, 200, "허락 없는 기기도 pins 가 그대로면 됨(래퍼 받기가 같은 값을 다시 올림)");
+  const kept = await wside();
+  for (const side of [{ pins: [{ id: "zzzz9999", title: "남의 캔버스" }] }, { side: ["ch"] }, null]) {
+    assert.equal((await put(side, "b")).status, 403, JSON.stringify(side));
+    assert.equal(await wside(), kept, "안 바뀜");
+  }
 });

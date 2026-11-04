@@ -102,6 +102,7 @@ test("에이전트 목록 자료: 자리표가 있으면 role_seats = 부서장 
   assert.equal(((await data(D1, A, null)) as any).role_seats, undefined);
   win(db, "host1:ew_tech02", "기술장", "session:claude:t");
   win(db, "host2:ew_chief", "비서실장");
+  db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").run(A, "cli_settings:dev1", "1", 1);   // 자리표 쓰기는 보드에서 허락받은 기기만(device-settings.ts)
   assert.equal((await call("POST", "/api/device/roles", { roles: [{ name: "비서실장", win: "host2:ew_chief", primary: true }, { name: "기술장", win: "host1:ew_tech02" }] })).status, 200);
   assert.deepEqual(((await data(D1, A, null)) as any).role_seats, ["기술장"]);
 });

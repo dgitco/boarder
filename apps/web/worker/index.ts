@@ -4,6 +4,7 @@ import { z } from "zod";
 import { METRICS_MAX_BYTES, putMetrics, listDevices, readCapped, tooSoon } from "./devices";
 import * as devCard from "./device-card";
 import * as connReq from "./connect-request";
+import * as devSettings from "./device-settings";
 import { onboarding } from "./member-onboarding";
 import { legal } from "./legal";
 import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
@@ -37,6 +38,8 @@ import eaJs from "./legacy/ea.js?raw";
 import eaCss from "./legacy/ea.css?raw";
 import xJs from "./legacy/x.js?raw";
 import xCss from "./legacy/x.css?raw";
+import statusJs from "./legacy/status.js?raw";   // 상태 페이지(태스크 현황 · 기기 세션 현황) — 설정 › 기능에서 켠 사람만 사이드바 「피드」 밑에
+import statusCss from "./legacy/status.css?raw";
 import eaSecretJs from "./legacy/ea-secret.js?raw";
 import { snippet, capture, phId, type PH } from "./posthog";
 import { mcp } from "./mcp/server";
@@ -44,6 +47,9 @@ import { run as runTool, hasTool, addTools, onlyReads } from "./mcp/tools";
 import { registry, view, dropCache, diff } from "./mcp/registry";
 import { mountConnectors } from "./connectors/routes";
 import { mountTasks } from "./tasks/routes";
+import { mountFeatures } from "./status-pages/routes";   // 설정 › 기능: 태스크 현황 · 기기 세션 현황 켜기/끄기(사람마다, 기본 꺼짐)
+import { mountTaskBoard, sweepTaskBoard } from "./status-pages/taskboard";   // 태스크 현황(요청 · 요청 대화 · 말하기) — 기기가 올리고 켠 사람만 봄
+import { mountDevBoard } from "./status-pages/devboard";
 import { mountSales } from "./sales/routes";
 import { runDigest, type Send as SalesSend } from "./sales/digest";
 import { mountHooks } from "./connectors/hooks";
@@ -162,7 +168,7 @@ app.use("*", async (c, next) => {
   const rn = (rec as { renew?: Renew }).renew;
   if (rn?.done && rn.done === rn.email) rec.cookies.push(await bxCookie(c, rn.email, rn.th));
   const lw = rec.who && /^[^@\s:%]+@[^@\s:%]+$/.test(rec.who) ? rec.who : rec.dev;
-  if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && !isOwner(c.env, lw) && !/^\/api\/(relay\/|device\/metrics|draft$|cardcheck$|me\/tasks\/view$)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok)
+  if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && !isOwner(c.env, lw) && !/^\/api\/(relay\/|device\/metrics|device\/taskboard|me\/taskboard|me\/devboard|me\/features$|draft$|cardcheck$|me\/tasks\/view$)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok). 상태 페이지 쓰기는 보드 화면 값을 안 바꿈(그 페이지가 스스로 다시 읽음)
     c.executionCtx.waitUntil(live.bumpMember(c.env, lw));
   const total = Date.now() - t0, st = [...Object.entries(rec.seg).map(([k, v]) => `${k};dur=${v}`), ...(meter.d1rn ? [`d1r;dur=${meter.d1r};desc=${meter.d1rn}`] : []), ...(meter.d1wn ? [`d1w;dur=${meter.d1w};desc=${meter.d1wn}`] : []), ...(meter.dobn ? [`dob;dur=${meter.dob};desc=${meter.dobn}`] : []), ...(meter.r2n ? [`r2m;dur=${meter.r2};desc=${meter.r2n}`] : []), `total;dur=${total}`].join(", ");
   if (c.res.status === 101 || (c.res as any).webSocket) { }
@@ -607,7 +613,7 @@ const CTRL_ALL = /[\x00-\x1f\x7f-\x9f]/g;
 const clean = (v: unknown, n: number) => String(v ?? "").replace(CTRL_ALL, "").trim().slice(0, n);
 const docNav = (c: { req: { method: string; header(k: string): string | undefined } }, url: URL) =>
   c.req.method === "GET" && c.req.header("sec-fetch-dest") === "document" && !url.pathname.startsWith("/api/") && url.pathname !== "/";
-export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/[A-Za-z0-9]{16,40})?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/\d{10}\.\d{6})?|w\/[^/]+|settings(?:\/[^/]+){0,2})\/?$/;
+export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/[A-Za-z0-9]{16,40})?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/\d{10}\.\d{6})?|w\/[^/]+|settings(?:\/[^/]+){0,2}|task-status(?:\/[\w.-]{1,40})?|device-sessions)\/?$/;
 const NOFRAME = { "cache-control": "no-store", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" };
 const sameSite = (c: Context<{ Bindings: Env }>) => c.req.header("x-hb") === "1" && ["same-origin", "none", undefined].includes(c.req.header("sec-fetch-site"));
 async function deviceOf(c: Context<{ Bindings: Env }>, opt: { watch?: boolean; harness?: boolean } = {}) {
@@ -947,7 +953,7 @@ app.post("/api/me/cards/:id/answer", async c => {
   const me = s.user.email.toLowerCase(), id = c.req.param("id"), { choice: ch, free, rid: rid0 } = await c.req.json<{ choice?: string; free?: boolean; rid?: string }>().catch(() => ({} as { choice?: string; free?: boolean; rid?: string }));
   if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) {
     const secret = await c.env.DB.prepare("SELECT 1 FROM secret_request WHERE card_id = ? AND owner = ?").bind(id, me).first();
-    if (secret || await devCard.isDeviceCard(c.env, me, id) || await connReq.isConnectCard(c.env, me, id)) return c.json({ error: "로그인" }, 401);   // 새 기기 · 커넥터 허용 카드도 사람만
+    if (secret || await devCard.isDeviceCard(c.env, me, id) || await connReq.isConnectCard(c.env, me, id) || await devSettings.isSettingsCard(c.env, me, id)) return c.json({ error: "로그인" }, 401);   // 새 기기 · 커넥터 · 기기 설정 허락 카드도 사람만
   }
   const rid = queue.ridOfBody({ rid: rid0 });
   let choice = "";
@@ -973,7 +979,8 @@ app.post("/api/me/cards/:id/answer", async c => {
   await onCardAnswered(c.env as never, me, id, head).catch(e => console.error("들여오기 카드 답", e));
   await secretCardAnswered(c.env as never, me, id).catch(e => console.error("비밀 요청 카드 답", String(e).slice(0, 200)));
   await devCard.onDeviceCardAnswered(c.env, me, id).catch(e => console.error("새 기기 카드 답", String(e).slice(0, 200)));   // 새 기기 허용 카드(device-card.ts)
-  await connReq.onConnectCardAnswered(c.env as never, me, id).catch(e => console.error("커넥터 카드 답", String(e).slice(0, 200)));
+  await connReq.onConnectCardAnswered(c.env as never, me, id).catch(e => console.error("커넥터 카드 답", String(e).slice(0, 200)));   // 기기에서 넣는 커넥터(connect-request.ts)
+  await devSettings.onSettingsCardAnswered(c.env, me, id).catch(e => console.error("기기 설정 허락 카드 답", String(e).slice(0, 200)));
   const card = await c.env.DB.prepare("SELECT wid, question, answer FROM board_card WHERE id = ? AND owner = ?").bind(id, me).first<{ wid: string | null; question: string; answer: string | null }>().catch(() => null);
   const ansText = card ? `${head} [Boarder] The person answered your card ${id} ("${card.question.slice(0, 120)}"): ${String(card.answer ?? choice)}. Continue with that.` : "";
   const sent = card?.wid ? deliverTo(c.env, me, card.wid, ansText).catch(async e => {
@@ -1024,6 +1031,12 @@ mountSlackConnector(app as never, { device: async c => { const d = await deviceO
 connReq.mountConnectRequests(app as never, {
   device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
   card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허용 — 늘 보냄(비밀 넣기와 같음)
+});
+devSettings.mountDeviceSettings(app as never, {
+  device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
+  ownWindow: (db, me, t) => ownWindow(db, me, t),
+  regroup: (env, me) => regroup(env as never, me),
+  card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허락 — 늘 보냄(커넥터 허용과 같음)
 });
 mountSecrets(app as never, {
   human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s ? { email: s.user.email, owner: isOwner(c.env as never, s.user.email) } : null; },
@@ -1170,11 +1183,13 @@ app.post("/api/device/overlay", async c => {
   const b = Object(await c.req.json().catch(() => ({}))) as { slot?: unknown; set?: Record<string, unknown>; consent?: unknown };
   const set = b.set && typeof b.set === "object" && !Array.isArray(b.set) ? b.set : null;
   if ((b.slot !== "mine" && b.slot !== "wrapper") || !set) return c.json({ ok: false, error: "slot · set" }, 400);
-  const patch: Parameters<typeof pc.savePatch>[2] = {}, what: string[] = [];
+  const patch: Parameters<typeof pc.savePatch>[2] = {}, what: string[] = [], cur = await pc.readOverlay(c.env.DB, a.owner);
+  let risky = false;
   for (const k of Object.keys(set)) {
     const v = set[k];
     if ((k === "css" || k === "js") && v !== undefined) {
       const t = v === null ? "" : pc.cleanText(v); if (t === null) return c.json({ ok: false, error: `${k} 는 글이고 200KB 까지예요` }, 400);
+      if (k === "js" && t && t !== (b.slot === "mine" ? cur?.js : cur?.wjs)) risky = true;
       if (b.slot === "mine") patch[k] = t;
       else if (k === "css") patch.wcss = t;
       else {   // 래퍼 js: 받는 사람이 동의한 해시와 같은 글일 때만
@@ -1184,10 +1199,12 @@ app.post("/api/device/overlay", async c => {
       what.push(`${b.slot === "wrapper" ? "래퍼 " : ""}${k}${t ? "" : " 비움"}`);
     } else if (k === "side" && b.slot === "wrapper") {
       const w = v === null ? null : pc.cleanWrapperSide(v); if (v !== null && !w) return c.json({ ok: false, error: "side 꼴이 틀렸어요" }, 400);
+      if (JSON.stringify(w?.pins ?? []) !== JSON.stringify(cur?.wside?.pins ?? [])) risky = true;
       patch.wside = w ? JSON.stringify(w) : null; what.push(`래퍼 사이드${w ? "" : " 비움"}`);
     } else return c.json({ ok: false, error: `모르는 칸: ${k}` }, 400);
   }
   if (!what.length) return c.json({ ok: false, error: "바꿀 칸이 없어요" }, 400);
+  if (risky && !isOwner(c.env, a.owner) && !(await devSettings.allowed(c.env.DB, a.owner, a.d.id))) return c.json({ ok: false, error: "not_allowed", hint: devSettings.NOT_ALLOWED_HINT }, 403, { "cache-control": "no-store" });
   await pc.savePatch(c.env.DB, a.owner, patch);
   noteDevice(c, a.owner, a.d, `화면 덧씌우기를 바꿨어요 (${what.join(" · ")})`);
   return c.json({ ok: true });
@@ -1821,6 +1838,19 @@ mountSales(app as never, async c => { const s = await signedIn(c as unknown as C
 
 mountTasks(app as never, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? s.user.email.toLowerCase() : null; }, memberBoard.paneOfId);
 
+// 상태 페이지 켜기/끄기(설정 › 기능) — 주인 · 회원 둘 다, 자기 값만
+mountFeatures(app as never, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? s.user.email.toLowerCase() : null; });
+mountTaskBoard(app as never, {
+  who: async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? s.user.email.toLowerCase() : null; },
+  device: async c => { const x = c as unknown as Context<{ Bindings: Env }>, d = await deviceOf(x); return d && (isOwner(x.env, d.owner) || await member(x.env, d.owner)) ? d : null; },
+  nameOf: async (c, email) => (await (c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(email).first<{ name: string }>()))?.name || "",
+});
+// 기기 세션 현황: 로그인한 사람의 기기만(주인은 그 메일 여럿 — 설정 › 기기와 같은 범위)
+mountDevBoard(app as never, {
+  who: async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? s.user.email.toLowerCase() : null; },
+  mails: (c, email) => ownerMails(c.env as unknown as Env, email),
+});
+
 app.post("/api/dev/ch", async c => {
   if (c.req.header("x-hb") !== "1" || !["same-origin", "none", undefined].includes(c.req.header("sec-fetch-site"))) return c.json({ error: "no" }, 403);
   const sd = await signedIn(c); if (!sd) return c.json({ error: "로그인" }, 401); if (!isOwner(c.env, sd.user.email)) return c.json({ error: "no" }, 403);
@@ -1984,8 +2014,8 @@ let bxShell: { head: string; body: string; eaHead: string; eaBody: string; xHead
 async function shellTags(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
   if (!bxShell) {
     const shas: string[] = [], put = (sha: string, b: bxs.Block) => { shas.push(sha); bxPut(sha, b); }, esc = (s: string) => s.replace(/<\//g, "<\\/");
-    const t = await Promise.all([bxs.pack([{ kind: "css", body: shellCss, id: "hbx-css" }, { kind: "css", body: settingsCss, id: "hbx-set-css" }], put),
-      bxs.pack([{ kind: "js", body: esc(shellJs) }, { kind: "js", body: esc(botPickJs) }, { kind: "js", body: esc(settingsJs) }], put),
+    const t = await Promise.all([bxs.pack([{ kind: "css", body: shellCss, id: "hbx-css" }, { kind: "css", body: settingsCss, id: "hbx-set-css" }, { kind: "css", body: statusCss, id: "hbx-st-css" }], put),
+      bxs.pack([{ kind: "js", body: esc(shellJs) }, { kind: "js", body: esc(botPickJs) }, { kind: "js", body: esc(settingsJs) }, { kind: "js", body: esc(statusJs) }], put),
       bxs.pack([{ kind: "css", body: eaCss, id: "hbx-ea-css" }], put), bxs.pack([{ kind: "js", body: esc(eaJs) }, { kind: "js", body: esc(eaSecretJs) }], put),
       bxs.pack([{ kind: "css", body: xCss, id: "hbx-x-css" }], put), bxs.pack([{ kind: "js", body: esc(xJs) }], put)]).catch(() => null);   // 비서(/es) 덩어리는 따로 — / 몸통 바이트 그대로
     if (!t) return null;
@@ -2092,10 +2122,12 @@ async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: s
       .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (!/^#(chat|art\\/|arts|node\\/|tree|w\\/|inbox|unread|saved|drafts|timeline|nf|settings|t=|board)/.test(location.hash) && location.pathname && location.pathname !== '/') { var hp = location.pathname, hq = new URLSearchParams(location.search), hm; if (hp === '/nodes') HB_HASH0 = '#tree'; else if (hm = /^\\/nodes\\/([^/]+)$/.exec(hp)) HB_HASH0 = '#node/' + hm[1] + (/^\\d{10}\\.\\d{6}$/.test(hq.get('thread') || '') ? '/' + hq.get('thread') : ''); else if (hm = /^\\/canvas\\/([A-Za-z0-9]{16,40})$/.exec(hp)) HB_HASH0 = '#art/' + hm[1]; else if (hp === '/canvas') HB_HASH0 = '#arts'; else if (hm = /^\\/chat\\/([^/]+)(?:\\/([^/]+))?$/.exec(hp)) HB_HASH0 = '#chat/' + hm[1] + (hm[2] ? (hq.get('thread') ? '/' + hq.get('thread') + '/' + hm[2] : '/' + hm[2]) : ''); else if (hm = /^\\/(inbox|unread|saved|drafts|timeline|nf|w\\/.+|settings(?:\\/.*)?)$/.exec(hp)) HB_HASH0 = '#' + hm[1]; } document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000); if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|unread$|saved$|drafts$|settings(\\/|$|\\?))/.test(window.HB_HASH0)) { document.documentElement.classList.add('bx-route'); setTimeout(function(){ document.documentElement.classList.remove('bx-route') }, 35000) }</script>", { html: true });
         e.prepend(`<script>window.HBR=window.HBR||{hash:function(){return location.hash},same:function(a,b){return a===b},go:function(h){location.hash=h},toHash:function(){return ''},toPath:function(){return null},isApp:function(){return false},url:function(h){return location.origin+'/'+h}}</script>`, { html: true });
         if (!ea && !emb) e.prepend(`<base href="/"><script>window.HB_PATHS=1</script>`, { html: true });
+        const pg0 = ({ "/task-status": "tasks", "/device-sessions": "devices" } as Record<string, string>)[new URL(c.req.url).pathname.replace(/^(\/task-status)\/[\w.-]{1,40}$/, "$1").replace(/\/$/, "")];   // /task-status/<요청 id> = 그 요청 세부
+        if (pg0) e.prepend(`<script>window.BX_PG0 = "${pg0}"; window.BX_PG0_PATH = ${JSON.stringify(new URL(c.req.url).pathname)}</script>`, { html: true });   // 경로는 위 꼴(글자 · 숫자 · . _ -)만 지난 것   // 상태 페이지 주소로 열림(status.js) — 보드 첫 그리기가 주소를 /nodes 로 바꾸기 전에 남겨 둠
         if (ea === "x") e.prepend(`<script>window.BX_X=1</script>`, { html: true });   // /x = 피드 화면(x.js 가 같은 몸통 위에 피드 · 유리 막대를 얹음)
         else if (ea) e.prepend(`<script>window.BX_EA=1${ea === "personal" ? ';window.BX_EA_MODE="personal"' : ""}</script>`, { html: true });
-        e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style>`) + (ea === "x" ? (bx ? bx.xHead : `<style id="hbx-x-css">${xCss}</style>`) : ea ? (bx ? bx.eaHead : `<style id="hbx-ea-css">${eaCss}</style>`) : "") + snippet(c.env, await phId(c.env, email)) + (ov?.head || ""), { html: true }); } })
-      .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script>`) + (ea === "x" ? (bx ? bx.xBody : `<script>${xJs.replace(/<\//g, "<\\/")}</script>`) : ea ? (bx ? bx.eaBody : `<script>${eaJs.replace(/<\//g, "<\\/")}</script><script>${eaSecretJs.replace(/<\//g, "<\\/")}</script>`) : "") + `<script>document.documentElement.classList.remove('bx-boot')</script>` + (ov?.body || ""), { html: true }); } })
+        e.append(`<style>html.bx-boot body{visibility:hidden}</style>` + (bx ? bx.head : `<style id="hbx-css">${shellCss}</style><style id="hbx-set-css">${settingsCss}</style><style id="hbx-st-css">${statusCss}</style>`) + (ea === "x" ? (bx ? bx.xHead : `<style id="hbx-x-css">${xCss}</style>`) : ea ? (bx ? bx.eaHead : `<style id="hbx-ea-css">${eaCss}</style>`) : "") + snippet(c.env, await phId(c.env, email)) + (ov?.head || ""), { html: true }); } })
+      .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script><script>${statusJs.replace(/<\//g, "<\\/")}</script>`) + (ea === "x" ? (bx ? bx.xBody : `<script>${xJs.replace(/<\//g, "<\\/")}</script>`) : ea ? (bx ? bx.eaBody : `<script>${eaJs.replace(/<\//g, "<\\/")}</script><script>${eaSecretJs.replace(/<\//g, "<\\/")}</script>`) : "") + `<script>document.documentElement.classList.remove('bx-boot')</script>` + (ov?.body || ""), { html: true }); } })
     .transform(res);
 }
 app.all("*", async c => {
@@ -2445,6 +2477,7 @@ async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: U
 // app 에 scheduled 를 붙여 내보냄 — 시험이 default 로 받는 app(onError · request)이 그대로 Hono 앱이게
 export default Object.assign(app, {
   async scheduled(_e: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(sweepTaskBoard(env.DB).catch(e => console.log(JSON.stringify({ ev: "taskboard_sweep", error: String(e).slice(0, 200) }))));
     ctx.waitUntil((async () => {
       if (!(await ledger.f7On(env.DB, "member_salesmail"))) return;
       const r = await runDigest(env.DB, env.PUBLIC_URL, salesSend(env));
