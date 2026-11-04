@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { SignIn } from "./SignIn";
 import { Device } from "./Device";
+import { Tasks } from "./Tasks";
 import { Sales } from "./Sales";
 import { Frame, type Counts } from "./Frame";
 import { useRoute, AREA_NAME } from "./lib/route";
@@ -13,6 +14,7 @@ const LATER: Record<string, string> = { tree: "노드 트리 — 3단계", timel
 export function App() {
   const [me, setMe] = useState<Me | undefined>(undefined), [route, go] = useRoute();
   if (location.pathname === "/device") return me ? <Device email={me.email} /> : <Gate me={me} setMe={setMe} />;
+  if (location.pathname === "/tasks") return me ? <Tasks /> : <Gate me={me} setMe={setMe} />;
   if (location.pathname === "/sales") return me ? <Sales email={me.email} /> : <Gate me={me} setMe={setMe} />;
   return me === undefined || !me ? <Gate me={me} setMe={setMe} /> : <Signed route={route} go={go} onOut={() => setMe(null)} />;
 }

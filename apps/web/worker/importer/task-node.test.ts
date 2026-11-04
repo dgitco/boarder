@@ -173,3 +173,14 @@ test("확인 대기(confirm): 주면 task 에 confirm, false 로 지움 · 안 �
   await call("POST", "/api/device/tasks", { tasks: [{ key: "x", confirm: false }] });
   assert.equal("confirm" in JSON.parse(row(db, "tk_x").task), false);
 });
+
+test("업무 칸(fields): 묶음째 저장 · 안 주면 그대로 · 칸 21개는 400 · 같은 값이면 안 씀", async () => {
+  const { D1 } = d1(), call = app(D1), post = (tasks: unknown[]) => call("POST", "/api/device/tasks", { tasks });
+  assert.equal((await post([{ key: "f1", name: "업무", fields: { "막힌 것": "팀장님 — 답", "다음 할 일": "x" } }])).status, 200);
+  const read = async () => JSON.parse((await D1.prepare("SELECT task FROM mnode WHERE id = 'tk_f1'").first<{ task: string }>())!.task);
+  assert.deepEqual((await read()).fields, { "막힌 것": "팀장님 — 답", "다음 할 일": "x" });
+  assert.equal(((await (await post([{ key: "f1", line: "새 줄" }])).json()) as any).changed, 1);
+  assert.deepEqual((await read()).fields, { "막힌 것": "팀장님 — 답", "다음 할 일": "x" });   // 안 준 칸은 그대로
+  assert.equal(((await (await post([{ key: "f1", fields: { "막힌 것": "팀장님 — 답", "다음 할 일": "x" } }])).json()) as any).changed, 0);
+  assert.equal((await post([{ key: "f1", fields: Object.fromEntries(Array.from({ length: 21 }, (_, i) => ["k" + i, "v"])) }])).status, 400);
+});

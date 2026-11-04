@@ -42,6 +42,7 @@ import { mcp } from "./mcp/server";
 import { run as runTool, hasTool, addTools, onlyReads } from "./mcp/tools";
 import { registry, view, dropCache, diff } from "./mcp/registry";
 import { mountConnectors } from "./connectors/routes";
+import { mountTasks } from "./tasks/routes";
 import { mountSales } from "./sales/routes";
 import { runDigest, type Send as SalesSend } from "./sales/digest";
 import { mountHooks } from "./connectors/hooks";
@@ -160,7 +161,7 @@ app.use("*", async (c, next) => {
   const rn = (rec as { renew?: Renew }).renew;
   if (rn?.done && rn.done === rn.email) rec.cookies.push(await bxCookie(c, rn.email, rn.th));
   const lw = rec.who && /^[^@\s:%]+@[^@\s:%]+$/.test(rec.who) ? rec.who : rec.dev;
-  if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && !isOwner(c.env, lw) && !/^\/api\/(relay\/|device\/metrics|draft$|cardcheck$)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok)
+  if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && !isOwner(c.env, lw) && !/^\/api\/(relay\/|device\/metrics|draft$|cardcheck$|me\/tasks\/view$)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok)
     c.executionCtx.waitUntil(live.bumpMember(c.env, lw));
   const total = Date.now() - t0, st = [...Object.entries(rec.seg).map(([k, v]) => `${k};dur=${v}`), ...(meter.d1rn ? [`d1r;dur=${meter.d1r};desc=${meter.d1rn}`] : []), ...(meter.d1wn ? [`d1w;dur=${meter.d1w};desc=${meter.d1wn}`] : []), ...(meter.dobn ? [`dob;dur=${meter.dob};desc=${meter.dobn}`] : []), ...(meter.r2n ? [`r2m;dur=${meter.r2};desc=${meter.r2n}`] : []), `total;dur=${total}`].join(", ");
   if (c.res.status === 101 || (c.res as any).webSocket) { }
@@ -1710,6 +1711,8 @@ mountHooks(app, async c => { const s = await signedIn(c as unknown as Context<{ 
 mountConnectors(app, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? { owner: allowed(c.env as unknown as Env, s.user.email) ? "" : s.user.email, email: s.user.email } : null; });
 mountSales(app as never, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? s.user.email.toLowerCase() : null; }, (c, email) => member(c.env as never, email));
 
+mountTasks(app as never, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? s.user.email.toLowerCase() : null; }, memberBoard.paneOfId);
+
 app.post("/api/dev/ch", async c => {
   if (c.req.header("x-hb") !== "1" || !["same-origin", "none", undefined].includes(c.req.header("sec-fetch-site"))) return c.json({ error: "no" }, 403);
   const sd = await signedIn(c); if (!sd) return c.json({ error: "로그인" }, 401); if (!isOwner(c.env, sd.user.email)) return c.json({ error: "no" }, 403);
@@ -2052,7 +2055,7 @@ app.all("*", async c => {
     return new HTMLRewriter().on("head", { element: e => { e.append(snippet(c.env), { html: true }); } }).transform(page);
   }
   if (url.pathname === "/login" && c.req.method === "GET") return c.redirect("/", 302);   // 이미 들어온 사람이 랜딩의 「로그인」을 누르면 보드로
-  if ((url.pathname === "/device" || url.pathname === "/sales") && c.req.method === "GET") {
+  if ((url.pathname === "/device" || url.pathname === "/sales" || url.pathname === "/tasks") && c.req.method === "GET") {
     const page = await c.env.ASSETS.fetch(new Request(new URL("/", url), c.req.raw)), h = new Headers(page.headers);
     for (const [k, v] of Object.entries(NOFRAME)) h.set(k, v);
     return new Response(page.body, { status: 200, headers: h });
