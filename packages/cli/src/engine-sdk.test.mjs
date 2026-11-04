@@ -49,6 +49,27 @@ test('로그인: 계정을 안 고른 창은 기본 로그인 → 로그인된 �
   assert.ok(!d.account, '기본 로그인이 있으면 계정을 안 씌움');
 });
 
+test('되살린 창(계정 비어 있음)도 글마다 로그인된 계정을 고름 · 없으면 이유가 state.error 에', async () => {
+  const c = { sdk: { accounts: {} } };
+  fs.mkdirSync(path.join(home, 'cfg', 'sdk-accounts', 'claude', 'me'), { recursive: true });
+  S._inject.loggedIn = (prov, folder) => folder.endsWith(path.join('claude', 'me'));
+  const o = await S.open(c, { id: 'ew_ra1', name: 'ra', cwd: path.join(home, 'wra'), prompt: 'x', account: 'me' });
+  assert.equal(o.account, 'me');
+  const reg = path.join(process.env.BOARDER_HOME, 'sdk-windows.json');
+  const j = JSON.parse(fs.readFileSync(reg, 'utf8')); j.ew_ra1.account = null; j.ew_ra1.config_dir = null; fs.writeFileSync(reg, JSON.stringify(j));   // 계정이 비어 있는 옛 파일
+  S._reset();   // 데몬이 다시 뜸: 파일에서 되살림
+  const w = S.list(c).find(x => x.id === 'ew_ra1'); assert.ok(w);
+  calls = [];
+  await S.send(c, 'ew_ra1', 'again');
+  await wait(() => S.state(c, 'ew_ra1').state !== 'busy');
+  assert.equal(calls[0].options.env.CLAUDE_CONFIG_DIR, path.join(home, 'cfg', 'sdk-accounts', 'claude', 'me'), '비어 있던 계정을 로그인된 것으로 채움');
+  S._inject.loggedIn = () => false; S._reset();
+  const j2 = JSON.parse(fs.readFileSync(reg, 'utf8')); j2.ew_ra1.account = null; j2.ew_ra1.config_dir = null; fs.writeFileSync(reg, JSON.stringify(j2)); S._reset();
+  await S.send(c, 'ew_ra1', 'again2').catch(() => {});
+  await wait(() => S.state(c, 'ew_ra1').state !== 'busy');
+  assert.match(S.state(c, 'ew_ra1').error || '', /로그인되지 않았어요/);
+});
+
 test('claude: 권한 모드 — auto 는 permissionMode auto, ask 는 기본(허락 없는 도구는 막힘)', async () => {
   await S.open(cfg, { id: 'ew_pa', name: 'pa', cwd: path.join(home, 'wpa'), prompt: 'x', perm: 'auto' });
   assert.equal(calls[0].options.permissionMode, 'auto');

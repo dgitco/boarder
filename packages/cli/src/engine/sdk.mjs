@@ -170,7 +170,8 @@ function startTurn(cfg, w, text) {
   w.busy = true; w.since = Date.now(); w.error = null; w.limit = null;
   let early; const first = new Promise(r => { early = r; });
   const run = w.provider === 'codex' ? codexTurn : claudeTurn;
-  w.turn = run(cfg, w, text, () => early())
+  // 다시 뜬 데몬이 파일에서 되살린 창은 계정이 비어 있을 수 있음 — 글마다 한 번 더 로그인된 계정을 고름(없으면 이 턴이 오류로 끝나 state.error 에 이유가 남음)
+  w.turn = (w.provider === 'claude' || w.provider === 'codex' ? pickAccount(cfg, w.provider, w) : Promise.resolve()).then(() => run(cfg, w, text, () => early()))
     .catch(e => { if (e?.name !== 'AbortError' && !w.abort?.signal?.aborted) w.error = String(e?.message || e); })
     .finally(() => { w.busy = false; w.since = Date.now(); w.abort = null; if (w.error && LIMIT.test(w.error)) w.limit = w.error.slice(0, 200); early(); });
   return Promise.race([first, w.turn, new Promise(r => setTimeout(r, 20000))]);
