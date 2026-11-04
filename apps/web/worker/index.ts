@@ -59,6 +59,7 @@ import { openSecret, sealSecret } from "./vault/secret";
 import { envelopeOn, forgetFlags, openBlob, sealBlob, type VaultEnv } from "./vault/index";
 import * as vmig from "./vault/migrate";
 import { mountImport, onCardAnswered, regroup, setUnit } from "./importer/routes";
+import { dropRef, mountTaskConvo } from "./task-convo";
 import * as slackImport from "./slack-import";
 import * as memberCanvas from "./member-canvas";
 import { mountSlackConnector } from "./slack-connector";
@@ -1025,6 +1026,12 @@ mountImport(app as never, {
   device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
   member: async c => { const s = await signedIn(c as never); return s && !isOwner(c.env as never, s.user.email) ? s.user.email.toLowerCase() : null; },
   sameSite: c => sameSite(c as never),
+});
+mountTaskConvo(app as never, {
+  device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
+  member: async c => { const s = await signedIn(c as never); return s && !isOwner(c.env as never, s.user.email) ? s.user.email.toLowerCase() : null; },
+  sameSite: c => sameSite(c as never),
+  sync: (db, me, node) => memberBoard.syncTaskConvo(db, me, node),
 });
 // 옛 Slack 글 들여오기(slack-import.ts): 회원 기기만 — 들여오기와 같은 가림
 slackImport.mountSlackImport(app as never, { device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; } });
@@ -2096,7 +2103,9 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
     if (pre) { const head = boardHead({ channel: lg.ch, thread: memberBoard.tsOf(pre.at, pre.id) }); body = "head" in body ? { ...body, head } : { ...body, text: withHead(head, lg.text) };
       if (hop.path === "/api/me/tasks/assign") body.thread = memberBoard.tsOf(pre.at, pre.id); }   // 업무 노드 배정(④): 맨 위 글도 스레드 = 그 글 — 배정기 세션이 그 스레드에 답
   }
-  const unpre = () => pre ? c.env.DB.prepare("DELETE FROM board_log WHERE id = ? AND owner = ?").bind(pre.id, me).run().catch(e => console.error("노드 채팅 줄 지우기", e)) : Promise.resolve();
+  const unpre = async () => { if (!pre) return;
+    await c.env.DB.prepare("DELETE FROM board_log WHERE id = ? AND owner = ?").bind(pre.id, me).run().catch(e => console.error("노드 채팅 줄 지우기", e));
+    await dropRef(c.env.DB, me, "board_log:" + pre.id).catch(e => console.error("태스크 대화 지우기", e)); };   // 그 사이 화면이 읽어 태스크 대화 표에 들어갔을 수 있음
   const h = new Headers({ "content-type": "application/json", "x-hb": "1", cookie: c.req.header("cookie") || "" });
   const sf = c.req.header("sec-fetch-site"); if (sf) h.set("sec-fetch-site", sf);
   const r = await app.fetch(new Request(new URL(hop.path, url), { method: "POST", headers: h, body: JSON.stringify({ ...body, ...(rid ? { rid } : {}) }) }), c.env, c.executionCtx);   // rid 도 넘김(안쪽 쓰기가 한 번만) — 던지면 줄은 남김(들어갔을 수 있음)

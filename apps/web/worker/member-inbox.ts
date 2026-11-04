@@ -3,6 +3,7 @@
 // 표: member_react · member_saved · member_draft · member_seen(0041). 모두 owner = 나, 남의 것은 404 · 빈 답
 import type { Context } from "hono";
 import { paneLogs, ME, OWN, NOT_CHAT, QUIET, etag } from "./member-board";
+import { editRef } from "./task-convo";
 
 type Env = { DB: D1Database };
 type C = Context<{ Bindings: Env }>;
@@ -165,6 +166,7 @@ export async function chatPost(db: D1Database, me: string, b: R): Promise<{ stat
     const has = new Set(text.split("\n").map(l => l.trim()));
     const fl = String(r.text || "").split("\n").map(l => l.trim()).filter(l => FILE_LINE.test(l) && !has.has(l));
     await db.prepare("UPDATE board_log SET text = ? WHERE id = ? AND owner = ? AND (kind = 'me' OR win = '나')").bind([text, ...fl].join("\n"), r.id, me).run();
+    await editRef(db, me, "board_log:" + r.id, [text, ...fl].join("\n")).catch(e => console.error("태스크 대화 고치기", e));   // 태스크 대화 표에 맞춰 넣은 그 줄도(표가 없어도 고침은 끝남)
     return { status: 200, body: { ok: true, state: "ok" } };
   }
   if (b.seen) {   // 스레드 · 글을 봄 — 그 글의 채널을 그 글까지 읽음으로

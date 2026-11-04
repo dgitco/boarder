@@ -91,7 +91,10 @@ test("업무 채널: 실제 regroup→data→옛/새 대화·카드·스레드·
     const response = await get(D1, A, null, new URL("/api/nodechat?w=" + encodeURIComponent(name), "https://demo.test"), async () => null);
     assert.equal(response?.status, 200); const j = await response!.json() as any;
     assert.ok(j.messages.some((m: any) => m.text === "옛 칸에 남긴 사람 글"));
-    assert.ok(j.messages.some((m: any) => m.text === "옮기기 전 보고"));
+    // 옛 창(지금 담당 창이 아님) 보고 = 태스크 대화의 agents 층: 맨 위 접은 글 스레드에서 보임(migrations/0060)
+    const fold = j.messages.find((m: any) => m.fold?.agents);
+    const folded = await get(D1, A, null, new URL("/api/chat/primary/" + fold.ts, "https://demo.test"), async () => null);
+    assert.ok((await folded!.json() as any).messages.some((m: any) => m.text === "옮기기 전 보고"));
     assert.ok(j.messages.some((m: any) => m.text === "옛 창 카드"));
     const th = await get(D1, A, null, new URL("/api/chat/n:" + encodeURIComponent(name) + "/" + ts, "https://demo.test"), async () => null);
     assert.ok((await th!.json() as any).messages.some((m: any) => m.text === "옛 스레드 답"));

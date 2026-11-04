@@ -1,4 +1,5 @@
 import { load, primaryRoot, paneOfId, inPrim, OWN, CARD_TS } from "./member-board";
+import { dropRef } from "./task-convo";
 
 type R = Record<string, any>;
 type L = Awaited<ReturnType<typeof load>>;
@@ -101,6 +102,7 @@ export async function splitMove(db: D1Database, me: string, post: string, pane: 
       db.prepare("UPDATE member_split SET node_id = ?, at = ? WHERE id = ? AND owner = ?").bind(t.id, Date.now(), s.id, me),
       db.prepare("UPDATE board_log SET win = ? WHERE id = ? AND owner = ?").bind(t.name.slice(0, 120), s.log_id, me),
     ]);
+    await dropRef(db, me, "board_log:" + s.log_id).catch(e => console.error("태스크 대화 옮기기", e));   // 옛 태스크 표에서 뺌 — 옮겨 간 곳이 태스크면 다음에 읽을 때 그 표로 들어감
   }
   return { ok: { ok: true, state: "ok", splits: await splitsOf(db, me, String(s.root_ts), L) } } as const;
 }

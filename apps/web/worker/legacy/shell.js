@@ -981,3 +981,20 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       items.push({...x, key, st: x.st === 'queued' || x.st === 'wait' ? 'queued' : 'check'}); }   // wait 은 보낸 적 없음
     items.sort((a, b) => a.at - b.at); draw(); if (items.length) kick(true); });
 })();
+(() => {
+  let q = 0, on = '';
+  const paint = () => {
+    q = 0;
+    if (!(typeof D === 'object' && Array.isArray(D?.task_side)) || typeof CS !== 'object') return;
+    const ts = (CS.ch?.[CS.at]?.messages || []).find(m => m.fold?.agents)?.ts || '';
+    if (ts === on) return;
+    on = ts;
+    let st = document.getElementById('bx-agf-css');
+    if (!ts) { if (st) st.textContent = ''; return; }
+    if (!st) { st = document.createElement('style'); st.id = 'bx-agf-css'; document.head.append(st); }
+    const m = `html.bx .msg[data-mts=${JSON.stringify(String(ts))}]:not([data-min="1"])`, lab = String(window.HB_MEMBER?.name || '나').slice(0, 40) + '님 ↔ 에이전트';
+    st.textContent = `${m}{background:var(--sunk);border-radius:12px;margin:2px 8px 42px;box-sizing:border-box;max-width:calc(100% - 16px)}`
+      + `${m}::after{content:${JSON.stringify(lab)};position:absolute;left:8px;right:8px;top:calc(100% + 12px);padding-top:10px;border-top:1px solid var(--line);font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.01em}`;
+  };
+  new MutationObserver(() => { if (!q) q = requestAnimationFrame(paint); }).observe(document.body, {childList: true, subtree: true});
+})();

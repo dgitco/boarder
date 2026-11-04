@@ -337,3 +337,19 @@ test("노드 채널 맨 위 글: 엔진 답 없음(들어갔을 수 있음)이�
   assert.equal(rows().length, 1, "다시 보내도 줄 하나");
   assert.equal(sent.at(-1)!.text, `[보드 · 일 창 · 스레드 ${ts}] [Boarder chat] 답 없는 동안 쓴 글`);
 });
+
+test("노드 채팅 글이 창에 못 들어가 지울 때: 태스크 대화 표에 먼저 들어간 그 줄도 같이 지움(지운 글이 표에 남지 않게)", async () => {
+  const { db, post } = setup();
+  // 앞 요청이 남긴 내 글(같은 rid) + 그 사이 화면이 읽어 표에 들어간 줄
+  const at = Date.now() - 1000;
+  const id = Number(db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").run(MEMBER, "일 창", "me", "못 들어갈 글", null, at, "rid:rtest-convo-0001").lastInsertRowid);
+  db.prepare("INSERT INTO task_convo(owner, task_id, layer, who, at, source, text, src_ref, created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(MEMBER, "6386", "human", MEMBER, at, "board", "못 들어갈 글", "board_log:" + id, at);
+  db.prepare("INSERT INTO task_convo(owner, task_id, layer, who, at, source, text, src_ref, created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(MEMBER, "6386", "human", MEMBER, at, "board", "다른 글", "board_log:" + (id + 1), at);
+  db.prepare("DELETE FROM device WHERE id = 'devMember01'").run();   // 기기가 없어 안쪽 쓰기가 4xx
+  const { paneOfId } = await import("./member-board.ts");
+  const r = await post("/api/chat", { text: "못 들어갈 글", pane: paneOfId("ew_role1"), channel: "n:일 창", rid: "rtest-convo-0001" });
+  const body = await r.json() as { error?: string };
+  assert.ok(r.status >= 400 && r.status < 500, `안쪽 쓰기 실패여야 함: ${r.status} ${JSON.stringify(body)}`);
+  assert.equal((db.prepare("SELECT count(*) AS n FROM board_log WHERE id = ?").get(id) as { n: number }).n, 0, "장부 줄이 지워짐");
+  assert.deepEqual(db.prepare("SELECT text FROM task_convo WHERE owner = ?").all(MEMBER).map((x: any) => x.text), ["다른 글"]);
+});
