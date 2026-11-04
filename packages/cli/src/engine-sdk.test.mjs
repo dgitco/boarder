@@ -70,6 +70,34 @@ test('되살린 창(계정 비어 있음)도 글마다 로그인된 계정을 �
   assert.match(S.state(c, 'ew_ra1').error || '', /로그인되지 않았어요/);
 });
 
+test('agentEnv: ~/.local/bin 이 PATH 에 없으면 뒤에 붙임, 있으면 그대로, 폴더가 없으면 안 건드림', () => {
+  const bin = path.join('/h', '.local', 'bin');
+  const yes = () => true, no = () => false;
+  assert.deepEqual(S.agentEnv({ PATH: '/usr/bin' }, { home: '/h', exists: yes, sep: ':' }), { PATH: '/usr/bin:' + bin });
+  assert.deepEqual(S.agentEnv({ PATH: '/x:' + bin + ':/usr/bin' }, { home: '/h', exists: yes, sep: ':' }), {});
+  assert.deepEqual(S.agentEnv({ PATH: '/usr/bin' }, { home: '/h', exists: no, sep: ':' }), {});
+  assert.deepEqual(S.agentEnv({ Path: 'C:\\X;' + bin.toUpperCase() + '/;C:\\Y' }, { home: '/h', exists: yes, sep: ';' }), {}, '대소문자 · 끝 슬래시를 무시하고 이미 있으면 안 붙임');
+  assert.deepEqual(S.agentEnv({ Path: 'C:\\Windows' }, { home: '/h', exists: yes, sep: ';' }), { Path: 'C:\\Windows;' + bin }, '윈도우는 Path 대소문자 그대로');
+});
+
+test('이어 붙일 대화가 없는 창(로그인 전 실패 뒤)은 새 대화로 다시 시작', async () => {
+  const seen = [];
+  S._inject.claude = { query({ prompt, options }) {
+    seen.push(options.resume || null);
+    return (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 'real-1' };
+      if (options.resume) { yield { type: 'result', subtype: 'error_during_execution', is_error: true, result: 'No conversation found with session ID: ghost-1', session_id: 'x' }; return; }
+      yield { type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 'real-1' };
+    })();
+  } };
+  const c = { sdk: { accounts: {} } };
+  const o = await S.open(c, { id: 'ew_gh1', name: 'gh', cwd: path.join(home, 'wgh'), prompt: 'x', session_id: 'ghost-1' });
+  await wait(() => S.state(c, 'ew_gh1').state !== 'busy');
+  assert.deepEqual(seen, ['ghost-1', null], '처음엔 이어 붙이려다 실패 → 새 대화로 한 번 더');
+  const st = S.state(c, 'ew_gh1');
+  assert.ok(!st.error, '오류가 안 남음'); assert.equal(st.session_id, 'real-1');
+});
+
 test('claude: 권한 모드 — auto 는 permissionMode auto, ask 는 기본(허락 없는 도구는 막힘)', async () => {
   await S.open(cfg, { id: 'ew_pa', name: 'pa', cwd: path.join(home, 'wpa'), prompt: 'x', perm: 'auto' });
   assert.equal(calls[0].options.permissionMode, 'auto');

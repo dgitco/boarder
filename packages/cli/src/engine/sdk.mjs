@@ -12,8 +12,16 @@ const PKG = { claude: '@anthropic-ai/claude-agent-sdk', codex: '@openai/codex-sd
 // 공급망: 버전 고정(윈도우 · 서버 시험에서 설치돼 동작한 판). 올릴 때는 시험을 다시 돌린 뒤 packages/cli/package.json 과 같이 바꿈
 export const PINNED = { claude: '0.3.317', codex: '0.166.0' };
 const SPEC = p => `${PKG[p]}@${PINNED[p]}`;
+const NO_CONVO = /No conversation found with session ID/i;
 const LIMIT = /(usage limit|limit reached|rate.?limit|quota|resets? (at|in) \d)/i;
 const expand = p => (p || '').replace(/^~(?=$|[\\/])/, os.homedir());
+export function agentEnv(base = process.env, { home = os.homedir(), exists = existsSync, sep = path.delimiter } = {}) {
+  const bin = path.join(home, '.local', 'bin');
+  const key = Object.keys(base).find(k => k.toLowerCase() === 'path') || 'PATH';
+  const cur = String(base[key] || '');
+  if (!exists(bin) || cur.split(sep).some(p => p.replace(/[\\/]+$/, '').toLowerCase() === bin.replace(/[\\/]+$/, '').toLowerCase())) return {};
+  return { [key]: cur ? `${cur}${sep}${bin}` : bin };
+}
 
 // ── SDK 불러오기(없으면 어떻게 깔지 알려 줌)
 export const _inject = { claude: null, codex: null, loggedIn: null };   // loggedIn: 시험이 (공급자, 폴더) → 참/거짓 으로 로그인 여부를 대신함
@@ -134,7 +142,7 @@ async function claudeTurn(cfg, w, text, onSession) {
   const cdir = accountDir(cfg, 'claude', w);
   const options = {
     cwd: w.cwd, abortController: ac,
-    env: { ...process.env, BOARDER_WINDOW: w.id, BOARDER_WINDOW_NAME: w.name, ...(cdir ? { CLAUDE_CONFIG_DIR: cdir } : {}) },
+    env: { ...process.env, ...agentEnv(), BOARDER_WINDOW: w.id, BOARDER_WINDOW_NAME: w.name, ...(cdir ? { CLAUDE_CONFIG_DIR: cdir } : {}) },
     ...(w.model ? { model: w.model } : {}),
     ...(w.session_id ? { resume: w.session_id } : {}),
     ...(w.system ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: w.system } } : {}),
@@ -150,7 +158,7 @@ async function codexTurn(cfg, w, text, onSession) {
   const { Codex } = await loadSdk('codex');
   const cdir = accountDir(cfg, 'codex', w);
   if (!w.thread) {
-    const codex = new Codex({ env: { ...process.env, BOARDER_WINDOW: w.id, BOARDER_WINDOW_NAME: w.name, ...(cdir ? { CODEX_HOME: cdir } : {}) } });
+    const codex = new Codex({ env: { ...process.env, ...agentEnv(), BOARDER_WINDOW: w.id, BOARDER_WINDOW_NAME: w.name, ...(cdir ? { CODEX_HOME: cdir } : {}) } });
     const opt = { workingDirectory: w.cwd, skipGitRepoCheck: true, ...(w.model ? { model: w.model } : {}), ...(w.perm === 'bypass' ? { sandboxMode: 'danger-full-access', approvalPolicy: 'never' } : { sandboxMode: 'workspace-write', approvalPolicy: 'never' }) };
     w.thread = w.session_id ? codex.resumeThread(w.session_id, opt) : codex.startThread(opt);
   }
@@ -170,8 +178,11 @@ function startTurn(cfg, w, text) {
   w.busy = true; w.since = Date.now(); w.error = null; w.limit = null;
   let early; const first = new Promise(r => { early = r; });
   const run = w.provider === 'codex' ? codexTurn : claudeTurn;
-  // 다시 뜬 데몬이 파일에서 되살린 창은 계정이 비어 있을 수 있음 — 글마다 한 번 더 로그인된 계정을 고름(없으면 이 턴이 오류로 끝나 state.error 에 이유가 남음)
-  w.turn = (w.provider === 'claude' || w.provider === 'codex' ? pickAccount(cfg, w.provider, w) : Promise.resolve()).then(() => run(cfg, w, text, () => early()))
+  const attempt = async () => {
+    await run(cfg, w, text, () => early()).catch(e => { if (!NO_CONVO.test(String(e?.message || e))) throw e; w.error = String(e.message); });
+    if (w.error && NO_CONVO.test(w.error) && w.session_id) { w.session_id = null; w.error = null; persist(); await run(cfg, w, text, () => early()); }
+  };
+  w.turn = (w.provider === 'claude' || w.provider === 'codex' ? pickAccount(cfg, w.provider, w) : Promise.resolve()).then(attempt)
     .catch(e => { if (e?.name !== 'AbortError' && !w.abort?.signal?.aborted) w.error = String(e?.message || e); })
     .finally(() => { w.busy = false; w.since = Date.now(); w.abort = null; if (w.error && LIMIT.test(w.error)) w.limit = w.error.slice(0, 200); early(); });
   return Promise.race([first, w.turn, new Promise(r => setTimeout(r, 20000))]);
