@@ -6,7 +6,7 @@ type Env = { RESULTS: R2Bucket; DB: D1Database; BETTER_AUTH_SECRET: string; PUBL
 type C = Context<{ Bindings: Env }>;
 export type CanvasHooks = { device: (c: C) => Promise<{ id: string; owner: string } | null> };
 
-export const LIMITS = { files: 200, file: 10 << 20, total: 25 << 20, canvases: 500, path: 200, depth: 8, title: 200, acct: 80 };
+export const LIMITS = { files: 200, file: 10 << 20, total: 25 << 20, canvases: 2000, path: 200, depth: 8, title: 200, acct: 80 };
 export const ID = /^[A-Za-z0-9]{16,40}$/;
 const CTRL = /[\x00-\x1f\x7f]/g;
 const te = new TextEncoder();
@@ -238,7 +238,8 @@ export function pickBoard(cj: { boards?: Record<string, { w?: number; h?: number
   }
   return null;
 }
-export async function thumbJobs(env: Env & { BETTER_AUTH_SECRET: string }, limit = 8, skip: Set<string> = new Set()): Promise<ThumbJob[]> {
+export const THUMB_SCAN = 200, THUMB_PAR = 25;
+export async function thumbJobs(env: Env & { BETTER_AUTH_SECRET: string }, limit = 8, skip: Set<string> = new Set(), now = Date.now()): Promise<ThumbJob[]> {
   const out: ThumbJob[] = [];
   const mem = await env.DB.prepare("SELECT email FROM invite ORDER BY email").all<{ email: string }>();
   for (const { email } of mem.results) {
@@ -246,17 +247,23 @@ export async function thumbJobs(env: Env & { BETTER_AUTH_SECRET: string }, limit
     const me = email.toLowerCase(), mk = await keyOf(me);
     const pr = await env.DB.prepare("SELECT art, thumb FROM member_artpref WHERE owner = ?").bind(me).all<{ art: string; thumb: string }>();
     const pref = new Map(pr.results.map(r => [r.art, r.thumb]));
-    for (const { id, m } of (await all(env, mk)).sort((a, b) => Number(b.m.at) - Number(a.m.at))) {
-      if (out.length >= limit) break;
-      if (skip.has(id)) continue;
-      const h = await env.RESULTS.head(thumbKey(mk, id));
-      const isCv = m.kind === "canvas", want = isCv ? pref.get(id) || "" : "";
-      if (!thumbStale(h?.customMetadata as { ver?: string; pref?: string } | null ?? null, m, want)) continue;
-      let cj: Parameters<typeof pickBoard>[0] = {};
-      if (!isCv) { out.push({ art: id, mk, ...PAGE_BOARD, ver: m.ver, pref: "", bxt: await token(env.BETTER_AUTH_SECRET, mk, id, Date.now() + 15 * 60_000) }); continue; }
-      try { const o = await env.RESULTS.get(fileKey(mk, id, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); if (o) cj = JSON.parse(await o.text()); } catch {}
-      const pk = pickBoard(cj, want); if (!pk) continue;
-      out.push({ art: id, mk, ...pk, ver: m.ver, pref: want, bxt: await token(env.BETTER_AUTH_SECRET, mk, id, Date.now() + 15 * 60_000) });
+    const sorted = (await all(env, mk)).sort((a, b) => Number(b.m.at) - Number(a.m.at)), N = sorted.length;
+    const off = N > THUMB_SCAN ? (Math.floor(now / 120_000) * THUMB_SCAN) % N : 0;
+    const inTurn = (i: number) => N > THUMB_SCAN && (i - off + N) % N < THUMB_SCAN;
+    const rows = sorted.filter((r, i) => (i < THUMB_SCAN || inTurn(i) || pref.has(r.id)) && !skip.has(r.id));
+    for (let i = 0; i < rows.length && out.length < limit; i += THUMB_PAR) {
+      const part = rows.slice(i, i + THUMB_PAR), hs = await Promise.all(part.map(r => env.RESULTS.head(thumbKey(mk, r.id))));
+      for (let k = 0; k < part.length; k++) {
+        const { id, m } = part[k], h = hs[k];
+        if (out.length >= limit) break;
+        const isCv = m.kind === "canvas", want = isCv ? pref.get(id) || "" : "";
+        if (!thumbStale(h?.customMetadata as { ver?: string; pref?: string } | null ?? null, m, want)) continue;
+        let cj: Parameters<typeof pickBoard>[0] = {};
+        if (!isCv) { out.push({ art: id, mk, ...PAGE_BOARD, ver: m.ver, pref: "", bxt: await token(env.BETTER_AUTH_SECRET, mk, id, Date.now() + 15 * 60_000) }); continue; }
+        try { const o = await env.RESULTS.get(fileKey(mk, id, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); if (o) cj = JSON.parse(await o.text()); } catch {}
+        const pk = pickBoard(cj, want); if (!pk) continue;
+        out.push({ art: id, mk, ...pk, ver: m.ver, pref: want, bxt: await token(env.BETTER_AUTH_SECRET, mk, id, Date.now() + 15 * 60_000) });
+      }
     }
   }
   return out;

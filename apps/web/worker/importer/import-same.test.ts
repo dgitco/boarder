@@ -26,10 +26,11 @@ function d1() {
   return { db, D1: { prepare: (sql: string) => stmt(sql), batch } as unknown as D1Database };
 }
 const MEMBER = "member@example.com";
+const quiets: string[] = [];   // 회원 화면 알림을 안 보내게 표시한 요청(index.ts quiet → bumpMember 건너뜀)
 function app(D1: D1Database) {
   const a = new Hono<any>();
   a.onError((e, c) => c.json({ error: String(e) }, 500));
-  mountImport(a, { device: async () => ({ id: "devMember01", owner: MEMBER, name: "member laptop" }), member: async () => null, sameSite: () => true });
+  mountImport(a, { device: async () => ({ id: "devMember01", owner: MEMBER, name: "member laptop" }), member: async () => null, sameSite: () => true, quiet: c => { quiets.push(c.req.path); } });
   return async (body: unknown) => { const r = await a.request("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, { DB: D1, PUBLIC_URL: "https://example.test" }); assert.equal(r.status, 200); return r.json() as Promise<any>; };
 }
 const body = (stateAt = 1000) => ({ host: "laptop", kinds: ["window"], items: [
@@ -91,4 +92,28 @@ test("dataGate: 한 사람 5초에 60번까지, 넘으면 거절, 창이 지나�
   assert.equal(dataGate(me, t + 61), false);
   assert.equal(dataGate("other@example.com", t + 61), true);
   assert.equal(dataGate(me, t + 5_000), true);
+});
+
+test("같은 목록(아무것도 안 바뀜)일 때만 화면 알림을 끔 — 처음 · 바뀐 목록은 알림 그대로", async () => {
+  const { D1 } = d1(), post = app(D1);
+  quiets.length = 0;
+  await post(body());
+  assert.equal(quiets.length, 0, "처음 들여오기는 알림");
+  const r2 = await post(body());
+  assert.equal(r2.same, true); assert.equal(quiets.length, 1, "같은 목록은 알림 끔");
+  await post(body(3000));
+  assert.equal(quiets.length, 1, "state_at 이 바뀐 목록은 알림");
+});
+
+test("같은 목록이어도 기기 기능(features)이 바뀌면 알림 그대로", async () => {
+  const { db, D1 } = d1(), post = app(D1);
+  db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope) VALUES (?,?,?,?,?,?,?,?)").run("devMember01", MEMBER, "member laptop", "", "h1", 1, 1, "full");
+  const withF = (engine: boolean) => ({ ...body(), features: { report: ["claude"], engine } });
+  quiets.length = 0;
+  await post(withF(false));
+  await post(withF(false));
+  assert.equal(quiets.length, 1, "기능도 같으면 알림 끔");
+  const r = await post(withF(true));
+  assert.equal(r.same, true, "목록은 같음");
+  assert.equal(quiets.length, 1, "기능이 바뀌었으니 알림");
 });

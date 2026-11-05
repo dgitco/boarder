@@ -21,6 +21,7 @@ export type Hooks = {
   device: (c: C) => Promise<{ id: string; owner: string; name: string } | null>;   // 기기 토큰(full) — 회원 기기만
   member: (c: C) => Promise<string | null>;                                     // 로그인한 회원 메일(주인이면 null)
   sameSite: (c: C) => boolean;
+  quiet?: (c: C) => void;
 };
 
 const CTRL = /[\x00-\x08\x0b-\x1f\x7f]/g;
@@ -216,7 +217,8 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     const p = ImportIn.safeParse(await c.req.json().catch(() => null));
     if (!p.success) return c.json({ error: p.error.issues.slice(0, 3).map(i => `${i.path.join(".")} ${i.message}`).join("; ") }, 400);
     const b = p.data, t = now(), owner = d.owner, DB = env(c).DB;
-    if (b.features) { const f = JSON.stringify(b.features); await DB.prepare("UPDATE device SET features = ? WHERE id = ? AND (features IS NULL OR features != ?)").bind(f, d.id, f).run(); }
+    let featChanged = false;
+    if (b.features) { const f = JSON.stringify(b.features); featChanged = Number((await DB.prepare("UPDATE device SET features = ? WHERE id = ? AND (features IS NULL OR features != ?)").bind(f, d.id, f).run())?.meta?.changes || 0) > 0; }
     const valid = b.items.map(x => ItemIn.safeParse(x)).filter(x => x.success).map(x => x.data!), items = valid.slice(0, 600), dropped = b.items.length - items.length;
     const have = new Map(((await DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, handle, gone_at FROM imp_item WHERE owner = ? AND device_id = ?").bind(owner, d.id).all()).results as Record<string, unknown>[]).map(r => [String(r.key), r]));
     const sig = (r: Record<string, unknown>) => JSON.stringify([r.kind, r.engine || "", r.title || "", r.cwd || "", r.repo || "", r.branch || "", typeof r.refs === "string" ? r.refs : JSON.stringify(r.refs || []), r.state || "", r.state_at ?? null, r.win || "", r.session || ""]);
@@ -242,6 +244,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
       ]);
       const a = au.results[0] as { at: number; data: string } | undefined;
       if (a && t - a.at < 5 * 60_000) {
+        if (!featChanged) h.quiet?.(c);
         const audit = json<{ nodes?: number }>(a.data, {}), states = Object.fromEntries((ns.results as { state: string; n: number }[]).map(r => [r.state, r.n]));
         return c.json({ ok: true, items: items.length, dropped, nodes: audit.nodes ?? Object.values(states).reduce((x, n) => x + n, 0), states, audit, proposal_card: null, url: `${env(c).PUBLIC_URL}/#nodes`, same: true });
       }

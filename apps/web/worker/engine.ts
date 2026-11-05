@@ -246,18 +246,20 @@ export class Engine extends DurableObject<EngEnv> {
     if (m.type === "queue") return this.queueMsg(m, device, owner);
     if (m.type === "state" || m.type === "event") {
       const list = m.type === "event" ? [m] : Array.isArray(m.windows) ? m.windows.slice(0, 50) : [];
+      let changed = 0;
       for (const w of list) {
         const st = String(w.state || ""); if (!/^(busy|idle|waiting|background|starting|none)$/.test(st) || !/^ew_[a-z0-9]{6,30}$/.test(String(w.id))) continue;
-        const next = st === "none" ? "gone" : st;
-        await db.prepare("UPDATE engine_window SET state = ?, state_at = CASE WHEN state = ? THEN state_at ELSE ? END, dialog = ?, note = COALESCE(?, note) WHERE id = ? AND device_id = ? AND state NOT IN ('parked','closed','failed')")
-          .bind(next, next, now, w.dialog ? String(w.dialog).slice(0, 20) : null, w.limit ? String(w.limit).slice(0, 200) : null, String(w.id), device).run();
-        if (st === "none" || w.error) await this.reopenSettled(String(w.id), true);   // 없어짐 · 첫 턴 오류(SDK 창)
+        const next = st === "none" ? "gone" : st, dialog = w.dialog ? String(w.dialog).slice(0, 20) : null, note = w.limit ? String(w.limit).slice(0, 200) : null;
+        const r = await db.prepare("UPDATE engine_window SET state = ?, state_at = CASE WHEN state = ? THEN state_at ELSE ? END, dialog = ?, note = COALESCE(?, note) WHERE id = ? AND device_id = ? AND state NOT IN ('parked','closed','failed') AND (state IS NOT ? OR dialog IS NOT ? OR (? IS NOT NULL AND note IS NOT ?))")
+          .bind(next, next, now, dialog, note, String(w.id), device, next, dialog, note, note).run();
+        changed += Number(r?.meta?.changes || 0);
+        if (st === "none" || w.error) { if (await this.reopenSettled(String(w.id), true)) changed++; }
         else if (st !== "starting" && !w.dialog) await this.reopenSettled(String(w.id), false);   // 창이 떠서 일하거나 쉼 — 첫 메시지를 받은 것(확인창이 떠 있으면 아직 아님)
       }
       await db.prepare("UPDATE device SET engine_at = ? WHERE id = ?").bind(now, device).run();
       if (list.some((w: any) => w.state === "idle")) await this.flush();   // 쉬게 된 창에 밀린 글
       if (list.length) this.ctx.waitUntil(this.drainCmds().catch(() => null));   // 바빠서 못 넣은 사람 글 다시
-      if (list.length) this.ctx.waitUntil(bumpMember(this.env as never, owner));
+      if (changed) this.ctx.waitUntil(bumpMember(this.env as never, owner));
     }
   }
   async queueMsg(m: any, device: string, owner: string) {
@@ -492,12 +494,13 @@ export class Engine extends DurableObject<EngEnv> {
     if (text && !(await this.who()).harness) { const m = (await this.ctx.storage.get<Record<string, number>>("reopens")) || {}; m[id] = Date.now(); await this.ctx.storage.put("reopens", m); }
     return { reopened: true };
   }
-  private async reopenSettled(id: string, lost: boolean | "unknown") {
-    const m = await this.ctx.storage.get<Record<string, number>>("reopens"); if (!m || !(id in m)) return;
+  /** 돌려줌: 채팅에 시스템 줄을 남겼으면 true(state 처리가 화면 알림을 보낼지 정할 때) */
+  private async reopenSettled(id: string, lost: boolean | "unknown"): Promise<boolean> {
+    const m = await this.ctx.storage.get<Record<string, number>>("reopens"); if (!m || !(id in m)) return false;
     delete m[id]; await this.ctx.storage.put("reopens", m);
-    if (!lost) return;
-    const w = await this.row(id); if (!w || !["starting", "gone", "opening", "idle", "busy", "background", "waiting"].includes(w.state)) return;
-    await sysLine(this.env.DB, w.owner, lost === "unknown" ? `「${w.name}」 창에 방금 글이 들어갔는지 확인하지 못했어요 — 답이 없으면 다시 보내 주세요` : reopenLostLine(w.name), id).catch(() => null);
+    if (!lost) return false;
+    const w = await this.row(id); if (!w || !["starting", "gone", "opening", "idle", "busy", "background", "waiting"].includes(w.state)) return false;
+    return await sysLine(this.env.DB, w.owner, lost === "unknown" ? `「${w.name}」 창에 방금 글이 들어갔는지 확인하지 못했어요 — 답이 없으면 다시 보내 주세요` : reopenLostLine(w.name), id).then(() => true, () => false);
   }
   async checkReopens(now = Date.now()) {
     const m = await this.ctx.storage.get<Record<string, number>>("reopens"); if (!m) return;

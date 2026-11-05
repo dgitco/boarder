@@ -1062,6 +1062,7 @@ mountImport(app as never, {
   device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
   member: async c => { const s = await signedIn(c as never); return s && !isOwner(c.env as never, s.user.email) ? s.user.email.toLowerCase() : null; },
   sameSite: c => sameSite(c as never),
+  quiet: c => quiet(c.req.raw),
 });
 mountTaskConvo(app as never, {
   device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },

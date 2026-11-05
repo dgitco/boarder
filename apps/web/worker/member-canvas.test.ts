@@ -34,7 +34,10 @@ function r2() {
       const b = m.get(key)!.b.slice(r.offset, r.offset + r.length); return { ...x, body: new Response(b as BodyInit).body, arrayBuffer: async () => b.slice().buffer };
     },
     head: async (key: string) => m.has(key) ? obj(key) : null,
-    list: async (o: { prefix?: string }) => ({ objects: [...m.keys()].filter(k => k.startsWith(o.prefix || "")).sort().map(obj), truncated: false }),
+    list: async (o: { prefix?: string; limit?: number; cursor?: string }) => {   // 진짜 R2 처럼 한 번에 limit(최대 1000)개 · cursor 로 다음 쪽
+      const ks = [...m.keys()].filter(k => k.startsWith(o.prefix || "")).sort(), at = Number(o.cursor || 0), n = Math.min(o.limit || 1000, 1000), page = ks.slice(at, at + n);
+      return { objects: page.map(obj), truncated: at + n < ks.length, cursor: at + n < ks.length ? String(at + n) : undefined };
+    },
     delete: async (k: string | string[]) => { for (const x of Array.isArray(k) ? k : [k]) m.delete(x); },
   };
   return { m, R: R as unknown as R2Bucket };
@@ -165,7 +168,9 @@ test("상한 · 꼴: index.html 없음 · 경로 넘기 · 같은 경로 둘 · 
   assert.equal(await st(s.put(TOK.A, lots)), 413);
   assert.equal(s.m.size, 0);
   const mk = await MC.keyOf(A);
-  for (let i = 0; i < MC.LIMITS.canvases; i++) s.m.set(`mart/${mk}/_c/Filler${String(i).padStart(14, "0")}`, { b: new Uint8Array(), customMetadata: { title: "", acct: "", at: "1", ver: "v", n: "1", bytes: "1" } });
+  //   상한(2000)은 R2 목록 한 쪽(1000)보다 커서 수 세기가 쪽을 넘겨 다 세야 함(첫 쪽만 세면 아래 429 가 안 남)
+  for (let i = 0; i < MC.LIMITS.canvases - 1; i++) s.m.set(`mart/${mk}/_c/Filler${String(i).padStart(14, "0")}`, { b: new Uint8Array(), customMetadata: { title: "", acct: "", at: "1", ver: "v", n: "1", bytes: "1" } });
+  assert.equal(await st(s.put(TOK.A, { "index.html": PAGE })), 200);
   assert.equal(await st(s.put(TOK.A, { "index.html": PAGE })), 429);
   assert.equal(await st(s.put(TOK.A, { "index.html": PAGE }, { id: "Filler00000000000000" })), 200);
 });
@@ -263,4 +268,68 @@ test("목록 칸 at 은 주인 판처럼 서울 시각 「YYYY-MM-DD HH:MM」(�
   assert.equal(seoulAt("1793818282123"), "2026-11-05 03:51");
   assert.equal(seoulAt("2026-11-05 08:18"), "2026-11-05 08:18");
   assert.equal(seoulAt(undefined), "");
+});
+
+test("썸네일 일감(2분마다): 캔버스 2000장 다 찍었어도 head 는 최근 · 돌아가는 조각 THUMB_SCAN 장씩 + 지정한 것만, 지정을 바꾼 옛 캔버스는 일감 · 판 바뀐 것은 맨 앞", async () => {
+  const me = "alice@example.test", mk = await MC.keyOf(me), m = new Map<string, { b: string; customMetadata?: Record<string, string> }>();
+  let heads = 0;
+  const R = {
+    head: async (k: string) => { heads++; return m.has(k) ? { customMetadata: m.get(k)!.customMetadata } : null; },
+    get: async (k: string) => m.has(k) ? { text: async () => m.get(k)!.b } : null,
+    list: async (o: { prefix?: string; limit?: number; cursor?: string }) => {
+      const ks = [...m.keys()].filter(k => k.startsWith(o.prefix || "")).sort(), at = Number(o.cursor || 0), n = Math.min(o.limit || 1000, 1000);
+      return { objects: ks.slice(at, at + n).map(key => ({ key, customMetadata: m.get(key)!.customMetadata })), truncated: at + n < ks.length, cursor: String(at + n) };
+    },
+  };
+  const id = (i: number) => "Cv" + String(i).padStart(18, "0"), cvj = JSON.stringify({ boards: { "A.dc.html": { w: 800, h: 600 }, "B.dc.html": { w: 900, h: 700 } }, order: ["A.dc.html"] });
+  for (let i = 0; i < 2000; i++) {   // i 가 클수록 최근(at) — 다 찍혀 있음(썸네일 ver = 판)
+    m.set(`mart/${mk}/_c/${id(i)}`, { b: "{}", customMetadata: { title: "", acct: "", at: String(1000 + i), ver: "v1", n: "1", bytes: "1", kind: "canvas", cv: "" } });
+    m.set(`mart/${mk}/${id(i)}/v1/canvas.json`, { b: cvj });
+    m.set(`mart/${mk}/${id(i)}/${MC.THUMB}`, { b: "", customMetadata: { ver: "v1", pref: "" } });
+  }
+  const pref: { art: string; thumb: string }[] = [];
+  const DB = { prepare: (sql: string) => {
+    const rows = () => /FROM invite/.test(sql) ? [{ email: me }] : pref;
+    return { all: async () => ({ results: rows() }), bind: () => ({ all: async () => ({ results: rows() }) }) };
+  } };
+  const env = { DB, RESULTS: R, BETTER_AUTH_SECRET: "test-secret-not-real" } as never;
+  assert.deepEqual(await MC.thumbJobs(env, 8), []);
+  assert.ok(heads <= 2 * MC.THUMB_SCAN, `head ${heads} 번 — 2000 이 아니라 최근 + 돌아가는 조각 ${2 * MC.THUMB_SCAN} 장까지만`);
+  pref.push({ art: id(3), thumb: "B.dc.html" }); heads = 0;
+  const j1 = await MC.thumbJobs(env, 8);
+  assert.deepEqual(j1.map(j => [j.art, j.board, j.pref]), [[id(3), "B.dc.html", "B.dc.html"]]);
+  assert.ok(heads <= 2 * MC.THUMB_SCAN + 1, String(heads));
+  m.set(`mart/${mk}/_c/${id(5)}`, { b: "{}", customMetadata: { title: "", acct: "", at: "9999", ver: "v2", n: "1", bytes: "1", kind: "canvas", cv: "" } });
+  m.set(`mart/${mk}/${id(5)}/v2/canvas.json`, { b: cvj });
+  assert.deepEqual((await MC.thumbJobs(env, 8)).map(j => j.art), [id(5), id(3)]);
+});
+
+test("썸네일 일감: 최근 200장 밖으로 밀린 옛 캔버스(썸네일 없음)도 시각이 지나면 돌아가는 조각으로 결국 일감", async () => {
+  const me = "alice@example.test", mk = await MC.keyOf(me), m = new Map<string, { b: string; customMetadata?: Record<string, string> }>();
+  let heads = 0;
+  const R = {
+    head: async (k: string) => { heads++; return m.has(k) ? { customMetadata: m.get(k)!.customMetadata } : null; },
+    get: async (k: string) => m.has(k) ? { text: async () => m.get(k)!.b } : null,
+    list: async (o: { prefix?: string; limit?: number; cursor?: string }) => {
+      const ks = [...m.keys()].filter(k => k.startsWith(o.prefix || "")).sort(), at = Number(o.cursor || 0), n = Math.min(o.limit || 1000, 1000);
+      return { objects: ks.slice(at, at + n).map(key => ({ key, customMetadata: m.get(key)!.customMetadata })), truncated: at + n < ks.length, cursor: String(at + n) };
+    },
+  };
+  const id = (i: number) => "Cv" + String(i).padStart(18, "0"), cvj = JSON.stringify({ boards: { "A.dc.html": { w: 800, h: 600 } }, order: ["A.dc.html"] });
+  for (let i = 0; i < 2000; i++) {   // 최근 200장(i ≥ 1800)만 찍혀 있고, 옛 1800장은 썸네일 없음(한꺼번에 올려 밀린 꼴)
+    m.set(`mart/${mk}/_c/${id(i)}`, { b: "{}", customMetadata: { title: "", acct: "", at: String(1000 + i), ver: "v1", n: "1", bytes: "1", kind: "canvas", cv: "" } });
+    m.set(`mart/${mk}/${id(i)}/v1/canvas.json`, { b: cvj });
+    if (i >= 1800) m.set(`mart/${mk}/${id(i)}/${MC.THUMB}`, { b: "", customMetadata: { ver: "v1", pref: "" } });
+  }
+  const DB = { prepare: (sql: string) => { const rows = () => /FROM invite/.test(sql) ? [{ email: me }] : []; return { all: async () => ({ results: rows() }), bind: () => ({ all: async () => ({ results: rows() }) }) }; } };
+  const env = { DB, RESULTS: R, BETTER_AUTH_SECRET: "test-secret-not-real" } as never;
+  const seen = new Set<string>(); let maxHeads = 0;
+  for (let t = 0; t < 10; t++) {   // 2분씩 열 번 = 한 바퀴 — 찍은 셈 치고 다음으로
+    heads = 0;
+    const js = await MC.thumbJobs(env, 2000, new Set(), t * 120_000);
+    maxHeads = Math.max(maxHeads, heads);
+    for (const j of js) { seen.add(j.art); m.set(`mart/${mk}/${j.art}/${MC.THUMB}`, { b: "", customMetadata: { ver: j.ver, pref: j.pref } }); }
+  }
+  assert.equal(seen.size, 1800, `옛 1800장 중 ${seen.size} 장만 일감`);
+  assert.ok(maxHeads <= 2 * MC.THUMB_SCAN, `한 번에 head ${maxHeads} 번 — 최근 + 조각 ${2 * MC.THUMB_SCAN} 이하`);
 });
