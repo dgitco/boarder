@@ -1002,13 +1002,9 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     f.addEventListener('load', done, {once: true}); setTimeout(done, 20000);
   }));
 })();
-(() => { if (!window.HB_MEMBER) return; const f0 = window.fetch;
-  window.fetch = function (u, o){ const s = typeof u === 'string' ? u : u?.url || '', m = String(o?.method || 'GET').toUpperCase();
-    if (m === 'GET' && window.HB_MIN && /(^|\/)api\/(data|topics|inbox)(\?|$)/.test(s)) { const h = new Headers(o?.headers || {}); h.set('X-BX-Min', String(window.HB_MIN)); o = {...(o || {}), headers: h}; }
-    return f0.call(this, u, o); }; })();
 (() => {
   if (!window.HB_LIVE || typeof evOpen !== 'function' || typeof evClose !== 'function' || !window.WebSocket) return;
-  const Native = window.EventSource, UNFOCUSED_GAP = 15000, POLL = 5000, CHECK = 30000, PING = 10000, PONG = 5000, DOWN = 30000, STALE = 25000;
+  const Native = window.EventSource, POLL = 5000, CHECK = 30000, PING = 10000, PONG = 5000, DOWN = 30000, STALE = 25000;
   let seq = 0, offAt = 0, cur = null;
   const EV = [], note = (k, v = '') => { EV.push([now(), k, v]); if (EV.length > 60) EV.shift(); };   // 최근 60개(시험 · 「갱신 안 됨」 볼 때 BX_LIVE().ev)
   const now = () => Date.now(), kst = t => typeof kstMin === 'function' ? kstMin(t) : '';
@@ -1022,8 +1018,6 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       this.connect();
       this.t.first = setTimeout(() => { if (!this.wsUp) this.poll(true); }, 3000);
       this.nCheck = 0;
-      this.onFocus = () => { if (!this.closed && this.pend) this.flushUf(); };
-      addEventListener('focus', this.onFocus); document.addEventListener('visibilitychange', this.onFocus);
       this.t.check = setInterval(() => { if (this.readyState !== 1) return; const full = ++this.nCheck % 4 === 0;
         this.get().catch(() => {}).finally(() => { if (this.closed) return; if (full) return this.catchUp();
           const sv = String(this.srv.data || ''); if (sv && !sv.startsWith('~') && typeof dataTag === 'string' && dataTag && tagOf(sv) !== tagOf(dataTag)) this.send(true); }); }, CHECK);
@@ -1078,23 +1072,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       for (const k of Object.keys(t)) if (this.srv[k] !== t[k]) { any = true; if (k === 'data') dataNew = true; this.srv[k] = t[k]; }
       if (any || beat) this.send(dataNew);
     }
-    catchUp(){ window.HB_MIN = 0;
-      const v = '~' + (++seq); for (const k of ['data', 'topics', 'chat', 'drafts']) this.srv[k] = v; this.send(true); }
+    catchUp(){ const v = '~' + (++seq); for (const k of ['data', 'topics', 'chat', 'drafts']) this.srv[k] = v; this.send(true); }   // 붙음 = 한 번 전체(보드가 ETag 로 다시 읽음 — 그 사이 놓친 것 0)
     send(dataNew){
-      if (!this.closed && window.HB_MEMBER && !document.hasFocus() && matchMedia('(hover: hover)').matches) {
-        this.pend = true; this.pendData = this.pendData || dataNew;
-        if (this.t.uf) return;
-        const wait = UNFOCUSED_GAP - (now() - (this.ufSent || 0));
-        if (wait > 0) { this.t.uf = setTimeout(() => { this.t.uf = 0; if (this.pend) this.flushUf(); }, wait); return; }
-        return this.flushUf();
-      }
-      const d = dataNew || this.pendData;
-      this.pend = false; this.pendData = false; clearTimeout(this.t.uf); this.t.uf = 0;
-      this.emit(d);
-    }
-    flushUf(){ const d = this.pendData; this.pend = false; this.pendData = false; clearTimeout(this.t.uf); this.t.uf = 0; this.ufSent = now(); this.emit(d); }
-    emit(dataNew){
-      { const v = String(this.srv.data || ''); const ms = /^~\d{12,}$/.test(v) ? Number(v.slice(1)) : 0; if (ms > (window.HB_MIN || 0)) window.HB_MIN = ms; }   // 받은 바뀜 시각 — 다시 읽기에 실어 서버가 그 뒤 판을 같이 줌(member-memo)
       const j = {...this.srv, ...(this.snapAt ? {gen: kst(this.snapAt)} : {})};   // gen = 스냅숏이 마지막으로 맞았던 때(주인). 회원은 없음 — 보드가 다시 읽은 답으로 앎
       if (!dataNew && typeof dataTag === 'string' && dataTag) j.data = dataTag;
       if (!j.data) delete j.data;
@@ -1103,7 +1082,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     up(){ const was = this.down; this.down = false; if (this.readyState !== 1) { this.readyState = 1; try { this.onopen?.(); } catch (e) {} } if (was) stamp(); }
     lost(){ if (this.down) return; this.down = true; if (this.readyState === 1) { this.readyState = 0; try { this.onerror?.(); } catch (e) {} } stamp(); }
     fatal(){ this.close(); try { this.onerror?.(); } catch (e) {} }
-    close(){ if (this.onFocus) { removeEventListener('focus', this.onFocus); document.removeEventListener('visibilitychange', this.onFocus); } this.closed = true; this.readyState = 2; for (const k in this.t) { clearTimeout(this.t[k]); clearInterval(this.t[k]); } const ws = this.ws; this.ws = null; this.wsUp = false; if (ws) try { ws.close(1000); } catch (e) {} if (this.down) { this.down = false; stamp(); } }
+    close(){ this.closed = true; this.readyState = 2; for (const k in this.t) { clearTimeout(this.t[k]); clearInterval(this.t[k]); } const ws = this.ws; this.ws = null; this.wsUp = false; if (ws) try { ws.close(1000); } catch (e) {} if (this.down) { this.down = false; stamp(); } }
   }
   LiveES.CONNECTING = 0; LiveES.OPEN = 1; LiveES.CLOSED = 2;
   let DC = null;

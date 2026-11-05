@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { ownPaneKeep, agentInFront, refsOf, normRepo, tomlMcp, frontmatter, collectMcp, since, sameAsSent, markSent, SAME_MAX, codexSessions, apiFail } from './importer.mjs';
+import { ownPaneKeep, agentInFront, refsOf, normRepo, tomlMcp, frontmatter, collectMcp, since, sameAsSent, markSent, SAME_MAX, codexSessions, apiFail, claudeDirs } from './importer.mjs';
 
 test('링크 뽑기: Slack 스레드 · GitHub 이슈/PR · Linear · 리포 안 #번호', () => {
   const r = refsOf('see https://acme.slack.com/archives/C0000000001/p1700000000000100 and https://github.com/Acme/Ledger/pull/88 and linear.app/acme/issue/ENG-12 fix #3720', 'github.com/acme/ledger');
@@ -110,4 +110,15 @@ test('판 거르기: 엔진 목록을 못 읽었거나 그 엔진 창이 목록�
   assert.equal(ownPaneKeep(p, { live: true, engIds: null }), true);
   assert.equal(ownPaneKeep(p, { live: true, engIds: new Set(['ew_other']) }), true);
   assert.equal(ownPaneKeep(p, { live: true, engIds: new Set(['ew_rw565d8c906d']) }), false);
+});
+
+test('claudeDirs: 임시 HOME 이면 그 밖 CLAUDE_CONFIG_DIR · 링크로 나간 ~/.claude-* 는 안 봄, HOME 안 것은 봄', () => {
+  const H = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-imp-')), O = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-imp-out-')), old = process.env.HOME, oc = process.env.CLAUDE_CONFIG_DIR;
+  try {
+    process.env.HOME = H; fs.mkdirSync(path.join(H, '.claude')); fs.mkdirSync(path.join(H, 'in')); fs.symlinkSync(O, path.join(H, '.claude-out'));
+    process.env.CLAUDE_CONFIG_DIR = O;
+    assert.deepEqual(claudeDirs(), [fs.realpathSync(path.join(H, '.claude'))]);
+    process.env.CLAUDE_CONFIG_DIR = path.join(H, 'in');
+    assert.deepEqual(claudeDirs().sort(), [path.join(H, 'in'), fs.realpathSync(path.join(H, '.claude'))].sort());
+  } finally { process.env.HOME = old; if (oc === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = oc; fs.rmSync(H, { recursive: true, force: true }); fs.rmSync(O, { recursive: true, force: true }); }
 });

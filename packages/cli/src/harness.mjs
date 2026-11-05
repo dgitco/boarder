@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dir, ensureDir, home, loadDevice, readJson, server } from './config.mjs';
-import { targets } from './targets.mjs';
+import { linkedOutside, targets, tmpTop, within } from './targets.mjs';
 import { LABEL_PREFIX, unitName, unitToPlist } from './launchd.mjs';
 import { dropAllRules } from './rules-block.mjs';
 
@@ -28,6 +28,19 @@ const inside = (p, root) => { const r = path.resolve(root) + path.sep; return pa
 const linkTarget = p => { try { return path.resolve(path.dirname(p), readlinkSync(p)); } catch { return null; } };
 const ourLink = p => isLink(p) && inside(linkTarget(p) || '', harnessDir());
 const sq = v => `'${String(v).replace(/'/g, `'\\''`)}'`;
+const realpathOr = p => { try { return realpathSync(p); } catch { return path.resolve(p); } };
+export function tempMismatch() {
+  if (inside(harnessDir(), home())) return [];
+  const top = tmpTop(harnessDir()); if (!top) return [];
+  const lasting = [['~/.local/bin', binDir()], ['Boarder state', dir()], [process.platform === 'darwin' ? 'LaunchAgents' : 'systemd user units', process.platform === 'darwin' ? agentsDir() : unitDir()], ['harness values', envPath()]];
+  return lasting.filter(([, p]) => tmpTop(p) !== top).map(([what, p]) => `${what} (${p})`);
+}
+
+function refuseTempMismatch() {
+  const away = tempMismatch();
+  if (away.length) throw new Error(`the harness folder ${harnessDir()} is in a temporary folder but ${away.join(', ')} ${away.length > 1 ? 'are' : 'is'} not — nothing was changed. `
+    + 'Point HOME (and BOARDER_HOME, XDG_CONFIG_HOME) at the same temporary folder, or unset XDG_DATA_HOME');
+}
 
 // 우리가 만든 빈 폴더는 끌 때 같이 지움(흔적 0)
 const made = new Set();
@@ -217,6 +230,7 @@ function stripOurs(j) {
   if (!Object.keys(j.hooks).length) delete j.hooks;
 }
 function editSettings(p, fn, log) {
+  if (linkedOutside(p)) { log(`skipped ${p} — it links to ${realpathOr(p)}, outside HOME (${home()}); the harness does not write there`); return null; }
   const existed = existsSync(p);
   let j = {};
   if (existed) { const t = readFileSync(p, 'utf8'); if (t.trim()) { try { j = JSON.parse(t); } catch { log(`skipped ${p} — it is not valid JSON`); return null; } } }
@@ -261,6 +275,7 @@ const unitBins = text => [...text.matchAll(/%h\/\.local\/bin\/([\w.-]+)/g)].map(
 /** 켜기 — 앞서 깐 것은 먼저 걷고 지금 값으로 다시(다시 돌려도 같음) */
 export async function enableHarness({ log = console.log, name, lang, from, wrapper } = {}) {
   if (process.platform === 'win32') { log('Windows runs without the harness — Boarder uses your own subscription (SDK engine). 윈도우는 하네스 없이 내 구독(SDK)으로 써요.'); return { ok: true, skipped: 'win32' }; }
+  refuseTempMismatch();
   let p, plan0 = null;
   if (from) {   // 서버 없이: 폴더에서 래퍼를 받아(직접 고른 것으로 적힘) 같은 꾸러미를 폄
     const id = wrapper || undefined;
@@ -277,12 +292,21 @@ export async function enableHarness({ log = console.log, name, lang, from, wrapp
   const st = { version: p.version, at: Date.now(), bundles: p.bundles, bins: [], skills: [], settings: [], settingsMade: [...(prev?.settingsMade || [])], units: [], env: null, made: [] };
   for (const n of plan.bins) { const src = path.join(runDir(), n); if (!existsSync(src)) continue; const dest = path.join(binDir(), n); if (linkOne(dest, src, log, 'command')) st.bins.push(dest); }
   const T = targets().filter(t => t.tool === 'claude' || t.tool === 'codex');
-  for (const t of T) for (const n of plan.skills) {
-    const src = path.join(harnessDir(), 'skills', n); if (!existsSync(src)) continue;
-    const dest = path.join(t.dir, 'skills', n); if (linkOne(dest, src, log, 'skill')) st.skills.push(dest);
+  for (const t of T) {
+    const sk = path.join(t.dir, 'skills');
+    if (plan.skills.length && linkedOutside(sk)) { log(`skipped skills in ${sk} — it links outside HOME (${home()})`); continue; }
+    for (const n of plan.skills) {
+      const src = path.join(harnessDir(), 'skills', n); if (!existsSync(src)) continue;
+      const dest = path.join(sk, n); if (linkOne(dest, src, log, 'skill')) st.skills.push(dest);
+    }
   }
   const hooks = plan.hooks.filter(h => existsSync(path.join(runDir(), h.bin)));
+  const runTop = within(runDir(), home()) ? null : tmpTop(runDir()), awayRun = !within(runDir(), home()) || !!tmpTop(runDir());
+  st.refused = [];
   if (hooks.length) for (const t of T.filter(t => t.tool === 'claude')) {
+    // 링크로 나간 것은 editSettings 가 건너뛰고 알림
+    if (!linkedOutside(t.files.settings) && ((awayRun && !within(t.files.settings, home())) || (runTop && tmpTop(t.files.settings) !== runTop) || (!runTop && awayRun && !within(realpathOr(t.files.settings), home())))) {
+      log(`refused hooks for ${t.files.settings} — it outlives ${runDir()} (outside HOME ${home()} or outside that temporary folder), which the hooks would call`); st.refused.push(t.files.settings); continue; }
     if (!existsSync(t.files.settings) && !st.settingsMade.includes(t.files.settings)) st.settingsMade.push(t.files.settings);
     const r = editSettings(t.files.settings, j => {
       stripOurs(j); j.hooks ||= {};
@@ -338,13 +362,14 @@ export async function enableHarness({ log = console.log, name, lang, from, wrapp
   if (prev?.env?.keys?.length && !st.env.made) st.env.keys = [...new Set([...prev.env.keys, ...st.env.keys])];
   st.made = [...made];
   ensureDir(dir()); writeFileSync(statePath(), JSON.stringify(st, null, 2) + '\n');
-  log(`harness ${p.version}: ${st.bins.length} commands in ${binDir()}, ${st.skills.length} skill links, hooks in ${st.settings.length} Claude settings, ${st.units.length} timers`);
+  log(`harness ${p.version}: ${st.bins.length} commands in ${binDir()}, ${st.skills.length} skill links, hooks in ${st.settings.length} Claude settings${st.refused.length ? ` (refused ${st.refused.length} outside HOME)` : ''}, ${st.units.length} timers`);
   if (plan.blocked.size) log(`not installed (off in Settings › Nodes): ${[...plan.blocked].sort().join(', ')}`);
   return { ok: true, ...st };
 }
 
 /** 끄기 — 적어 둔 것만, 그리고 지금 Claude 설정 폴더에 남은 우리 훅도 */
 export function disableHarness({ log = console.log, keepFiles = false } = {}) {
+  refuseTempMismatch();
   const st = loadState() || {}, done = [];
   const mac = (st.units || []).filter(u => u?.plist);
   if (mac.length) done.push(...removeLaunchd(mac, { lc: launchctlRunner({ log }), log, load: realHome() }));

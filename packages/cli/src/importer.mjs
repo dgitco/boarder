@@ -3,6 +3,7 @@ import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, openSync, readSync, closeSync, realpathSync } from 'node:fs';
 import { dir, home, loadDevice, readJson, server, writeSecret } from './config.mjs';
+import { outsideHome } from './targets.mjs';
 
 const host = () => os.hostname().split('.')[0].replace(/[^\w.-]/g, '').slice(0, 30) || 'host';
 const run = (cmd, args, timeout = 5000, cwd) => { try { return execFileSync(cmd, args, { encoding: 'utf8', timeout, cwd, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return ''; } };
@@ -43,8 +44,8 @@ const branchOf = cwd => cwd && existsSync(cwd) ? run('git', ['-C', cwd, 'rev-par
 
 export function claudeDirs() {
   const h = home(), out = new Set();
-  if (process.env.CLAUDE_CONFIG_DIR) out.add(process.env.CLAUDE_CONFIG_DIR);
-  for (const n of ls(h)) if (n === '.claude' || /^\.claude-[\w-]{1,20}$/.test(n)) { const d = path.join(h, n); try { if (statSync(d).isDirectory()) out.add(fsReal(d)); } catch {} }
+  if (process.env.CLAUDE_CONFIG_DIR && !outsideHome(process.env.CLAUDE_CONFIG_DIR)) out.add(process.env.CLAUDE_CONFIG_DIR);
+  for (const n of ls(h)) if (n === '.claude' || /^\.claude-[\w-]{1,20}$/.test(n)) { const d = path.join(h, n); try { if (statSync(d).isDirectory() && !outsideHome(d)) out.add(fsReal(d)); } catch {} }
   return [...out];
 }
 const fsReal = d => { try { return realpathSync(d); } catch { return d; } };

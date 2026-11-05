@@ -1,5 +1,4 @@
 // Boarder API(Hono) — /api/* 만 Worker 가 받고, 나머지는 React 정적 자산(SPA)
-import * as memberMemo from "./member-memo";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { METRICS_MAX_BYTES, putMetrics, listDevices, readCapped, tooSoon } from "./devices";
@@ -2342,7 +2341,7 @@ app.all("*", async c => {
         if (ao) return c.json(await memberVoice.artOwner(c.env as never, me, ao[1]).catch(() => ({})), 200, { "cache-control": "no-store" });
         const vp = /^\/api\/voice\/rtc\/poll\/([\w.-]{1,110})$/.exec(url.pathname);
         if (vp) { const [st, o] = await memberVoice.poll(c.env as never, me, vp[1]); return c.json(o, st as 200, { "cache-control": "no-store" }); }
-        const mi = url.pathname === "/api/inbox" ? await memberMemo.memo(c as never, me, "inbox", () => memberInbox.route(c as never, me, url)) : await memberInbox.route(c as never, me, url); if (mi) return mi;
+        const mi = await memberInbox.route(c as never, me, url); if (mi) return mi;
         if (url.pathname === "/api/arts") return c.json(await memberCanvas.list(c.env, me), 200, { "cache-control": "no-store" });
         const pa = url.pathname.startsWith("/art/") ? memberCanvas.parseArt(url.pathname) : null;
         if (pa?.bare) return c.redirect(`/art/${pa.id}/`, 302);
@@ -2353,13 +2352,12 @@ app.all("*", async c => {
           if (r && r.status === 200 && !pa.rel && artView.viewable(c.req.method, c.req.header("sec-fetch-dest"), url.search)) c.executionCtx.waitUntil(artView.record(c.env.DB, me, pa.id).catch(e => console.error("열람 기록", e)));
           if (r) return r; }
         if (url.pathname.startsWith("/art/")) return docNav(c, url) ? c.redirect("/nf", 302) : c.text("not found", 404, { "cache-control": "no-store" });
-        if (url.pathname === "/api/data") { if (!memberBoard.dataGate(me)) return queue.retrySafe(c); if (await memberBoard.fresh(c.env, me).catch(e => { console.error("묶기", e); return false; })) await live.bumpMember(c.env, me); }
+        if (url.pathname === "/api/data") { if (!memberBoard.dataGate(me)) return queue.retrySafe(c); await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e)); }
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드
         if (sl) return sl;
-        const mbot = await memberBot(c.env, me), mget = (inmX: string | undefined) => memberBoard.get(c.env.DB, me, mbot, url, () => snap(c.env).get("emoji"), inmX,
+        const r = await memberBoard.get(c.env.DB, me, await memberBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"),
           async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name, c.executionCtx,
           () => live.liveOf(c.env, me).tags().then(x => JSON.stringify([(x as { boot?: string }).boot ?? "", x.t.data ?? "", x.t.chat ?? ""])));
-        const r = url.pathname === "/api/data" || url.pathname === "/api/topics" ? await memberMemo.memo(c as never, me, url.pathname + "\n" + (mbot?.name || ""), mget) : await mget(c.req.header("if-none-match"));
         if (r) return r;
       }
       if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {   // 몸통이 파일 · 녹음(JSON 아님) — 회원 쓰기와 같은 문

@@ -146,3 +146,20 @@ test('Codex: 사람이 쓰던 notify 가 있으면 건드리지 않음(하나만
     assert.doesNotMatch(toml, /codex-turn/);
   });
 });
+
+test('임시 HOME + 바깥 CLAUDE_CONFIG_DIR: status 에 안 나오고 enable report · restore 가 바깥 폴더를 안 건드림, 한 줄 알림', async () => {
+  const O = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'bx-tg-out-')), acct = path.join(O, 'acct');
+  fs.mkdirSync(path.join(O, 'real')); fs.writeFileSync(path.join(O, 'real', 'settings.json'), '{"model":"real"}\n');
+  fs.mkdirSync(acct); fs.writeFileSync(path.join(acct, '.claude.json'), '{"keep":1}\n'); fs.symlinkSync(path.join(O, 'real', 'settings.json'), path.join(acct, 'settings.json'));
+  const look = () => Object.fromEntries(fs.readdirSync(O, { recursive: true }).sort().map(r => { const st = fs.lstatSync(path.join(O, r)); return [r, st.isFile() ? `${st.size} ${st.mtimeMs} ${fs.readFileSync(path.join(O, r), 'utf8')}` : st.isSymbolicLink() ? fs.readlinkSync(path.join(O, r)) : 'dir']; }));
+  try {
+    await world(async ({ cli }) => {
+      const before = look();
+      const st = await cli(['status'], { CLAUDE_CONFIG_DIR: acct });
+      assert.ok(!st.out.includes(acct), st.out); assert.match(st.err, /left .*acct alone — it is outside HOME/);
+      assert.equal((await cli(['enable', 'report', '--yes'], { CLAUDE_CONFIG_DIR: acct })).code, 0);
+      assert.equal((await cli(['restore'], { CLAUDE_CONFIG_DIR: acct })).code, 0);
+      assert.deepEqual(look(), before, '바깥 계정 폴더가 바뀜');
+    });
+  } finally { fs.rmSync(O, { recursive: true, force: true }); }
+});
