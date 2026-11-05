@@ -2512,7 +2512,8 @@ app.all("*", async c => {
     console.error("다리 503", JSON.stringify({ req_id: reqId, rid, path: normPath(url.pathname), method: c.req.method, safe, err: String(e).slice(0, 120) }));   // Workers 로그(tail)에도
     return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, safe ? { "x-retry-safe": "1" } : {});   // 보내지도 못한 요청 — 화면이 쓰기도 조용히 다시
   }
-  if (c.req.method === "POST" && r.status < 400) REC.get(c.req.raw)?.cookies.push("bx_w=1; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=20");   // 방금 씀 — 20초 스냅숏 건너뜀
+  const noWrite = url.pathname === "/api/clientlog" || (url.pathname === "/api/chat" && !!body && body.byteLength < 4096 && (() => { try { return !!(JSON.parse(new TextDecoder().decode(body)) as { seen?: unknown }).seen; } catch { return false; } })());
+  if (c.req.method === "POST" && r.status < 400 && !noWrite) REC.get(c.req.raw)?.cookies.push("bx_w=1; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=20");
   if (shadowRd && rd && !fr && !own) {   // 그림자: 304 대신 몸통을 받아 대조하고, 화면에는 보드처럼 같은 ETag 면 빈 304
     const bridged = r, inm = c.req.header("if-none-match"), bms = Date.now() - t0;
     c.executionCtx.waitUntil(ownerRead.shadow(c.env.DB, () => snap(c.env).get("cfg"), rd, bridged).then(d => {

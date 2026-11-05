@@ -95,3 +95,11 @@ test("주인 글(파일 없음)은 그대로 다리로", async () => {
   const r = await t.send("/api/chat", JSON.stringify({ text: "안녕" }), { "content-type": "application/json" });
   assert.equal(r.status, 200); assert.equal(t.calls.length, 1); assert.equal(JSON.parse(t.calls[0].body).text, "안녕");
 });
+test("주인 읽음 표시(seen) POST 는 「방금 씀」 쿠키를 안 붙이고, 글 POST 는 붙임", async () => {
+  const t = setup();
+  const seen = await t.send("/api/chat", JSON.stringify({ channel: "dgit", thread: "1793000000.000001", seen: true }), { "content-type": "application/json" });
+  assert.equal(seen.status, 200);
+  assert.ok(!(seen.headers.get("set-cookie") || "").includes("bx_w="), "읽음에 bx_w");
+  const post = await t.send("/api/chat", JSON.stringify({ text: "안녕" }), { "content-type": "application/json" });
+  assert.ok((post.headers.get("set-cookie") || "").includes("bx_w="), "글에 bx_w 없음");
+});
