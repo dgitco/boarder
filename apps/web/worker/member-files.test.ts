@@ -46,6 +46,14 @@ test("올리기 → 보기: 올린 사람만(남은 404), 빈 몸통 400, 이름
   assert.equal((await s.call("POST", "/api/upload", { "x-test-user": A }, "")).status, 400);
 });
 
+test("같은 열쇠(X-Upload-Key)로 다시 올려도 파일 하나 · 올리기 한도 한 번만, 열쇠가 다르거나 남이면 따로", async () => {
+  const s = setup(), put = async (who: string, key: string) => JSON.parse((await s.call("POST", "/api/upload", { "x-test-user": who, "x-file-name": "p.png", "content-type": "image/png", ...(key ? { "x-upload-key": key } : {}) }, "사진")).t) as { ok: boolean; id: string; size: number };
+  const a = await put(A, "k-1"), a2 = await put(A, "k-1"), a3 = await put(A, "k-2"), n1 = await put(A, ""), n2 = await put(A, ""), b = await put(B, "k-1");
+  assert.ok(a.ok && a2.ok); assert.equal(a2.id, a.id); assert.equal(a2.size, a.size); assert.match(a.id, /^[0-9a-f]{32}$/);
+  assert.notEqual(a3.id, a.id); assert.notEqual(n1.id, n2.id); assert.notEqual(b.id, a.id);   // 열쇠 없으면 예전처럼 매번 새 파일, 남의 같은 열쇠는 다른 파일
+  assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "사진");
+});
+
 test("위험한 꼴(HTML · SVG)은 화면에 띄우지 않고 내려받기, ?dl 이면 무엇이든 내려받기", async () => {
   const s = setup(), h = await up(s, A, "x.html", "text/html", "<script>1</script>"), p = await up(s, A, "p.png", "image/png");
   const r = await s.call("GET", `/api/file/${h.id}`, { "x-test-user": A });

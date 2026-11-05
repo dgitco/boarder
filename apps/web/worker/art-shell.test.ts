@@ -153,3 +153,9 @@ test("끼운 /art: 주인만 그 /art 표를 받고, 표가 붙은 첫 화면(�
   const D = newId("I"); arts[D] = { kind: "doc" }; later(6_000);
   assert.equal((await tok(D, ck)).status, 404, "글(doc)은 끼우지 않음");
 });
+
+test("shell.js: /api/live 는 절대 경로(상대 'api/live' 금지)", () => {
+  const src = readFileSync(new URL("./legacy/shell.js", import.meta.url), "utf8");
+  assert.ok(!/['"`]api\/live['"`]/.test(src), "상대 api/live 가 남음");
+  assert.equal((src.match(/['"]\/api\/live['"]/g) || []).length, 2, "WebSocket 주소 · GET 폴링 둘 다 절대 경로");
+});

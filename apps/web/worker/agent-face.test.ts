@@ -34,3 +34,24 @@ test("에이전트 키 꼴: 소문자로 시작하는 짧은 키만", () => {
   for (const k of ["primary", "company", "harness", "qa_lead"]) assert.equal(A.KEY.test(k), true, k);
   for (const k of ["", "Primary", "1x", "a", "x".repeat(40), "n:노드", "../x"]) assert.equal(A.KEY.test(k), false, k);
 });
+
+test("보이는 이름: 얼굴은 그대로, 이름만 넣고 · 비우고, 얼굴 없는 줄은 비우면 사라짐", async () => {
+  const db = d1();
+  await A.set(db, "o@x", "company", { seed: "pebble", hue: 215 });
+  await A.setName(db, "o@x", "company", "네오 리드");
+  await A.setName(db, "o@x", "dgit", "디깃");
+  assert.deepEqual(await A.all(db, "o@x"), { company: { seed: "pebble", hue: 215, name: "네오 리드" }, dgit: { name: "디깃" } });
+  await A.set(db, "o@x", "company", null);   // 얼굴만 되돌림, 이름은 남음
+  assert.deepEqual((await A.all(db, "o@x")).company, { name: "네오 리드" });
+  await A.setName(db, "o@x", "company", "");  // 얼굴 없는 줄 + 이름 비움 = 줄 지움
+  await A.setName(db, "o@x", "dgit", "");
+  assert.deepEqual(await A.all(db, "o@x"), {});
+  await A.set(db, "o@x", "harness", { seed: "kiwi", hue: 45 }); await A.setName(db, "o@x", "harness", "");
+  assert.deepEqual((await A.all(db, "o@x")).harness, { seed: "kiwi", hue: 45 });
+});
+
+test("이름 다듬기: 제어 글자 뺌 · 앞뒤 공백 · 40자", () => {
+  assert.equal(A.cleanName("  회\u0000\n사  "), "회사");
+  assert.equal([...A.cleanName("가".repeat(60))].length, 40);
+  assert.equal(A.cleanName(null), "");
+});

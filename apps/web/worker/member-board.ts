@@ -8,6 +8,7 @@ import { prefsOf, tidyOn } from "./node-prefs";
 import { history, topics, promiseRows } from "./member-views";
 import { splitMarks, splitMove } from "./member-split";
 import { seatsFromData } from "./role-seat";
+import { chiefOf, type Seat } from "./inbox-rules";
 import { orderFromData, rankOf, deptOf } from "./node-order";
 import { frontDoorNode, readFrontDoor } from "./front-door";
 import { addRows, dropRef, RESERVED, type ConvoRow } from "./task-convo";
@@ -167,7 +168,7 @@ export async function load(db: D1Database, me: string) {
   const nodeOfItem = new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)]));
   const engMain = (ew.results as R[]).some(w => w.kind === "main" && !["closed", "failed", "gone"].includes(w.state));
   const prefs = prefsOf((ns.results[0] as R | undefined)?.data), fd = prefs.front_door, tcOn = prefs.task_channels;
-  const seatRows = seatsFromData((ns.results[0] as R | undefined)?.data).filter(x => !x.primary), roleNames = seatRows.map(x => x.name);   // 역할 자리표(role-seat.ts)의 부서장 이름 — 있으면 왼쪽 에이전트는 메인 봇 + 이 역할들만   // 앞단 · 채널 = 태스크는 켠 사람만(node-prefs.ts)
+  const seatAll = seatsFromData((ns.results[0] as R | undefined)?.data), seatRows = seatAll.filter(x => !x.primary), roleNames = seatRows.map(x => x.name);   // 역할 자리표(role-seat.ts)의 부서장 이름 — 있으면 왼쪽 에이전트는 메인 봇 + 이 역할들만   // 앞단 · 채널 = 태스크는 켠 사람만(node-prefs.ts)
   const pp = primaryPick([...items.values()].filter(i => !i.rv) as unknown as Item[], prefs.primary_item, engMain);
   const primary = pp.primary as unknown as R | null;
   const primKeys = new Set<string>(primary ? [String(primary.key), ...(primary.session ? [String(primary.session)] : [])] : []);
@@ -228,7 +229,7 @@ export async function load(db: D1Database, me: string) {
   const tidy = tidyOn(prefs, roleNames.length), seatRole = new Map<string, string>();
   for (const n of nodes) { if (n.archived_at) continue; const x = seatRows.find(x => x.node ? x.node === n.id : n.id.startsWith("tk_") && n.name === x.name); if (x) seatRole.set(n.id, x.name); }
   const seatIds = new Set(seatRole.keys());
-  return { tidy, seatIds, seatRole, order: orderFromData((ns.results[0] as R | undefined)?.data), keysOf: (win: string) => keysOfWin.get(win) || [], winsOf, resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes, roleWins,
+  return { tidy, seatIds, seatRole, seatAll, order: orderFromData((ns.results[0] as R | undefined)?.data), keysOf: (win: string) => keysOfWin.get(win) || [], winsOf, resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes, roleWins,
     parents: parentsOf((ns.results[0] as R | undefined)?.data), faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
@@ -243,8 +244,12 @@ export async function paneLogs(db: D1Database, me: string) {
   ];
   const engineOf = new Map(L.engineNodes.map(w => [String(w.name), paneOfId(w.id)]));
   const paneOfLog = (r: { win: string; kind?: string; thread?: string | null }) => inPrim(r) || (r.kind !== "me" && L.isPrimWin(String(r.win))) ? PRIMARY   // 있던 primary 창의 보고 줄 = 메인 봇 판(data() %1 과 같게)
-    : L.nodeOfWin(r.win)?.pane || engineOf.get(r.win) || (r.kind === "me" ? L.nodes.find(n => n.name === r.win)?.pane : null) || null;   // 내 글(kind me)은 win 이 노드 이름
-  return { chans, paneOfLog };
+    : L.nodeOfWin(r.win)?.pane || engineOf.get(r.win) || (r.kind === "me" ? L.nodes.find(n => n.name === r.win)?.pane : null) || null;
+  const seatOf = (r: { win: string; kind?: string; thread?: string | null }): Seat => paneOfLog(r) === PRIMARY ? "chief" : L.seatIds.has(L.nodeOfWin(String(r.win))?.id || "") ? "dept" : null;
+  // 메인 봇 판의 뿌리 글(Primary 채팅 새 글 · 있던 primary 창의 보고 줄 · 보더 시스템 줄) — 자리표 쓰는 사람의 읽지 않음(비서실장 채팅)이 씀. 내 글 · 스레드 답은 뺌
+  const prim = L.logs.filter(r => r.kind !== "me" && r.win !== ME && !OWN.test(String(r.win)) && (r.thread === "primary" || (!r.thread && L.isPrimWin(String(r.win)))));
+  const mineAt = Math.max(0, ...L.logs.filter(r => r.thread === "primary" && r.win === ME).map(r => Number(r.at)));   // 내가 Primary 에 마지막으로 쓴 때 — 그 앞 글은 읽은 것(스레드 「마지막이 내 글」과 같은 뜻)
+  return { chans, paneOfLog, prim, mineAt, seatOf, rules: { on: L.seatAll.length > 0, chief: chiefOf(L.seatAll) } };
 }
 async function withReacts(db: D1Database, me: string, out: R[]) {
   const lids = out.map(m => m.lid).filter((x): x is number => !!x);

@@ -353,3 +353,32 @@ test("노드 채팅 글이 창에 못 들어가 지울 때: 태스크 대화 표
   assert.equal((db.prepare("SELECT count(*) AS n FROM board_log WHERE id = ?").get(id) as { n: number }).n, 0, "장부 줄이 지워짐");
   assert.deepEqual(db.prepare("SELECT text FROM task_convo WHERE owner = ?").all(MEMBER).map((x: any) => x.text), ["다른 글"]);
 });
+
+// 주인 GET /api/answer/:rid(읽기 다리 빼기): 큐(rid 칸 · f7_rid)에 있으면 Worker 가 바로, 없으면 예전처럼 다리로
+test("주인 /api/answer/<rid>: 큐에 있는 rid 는 다리 없이 Worker 가 답함 · 없는 rid 는 다리로 감", async () => {
+  const { db, env } = setup(), OWNER = "owner@example.test";
+  db.prepare("INSERT INTO f7_rid(rid, at) VALUES (?, ?)").run("rtest-own-0001", Date.now());
+  const th = hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(TOKEN))).slice(0, 32), exp = Date.now() + 600_000;
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = hex(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(`bx_s|${OWNER}|${exp}|${th}`))).slice(0, 32);
+  const ck = `better-auth.session_token=${TOKEN}; bx_s=${encodeURIComponent(`${OWNER}|${exp}|${sig}`)}`;
+  let bridged = 0;
+  const e2 = { ...env, BRIDGE: { idFromName: (n: string) => n, get: () => ({ fetch: async () => { bridged++; return new Response("{}", { status: 404 }); }, call: async () => { bridged++; throw new Error("다리(시험)"); } }) } };
+  const get = (rid: string) => app.fetch(new Request("https://example.test/api/answer/" + rid, { headers: { cookie: ck, "sec-fetch-site": "same-origin" } }), e2 as never, { waitUntil() {}, passThroughOnException() {} } as never);
+  const hit = await get("rtest-own-0001");
+  assert.equal(hit.status, 200); assert.equal(hit.headers.get("x-f7"), "queue");
+  assert.deepEqual(await hit.json(), { ok: true, state: "ok" });
+  assert.equal(bridged, 0, "큐에 있으면 다리를 안 부름");
+  // 실제 주인 경우: 다리가 202 queued 로 받은 글은 rid 칸에 「끝남 202」로 남음 → 화면이 나중 실패를 잃지 않게 다리로. 4xx 로 끝난 것은 Worker 가 fail
+  const cell = (env.SNAP as any).get("rid:owner@apac");
+  await cell.claim("rtest-own-0202", "/api/chat"); await cell.done("rtest-own-0202", 202, "", "", "");
+  await cell.claim("rtest-own-0400", "/api/chat"); await cell.done("rtest-own-0400", 400, "", "", "");
+  const b0 = bridged;
+  const q202 = await get("rtest-own-0202");
+  assert.notEqual(q202.headers.get("x-f7"), "queue", "202 로 받은 글은 Worker 가 ok 로 답하면 안 됨"); assert.ok(bridged > b0, "다리로 감");
+  const f400 = await get("rtest-own-0400");
+  assert.equal(f400.headers.get("x-f7"), "queue"); assert.deepEqual(await f400.json(), { ok: true, state: "fail" });
+  const miss = await get("rtest-own-9999");
+  assert.notEqual(miss.headers.get("x-f7"), "queue");
+  assert.ok(bridged > 0, "큐에 없으면 예전처럼 다리로");
+});

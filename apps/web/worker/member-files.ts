@@ -20,6 +20,11 @@ export async function quotaTake(db: D1Database, me: string, kind: string, bytes:
   if (r && Math.random() < 0.05) await db.prepare("DELETE FROM user_pref WHERE owner = ? AND k LIKE 'q:%' AND at < ?").bind(me, now - 3 * 86_400_000).run().catch(() => {});   // 지난 날 칸 치우기
   return !!r;
 }
+/** 올리기 한도에서 방금 센 한 번을 돌려줌(R2 에 못 넣었을 때 — 다시 보내면 한도를 한 번 더 세지 않게). 못 돌려줘도 던지지 않음 */
+export async function quotaGive(db: D1Database, me: string, kind: string, bytes: number, now = Date.now()) {
+  const day = new Date(now).toISOString().slice(0, 10);
+  await db.prepare(`UPDATE user_pref SET v = json_object('n', max(0, json_extract(v, '$.n') - 1), 'b', max(0, json_extract(v, '$.b') - ?)) WHERE owner = ? AND k = ?`).bind(bytes, me, `q:${kind}:${day}`).run().catch(() => {});
+}
 export async function readCapped(req: Request, max: number): Promise<Uint8Array | "big" | null> {
   if (+(req.headers.get("content-length") || 0) > max) return "big";
   if (!req.body) return new Uint8Array(0);
@@ -78,8 +83,19 @@ async function headers(o: R2ObjectBody, dl: boolean): Promise<{ h: Headers; body
   return { h, body };
 }
 
+/** 올리는 사람 + 첨부 열쇠 → 32자리 16진 파일 id(같은 열쇠 = 같은 id) */
+async function keyedId(me: string, key: string) {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`mfile|${me}|${key}`)));
+  return [...d.slice(0, 16)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
 /** POST /api/upload — 틀은 몸통에 파일 그대로 + X-File-Name(URI 인코딩). 답 { ok, id, name, size, mime } */
 export async function upload(c: C, me: string) {
+  const key = (c.req.header("x-upload-key") || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+  const kid = key ? await keyedId(me, key) : "";
+  if (kid) {
+    const o = await c.env.RESULTS.head(`mfiles/${kid}`).catch(() => null);
+    if (o && o.customMetadata?.owner === me) return c.json({ ok: true, id: kid, name: o.customMetadata?.name || "file", size: o.size, mime: o.httpMetadata?.contentType || "application/octet-stream" });
+  }
   const buf = await readCapped(c.req.raw, FILE_MAX);
   if (buf === "big") return c.json({ ok: false, error: "20MB 까지예요" }, 413);
   if (!buf || !buf.byteLength) return c.json({ ok: false, error: "파일이 비었어요" }, 400);
@@ -87,8 +103,9 @@ export async function upload(c: C, me: string) {
   if (q !== true) return q === null ? c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503) : tooMany(c, "올리기");   // 셈을 못 하면 받지 않음(기본 거부)
   let name = "file"; try { name = decodeURIComponent(c.req.header("x-file-name") || "file"); } catch {}
   name = name.replace(/[\x00-\x1f\x7f"\\/]/g, "_").trim().slice(0, 120) || "file";
-  const type = (c.req.header("content-type") || "application/octet-stream").slice(0, 100), id = crypto.randomUUID().replace(/-/g, "");
-  await c.env.RESULTS.put(`mfiles/${id}`, buf, { httpMetadata: { contentType: type, contentDisposition: disposition("inline", name) }, customMetadata: { owner: me, name } });
+  const type = (c.req.header("content-type") || "application/octet-stream").slice(0, 100), id = kid || crypto.randomUUID().replace(/-/g, "");
+  try { await c.env.RESULTS.put(`mfiles/${id}`, buf, { httpMetadata: { contentType: type, contentDisposition: disposition("inline", name) }, customMetadata: { owner: me, name } }); }
+  catch (e) { await quotaGive(c.env.DB, me, "mfiles", buf.byteLength); console.error("올리기 R2", e); return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" }); }   // 못 넣었음 — 한도는 돌려주고 다시 보내도 되는 503
   return c.json({ ok: true, id, name, size: buf.byteLength, mime: type });
 }
 /** GET /api/file/:id — 올린 사람만(남의 것은 없는 것과 같게 404). ?dl = 내려받기 */

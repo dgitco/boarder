@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { refsOf, normRepo, tomlMcp, frontmatter, collectMcp, since, sameAsSent, markSent, SAME_MAX, codexSessions } from './importer.mjs';
+import { refsOf, normRepo, tomlMcp, frontmatter, collectMcp, since, sameAsSent, markSent, SAME_MAX, codexSessions, apiFail } from './importer.mjs';
 
 test('링크 뽑기: Slack 스레드 · GitHub 이슈/PR · Linear · 리포 안 #번호', () => {
   const r = refsOf('see https://acme.slack.com/archives/C0000000001/p1700000000000100 and https://github.com/Acme/Ledger/pull/88 and linear.app/acme/issue/ENG-12 fix #3720', 'github.com/acme/ledger');
@@ -65,4 +65,10 @@ test('Codex 세션: `codex exec` 로 돈 기록(originator codex_exec)은 세션
     roll('exec4', 'aaaaaaaa-0000-4000-8000-000000000005', { originator: 'codex_exec', source: { subagent: {} } });
     assert.deepEqual(codexSessions(1).map(s => s.key).sort(), ['session:codex:aaaaaaaa-0000-4000-8000-000000000001', 'session:codex:aaaaaaaa-0000-4000-8000-000000000003']);
   } finally { if (old === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = old; fs.rmSync(C, { recursive: true, force: true }); }
+});
+
+test('JSON 아닌 서버 실패 줄: 메서드 · 경로를 붙이고 쿼리 · 토큰은 안 남김', () => {
+  assert.equal(apiFail('GET', '/api/topics', 500), 'Boarder 500 GET /api/topics');
+  assert.equal(apiFail('POST', '/api/import?token=bxd_secret&x=1#h', 502), 'Boarder 502 POST /api/import');
+  assert.ok(!apiFail('GET', '/api/x?token=bxd_secret', 500).includes('secret'));
 });

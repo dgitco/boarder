@@ -1,5 +1,8 @@
 // 회원 웹 푸시 더하기: 어느 사건에 알림을 보내나 · 한 브라우저 구독 주소는 한 회원 것만.
-// 구독 자체(열쇠 · 보내기 · 몰림 묶기)는 push-do.ts 회원 칸 그대로
+import { paneLogs } from "./member-board";
+import { shows, chiefTrouble } from "./inbox-rules";
+import { seatsFromData } from "./role-seat";
+const QUIET_KINDS = new Set(["status", "start", "progress", "done"]);
 
 export type PushWhy = "card" | "reply" | "call" | "progress";
 export type ProgressPref = "digest" | "off";
@@ -49,22 +52,41 @@ export async function humanThread(db: D1Database, me: string, thread: string | n
   const root = await db.prepare("SELECT 1 x FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? AND (kind = 'me' OR win = '나') LIMIT 1").bind(me, Number(m[2]), Number(m[1]) * 1000, Number(m[1]) * 1000 + 1000).first();
   return { human: !!root, card: !!c };
 }
+const SEAT_MS = 60_000, SEAT_MAX = 200;
+const seatMemo = new WeakMap<D1Database, Map<string, { at: number; p: Promise<Awaited<ReturnType<typeof paneLogs>>> }>>();
+export function seatView(db: D1Database, me: string, now = Date.now()) {
+  let m = seatMemo.get(db); if (!m) seatMemo.set(db, m = new Map());
+  const hit = m.get(me); if (hit && now - hit.at < SEAT_MS) return hit.p;
+  if (m.size >= SEAT_MAX) m.clear();
+  const p = paneLogs(db, me); m.set(me, { at: now, p });
+  p.catch(() => { if (m!.get(me)?.p === p) m!.delete(me); });   // 실패는 두지 않음 — 다음 줄이 다시 읽음
+  return p;
+}
 /**
  * 글 한 줄의 알림 종류: 턴 답(inbox_log reply — 보드에서 창에 넣은 내 글에 대한 답) · 사람 글 스레드의 답 = reply,
  * 막힘 unblocks=me · 장애 = call, 그 밖 = progress. card = 그 스레드가 내 카드
  */
-export async function lineWhy(db: D1Database, me: string, l: PushLine): Promise<{ why: PushWhy; card: boolean }> {
+export async function lineWhy(db: D1Database, me: string, l: PushLine): Promise<{ why: PushWhy | "none"; card: boolean; fresh?: boolean }> {
   const t = await humanThread(db, me, l.thread);
+  const seated = seatsFromData((await db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string | null }>().catch(() => null))?.data).length > 0;   // 자리표 없는 사람은 보드 전체를 안 읽음(예전 그대로)
+  const P = seated ? await seatView(db, me) : null;
+  if (P?.rules.on) {
+    const seat = P.seatOf({ win: l.win, kind: l.kind, thread: l.thread }), human = t.human || (l.tool === "inbox_log" && l.kind === "reply");
+    const line = { win: l.win, kind: l.kind, text: l.text };
+    if (!shows(line, seat, P.rules.chief, human)) return { why: seat && QUIET_KINDS.has(l.kind) ? "progress" : "none", card: t.card };
+    if (chiefTrouble(line, P.rules.chief) || l.kind === "incident" || (l.kind === "blocked" && l.unblocks === "me")) return { why: "call", card: t.card };
+    return { why: "reply", card: t.card, fresh: !human };
+  }
   if (l.tool === "inbox_log" && l.kind === "reply") return { why: "reply", card: t.card };
   if (l.tool === "inbox_log" && (l.kind === "incident" || (l.kind === "blocked" && l.unblocks === "me"))) return { why: "call", card: t.card };
   return { why: t.human ? "reply" : "progress", card: t.card };
 }
 /** reply · call 알림 글. 누르면: Primary 내 글 스레드 → 그 스레드, 카드 스레드 → 그 카드, 그 밖 → 보드 첫 화면 */
-export function lineMsg(l: PushLine, why: "reply" | "call", card = false) {
+export function lineMsg(l: PushLine, why: "reply" | "call", card = false, fresh = false) {
   const p = PTH.exec(l.thread || "");
   const url = p ? `./?open=thread:primary:${p[1]}` : card && l.thread ? `./?open=card:${l.thread}` : "./";
   const text = String(l.text || "").replace(/\s+/g, " ").trim(), win = String(l.win || "").trim();
-  return { id: `log:${l.id}`, question: (win ? `${win} — ` : "") + text, url, title: why === "call" ? "나를 불러요" : "답이 왔어요" };
+  return { id: `log:${l.id}`, question: (win ? `${win} — ` : "") + text, url, title: why === "call" ? "나를 불러요" : fresh ? "새 글이 왔어요" : "답이 왔어요" };
 }
 type Pu = Pick<import("./push-do").MemberPushApi, "mNotify" | "mDigest" | "mPrefs">;
 /** 새 카드 한 장을 회원 칸으로(index.ts memberCardPush): 급한 카드는 누구에게나, 그 밖 새 카드는 넓힘을 켠 사람만(칸이 opt.wide 로 설정을 봄) */
@@ -77,9 +99,10 @@ export async function routeCard(db: D1Database, me: string, card: PushCard, pu: 
 export async function routeLine(db: D1Database, me: string, line: PushLine, pu: Pu) {
   const m = me.toLowerCase(), pr = await pu.mPrefs(m);
   if (pr[0] !== 200 || (pr[1] as { wide?: boolean }).wide !== true) return null;
-  const { why, card } = await lineWhy(db, me, line);
+  const { why, card, fresh } = await lineWhy(db, me, line);
+  if (why === "none") return null;
   if (why === "progress") return pu.mDigest(m);
-  if (why !== "card") return pu.mNotify(m, lineMsg(line, why, card), `log:${line.id}`, { wide: true });
+  if (why !== "card") return pu.mNotify(m, lineMsg(line, why, card, fresh), `log:${line.id}`, { wide: true });
   return null;
 }
 /** 묶음 알림 한 통(진행 글 n개) */

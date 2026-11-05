@@ -81,10 +81,43 @@ async function download(p) {
     const top = path.join(tmp, 'harness');
     if (!existsSync(path.join(top, 'defaults', 'install.json'))) throw new Error('the harness download has no defaults/install.json');
     for (const e of readdirSync(tmp)) if (e !== 'harness') rmSync(path.join(tmp, e), { recursive: true, force: true });
-    rmSync(harnessDir(), { recursive: true, force: true });
-    renameSync(top, harnessDir());
+    swapIn(top);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
   buildRun();
+}
+
+const names = d => { try { return readdirSync(d); } catch { return []; } };
+export function swapIn(top, { rename = renameSync } = {}) {
+  const dest = harnessDir();
+  keepRunEntries(top);
+  const had = present(dest), bak = path.join(shareRoot(), `harness.old-${process.pid}-${Date.now()}`);
+  if (had) rename(dest, bak);
+  try { rename(top, dest); } catch (e) { if (had) rename(bak, dest); throw e; }
+  if (!had) return;
+  try {
+    const oldD = path.join(bak, 'run.d'), newD = path.join(dest, 'run.d');
+    if (present(oldD)) {
+      if (!present(newD)) rename(oldD, newD);
+      else for (const n of names(oldD)) if (!present(path.join(newD, n))) rename(path.join(oldD, n), path.join(newD, n));
+    }
+  } catch (e) { process.stderr.write(`harness: could not move run.d into the new harness (${e.message}) — it stays in ${bak}\n`); return; }
+  rmSync(bak, { recursive: true, force: true });
+}
+function keepRunEntries(top) {
+  const old = harnessDir(), oldRun = path.join(old, 'run'), newRun = path.join(top, 'run');
+  if (!present(oldRun)) return;
+  const linked = isLink(oldRun);
+  const ours = new Set(['.built-by-harness', 'harness-board', ...[top, old].flatMap(h => ['bin', 'lib', 'board'].flatMap(d => names(path.join(h, d))))]);
+  for (const n of names(oldRun)) {
+    if (ours.has(n)) continue;
+    const s = path.join(oldRun, n), d = path.join(newRun, n);
+    if (present(d)) continue;
+    const st = lstatSync(s);
+    if (!(st.isSymbolicLink() || (st.isFile() && !linked))) continue;
+    mkdirSync(newRun, { recursive: true });
+    if (st.isSymbolicLink()) symlinkSync(readlinkSync(s), d);
+    else { copyFileSync(s, d); chmodSync(d, st.mode & 0o777); }
+  }
 }
 
 function buildRun() {
@@ -119,8 +152,7 @@ function packFromFolder(plan) {
     for (const d of ['skills', 'hooks', 'rules', 'plan-abc']) for (const base of [E, W]) if (existsSync(path.join(base, d))) cpSync(path.join(base, d), path.join(stage, d), { recursive: true, filter: noLinks });
     for (const f of ['install.json', 'bundles.json']) copyFileSync(path.join(W, f), path.join(stage, 'defaults', f));
     if (existsSync(path.join(W, 'wrapper.json'))) copyFileSync(path.join(W, 'wrapper.json'), path.join(stage, 'wrapper.json'));
-    rmSync(harnessDir(), { recursive: true, force: true });
-    renameSync(stage, harnessDir());
+    swapIn(stage);
   } finally { rmSync(stage, { recursive: true, force: true }); }
   buildRun();
 }

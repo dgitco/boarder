@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "6c3f70d4b5ab";
+window.HB_VER = "0070684f5f02";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1407,6 +1407,8 @@ textarea.tkon::selection{background:color-mix(in srgb,var(--accent) 26%,transpar
 .msg .bd a.mention,a.mention{text-decoration:none;cursor:pointer}   
 .msg .bd a.mention:hover,a.mention:hover{text-decoration:none;background:color-mix(in srgb,var(--accent) 16%,var(--accent-soft))}
 .ah .hmore{position:relative;flex:none}.ah .hmore > summary{list-style:none;cursor:pointer;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--soft)}.ah .hmore > summary:hover,.ah .hmore[open] > summary{color:var(--ink);background:var(--sunk)}.ah .hmore > summary::-webkit-details-marker{display:none}   
+.hren{display:flex;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line)}.hren input{flex:1;min-width:0;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px}.hren button{height:34px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:none;color:var(--ink);font:inherit;font-size:13px;cursor:pointer}.hren button[type=submit]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.ah .hcall{flex:none;width:30px;height:30px;border:0;background:none;border-radius:8px;display:grid;place-items:center;color:var(--soft);cursor:pointer}.ah .hcall:hover{color:var(--ink);background:var(--sunk)}
 .ah .hmenu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:150px;padding:4px;border-radius:12px;background:var(--surface);box-shadow:0 0 0 1px var(--line),0 8px 24px rgba(0,0,0,.18)}
 .ah .hmenu button{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 10px;border:0;border-radius:8px;background:none;color:var(--ink);font:inherit;font-size:13.5px;cursor:pointer;text-align:left}
 .ah .hmenu button:hover{background:var(--sunk)}.ah .hmenu svg{width:15px;height:15px;color:var(--soft)}
@@ -1891,8 +1893,8 @@ p.mdi{padding-left:1em;text-indent:-1em}
 .ibfeed .ibi .msg.lclip > .mbody > .bd{-webkit-mask-image:linear-gradient(#000 70%,transparent);mask-image:linear-gradient(#000 70%,transparent)}
 .iblong{display:block;border:0;background:none;color:var(--accent);font:inherit;font-size:13px;font-weight:500;padding:2px 0;cursor:pointer}
 .iberr{color:var(--muted);font-size:12.5px;padding:2px 16px 0 54px}
-.ah .who:has(.ibhn){display:flex;align-items:center;gap:10px;min-width:0}
-.ah .who .ibhn{color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+.ah .who:has(.ibhr){display:flex;align-items:center;gap:10px;min-width:0}
+.ah .who .ibhr{display:inline-flex;align-items:center;gap:8px;margin-left:auto;flex:none}
 .ah .who .ibrall{height:28px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--soft);font:inherit;font-size:12.5px;cursor:pointer}
 .ah .who .ibrall:hover{background:var(--hover);color:var(--ink)}
 .ah .who .ibflt{height:26px;padding:0 10px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer;flex:none}
@@ -1906,14 +1908,8 @@ p.mdi{padding-left:1em;text-indent:-1em}
 .ah .who .ibvw{display:inline-flex;gap:2px;padding:2px;border-radius:999px;background:var(--sunk);flex:none}
 .ah .who .ibvw button{height:24px;padding:0 10px;border:0;border-radius:999px;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
 .ah .who .ibvw button[aria-selected="true"]{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--line)}
-.ah .who .ibmgt{white-space:nowrap}
-@media (max-width:640px){.ah .who:has(.ibhn){flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.ah .who .ibhn{display:none}}
-.ibtip{position:fixed;z-index:80;background:#17171a;color:#f3f5f7;border-radius:16px;padding:12px;box-shadow:0 18px 50px rgba(0,0,0,.35);font-size:14px;line-height:20px}
-.ibtip .ibtipa{position:absolute;top:-7px;width:14px;height:14px;background:#17171a;transform:rotate(45deg);border-radius:2px}
-.ibtip .ibtipg{display:flex;gap:6px;justify-content:center;align-items:center;height:86px;border-radius:10px;background:linear-gradient(135deg,#c9b8ff,#f7d6c4 55%,#ee9b78);margin-bottom:10px}
-.ibtip .ibtipg span{padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.8);color:#333;font-size:12px}.ibtip .ibtipg span.on{background:#17171a;color:#fff;font-weight:600}
-.ibtip b{display:block;font-size:15px;font-weight:600;margin-bottom:3px}.ibtip p{margin:0;color:#b8b8bf;font-size:13.5px;line-height:19px}
-.ibtip button{display:block;margin:10px 0 0 auto;height:30px;padding:0 13px;border:0;border-radius:999px;background:#f3f5f7;color:#17171a;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer}
+.ah .who .ibvw button.ibic{width:30px;padding:0;display:grid;place-items:center}
+@media (max-width:640px){.ah .who:has(.ibhr){flex-wrap:wrap;row-gap:6px;column-gap:8px}.ah .who:has(.ibhr) .n{flex:1 0 100%}.ah .who .ibhr{margin-left:0;flex-wrap:wrap;gap:6px}.ah .who:has(.ibhr) .ibmg{flex:none}}
 .inbr.ibdn{opacity:.55}.inbr.ibdn .ud,.inbr.ibdn .un{display:none}
 
 
@@ -2940,18 +2936,30 @@ const agentFace = (i) => {
   return { seed, hue };
 };
 let AGENT_CUSTOM = /* @__PURE__ */ Object.create(null), agentCustomAt = 0;
+let AGENT_NAME = /* @__PURE__ */ Object.create(null);
+const AREA_DEF = /* @__PURE__ */ Object.create(null);
+function applyAgentNames() {
+  for (const k of /* @__PURE__ */ new Set([...Object.keys(AREA_DEF), ...Object.keys(AGENT_NAME)])) {
+    if (!(k in AREA_DEF)) AREA_DEF[k] = AREA_NAME[k];
+    AREA_NAME[k] = AGENT_NAME[k] || AREA_DEF[k];
+  }
+}
 function agentCustomLoad() {
   if (window.HB_CH || agentCustomAt) return;
   agentCustomAt = Date.now();
   fetch("api/me/agent-faces", { credentials: "include" }).then((r) => r.ok ? r.json() : null).then((j) => {
     if (!j?.faces) return;
-    const o = /* @__PURE__ */ Object.create(null);
+    const o = /* @__PURE__ */ Object.create(null), nm = /* @__PURE__ */ Object.create(null);
     for (const [k, v] of Object.entries(j.faces)) {
       const f = faceOk(v);
       if (f) o[k] = f;
+      const n = typeof v?.name === "string" ? v.name.slice(0, 40).trim() : "";
+      if (n) nm[k] = n;
     }
     AGENT_CUSTOM = o;
-    if (Object.keys(o).length && typeof compute === "function") {
+    AGENT_NAME = nm;
+    applyAgentNames();
+    if ((Object.keys(o).length || Object.keys(nm).length) && typeof compute === "function") {
       compute();
       if (typeof viewDraw === "function") viewDraw();
       window.dispatchEvent(new Event("hb-chats"));
@@ -4129,6 +4137,101 @@ function render() {
     if (caret && ans.contains(document.getElementById(caret.id))) caretBack(caret);
   }
 }
+const hdrRenameKind = () => !cur ? "" : window.HB_MEMBER ? isNodeCh(cur.chan) ? "node" : cur.chan === "primary" ? "bot" : "" : !window.HB_CH && cur.chan in AREA_NAME && /^[a-z][a-z0-9_]{1,30}$/.test(cur.chan) ? "agent" : "";
+const hmenuItems = (p) => (undefined || "") + (hdrRenameKind() ? '<button type="button" role="menuitem" data-hrename><span>이름 변경</span></button>' : "");
+function hrenameOpen() {
+  document.querySelector("#ans .hren")?.remove();
+  const kind = hdrRenameKind(), p = cur && itemsFor(cur).p;
+  if (!kind || !p) return;
+  const chan = cur.chan, was = kind === "node" ? chan.slice(2) : AREA_NAME[chan === "primary" ? "primary" : chan] || "";
+  const box = document.createElement("form");
+  box.className = "hren";
+  box.innerHTML = `<input type="text" maxlength="${kind === "agent" ? 40 : kind === "bot" ? 20 : 60}" aria-label="이름" value="${esc(was)}"><button type="submit">저장</button><button type="button" data-hrcancel>취소</button>`;
+  document.querySelector("#ans > .ah").after(box);
+  const inp = box.querySelector("input");
+  inp.focus();
+  inp.select();
+  box.querySelector("[data-hrcancel]").addEventListener("click", () => box.remove());
+  box.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const v = inp.value.trim();
+    if (v === was) return box.remove();
+    if (!v && kind !== "agent") return;
+    const sub = box.querySelector("button[type=submit]");
+    sub.disabled = true;
+    const redraw2 = () => {
+      try {
+        compute();
+      } catch (e2) {
+      }
+      try {
+        viewDraw();
+      } catch (e2) {
+      }
+      window.dispatchEvent(new Event("hb-chats"));
+      if (cur) try {
+        render();
+      } catch (e2) {
+      }
+    };
+    let undo = () => {
+    };
+    try {
+      if (kind === "agent") {
+        const old = AGENT_NAME[chan];
+        undo = () => {
+          old ? AGENT_NAME[chan] = old : delete AGENT_NAME[chan];
+          applyAgentNames();
+          redraw2();
+        };
+        v ? AGENT_NAME[chan] = v : delete AGENT_NAME[chan];
+        applyAgentNames();
+        redraw2();
+        box.remove();
+        await optPost("api/me/agent-faces", { key: chan, name: v });
+      } else if (kind === "bot") {
+        const bj = await fetch("api/me/bot").then((r) => r.json()), b0 = bj.bot;
+        if (!b0) throw 0;
+        const old = AREA_NAME.primary;
+        undo = () => {
+          AREA_NAME.primary = old;
+          redraw2();
+        };
+        AREA_NAME.primary = v;
+        if (window.HB_MEMBER) window.HB_MEMBER.bot = v;
+        redraw2();
+        box.remove();
+        await optPost("api/me/bot", { ...b0, name: v.slice(0, 20) });
+      } else {
+        const fl = await fetch("api/me/nodes/avatar").then((r) => r.json()), nx = (fl.nodes || []).find((n) => n.pane === p.pane);
+        if (!nx) throw 0;
+        const o = { win: p.win, name: p.name, chan };
+        undo = () => {
+          p.win = o.win;
+          p.name = o.name;
+          cur.chan = o.chan;
+          redraw2();
+        };
+        if (p.win) p.win = v;
+        p.name = v;
+        cur.chan = "n:" + v;
+        redraw2();
+        box.remove();
+        await optPost("api/me/nodes/edit", { op: "rename", node: nx.node, name: v });
+        try {
+          refresh();
+        } catch (e2) {
+        }
+      }
+      toast("이름을 바꿨어요");
+    } catch (err) {
+      undo();
+      toast("이름을 못 바꿨어요. 다시 해 주세요", 3600, true);
+      document.querySelector("#ans > .ah")?.after(box);
+      sub.disabled = false;
+    }
+  });
+}
 function renderNow() {
   ans.querySelectorAll("textarea[data-dk]").forEach((t) => (cur.drafts ||= {})[t.dataset.dk] = t.value);
   const { p } = itemsFor(cur);
@@ -4139,10 +4242,9 @@ function renderNow() {
   const keepBox = tab === "chat" && cur.chatFor === p.pane ? $("#mchatbox") : null, keepAct = keepBox?.contains(document.activeElement) ? document.activeElement.id : null;
   const keepScroll = keepBox ? ["cfeed", "cthfeed"].map((id) => [id, keepBox.querySelector("#" + id)?.scrollTop]) : [];
   const body = `<div class="mchat2" id="mchatbox"></div>`;
-  const head = `${cur.back ? `<button class="aback${cur.fromPage ? " npb" : ""}" data-alist aria-label="${cur.fromPage ? "노드로" : TURN + " 목록으로"}">${cur.fromPage ? "‹ 노드" : "‹ 목록"}</button>` : ""}${tabs}<div class="who"><div class="n">${esc(tab === "chat" && isGptCh(cur.chan) ? gptTitle(cur.chan) : tab === "chat" && isSessCh(cur.chan) ? sessName(cur.chan) : tab === "chat" && isNodeCh(cur.chan) ? cur.chan.slice(2) : tab === "chat" && isIbCh(cur.chan) ? { "i:unread": "읽지 않음", "i:saved": "저장", "i:drafts": "초안", "i:turn": "결정 · 할 일" }[cur.chan] : tab === "chat" && isXCh(cur.chan) ? "↔ " + (undefined || "") : tab === "chat" && AGENT_CH.some((a) => a.key === cur.chan) ? AREA_NAME[cur.chan] : nameOf(p))}${isIbCh(cur.chan) || isXCh(cur.chan) || isGptCh(cur.chan) ? "" : waitChip(p)}</div>${tab === "chat" && isIbCh(cur.chan) ? window.HBInbox?.feedHead?.(cur.chan) || "" : ""}</div>`;
-  const sw = !LIVE || tab !== "chat" || isIbCh(cur.chan) || isXCh(cur.chan) || isGptCh(cur.chan) || p.ghost || /^g:/.test(p.pane || "") ? "" : isSessCh(cur.chan) ? `<button type="button" class="sesssw" data-sesssw="${esc(isMain(p) ? mainKey(p) : "n:" + nodeTitle(p))}">채널 글</button>` : `<button type="button" class="sesssw" data-sesssw="${esc(sessKey(p))}">세션</button>`;
-  ans.innerHTML = `<div class="ah">${head}${sw}
-      ${LIVE && tab === "chat" && !p.parked && !isIbCh(cur.chan) ? `<details class="hmore"><summary aria-label="더 보기" title="더 보기"><svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.75" cy="10" r="1.4" fill="currentColor"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/><circle cx="15.25" cy="10" r="1.4" fill="currentColor"/></svg></summary><div class="hmenu" role="menu"><button type="button" role="menuitem" data-vcall="${p.pane}" aria-label="${esc(jo(nameOf(p), "와/과"))} 음성 통화">${ICON.phone}<span>전화 걸기</span></button>${undefined || ""}</div></details>` : ""}<button class="xbtn" id="x" aria-label="닫기">${ICON.x}</button></div>
+  const head = `${cur.back ? `<button class="aback${cur.fromPage ? " npb" : ""}" data-alist aria-label="${cur.fromPage ? "노드로" : TURN + " 목록으로"}">${cur.fromPage ? "‹ 노드" : "‹ 목록"}</button>` : ""}${tabs}<div class="who"><div class="n">${esc(tab === "chat" && isGptCh(cur.chan) ? gptTitle(cur.chan) : tab === "chat" && isSessCh(cur.chan) ? sessName(cur.chan) : tab === "chat" && isNodeCh(cur.chan) ? cur.chan.slice(2) : tab === "chat" && isIbCh(cur.chan) ? cur.chan === "i:unread" && window.HBInbox?.isBoth?.() ? "전체" : { "i:unread": "읽지 않음", "i:saved": "저장", "i:drafts": "초안", "i:turn": "결정 · 할 일" }[cur.chan] : tab === "chat" && isXCh(cur.chan) ? "↔ " + (undefined || "") : tab === "chat" && AGENT_CH.some((a) => a.key === cur.chan) ? AREA_NAME[cur.chan] : nameOf(p))}${isIbCh(cur.chan) || isXCh(cur.chan) || isGptCh(cur.chan) ? "" : waitChip(p)}</div>${tab === "chat" && isIbCh(cur.chan) ? window.HBInbox?.feedHead?.(cur.chan) || "" : ""}</div>`;
+  ans.innerHTML = `<div class="ah">${head}
+      ${LIVE && tab === "chat" && !p.parked && !isIbCh(cur.chan) ? `${vcallBtn(p.pane, nameOf(p)).replace('class="vcall"', 'class="vcall hcall"')}${hmenuItems(p) ? `<details class="hmore"><summary aria-label="더 보기" title="더 보기"><svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.75" cy="10" r="1.4" fill="currentColor"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/><circle cx="15.25" cy="10" r="1.4" fill="currentColor"/></svg></summary><div class="hmenu" role="menu">${hmenuItems(p)}</div></details>` : ""}` : ""}<button class="xbtn" id="x" aria-label="닫기">${ICON.x}</button></div>
     ${tab === "chat" && isNodeCh(cur.chan) ? nodeBox(p) + `<div class="nthr" data-nthr hidden></div>` + (setTimeout(nthrFill, 0), "") + todoBox(cur.chan.slice(2)) : ""}
     ${body}`;
   tfDir = "";
@@ -7019,6 +7121,7 @@ const attChips = (id) => (CS.att[id] || []).map((a, i) => {
   const st = (a.xhr ? " up" : "") + (a.err ? " bad" : ""), k = a.k ? ` data-ak="${a.k}"` : "";
   return a.url ? `<span class="chip img${st}"${k} title="${esc(a.f.name)}"><img src="${a.url}" alt="${esc(a.f.name)}">${attX(id, i, a)}</span>` : `<span class="chip${st}"${k} title="${esc(a.f.name)}"><i class="fi">${ICON.file}</i><span class="cn"><b>${esc(a.f.name)}</b><small>${esc(fileMeta({ name: a.f.name, mime: a.f.type, size: a.f.size }))}</small></span>${attX(id, i, a)}</span>`;
 }).join("");
+const upKey = (a) => a.uk ||= String(window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
 function preUp(id, a) {
   a.p = 0;
   a.done = new Promise((res) => {
@@ -7092,6 +7195,7 @@ function preUp(id, a) {
       x.open("POST", "api/upload");
       x.setRequestHeader("X-Request-Id", rq);
       x.setRequestHeader("X-HB", "1");
+      x.setRequestHeader("X-Upload-Key", upKey(a));
       x.setRequestHeader("X-File-Name", encodeURIComponent(a.f.name));
       x.setRequestHeader("Content-Type", a.f.type || "application/octet-stream");
       x.send(a.f);
@@ -7099,13 +7203,27 @@ function preUp(id, a) {
     go();
   });
 }
+const UP_ERR = "첨부를 올리지 못했어요";
 async function upOne(a) {
   if (a.done) await a.done;
   if (a.id) return a.id;
-  const r = await fetch("api/upload", { method: "POST", headers: { "X-HB": "1", "X-File-Name": encodeURIComponent(a.f.name), "Content-Type": a.f.type || "application/octet-stream" }, body: a.f });
-  const j = await r.json();
-  if (!r.ok || !j.ok) throw new Error(j.error || r.status);
-  return j.id;
+  for (let i = 0; ; i++) {
+    let r, j;
+    try {
+      r = await fetch("api/upload", { method: "POST", headers: { "X-HB": "1", "X-Upload-Key": upKey(a), "X-File-Name": encodeURIComponent(a.f.name), "Content-Type": a.f.type || "application/octet-stream" }, body: a.f });
+      j = await r.json().catch(() => null);
+    } catch (e) {
+      if (i >= 2) throw e;
+      await sleep(1500 * (i + 1));
+      continue;
+    }
+    if (r.ok && j?.ok) {
+      a.id = j.id;
+      return j.id;
+    }
+    if (r.status < 500 || i >= 2) throw new Error(j?.error || r.status);
+    await sleep(1500 * (i + 1));
+  }
 }
 function attChanged(id) {
   const box = document.querySelector(`#ans .box[data-mbox="${id}"], #mchatbox .box[data-mbox="${id}"]`);
@@ -7499,7 +7617,7 @@ async function gptSend(ta, text) {
   CS.pend[key] = bub;
   CS.pmeta[key] = { text, at: Date.now(), channel: k };
   viewChat(true);
-  const back = () => {
+  const back = (msg = ERR) => {
     delete CS.pend[key];
     delete CS.pmeta[key];
     if (att.length) {
@@ -7511,14 +7629,14 @@ async function gptSend(ta, text) {
       t2.value = text;
       grow(t2);
     }
-    toast(ERR, 4e3, true);
+    toast(msg, 4e3, true);
     viewChat(true);
   };
   let files = [];
   try {
     for (const a of att) files.push(await upOne(a));
   } catch (e) {
-    return back();
+    return back(UP_ERR);
   }
   try {
     if (k === "q:new") {
@@ -7920,6 +8038,13 @@ setInterval(() => {
   if (LIVE && chatOn() && isSessCh(CS.at) && !document.hidden && CS.sessBusy !== CS.at && !/세션 기록이 없어요/.test(CS.ch[CS.at]?.err || "")) chatLoad();
 }, 2500);
 document.addEventListener("click", (e) => {
+  if (e.target.closest?.("[data-hrename]")) {
+    e.preventDefault();
+    e.stopPropagation();
+    hrenameOpen();
+    document.querySelectorAll("details.hmore[open]").forEach((d) => d.open = false);
+    return;
+  }
   const b = e.target.closest?.("[data-sesssw]");
   if (!b || !cur) return;
   e.preventDefault();
@@ -8481,7 +8606,7 @@ async function chatSend(id) {
       drTyped[dk] = Date.now();
       draftSet(dk, text);
       delete CS.pend[up];
-      toast(ERR, 4e3, true);
+      toast(UP_ERR, 4e3, true);
       viewChat(true);
       const t2 = document.getElementById(id);
       if (t2) {
@@ -11499,7 +11624,7 @@ setInterval(() => {
   let HOVROW = null;
   const FD = {}, FQ = { list: [], busy: 0, want: /* @__PURE__ */ new Set(), at: /* @__PURE__ */ new Map(), ch: /* @__PURE__ */ new Map(), n: /* @__PURE__ */ new Map() }, VIS = /* @__PURE__ */ new Map();
   const CHEV = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5l3 3 3-3"/></svg>';
-  const VK = "hb-ib-view", MK = "hb-ib-merge", TIPK = "hb-ib-tip";
+  const VK = "hb-ib-view";
   const VIEW = (() => {
     try {
       return { turn: "list", unread: "open", ...JSON.parse(lsGet(VK, "{}")) };
@@ -11508,7 +11633,6 @@ setInterval(() => {
     }
   })();
   const expanded = (f) => (f.k === "unread" || f.k === "turn") && VIEW[f.k] === "open";
-  const merged = () => lsGet(MK, "") === "1";
   let BOTH = false;
   const unRank = (x) => {
     try {
@@ -11581,7 +11705,7 @@ setInterval(() => {
         f.keys.delete(idOf(f.k, x));
       }
     }
-    const extra = f.k === "unread" && merged() && BOTH ? turnItems().filter((x) => !S.unread.some((y) => thOf(y) === thOf(x))) : [];
+    const extra = f.k === "unread" && BOTH ? turnItems().filter((x) => !S.unread.some((y) => thOf(y) === thOf(x))) : [];
     for (const x of [...S[f.k], ...extra]) {
       const id = idOf(f.k, x), o = f.keys.get(id);
       if (o) {
@@ -11786,45 +11910,24 @@ setInterval(() => {
     const f = FD[fk(ch)], k = fk(ch);
     const left = k === "unread" ? f ? f.items.filter((x) => !f.done.has(idOf(k, x))).length : S.unread.length : k === "turn" ? S.doneOn ? S.turn.length : turnRows().length : S[k].length;
     const pick = k === "unread" || k === "turn";
-    const seg = !pick ? "" : `<span class="ibvw" role="tablist" aria-label="보기">${[["open", "펼쳐보기"], ["list", "목록"]].map(([v, l]) => `<button role="tab" aria-selected="${VIEW[k] === v}" data-ibview="${v}">${l}</button>`).join("")}</span>`;
-    const mg = !pick ? "" : merged() ? `<span class="ibvw ibmg" role="tablist" aria-label="거르개">${[["turn", "결정"], ["unread", "읽지 않음"], ["both", "둘 다"]].map(([v, l]) => `<button role="tab" aria-selected="${v === "both" ? k === "unread" && BOTH : v === k && !BOTH}" data-ibmg="${v}">${l}</button>`).join("")}</span><button class="ibflt ibmgt" data-ibmerge aria-pressed="true">합쳐 보기 끄기</button>` : '<button class="ibflt ibmgt" data-ibmerge aria-pressed="false">합쳐 보기</button>';
-    return `${mg}${seg}<span class="ibhn">${left || ""}</span>${k === "unread" && left ? '<button class="ibrall" data-ibrall>모두 읽음</button>' : ""}${k === "turn" ? `<button class="ibflt" data-ibdone aria-pressed="${S.doneOn}">끝난 것</button>` : ""}`;
+    const IC = { open: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 8h8"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>', list: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M21 9H3"/><path d="M21 15H3"/></svg>' };
+    const tabs = !pick ? "" : `<span class="ibvw ibmg" role="tablist" aria-label="거르개">${[["turn", "결정"], ["unread", "읽지 않음"], ["both", "전체"]].map(([v, l]) => `<button role="tab" aria-selected="${v === "both" ? k === "unread" && BOTH : v === k && !BOTH}" data-ibmg="${v}">${l}</button>`).join("")}</span>`;
+    const seg = !pick ? "" : `<span class="ibvw" role="tablist" aria-label="보기">${[["open", "펼쳐보기"], ["list", "목록"]].map(([v, l]) => `<button role="tab" class="ibic" aria-selected="${VIEW[k] === v}" aria-label="${l}" title="${l}" data-ibview="${v}">${IC[v]}</button>`).join("")}</span>`;
+    if (!pick) return "";
+    return `${tabs}<span class="ibhr">${seg}${k === "turn" ? `<button class="ibflt" data-ibdone aria-pressed="${S.doneOn}">끝난 것</button>` : ""}${k === "unread" && left ? '<button class="ibrall" data-ibrall>모두 읽음</button>' : ""}</span>`;
   }
   let IO = null, ioRoot = null;
   const OBS = /* @__PURE__ */ new Set();
   let MIO = null;
   function headUpd() {
     const hd = document.querySelector("#ans > .ah .who");
-    if (!hd || !hd.querySelector(".ibhn")) return;
+    if (!hd || !hd.querySelector(".ibhr")) return;
+    const nn = hd.querySelector(".n");
+    if (nn && CS.at === "i:unread") nn.textContent = BOTH ? "전체" : "읽지 않음";
     const tmp = document.createElement("div");
     tmp.innerHTML = feedHead(CS.at);
-    hd.querySelectorAll(".ibhn, .ibrall, .ibflt, .ibvw").forEach((e) => e.remove());
+    hd.querySelectorAll(".ibhr, .ibmg").forEach((e) => e.remove());
     hd.append(...tmp.childNodes);
-  }
-  let TIP = null;
-  function tipClose(seen = true) {
-    TIP?.remove();
-    TIP = null;
-    clearInterval(tipClose.t);
-    if (seen) lsSet(TIPK, "1");
-  }
-  function tipShow() {
-    if (TIP?.isConnected || lsGet(TIPK, "")) return;
-    const a = document.querySelector("#ans > .ah .ibmgt");
-    if (!a || !a.offsetParent) return;
-    const r = a.getBoundingClientRect(), W = Math.min(300, innerWidth - 24);
-    TIP = document.createElement("div");
-    TIP.className = "ibtip";
-    TIP.setAttribute("role", "dialog");
-    TIP.setAttribute("aria-label", "합쳐 보기 안내");
-    TIP.style.cssText = `width:${W}px;left:${Math.max(12, Math.min(innerWidth - W - 12, r.left + r.width / 2 - W / 2))}px;top:${r.bottom + 12}px`;
-    TIP.innerHTML = `<i class="ibtipa" style="left:${r.left + r.width / 2 - Math.max(12, Math.min(innerWidth - W - 12, r.left + r.width / 2 - W / 2)) - 7}px"></i><div class="ibtipg"><span>결정</span><span>읽지 않음</span><span class="on">둘 다</span></div><b>한 페이지로 합쳐 볼 수 있어요</b><p>결정과 읽지 않음을 거르개로 오가요. 위 탭으로 펼쳐보기와 목록도 골라요. 끄면 지금처럼 따로 봐요.</p><button data-ibtipok>알겠어요</button>`;
-    document.body.append(TIP);
-    TIP.querySelector("[data-ibtipok]").addEventListener("click", () => tipClose());
-    clearInterval(tipClose.t);
-    tipClose.t = setInterval(() => {
-      if (!document.querySelector("#ans > .ah .ibmgt")?.offsetParent) tipClose(false);
-    }, 500);
   }
   function feedAfter(fe) {
     const f = FD[fk(CS.at)];
@@ -11841,7 +11944,6 @@ setInterval(() => {
       }, { root: fe, rootMargin: "300px" });
       MIO.observe(mo);
     }
-    tipShow();
     if (!expanded(f)) {
       headUpd();
       return;
@@ -11977,24 +12079,13 @@ setInterval(() => {
       viewChat(true);
       return expanded(f) && nextBatch(f);
     }
-    if (t.closest("[data-ibmerge]")) {
-      stop();
-      const on2 = !merged();
-      lsSet(MK, on2 ? "1" : "");
-      BOTH = false;
-      f.items = [];
-      f.keys.clear();
-      fsync(f);
-      tipClose();
-      return viewChat(true);
-    }
     const mgb = t.closest("[data-ibmg]");
     if (mgb) {
       stop();
       const v = mgb.dataset.ibmg;
       BOTH = v === "both";
       S.doneOn = false;
-      if (fk(CS.at) !== (v === "turn" ? "turn" : "unread")) return openFeed(v === "turn" ? "turn" : "unread");
+      if (fk(CS.at) !== (v === "turn" ? "turn" : "unread")) return openFeed(v);
       f.items = [];
       f.keys.clear();
       f.shown = /* @__PURE__ */ new Set();
@@ -12185,6 +12276,7 @@ setInterval(() => {
     const p = panes.find((x) => x.kind !== "helper" && isMain(x) && mainKey(x) === "primary") || byPane[leadPane("primary")];
     if (!p) return toast(ERR);
     if (current !== "tree" && current !== "timeline") show("tree", true);
+    BOTH = k === "both";
     openAns({ p: p.pane, tab: "chat", chan: "i:" + (k === "saved" || k === "drafts" || k === "turn" ? k : "unread") });
   }
   const on = (fn) => {
@@ -12335,6 +12427,7 @@ setInterval(() => {
     feedAfter,
     openFeed,
     keepApply,
+    isBoth: () => BOTH,
     chanOf: (th) => FQ.ch.get(th)
   };
   keepSync();

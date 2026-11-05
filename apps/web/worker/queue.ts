@@ -101,6 +101,16 @@ export async function answerOf(env: QEnv, email: string, rid: string): Promise<{
   return (await ridSeen(env.DB, rid)) ? { state: "ok" } : null;   // D1 오류는 던짐 → 부른 쪽 503(모름 — 같은 rid)
 }
 
+/** 주인 GET /api/answer/:rid: 회원 answerOf 와 달리 「다리가 받은 글」은 모름(null → 다리). 다리가 202 queued 로 받은 글도 이 칸엔 「끝남 202」로 남아 있어, 그걸 ok 로 답하면 화면이 나중 실패를 잃음.
+ *  Worker 가 직접 D1 에 쓴 rid(f7_rid)는 ok, 남은 답이 4xx(확정 실패)는 fail, 그 밖(2xx · 하는 중 · 5xx · 칸 없음)은 null */
+export async function ownerAnswerOf(env: QEnv, email: string, rid: string): Promise<{ state: string } | null> {
+  if (!RID.test(rid)) return null;
+  if (await ridSeen(env.DB, rid)) return { state: "ok" };
+  const a = await ridOf(env, email).look(rid, true) as { state: string; status: number } | string;
+  if (typeof a !== "string" && a.state === "done" && a.status >= 400 && a.status < 500) return { state: "fail" };
+  return null;
+}
+
 /** GET /api/rid/:rid — 「확인 필요」 글이 서버에 이미 들어갔나(done · busy · none). 스위치가 꺼져 있으면 404(화면은 「모름」 — 다시 안 보내고 오류로) */
 export async function look(c: C, email: string) {
   if (!(await f7On(c.env.DB, "write_queue"))) return c.json({ error: "꺼짐" }, 404);

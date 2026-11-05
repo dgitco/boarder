@@ -350,12 +350,17 @@ export async function collect({ days = 7, setup = false, gh = true } = {}) {
   return body;
 }
 
+export function apiFail(method, p, status) {
+  let where = '';
+  try { where = new URL(String(p), 'http://boarder.invalid').pathname; } catch { where = String(p).split(/[?#]/)[0]; }
+  return `Boarder ${status} ${method} ${where}`;
+}
 async function api(method, p, body) {
   const d = loadDevice(); if (!d?.token) { const e = new Error('This machine is not set up for Boarder yet — run `boarder setup --yes`.'); e.code = 'NO_DEVICE'; throw e; }
   const r = await fetch(`${server()}${p}`, { method, headers: { 'content-type': 'application/json', authorization: `Bearer ${d.token}` }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(60000) });
   if (r.status === 401) { const e = new Error('This device was revoked or signed out — run `boarder setup --yes` again.'); e.code = 'REVOKED'; throw e; }
-  const j = await r.json().catch(() => ({ error: `Boarder ${r.status}` }));
-  if (!r.ok) throw new Error(j.error || `Boarder ${r.status}`);
+  const j = await r.json().catch(() => ({ error: apiFail(method, p, r.status) }));
+  if (!r.ok) throw new Error(j?.error || apiFail(method, p, r.status));
   return j;
 }
 

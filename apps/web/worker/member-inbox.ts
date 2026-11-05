@@ -4,6 +4,7 @@
 import type { Context } from "hono";
 import { paneLogs, ME, OWN, NOT_CHAT, QUIET, etag } from "./member-board";
 import { editRef } from "./task-convo";
+import { shows } from "./inbox-rules";
 
 type Env = { DB: D1Database };
 type C = Context<{ Bindings: Env }>;
@@ -28,7 +29,7 @@ export async function logByTs(db: D1Database, me: string, ts: unknown): Promise<
   const s = Number(m[1]) * 1000;
   return db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? LIMIT 1").bind(me, Number(m[2]), s, s + 1000).first<R>();
 }
-const cardByTs = (db: D1Database, me: string, ts: string) => TS.test(ts) ? db.prepare("SELECT id, win, question, state, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>() : Promise.resolve(null);
+const cardByTs = (db: D1Database, me: string, ts: string) => TS.test(ts) ? db.prepare("SELECT id, win, question, state, answer, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>() : Promise.resolve(null);
 
 // 채널 열쇠(틀의 「n:<화면 이름>」) ↔ pane
 async function chans(db: D1Database, me: string) {
@@ -52,9 +53,14 @@ export async function inbox(db: D1Database, me: string) {
   ]);
   const seen = new Map((sn.results as R[]).map(r => [String(r.pane), Number(r.at)]));
   const unread: R[] = [];
+  const on = P.rules.on, keepRow = (r: R) => !on || shows({ win: String(r.win), kind: String(r.kind), text: r.text, wid: r.wid }, P.seatOf(r as { win: string }), P.rules.chief, r.kind === "reply");   // reply = 턴 답 훅(보드에서 그 창에 넣은 내 글에 대한 답, packages/cli turn.mjs) — 내 글에 온 답
   for (const c of P.chans) {
     const s = seen.get(c.pane) ?? now - FIRST_DAY;   // 처음 보는 채널은 하루 안 글만
-    for (const r of c.rows) if (!QUIET.has(String(r.kind)) && !TS.test(String(r.thread || "")) && Number(r.at) > s && !((seen.get(thKey(tsOf(r.at, r.id))) ?? 0) >= Number(r.at))) unread.push({ ts: tsOf(r.at, r.id), chan: key.get(c.pane), thread: null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author: c.name });   // 스레드 답은 아래 threadUnread(채널 읽음과 따로)
+    for (const r of c.rows) if ((on || !QUIET.has(String(r.kind))) && keepRow(r) && !TS.test(String(r.thread || "")) && Number(r.at) > s && !((seen.get(thKey(tsOf(r.at, r.id))) ?? 0) >= Number(r.at))) unread.push({ ts: tsOf(r.at, r.id), chan: key.get(c.pane), thread: null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author: c.name });   // 스레드 답은 아래 threadUnread(채널 읽음과 따로)
+  }
+  if (on) {
+    const s = Math.max(seen.get(PRIMARY) ?? now - FIRST_DAY, P.mineAt), bot = await botName(db, me);
+    for (const r of P.prim) if (keepRow(r) && Number(r.at) > s && !((seen.get(thKey(tsOf(r.at, r.id))) ?? 0) >= Number(r.at))) unread.push({ ts: tsOf(r.at, r.id), chan: "primary", thread: null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author: r.win === "보더" ? "보더" : bot });
   }
   unread.push(...await threadUnread(db, me, seen, now, P, key));
   unread.sort((a, b) => b.at - a.at);
@@ -94,7 +100,7 @@ export async function inboxPost(db: D1Database, me: string, b: R): Promise<{ sta
   }
   if (op === "read" || op === "readall") {
     const { P, byKey } = await chans(db, me);
-    if (op === "readall") { for (const c of P.chans) await seeUpTo(db, me, c.pane, Date.now()); await seeUpTo(db, me, PRIM_ALL, Date.now()); return { status: 200, body: { ok: true } }; }
+    if (op === "readall") { for (const c of P.chans) await seeUpTo(db, me, c.pane, Date.now()); await seeUpTo(db, me, PRIM_ALL, Date.now()); await seeUpTo(db, me, PRIMARY, Date.now()); return { status: 200, body: { ok: true } }; }
     const items = Array.isArray(b.items) ? (b.items as R[]).slice(0, 200) : [];
     for (const it of items) {
       const r = await logByTs(db, me, it?.ts); if (!r) continue;
@@ -106,15 +112,21 @@ export async function inboxPost(db: D1Database, me: string, b: R): Promise<{ sta
   return { status: 400, body: { ok: false, error: "모르는 요청" } };
 }
 
+const botName = async (db: D1Database, me: string) => String((await db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(me.toLowerCase()).first<{ name: string | null }>().catch(() => null))?.name || "Primary");
 async function threadUnread(db: D1Database, me: string, seen: Map<string, number>, now: number, P: Awaited<ReturnType<typeof paneLogs>>, key: Map<string, string>): Promise<R[]> {
   const all = seen.get(PRIM_ALL) ?? now - FIRST_DAY;
-  const rows = ((await db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IS NOT NULL AND thread != 'primary' AND at > ? ${NOT_CHAT} ORDER BY at DESC, id DESC LIMIT ?`).bind(me, all, TH_ROWS).all<R>()).results || []) as R[];
+  const rows = ((await db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? AND thread IS NOT NULL AND thread != 'primary' AND at > ? ${NOT_CHAT} ORDER BY at DESC, id DESC LIMIT ?`).bind(me, all, TH_ROWS).all<R>()).results || []) as R[];
   if (!rows.length) return [];
   const reacted = new Set(((await db.prepare("SELECT DISTINCT log_id FROM member_react WHERE owner = ? AND log_id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(rows.map(r => Number(r.id)))).all<{ log_id: number }>()).results || []).map(r => Number(r.log_id)));
   const mine = (r: R) => r.kind === "me" || r.win === ME;
-  const bot = String((await db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(me.toLowerCase()).first<{ name: string | null }>().catch(() => null))?.name || "Primary");
+  const bot = await botName(db, me);
   const floor = new Map<string, number>();
-  for (const r of rows) { const root = rootOf(r.thread); if (root && (mine(r) || reacted.has(Number(r.id)))) floor.set(root, Math.max(floor.get(root) ?? 0, Number(r.at))); }
+  const mineRoot = new Set<string>();   // 내가 쓴 줄이 있는 스레드(자리표 쓰는 사람의 「내 글에 온 답」)
+  for (const r of rows) { const root = rootOf(r.thread); if (root && mine(r)) mineRoot.add(root); if (root && (mine(r) || reacted.has(Number(r.id)))) floor.set(root, Math.max(floor.get(root) ?? 0, Number(r.at))); }
+  if (P.rules.on) {
+    const ths = [...new Set(rows.map(r => String(r.thread || "")).filter(t => rootOf(t) && !mineRoot.has(rootOf(t)!)))];
+    if (ths.length) for (const x of ((await db.prepare("SELECT DISTINCT thread FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) AND (kind = 'me' OR win = ?)").bind(me, JSON.stringify(ths), ME).all<{ thread: string }>()).results || [])) { const root = rootOf(x.thread); if (root) mineRoot.add(root); }
+  }
   const out: R[] = [], byRoot = new Map<string, R>();   // rows 는 새것부터 — 처음 만난 답이 그 스레드 항목
   const fresh = (r: R) => { const root = rootOf(r.thread); return !!root && !mine(r) && !OWN.test(String(r.win)) && r.win !== "보더" && !QUIET.has(String(r.kind)) && Number(r.at) > Math.max(all, seen.get(thKey(root)) ?? 0, floor.get(root) ?? 0); };
   const home = new Map<string, R | null>();
@@ -125,6 +137,7 @@ async function threadUnread(db: D1Database, me: string, seen: Map<string, number
     const root = rootOf(r.thread)!, h = home.get(root);
     const prim = PTH.test(String(r.thread)), pane = prim ? null : P.paneOfLog(h ? { win: String(h.win), kind: h.kind ? String(h.kind) : undefined, thread: null } : { win: String(r.win), kind: r.kind, thread: null }) || (h ? P.paneOfLog({ win: String(r.win), kind: r.kind, thread: null }) : null), chan = prim || (h && pane === PRIMARY) ? "primary" : pane && pane !== PRIMARY ? key.get(pane) : null;
     if (!chan) continue;
+    if (P.rules.on && !shows({ win: String(r.win), kind: String(r.kind), text: r.text, wid: r.wid }, P.seatOf({ win: String(r.win), kind: r.kind, thread: null }), P.rules.chief, prim || mineRoot.has(root) || !!h && (h.kind === "me" || h.win === ME || h.answer != null))) continue;
     const author = prim ? bot : P.chans.find(c => c.pane === P.paneOfLog({ win: String(r.win), kind: r.kind, thread: null }))?.name || String(r.win || "");   // 답한 이 = 답을 쓴 창(채널은 뿌리 쪽이어도)
     const had = byRoot.get(root); if (had) { had.n++; continue; }
     const it: R = { ts: tsOf(r.at, r.id), chan, thread: root, text: cut(r.text, 400), at: Number(r.at) / 1000, who: "agent", author, n: 1, kind: "thread" };

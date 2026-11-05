@@ -1327,6 +1327,11 @@ app.post("/api/me/agent-faces", async c => {
   const s = await signedIn(c); if (!s || !isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   const b = Object(await c.req.json().catch(() => ({}))) as Record<string, unknown>, key = String(b.key ?? "");
   if (!agentFace.KEY.test(key)) return c.json({ error: "없는 에이전트예요" }, 404);
+  if ("name" in b && !("seed" in b) && !("photo" in b)) {   // 보이는 이름만(얼굴은 그대로) — 빈 글이면 기본 이름으로
+    if (b.name !== null && typeof b.name !== "string") return c.json({ error: "이름은 글이에요" }, 400);
+    const name = agentFace.cleanName(b.name); await agentFace.setName(c.env.DB, todoOwner(c.env, s.user.email), key, name);
+    return c.json({ ok: true, key, name });
+  }
   const reset = !b.seed && !b.photo, f = reset ? null : memberBoard.cleanFace({ seed: b.seed || "mochi", hue: b.hue ?? 180, photo: b.photo || "" });
   if (!reset && !f) return c.json({ error: "모양 · 색" }, 400);
   if (f && !(await photoOk(c.env, f.photo || ""))) return c.json({ error: "그림을 먼저 올려요" }, 400);
@@ -2439,6 +2444,14 @@ app.all("*", async c => {
     if (r) { if (r[0] < 400) c.executionCtx.waitUntil(live.bumpLedger(c.env)); return c.json(r[1], r[0] as 200); }
     return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" });   // 색인 없음 — 쓰기 전이라 다시 보내도 됨
   }
+  // 주인 GET /api/answer/:rid — Worker 가 직접 D1 에 쓴 rid(f7_rid) · 남은 답이 4xx 인 것만 여기서. 다리가 받은 글(202 queued 등) · 모르는 rid · 칸 오류는 예전처럼 다리(_jobs)로
+  if (c.req.method === "GET" && chOf(c) === "owner") {
+    const am = /^\/api\/answer\/([\w-]{1,64})$/.exec(url.pathname);
+    if (am && await ledger.f7On(c.env.DB, "write_queue")) {
+      const a = await queue.ownerAnswerOf(c.env, s.user.email, am[1]).catch(() => null);
+      if (a) return c.json({ ok: true, ...a }, 200, { "cache-control": "no-store", "x-f7": "queue" });
+    }
+  }
   const rd = c.req.method === "GET" && chOf(c) === "owner" ? ownerRead.route(url.pathname + url.search) : null;
   const flag = (n: string) => rd?.kind === "inbox" ? ledger.f7Peek(c.env.DB, n, peekWait(c)) : ledger.f7On(c.env.DB, n);
   const shadowRd = !!rd && await flag("shadow_" + rd.group);
@@ -2606,8 +2619,9 @@ const AGAIN = "x-bx-again", D1_BUSY = /overloaded|Too many resources consumed/i;
 app.onError(async (err, c) => {
   const u = new URL(c.req.url), m = c.req.method, msg = String((err as Error)?.message ?? err).slice(0, 300), again = c.req.raw.headers.has(AGAIN), busy = D1_BUSY.test(msg);
   console.error(JSON.stringify({ ev: "req_error", m, path: u.pathname.slice(0, 120), again, busy, msg }));
-  if (m !== "GET" && m !== "HEAD") return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 500, { "cache-control": "no-store" });
-  if (!again && !busy && !u.pathname.startsWith("/api/auth/")) {
+  const upload = m === "POST" && u.pathname === "/api/upload";   // 올리기는 열쇠(X-Upload-Key)로 같은 파일이 하나라 다시 보내도 됨 — 아래 503 + x-retry-safe 로(화면이 조용히 다시)
+  if (m !== "GET" && m !== "HEAD" && !upload) return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 500, { "cache-control": "no-store" });
+  if (!again && !busy && !upload && !u.pathname.startsWith("/api/auth/")) {
     await new Promise(ok => setTimeout(ok, 150 + Math.floor(Math.random() * 200)));
     const h = new Headers(c.req.raw.headers); h.set(AGAIN, "1");
     try { const r = await app.fetch(new Request(c.req.raw.url, { method: m, headers: h }), c.env, c.executionCtx); if (r.status < 500) return r; } catch { /* 아래 503 */ }

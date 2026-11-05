@@ -927,7 +927,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   let seq = 0, offAt = 0, cur = null;
   const EV = [], note = (k, v = '') => { EV.push([now(), k, v]); if (EV.length > 60) EV.shift(); };   // 최근 60개(시험 · 「갱신 안 됨」 볼 때 BX_LIVE().ev)
   const now = () => Date.now(), kst = t => typeof kstMin === 'function' ? kstMin(t) : '';
-  const wsUrl = () => { const u = new URL('api/live', location.href); u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'; return u.href; };
+  const wsUrl = () => { const u = new URL('/api/live', location.href); u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'; return u.href; };
   class LiveES {
     constructor(url, opt){
       if (!/(^|\/)api\/events$/.test(String(url))) return new Native(url, opt);   // 그 밖(api/push/stream)은 원래 것
@@ -963,7 +963,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       const at = now(); try { ws.send('ping'); } catch (e) {}
       clearTimeout(this.t.pong); this.t.pong = setTimeout(() => { if (this.ws === ws && !(this.pongAt >= at)) { this.gone(ws, 'pong'); try { ws.close(); } catch (e) {} } }, PONG); }, PING); }   // 답 없으면 반쯤 끊긴 연결(폰 잠금 · 망 바뀜 · 서버 쪽만 닫힘) — 닫기 끝을 안 기다리고 바로 폴링 · 다시 붙기
     async get(){
-      const r = await fetch('api/live', {cache: 'no-store', headers: {accept: 'application/json'}, signal: AbortSignal.timeout?.(8000)});
+      const r = await fetch('/api/live', {cache: 'no-store', headers: {accept: 'application/json'}, signal: AbortSignal.timeout?.(8000)});
       if ([401, 403, 404].includes(r.status)) { offAt = now(); this.fatal(); throw new Error('off'); }
       if (!r.ok) throw new Error(r.status);
       const j = await r.json(); this.okAt = now(); note('get'); this.apply(j.t || {}, true, j.age);

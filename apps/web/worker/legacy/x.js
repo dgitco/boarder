@@ -160,7 +160,7 @@
   let lastSig = '';
   function drawHome(force){
     fetchWanted();
-    const v = V('home'), all = items(), it = X.fl === 'ask' ? all.filter(y => y.ask) : X.fl === 'info' ? all.filter(y => !y.ask) : all, sig = JSON.stringify([X.fl, all.filter(y => y.ask).length]) + JSON.stringify([it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked]), it.map(x => isSaved(x.m.ts))]);
+    const v = V('home'), all = items(), it = X.fl === 'ask' ? all.filter(y => y.ask) : X.fl === 'info' ? all.filter(y => !y.ask) : all, sig = JSON.stringify([X.fl, all.filter(y => y.ask).length]) + JSON.stringify([it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked, x.m.failX]), it.map(x => isSaved(x.m.ts))]);
     if (!force && sig === lastSig && v.firstChild) return; lastSig = sig;
     // 글 칸은 한 번만 만듦(다시 그려도 쓰던 글 · 포커스 · 한글 조합 · 첨부 · 토픽 창이 그대로) — 피드만 바꿈
     if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd"><button type="button" class="xdrb" data-xdr aria-label="메뉴">${DR2}</button><button type="button" class="xpri" data-xpri></button><button type="button" class="xfnd" data-xfind aria-label="찾기">${FND}</button></header>${composer()}<div class="xfl" role="tablist" aria-label="거르개"></div><div class="xfeed"></div>`;
