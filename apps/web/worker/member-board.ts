@@ -248,10 +248,8 @@ export async function load(db: D1Database, me: string, readOnly = false) {   // 
     parents, faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
-// 채널(pane)마다 에이전트 글 — 모아 보기 읽지 않음 · 저장(member-inbox.ts)이 씀. 채널 = 노드 + 노드에 안 묶인 역할 창(메인 봇은 따로), 이름은 틀 노드 채팅 열쇠(「n:<이름>」)와 같음.
-// 글은 load 가 읽는 최근 600줄 안에서만. paneOfLog: 글 한 줄(win · thread) → 그 채널 pane(못 찾으면 null)
-export async function paneLogs(db: D1Database, me: string) {
-  const L = await load(db, me);
+export async function paneLogs(db: D1Database, me: string, ctx?: Ctx | null) {
+  const L = ctx ? await loadRead(db, me, ctx) : await load(db, me);
   const agent = (r: R) => r.kind !== "me" && r.win !== ME && !OWN.test(r.win);
   const chans = [
     // 에이전트끼리 접기(켠 사람 · 에이전트 화면만): 접힌 칸 줄은 읽지 않음에 안 셈
@@ -699,8 +697,8 @@ async function foldOf(db: D1Database, me: string, L: Loaded, ts: string, my: str
   }
   return null;
 }
-async function agentsThread(db: D1Database, me: string, ts: string, my: string, mainName: string) {
-  const f = (await foldOf(db, me, await load(db, me), ts, my, mainName))?.f; if (!f) return null;
+async function agentsThread(db: D1Database, me: string, ts: string, my: string, mainName: string, ctx?: Ctx | null) {
+  const f = (await foldOf(db, me, ctx ? await loadShared(db, me, ctx) : await load(db, me), ts, my, mainName))?.f; if (!f) return null;
   return { channel: "primary", root: ts, owner: null, messages: await withReacts(db, me, [{ ...f.root, ts }, ...f.replies.map(m => ({ ...m, thread: ts }))] as R[]) };   // 낡은 ts 로 열어도 칸이 그 ts 로 이어짐
 }
 function peersOf(L: Loaded, rows: R[]) {
@@ -953,8 +951,8 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
   if (/^\/api\/answer\/[\w-]{1,64}$/.test(p)) return j({ ok: true, state: "ok" });   // 회원 쓰기는 바로 끝나서 기다릴 일 없음
   if (p === "/emoji.json") { const e = await emoji(); return e ? new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag } }) : j({ cats: [], e: {} }); }
   const nm = /^\/api\/chat\/n:(.{1,200})\/(\d{10}\.\d{6})$/.exec(dp);
-  const nL = nm && PEER_TS.test(nm[2]) ? await loadShared(db, me, ctx) : null;
-  if (nm && nL) { const f = await nodePeerThread(db, me, nL, nm[1], nm[2], my, mainName, String(url.searchParams.get("id") || "")); if (f) return j(f); }
+  const nL = nm ? await loadShared(db, me, ctx) : null;
+  if (nm && nL && PEER_TS.test(nm[2])) { const f = await nodePeerThread(db, me, nL, nm[1], nm[2], my, mainName, String(url.searchParams.get("id") || "")); if (f) return j(f); }
   if (nm) return j(await nodeThread(db, me, nm[1], nm[2], my, String(url.searchParams.get("id") || ""), true, nL) ?? { channel: "n:" + nm[1], root: nm[2], owner: null, messages: [] });
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?$/.exec(p);
   if (m) {
@@ -962,7 +960,7 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
     if (m[2]) {
       const pL = foldOn && PEER_TS.test(m[2]) ? await loadShared(db, me, ctx) : null;
       if (pL) { const a = await primaryPeerThread(db, me, pL, m[2], my, mainName); if (a) return j(a); }
-      if (AGENTS_TS.test(m[2])) { const a = await agentsThread(db, me, m[2], my, mainName); if (a) return j(a); }   // 태스크 「에이전트끼리」 접은 글
+      if (AGENTS_TS.test(m[2])) { const a = await agentsThread(db, me, m[2], my, mainName, ctx); if (a) return j(a); }   // 태스크 「에이전트끼리」 접은 글
       if (FOLD_TS.test(m[2])) {
         const L = pL || await loadShared(db, me, ctx), f = [...L.nodes, ...(L.front?.nodes || [])].map(n => convoFold(n, mainName, my)).find(x => x?.root.ts === m![2]);
         if (f) return j({ channel: "primary", root: m[2], owner: null, messages: [f.root, ...f.replies] });

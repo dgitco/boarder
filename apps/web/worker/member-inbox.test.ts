@@ -258,5 +258,6 @@ test("모아 보기 GET: ETag 이 붙고 같은 ETag(W/ 꼴 포함)이면 304, �
   assert.equal((await MI.route(c(t!) as never, A, U))!.status, 304);
   assert.equal((await MI.route(c("W/" + t!) as never, A, U))!.status, 304, "약한 꼴 ETag 로 304 안 됨");
   s.log(A, "영업 창", "새 답", s.now + 1000);
+  (await import("./member-board.ts")).loadForget(A);   // 실제 쓰기 길은 미들웨어(index.ts)가 그 isolate 의 나눠 쓰던 판을 버림 — GET 이 0.4초 나눠 쓰기(loadRead)를 타므로 같게
   const r3 = (await MI.route(c(t!) as never, A, U))!; assert.equal(r3.status, 200);
 });

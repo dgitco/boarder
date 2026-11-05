@@ -74,3 +74,25 @@ test("/api/topics: Cache API가 없으면 0.4초 안 같은 요청은 load 를 �
   assert.equal((await call())?.status, 200); assert.equal(count(), n);
   loadForget(ME);
 });
+
+test("/api/inbox(GET): ctx 가 있으면 같은 순간의 /api/data · topics 판 읽기를 나눠 씀 — ctx 없으면(쓰기 길) 새로 읽음", async () => {
+  const { inbox } = await import("./member-inbox.ts");
+  const { D1, count } = d1();
+  await loadRead(D1, ME, CTX); let n = count();
+  await inbox(D1, ME, CTX); const withCtx = count() - n;   // 판은 앞 읽기를 나눠 씀 — 모아 보기 자기 batch 만
+  loadForget(ME); await loadRead(D1, ME, CTX); n = count();
+  await inbox(D1, ME); const noCtx = count() - n;
+  assert.equal(noCtx - withCtx, 1, "ctx 없으면 판(load batch)을 한 번 더 읽음");
+  loadForget(ME);
+});
+
+test("노드 글 하나(GET /api/chat/n:<노드>/<ts>, 「읽지 않음」이 글마다 부름): ctx 가 있으면 앞 판 읽기를 나눠 씀", async () => {
+  const { D1, count } = d1(), none = async () => null, url = new URL("https://x.test/api/chat/n:영업 창/1793681208.264390");
+  const call = (ctx: typeof CTX | null) => get(D1, ME, { name: "봇" }, url, none, undefined, null, ctx, async () => "~1");
+  await loadRead(D1, ME, CTX); let n = count();
+  assert.equal((await call(CTX))?.status, 200); const withCtx = count() - n;
+  loadForget(ME); await loadRead(D1, ME, CTX); n = count();
+  assert.equal((await call(null))?.status, 200); const noCtx = count() - n;
+  assert.equal(noCtx - withCtx, 1, "ctx 없으면 판을 한 번 더 읽음");
+  loadForget(ME);
+});

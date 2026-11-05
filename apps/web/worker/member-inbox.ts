@@ -32,8 +32,9 @@ export async function logByTs(db: D1Database, me: string, ts: unknown): Promise<
 const cardByTs = (db: D1Database, me: string, ts: string) => TS.test(ts) ? db.prepare("SELECT id, win, question, state, answer, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>() : Promise.resolve(null);
 
 // 채널 열쇠(틀의 「n:<화면 이름>」) ↔ pane
-async function chans(db: D1Database, me: string) {
-  const P = await paneLogs(db, me);
+type Ctx = { waitUntil(p: Promise<unknown>): void };
+async function chans(db: D1Database, me: string, ctx?: Ctx | null) {
+  const P = await paneLogs(db, me, ctx);
   const key = new Map(P.chans.map(c => [c.pane, "n:" + c.name])), byKey = new Map(P.chans.map(c => ["n:" + c.name, c.pane]));
   const chanOf = (r: { win: string; kind?: string; thread?: string | null }) => { const p = P.paneOfLog(r); return p && p !== PRIMARY ? key.get(p) || "" : ""; };
   return { P, key, byKey, chanOf };
@@ -44,8 +45,8 @@ async function seeUpTo(db: D1Database, me: string, pane: string, at: number) {
 
 // ── 모아 보기(/api/inbox) ──
 // 읽지 않음에서 빼는 줄 = QUIET(member-board.ts — 화면 글의 quiet 표시와 같은 목록)
-export async function inbox(db: D1Database, me: string) {
-  const { P, key, chanOf } = await chans(db, me), now = Date.now();
+export async function inbox(db: D1Database, me: string, ctx?: Ctx | null) {
+  const { P, key, chanOf } = await chans(db, me, ctx), now = Date.now();
   const [sn, sv, dr] = await db.batch([
     db.prepare("SELECT pane, at FROM member_seen WHERE owner = ?").bind(me),
     db.prepare("SELECT kind, ref, at FROM member_saved WHERE owner = ? ORDER BY at DESC LIMIT ?").bind(me, SAVED_MAX),
@@ -195,10 +196,10 @@ export async function chatPost(db: D1Database, me: string, b: R): Promise<{ stat
 }
 // 노드 채팅을 열면(틀이 api/nodechat 을 부름) 그 채널을 읽음으로 — 화면 이름 → pane. 틀이 몇 초마다 다시 부르므로 같은 채널은 30초에 한 번만
 const SEEN_GAP = 30_000, seenAt = new Map<string, number>();
-export async function seenByLabel(db: D1Database, me: string, label: string, now = Date.now()) {
+export async function seenByLabel(db: D1Database, me: string, label: string, now = Date.now(), ctx?: Ctx | null) {
   const k = me + "|" + label; if (now - (seenAt.get(k) || 0) < SEEN_GAP) return;
   if (seenAt.size > 2000) seenAt.clear(); seenAt.set(k, now);
-  const { byKey } = await chans(db, me), pane = byKey.get("n:" + label);
+  const { byKey } = await chans(db, me, ctx), pane = byKey.get("n:" + label);
   if (pane) await seeUpTo(db, me, pane, Date.now());
 }
 
@@ -207,11 +208,11 @@ export async function route(c: C, me: string, url: URL, body?: R | null): Promis
   const p = url.pathname, db = c.env.DB, J = (o: R, st = 200) => c.json(o, st as 200, { "cache-control": "no-store" });
   if (c.req.method === "GET") {
     if (p === "/api/inbox") {
-      const b = JSON.stringify(await inbox(db, me)), t = await etag(b), h = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", etag: t };
+      const b = JSON.stringify(await inbox(db, me, c.executionCtx)), t = await etag(b), h = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", etag: t };
       return (c.req.header("if-none-match") || "").replace(/^W\//, "") === t ? new Response(null, { status: 304, headers: h }) : new Response(b, { headers: h });
     }
     if (p === "/api/drafts") return J(await draftMap(db, me));
-    if (p === "/api/nodechat") { const w = String(url.searchParams.get("w") || "").trim(); if (w) c.executionCtx.waitUntil(seenByLabel(db, me, w).catch(e => console.error("읽음", e))); }
+    if (p === "/api/nodechat") { const w = String(url.searchParams.get("w") || "").trim(); if (w) c.executionCtx.waitUntil(seenByLabel(db, me, w, Date.now(), c.executionCtx).catch(e => console.error("읽음", e))); }
     return null;
   }
   if (c.req.method !== "POST" || !body) return null;
