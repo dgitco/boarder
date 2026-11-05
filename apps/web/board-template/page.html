@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "17a81bef0d90";
+window.HB_VER = "6c3f70d4b5ab";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -977,6 +977,9 @@ code{font-family:var(--mono);font-size:12px;color:var(--soft)}
 .cside .sub{padding-left:22px;font-size:12.5px}
 .cmain,.cth{display:flex;flex-direction:column;min-width:0;min-height:0}
 .cth{border-left:1px solid var(--line);position:relative}
+
+@media (min-width:861px){.chat:has(#cfeed > .empty.loading, #cfeed > .gcol > .empty.loading) .cth #cthfeed > .empty.loading{visibility:hidden}}
+body:has(#cfeed > .empty.loading, #cfeed > .gcol > .empty.loading, #cthfeed > .empty.loading) #bx-lw{display:none!important}
 .thgrip{position:absolute;top:0;bottom:0;left:-4px;width:9px;cursor:col-resize;z-index:3;touch-action:none}
 .thgrip::after{content:'';position:absolute;top:0;bottom:0;left:3px;width:3px;border-radius:2px;background:transparent;transition:background-color .12s}
 .thgrip:hover::after,.thgrip:focus-visible::after,body.thw-drag .thgrip::after{background:var(--accent)}
