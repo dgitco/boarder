@@ -76,6 +76,7 @@ export async function setUnit(env: Env, owner: string, unit: Unit, by: "auto" | 
   // 사람이 정했으면 남은 질문을 닫음 — 나중에 옛 질문에 답해 뒤집히지 않게
   if (by === "me") await env.DB.prepare("UPDATE board_card SET state = 'closed', done = ? WHERE owner = ? AND win = ? AND question = ? AND state = 'open'").bind(UNIT_CHOICE[unit], owner, IMPORT_WIN, UNIT_Q).run();
 }
+const NODES_FRESHED = new Map<string, number>();   // GET /api/me/nodes 의 읽을 때 다시 묶기 — 사람마다 마지막 때
 const rid = () => crypto.randomUUID().replace(/-/g, "").slice(0, 20);
 const json = <T>(v: string | null | undefined, d: T): T => { try { return v ? JSON.parse(v) as T : d; } catch { return d; } };
 
@@ -104,6 +105,7 @@ export async function regroup(env: Env, owner: string) {
   const raw = (ns.results[0] as { data?: string } | undefined)?.data;
   const set = json<{ archive_h?: number; unit?: Unit }>(raw, {}), archiveH = set.archive_h ?? 6, pref = prefsOf(raw);
   const seats = seatsFromData(raw);
+  let seatWrites = 0;
   if (seats.length) {
     const plan = seatPlan({ seats, items: items as never, tasks: tk.results as never, map: mp.results as never });
     const sst: D1PreparedStatement[] = [];
@@ -122,6 +124,7 @@ export async function regroup(env: Env, owner: string) {
     }
     if (plan.primary && pref.primary_item !== plan.primary) { sst.push(env.DB.prepare("UPDATE node_setting SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.primary_item', ?), updated_at = ? WHERE owner = ?").bind(plan.primary, t, owner)); pref.primary_item = plan.primary; }
     if (sst.length) await env.DB.batch(sst);
+    seatWrites = sst.length;
   }
   const taskRows = (pref.task_channels ? tk.results : []) as { id: string; name: string; pinned_name: string | null; task: string; counts: string; archived_at: number | null }[];
   const tasks = taskRows.map(n => ({ id: n.id, name: n.pinned_name || n.name, issue: taskIssueFor(pref.task_repo, json<{ issue?: string }>(n.task, {}).issue || ""), archived_at: n.archived_at }));
@@ -163,7 +166,7 @@ export async function regroup(env: Env, owner: string) {
   st.push(env.DB.prepare("INSERT INTO imp_audit(owner, at, data) VALUES (?,?,?)").bind(owner, t, JSON.stringify(r.audit)));
   st.push(env.DB.prepare("DELETE FROM imp_audit WHERE owner = ? AND at < ?").bind(owner, t - 48 * 3600_000));
   for (let i = 0; i < st.length; i += 90) await env.DB.batch(st.slice(i, i + 90));   // D1 batch 한 번에 너무 많지 않게
-  return r;
+  return Object.assign(r, { changed: st.length - 2 + seatWrites });
 }
 
 /** 자리마다 지금 판정(묶기 뒤 값으로 — 이미 붙었으면 「붙음」) */
@@ -277,7 +280,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
       DB.prepare("SELECT MAX(x) at FROM (SELECT MAX(at) x FROM board_log WHERE owner = ? UNION ALL SELECT MAX(COALESCE(answered_at, at)) FROM board_card WHERE owner = ?)").bind(me, me),
     ]);
     const lastA = (la.results[0] as { at: number | null })?.at || 0, lastW = (lw.results[0] as { at: number | null })?.at || 0;
-    if (lastW > lastA || (lastA && now() - lastA > 10 * 60_000)) await regroup(env(c), me);
+    if ((lastW > lastA || (lastA && now() - lastA > 10 * 60_000)) && now() - (NODES_FRESHED.get(me) || 0) >= 30_000) { await regroup(env(c), me); NODES_FRESHED.set(me, now()); if (NODES_FRESHED.size > 2000) NODES_FRESHED.clear(); }
     const [nd, mi, it, au, dv] = await DB.batch([
       DB.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?) ORDER BY updated_at DESC").bind(me, now() - 24 * 3600_000),
       DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(me),

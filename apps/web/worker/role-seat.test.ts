@@ -307,3 +307,14 @@ test("끊은 기기의 창은 자리에 안 붙음 — 자리 판정 · 다시 �
   const g = await (await call("GET", "/api/device/roles")).json() as any;
   for (const s of g.seats || []) assert.notEqual(s.why, "붙음", `GET ${s.name}`);
 });
+
+test("regroup 반환 changed: 자리표만 바뀌어도 0 보다 큼 · 아무것도 안 바뀌면 0(읽을 때 미룬 묶기는 바뀐 때만 화면 알림)", async () => {
+  const { db, D1, call } = await seed();
+  await call("POST", "/api/device/roles", { roles: SEATS1 });
+  await regroup({ ...ENV, DB: D1 } as never, A);
+  assert.equal(((await regroup({ ...ENV, DB: D1 } as never, A)) as any).changed, 0, "그대로면 0");
+  db.prepare("DELETE FROM mnode_item WHERE owner = ? AND item = ?").run(A, "window:host1:ew_tech01");
+  const r = await regroup({ ...ENV, DB: D1 } as never, A) as any;
+  assert.deepEqual(mapOf(db, "window:host1:ew_tech01"), { node: "tk_dept_tech", how: "pin" });
+  assert.ok(r.changed > 0, `자리표 쓰기도 바뀐 수에(${r.changed})`);
+});

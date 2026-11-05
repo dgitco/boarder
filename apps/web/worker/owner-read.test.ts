@@ -147,3 +147,34 @@ test("시스템 글(원문 raw 없음)도 글쓴이가 화면에 나옴 — 에�
   assert.equal(name("1703390101.000100"), "비서", "글쓴이가 없으면 예전 그대로");
   assert.equal(name("1703390102.000100"), "도우미", "에이전트 글은 그대로");
 });
+
+test("#메인 합쳐 보기(/api/chat/main): 다섯 채널 뿌리 글을 시간순 한 줄기 · 글마다 진짜 채널 · 왕복은 채널 하나와 같음", async () => {
+  assert.deepEqual(OR.route("/api/chat/main"), { group: "chat", kind: "channel", a: "main", b: undefined });
+  assert.deepEqual(OR.route("/api/chat/main?before=1703390102.000100"), { group: "chat", kind: "channel", a: "main", b: "1703390102.000100" });
+  assert.equal(OR.route("/api/chat/main/1703390102.000100"), null, "스레드는 그 글의 진짜 채널 길로");
+  const db = new DatabaseSync(":memory:");
+  for (const f of readdirSync(new URL("../migrations/", import.meta.url)).filter(f => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
+  const cfg: OR.Cfg = { channels: { primary: "C2", company: "C3", dgit: "C1", personal: "C4", shop: "C5", harness: "C9" } };
+  for (const [k, sc] of Object.entries(cfg.channels)) db.prepare("INSERT INTO wl_talk_chan(id, name, slack_channel) VALUES (?, ?, ?)").run(k, k, sc);
+  const m = db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cli')");
+  m.run("1703390100.000100", "company", null, "agent", "a", null, "회사 글", 1703390100.0001);
+  m.run("1703390101.000100", "primary", null, "owner", null, null, "메인 글", 1703390101.0001);
+  m.run("1703390101.000200", "primary", "1703390101.000100", "agent", "a", null, "메인 답(줄기엔 안 옴)", 1703390101.0002);
+  m.run("1703390102.000100", "dgit", null, "agent", "a", null, "디지트 글", 1703390102.0001);
+  m.run("1703390103.000100", "harness", null, "agent", "a", null, "에이전트 채널 글(줄기엔 안 옴)", 1703390103.0001);
+  m.run("1703390104.000100", "shop", null, "agent", "a", null, "가게 글", 1703390104.0001);
+  const { d1, n } = fakeD1(db);
+  type O = { status: number; body: { channel: string; more: boolean; cursor: string; messages: { ts: string; ch?: string; replies: number }[] } };
+  const o = await OR.build(d1, cfg, OR.route("/api/chat/main")!, NOW) as O;
+  const rMain = n.round; n.round = 0;
+  assert.equal(o.status, 200);
+  assert.equal(o.body.channel, "main");
+  assert.deepEqual(o.body.messages.map(x => [x.ts, x.ch]), [["1703390100.000100", "company"], ["1703390101.000100", "primary"], ["1703390102.000100", "dgit"], ["1703390104.000100", "shop"]]);
+  assert.equal(o.body.messages[1].replies, 1, "답 수는 채널 보기와 같음");
+  const one = await OR.build(d1, cfg, OR.route("/api/chat/primary")!, NOW) as O;
+  assert.equal(n.round, rMain, "왕복 수 = 채널 하나 읽기와 같음");
+  assert.equal(one.body.messages[0].ch, undefined, "채널 하나 보기 꼴은 그대로(ch 없음)");
+  const old = await OR.build(d1, cfg, OR.route("/api/chat/main?before=1703390102.000100")!, NOW) as O;
+  assert.deepEqual(old.body.messages.map(x => x.ch), ["company", "primary"], "옛 글 쪽(커서)도 채널을 가로질러");
+  assert.equal(await OR.build(d1, { channels: { harness: "C9" } }, OR.route("/api/chat/main")!, NOW), null, "기본 채널이 하나도 없으면 다리로");
+});

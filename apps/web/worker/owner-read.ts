@@ -7,6 +7,7 @@ type Out = { status: number; body: unknown };
 const REP = "U0000000000";
 const BOARD_NAME = "Owner (보드)";
 const CHANNELS = ["primary", "company", "personal", "dgit", "shop"];   // chat.CHANNELS 기본 다섯
+export const MAIN = "main";   // #메인 합쳐 보기(/api/chat/main) — 기본 다섯 채널 뿌리 글을 한 줄기로(글 DB 는 그대로, 읽을 때만 합침). 등록 에이전트 채널 키로는 못 씀
 const AGENT_CH = /^[a-z][a-z0-9_]{1,30}$/;   // 등록한 에이전트 채널 키 — 진짜 있는지는 build 가 cfg.channels 로 봄(없으면 다리로)
 const FREQ_DEFAULT = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];
 const PAGE = 100;
@@ -46,6 +47,7 @@ const guess = (n: unknown) => { const m = /\.([^./]+)$/.exec(String(n || "")); r
 export function route(path: string): Route | null {
   const p = path.split("?")[0];
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?(?:\?before=(\d{10}\.\d{6}))?$/.exec(path);
+  if (m && m[1] === MAIN) return m[2] ? null : { group: "chat", kind: "channel", a: MAIN, b: m[3] };   // 합친 줄기는 쪽만 — 스레드는 그 글의 진짜 채널 길로
   if (m && (CHANNELS.includes(m[1]) || AGENT_CH.test(m[1]))) return m[2] ? { group: "chat", kind: "thread", a: m[1], b: m[2] } : { group: "chat", kind: "channel", a: m[1], b: m[3] };
   if ((m = /^\/api\/nodechat\?w=([^&]{1,400})$/.exec(path))) return { group: "chat", kind: "nodechat", a: m[1] };
   if (p === "/api/emoji/frequent") return { group: "chat", kind: "frequent" };
@@ -208,11 +210,16 @@ function cardMarks(msgs: R[], rows: R[]) {
 }
 
 // ── 채널 · 스레드(chat.Chat.channel · thread, 대화 DB 원천) ──
-async function channel(db: D1Database, cfg: Cfg, key: string, before: string | undefined, now: number): Promise<Out> {
+async function channel(db: D1Database, cfg: Cfg, key: string, before: string | undefined, now: number, owners: string[] = []): Promise<Out> {
   const rep = cfg.rep || REP, bf = new Set(cfg.board_files || []), own = cfg.owners || {};
-  const q = `SELECT ${COLS} FROM wl_talk_msg m WHERE chan=(SELECT id FROM wl_talk_chan WHERE slack_channel = ?) AND thread IS NULL AND ${LIVE_ROOT}` +
-    (before ? " AND m.at < coalesce((SELECT at FROM wl_talk_msg WHERE id = ? OR slack_ts = ? LIMIT 1), CAST(? AS REAL))" : "") + " ORDER BY at DESC LIMIT ?";
-  const rows = (await db.prepare(q).bind(cfg.channels[key], ...(before ? [before, before, before] : []), PAGE + 1).all<R>()).results;
+  const cur = before ? " AND m.at < coalesce((SELECT at FROM wl_talk_msg WHERE id = ? OR slack_ts = ? LIMIT 1), CAST(? AS REAL))" : "", bv = before ? [before, before, before] : [];
+  const one = (agents = "") => `SELECT ${COLS}, m.at AS _at, ? AS _k FROM wl_talk_msg m WHERE chan=(SELECT id FROM wl_talk_chan WHERE slack_channel = ?) AND thread IS NULL AND ${LIVE_ROOT}${cur}${agents} ORDER BY at DESC LIMIT ?`;
+  const keys = key === MAIN ? CHANNELS.filter(k => has(cfg.channels, k)) : [key];
+  const parts = keys.flatMap(k => keys.length === 1 || k === "primary" ? [[k, ""]] : [[k, " AND m.who = 'owner' AND m.at >= (SELECT t FROM cut)"], [k, " AND m.at < (SELECT t FROM cut)"]]);
+  const q = keys.length === 1 ? one() : `WITH cut(t) AS (SELECT coalesce((SELECT min(at) / 1000.0 FROM user_pref WHERE owner IN ${IN} AND k = 'mainmerge_at'), 1e300)) `
+    + `SELECT * FROM (${parts.map(([, w]) => `SELECT * FROM (${one(w)})`).join(" UNION ALL ")}) ORDER BY _at DESC LIMIT ?`;
+  const rows = (await db.prepare(q).bind(...(keys.length === 1 ? [] : [JSON.stringify(owners.map(x => x.toLowerCase()))]), ...parts.flatMap(([k]) => [k, cfg.channels[k], ...bv, PAGE + 1]), ...(keys.length === 1 ? [] : [PAGE + 1])).all<R>()).results;
+  const chOf = new Map(rows.map(r => [String(r.slack_ts || r.id), String(r._k)]));
   const page = rows.slice(0, PAGE), more = rows.length > PAGE;
   const ids = page.map(r => r.id);
   // 두 번째 왕복: 꾸밈 넷 + 표시(db_marks) 셋 — 표시는 뿌리 꼴(답 수 · 단추)이 있어야 해서 꾸밈 결과로 먼저 꼴을 만든 뒤 묻지 않고, 뿌리 전부로 물어 둠
@@ -222,7 +229,7 @@ async function channel(db: D1Database, cfg: Cfg, key: string, before: string | u
   const ex = exOf(rs.slice(0, 4));
   const msgs = page.map(r => asSlack(r, ex));
   const out: R[] = [...msgs].sort((a, b) => parseFloat(a.ts) - parseFloat(b.ts)).filter(seenByPeople)
-    .map(m => ({ ...norm(m, rep, bf), owner: has(own, m.ts) ? own[m.ts] : null }));
+    .map(m => ({ ...norm(m, rep, bf), owner: has(own, m.ts) ? own[m.ts] : null, ...(key === MAIN ? { ch: chOf.get(String(m.ts)) || "primary" } : {}) }));   // 합친 줄기 글 = 진짜 채널(화면이 반응 · 스레드 · 답을 그 채널로, 노드 채팅과 같은 칸)
   // db_marks: 읽지 않음은 답 있는 뿌리만(물은 것은 모든 뿌리라 여기서 거름), 단추 카드는 꼴이 같으니 그대로
   const withReplies = new Set(out.filter(m => T(m.replies) && !T(m.ledger)).map(m => m.ts));
   const rs0 = { ...rs[4], results: rs[4].results.filter(r => withReplies.has(r.th)) } as D1Result<R>;
@@ -577,11 +584,13 @@ async function artnotes(db: D1Database, art: string): Promise<Out> {   // artnot
 }
 
 // 답 하나 만들기. cfg 가 필요한 길(채팅 · 노드 · 모아 보기)인데 없으면 null(→ 다리로)
-export async function build(db: D1Database, cfg: Cfg | null, rt: Route, now = Date.now() / 1000, cache = true, state = false): Promise<Out | null> {
+// owners = 주인 메일들(#메인 줄기가 가장 이른 켠 시각을 user_pref 에서 찾음 — 없으면 거름 없이 전부)
+export async function build(db: D1Database, cfg: Cfg | null, rt: Route, now = Date.now() / 1000, cache = true, state = false, owners: string[] = []): Promise<Out | null> {
   if (rt.kind === "frequent") return frequent(db);
   if (rt.kind === "artnotes") return artnotes(db, rt.a!);
   if (!cfg || !cfg.channels) return null;
   if (rt.kind === "inbox") return inbox(db, cfg, now, state);
+  if (rt.kind === "channel" && rt.a === MAIN) return CHANNELS.some(k => has(cfg.channels, k)) ? channel(db, cfg, MAIN, rt.b, now, owners) : null;
   if (!has(cfg.channels, rt.a || "") && rt.kind !== "nodechat") return null;
   if (rt.kind === "channel") return channel(db, cfg, rt.a!, rt.b, now);
   if (rt.kind === "thread") { const [t] = await threads(db, cfg, [{ key: rt.a!, ts: rt.b! }]); const { raw: _r, ...body } = t; void _r;
@@ -603,9 +612,9 @@ async function etagOf(b: string) { return '"' + [...new Uint8Array(await crypto.
 
 // 화면에 보낼 답(보드 _send 와 같은 머리: ETag · 같으면 빈 304 · no-store). 못 만들면 null(→ 다리로)
 // state = 모아 보기 초안을 D1 owner_state 에서(write_state) — 같은 batch 에서 읽음
-export async function respond(db: D1Database, get: () => Promise<{ body: string; etag: string } | null>, rt: Route, inm?: string, state = false) {
+export async function respond(db: D1Database, get: () => Promise<{ body: string; etag: string } | null>, rt: Route, inm?: string, state = false, owners: string[] = []) {
   let o: Out | null;
-  try { o = await build(db, await cfgOf(get), rt, undefined, true, state); } catch { return null; }
+  try { o = await build(db, await cfgOf(get), rt, undefined, true, state, owners); } catch { return null; }
   if (!o) return null;
   const b = JSON.stringify(o.body), h: Record<string, string> = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "d1" };
   if (o.status === 200) { const { read_at: _v, ...same } = o.body as R; h.etag = await etagOf(JSON.stringify(same)); if (inm && inm.replace(/^W\//, "") === h.etag) return new Response(null, { status: 304, headers: { etag: h.etag, "cache-control": "no-store", "x-f7": "d1" } }); }

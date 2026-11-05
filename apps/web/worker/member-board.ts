@@ -1,6 +1,7 @@
 
 import { tokenRows } from "./agent-token-cache";
 import { regroup } from "./importer/routes";
+import { bumpMember } from "./live";   // 30초 막기 뒤 미룬 묶기가 끝나면 화면에 알림
 import { parseConnectKind, titleOf, readsOf, oauthApi, CONNECT_TTL } from "./connectors/connect-card";
 import { boardHead, withHead } from "./board-head";
 import { primaryPick, notChat, type Item } from "./importer/group";
@@ -111,12 +112,30 @@ export async function nodeFaceList(db: D1Database, me: string, bot: { name?: str
   }).sort((a, b) => Number(b.head) - Number(a.head));
 }
 
-const FRESHING = new Map<string, number>();
-export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
+const FRESHING = new Map<string, number>(), FRESHED = new Map<string, number>(), FRESH_LATER = new Map<string, number>();
+//   미룬 한 번: 응답 뒤 waitUntil 은 30초까지라 20초까지만 자고 묶기 몫 10초를 남김. 잘려서 finally 를 못 타도 40초면 표시가 풀림(FRESHING 10초와 같은 까닭)
+export const freshOpts = { gap: 30_000, sleep: (ms: number) => new Promise<void>(r => setTimeout(r, ms)), bump: bumpMember };   // 시험이 바꿔 끼움
+type FreshEnv = { DB: D1Database; PUBLIC_URL: string } & Parameters<typeof bumpMember>[0];
+export async function fresh(env: FreshEnv, me: string, ctx?: Ctx | null) {
   const t0 = Date.now(); if (t0 - (FRESHING.get(me) || 0) < 10_000) return;
-  FRESHING.set(me, t0);
-  try { await fresh0(env, me); } finally { FRESHING.delete(me); }
+  const wait = freshOpts.gap - (t0 - (FRESHED.get(me) || 0));
+  if (wait > 0) {
+    if (ctx && t0 - (FRESH_LATER.get(me) || 0) >= 40_000) {
+      FRESH_LATER.set(me, t0); if (FRESH_LATER.size > 2000) FRESH_LATER.clear();
+      ctx.waitUntil(freshOpts.sleep(Math.min(wait + 200, 20_000)).then(() => Date.now() - (FRESHING.get(me) || 0) < 10_000 ? undefined : freshRun(env, me, true)).catch(e => console.error("묶기", e)).finally(() => FRESH_LATER.delete(me)));
+    }
+    return;
+  }
+  await freshRun(env, me, false);
 }
+async function freshRun(env: FreshEnv, me: string, notify: boolean) {
+  FRESHING.set(me, Date.now());
+  try {
+    const n = await fresh0(env, me);
+    if (n !== false) { FRESHED.set(me, Date.now()); if (FRESHED.size > 2000) FRESHED.clear(); if (notify && n > 0) await freshOpts.bump(env, me); }   // 실제로 묶었을 때만 30초를 검 · 알림은 노드가 바뀐 때만   // 실제로 묶었을 때만 30초를 검(대조만 한 읽기는 안 막음) · 알림까지 waitUntil 이 붙잡음
+  } finally { FRESHING.delete(me); }
+}
+export function freshForget(me: string) { FRESHED.delete(me); }
 const DATA_GATE = new Map<string, { at: number; n: number }>(), DATA_MAX = 60;
 export function dataGate(me: string, now = Date.now()) {
   let g = DATA_GATE.get(me); if (!g || now - g.at >= 5_000) DATA_GATE.set(me, g = { at: now, n: 0 });
@@ -128,7 +147,8 @@ async function fresh0(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
     env.DB.prepare("SELECT MAX(x) at FROM (SELECT MAX(at) x FROM board_log WHERE owner = ? UNION ALL SELECT MAX(COALESCE(answered_at, at)) FROM board_card WHERE owner = ?)").bind(me, me),
   ]);
   const a = (la.results[0] as { at: number | null })?.at || 0, w = (lw.results[0] as { at: number | null })?.at || 0;
-  if (w > a || (a && Date.now() - a > 10 * 60_000)) await regroup(env as never, me);
+  if (w > a || (a && Date.now() - a > 10 * 60_000)) return (await regroup(env as never, me) as { changed?: number }).changed ?? 1;   // 묶음: 바뀐 줄 수
+  return false;
 }
 
 const closeStaleConnect = (db: D1Database, me: string) => db.prepare("UPDATE board_card SET state = 'closed', done = '만료' WHERE owner = ? AND state = 'open' AND kind LIKE 'connect:%' AND at < ?").bind(me, Date.now() - CONNECT_TTL).run().catch(() => {});   // 10분 지난 「연결하기」 카드(connect-card.ts)

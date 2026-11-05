@@ -235,7 +235,19 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       + '<i class="bx-gap" aria-hidden="true"></i>' + ib + '<i class="bx-gap" aria-hidden="true"></i>'
       + it('agents', IA.bot, '에이전트', '', agOn) + fl('node', aTop === 'node' ? IA.nodeOn : IA.node, '노드') + fl('canvas', I.canvas, '캔버스')
       + (window.BXStatus?.side?.(it, aTop) || '') + pins + '</div>';
-    if (S.ag) agDraw({a: DG !== null ? `<div class="bx-dgs">${DG}</div>` : ch, c: (DG !== null ? '' : TS ? tks : nd) + ss, x: xc});
+    const org = (() => {
+      if (window.HB_CH || DG !== null || typeof windowsOf !== 'function' || typeof subsOf !== 'function' || !(typeof D === 'object' && Array.isArray(D?.roster))) return null;
+      const seen = new Set();
+      const rowOf = p => { const n = nameOf(p), ak = p.agent && CH.includes(p.agent) ? p.agent : '';   // 등록한 에이전트는 그 채널, 워커는 그 노드 화면
+        return it(ak ? 'chan:' + ak : 'node:' + p.pane, p.agent ? blob(n, 20) : I.hash, esc(n), rp.has(p.pane) ? '<i class="ud" aria-label="내 차례"></i>' : '', ak ? chan === ak : pg === p.pane); };
+      const grp = (row, kids, k) => kids ? `<div class="bx-dg">${row}<button type="button" class="bx-dgf" data-fold="${esc(k)}" aria-expanded="${!SB.fold[k]}" aria-label="밑 에이전트 ${SB.fold[k] ? '펴기' : '접기'}">${I.fold}</button></div><div class="bx-sbody bx-dgb" data-sec="${esc(k)}"${SB.fold[k] ? ' hidden' : ''}>${kids}</div>` : row;
+      const sortA = ws => ws.map(w => w.lead).sort((a, b) => !!b.agent - !!a.agent);
+      const walk = (p, d) => { if (seen.has(p.pane) || d > 12) return ''; seen.add(p.pane); return grp(rowOf(p), sortA(subsOf(p.pane)).map(x => walk(x, d + 1)).join(''), 'og:' + p.pane); };
+      const head = (k, kids) => grp(it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k), kids, 'og:' + k);
+      const col = k => sortA(windowsOf(k)).map(p => walk(p, 1)).join('');
+      return head('primary', (D.areas || []).map(a => a.key).filter(k => k !== 'primary' && AREA_NAME[k]).map(k => head(k, col(k))).join('') + col('primary'));
+    })();
+    if (S.ag) agDraw({a: DG !== null ? `<div class="bx-dgs">${DG}</div>` : org ? `<div class="bx-dgs bx-org">${org}</div>` : ch, c: (DG !== null ? '' : TS ? tks : nd) + ss, x: xc});
     const sbH = !feedOn() ? `<div class="top">${logo}<span class="tr">${fb}<button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + body + foot
       : `<div class="top">${logo}<span class="tr"><button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + sbA + foot;
     const drH = `<div class="top">${logo}<span class="tr">${fb}</span></div>` + body + foot;
@@ -260,7 +272,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   }).catch(() => {});
   const rankOf = v => typeof priRank === 'function' ? priRank(v) : 2.5;
   // 업무 노드를 왼쪽 채널에 올리는 것은 설정 › 노드 「채널 = 태스크」를 켠 사람만(D.task_channels) — 끈 사람은 예전처럼 업무는 트리 · /tasks 에서
-  const myNodes = () => (typeof panes !== 'undefined' ? panes : []).filter(p => ((typeof D !== 'undefined' && D?.task_channels) ? !p.tkdept : !p.tk) && !['primary', 'arealead', 'helper'].includes(p.kind) && (((typeof D !== 'undefined' && D?.task_channels) && p.tk) || !(window.HB_CH && typeof MHEAD !== 'undefined' && MHEAD.has(p.pane))))   // 회원 열 머리는 「에이전트」 칸에(두 번 안 나오게)
+  const myNodes = () => (typeof panes !== 'undefined' ? panes : []).filter(p => !p.standing && ((typeof D !== 'undefined' && D?.task_channels) ? !p.tkdept : !p.tk) && !['primary', 'arealead', 'helper'].includes(p.kind) && (((typeof D !== 'undefined' && D?.task_channels) && p.tk) || !(window.HB_CH && typeof MHEAD !== 'undefined' && MHEAD.has(p.pane))))   // 회원 열 머리는 「에이전트」 칸에(두 번 안 나오게)
     .map((p, i) => [p, i]).sort((a, b) => rankOf(a[0].pri) - rankOf(b[0].pri) || a[1] - b[1]).map(x => x[0]);
   function rowPanes(){ try { return new Set((attnRows() || []).map(rowPane)); } catch { return new Set(myNodes().filter(p => nodeRows(p.pane).length).map(p => p.pane)); } }   // 함수 선언 — 위의 lists() 가 먼저 불려도 됨
   const rcSig = () => recent().map(r => r.id + (r.title || '')).join('|') + '#' + (typeof attnCount === 'function' ? attnCount() : 0)
@@ -369,7 +381,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (g === 'feed') return window.BXFeed ? window.BXFeed.on() : void (location.href = '/feed');   // 피드 = /feed(폰 · PC 같은 화면)
     if (g === 'find') return findOpen();
     if (g.startsWith('chan:')) return openChan(g.slice(5));
-    if (g.startsWith('node:')){ ibClose(); return openAns({p: g.slice(5), page: true}); }   // 내 노드 → 본 칸 노드 화면
+    if (g.startsWith('node:')){ ibClose(); if (typeof byPane !== 'undefined' && byPane[g.slice(5)]?.standing && typeof openNode === 'function') return openNode(g.slice(5)); return openAns({p: g.slice(5), page: true}); }
     if (FEED(g)){ ibClose(); return window.HBInbox.openFeed(g); }
     if (IBK.includes(g)) return ibOpen(g);
     if (!ans.hidden) closeAns();
@@ -488,7 +500,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   function nodeGo(t, ts, th){
     if (frontAlias(t)){ openChan('primary', th); if (ts && typeof nodeFlash === 'function') nodeFlash(th || ts); return; }
     const aliasPane = typeof D !== 'undefined' && D?.node_aliases?.[t]; if (aliasPane && byPane[aliasPane]) t = winT(byPane[aliasPane]);
-    const p = Object.values(byPane).find(x => winT(x) === t), k = p ? '' : Object.keys(parkBy).find(id => winT(parkBy[id]) === t);
+    const p = Object.values(byPane).find(x => !x.standing && winT(x) === t), k = p ? '' : Object.keys(parkBy).find(id => winT(parkBy[id]) === t);
     if (ts && typeof openNode === 'function'){   // 스레드 답은 뿌리 글로 굴리고 스레드를 엶(읽지 않음 글 누르기와 같은 길)
       const r = openNode(p ? p.pane : k || t, th || ts);
       if (th && typeof openThread === 'function') Promise.resolve(r).then(() => openThread('n:' + t, th));
@@ -619,6 +631,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       if (cur.tab === 'chat' && cur.chan && cur.chan.startsWith('n:')) return '#node/' + encodeURIComponent(nodeKey(cur.p)) + (CS.th?.ts && CS.th.k === cur.chan ? '/' + CS.th.ts : '');
       if (cur.tab === 'chat' && cur.chan === 'i:turn') return '#inbox';
       if (cur.tab === 'chat' && /^i:(unread|saved|drafts)$/.test(cur.chan || '')){ const m = cur.chan === 'i:unread' && window.HBInbox?.focusOf?.(); return '#' + cur.chan.slice(2) + (m ? '?msg=' + m : ''); }
+      if (cur.tab === 'chat' && cur.chan === 'primary' && CS.th?.ts && CS.th.k !== 'primary' && typeof inMain === 'function' && inMain(CS.th.k)) return '#chat/' + CS.th.k + '/' + CS.th.ts;   // 합친 #메인 안에서 연 다른 채널 스레드(board.html mainOn) — 주소는 그 글 자리(/m/… · 열면 다시 #메인 + 그 스레드)
       if (cur.tab === 'chat' && cur.chan) return '#chat/' + cur.chan + (CS.th?.ts && CS.th.k === cur.chan ? '/' + CS.th.ts : '');
       if (cur.w) return '#w/' + encodeURIComponent(cur.w);
       if (cur.p) return '#node/' + encodeURIComponent(nodeKey(cur.p));
@@ -681,7 +694,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       if (k === 'art'){ const aid = () => ARTS[a] ? a : window.artId?.('#art/' + a);
         if (MVv() !== a){ if (await linkUntil(aid)){ if (gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ if (!ans.hidden) closeAns(); const id = aid(); openArt(id); if (id !== a){ history.replaceState(history.state, '', '#art/' + id); moved = true; } } } else if (gen === G){ pre0(); linkFail(); } } }
       else if (k === 'chat' && CH.includes(a)){
-        if (b && typeof window.HBOpenCard === 'function' && !(chatMode() && cur.chan === a && CS.th?.ts === b)){
+        if (b && typeof window.HBOpenCard === 'function' && !(chatMode() && (cur.chan === a || (cur.chan === 'primary' && CS.th?.k === a)) && CS.th?.ts === b)){   // 합친 #메인 안에 이미 연 그 스레드면 그대로
           const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail();
           if (ready && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ ibClose(); S.ret = null;
             await window.HBOpenCard(b, {c: a, t: b});

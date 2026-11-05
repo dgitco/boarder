@@ -5,6 +5,7 @@ import { METRICS_MAX_BYTES, putMetrics, listDevices, readCapped, tooSoon } from 
 import * as devCard from "./device-card";
 import * as connReq from "./connect-request";
 import * as devSettings from "./device-settings";
+import { uiPrefStmts } from "./ui-pref";
 import { onboarding } from "./member-onboarding";
 import { legal } from "./legal";
 import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
@@ -549,7 +550,7 @@ app.get("/api/search", async c => {
   return c.json({ ...r, ms: { ...r.ms, worker: Date.now() - t0 } }, 200, { "cache-control": "private, no-store" });
 });
 
-hosted.mount?.(app, { me: async c => (await signedIn(c as never))?.user.email ?? null, sameSite: c => sameSite(c as never) });
+hosted.mount?.(app, { me: async c => (await signedIn(c as never))?.user.email ?? null, sameSite: c => sameSite(c as never), device: async c => boardDevice(c as never) });
 // 릴레이의 다리(WebSocket) — 토큰 확인 뒤 Bridge DO 로
 app.get("/api/relay/ws", async c => {
   const tok = (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -694,7 +695,7 @@ const CTRL_ALL = /[\x00-\x1f\x7f-\x9f]/g;
 const clean = (v: unknown, n: number) => String(v ?? "").replace(CTRL_ALL, "").trim().slice(0, n);
 const docNav = (c: { req: { method: string; header(k: string): string | undefined } }, url: URL) =>
   c.req.method === "GET" && c.req.header("sec-fetch-dest") === "document" && !url.pathname.startsWith("/api/") && url.pathname !== "/";
-export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/[A-Za-z0-9]{16,40})?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/\d{10}\.\d{6})?|w\/[^/]+|settings(?:\/[^/]+){0,2}|task-status(?:\/[\w.-]{1,40})?|device-sessions|agents(?:\/(?:channels|a2a))?)\/?$/;
+export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/[A-Za-z0-9]{16,40})?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/\d{10}\.\d{6})?|m\/[a-z][0-9a-z]{6,12}(?:_[0-9a-z]{6,12})?(?:-[^/]{0,400})?|w\/[^/]+|settings(?:\/[^/]+){0,2}|task-status(?:\/[\w.-]{1,40})?|device-sessions|agents(?:\/(?:channels|a2a))?)\/?$/;
 const NOFRAME = { "cache-control": "no-store", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" };
 const sameSite = (c: Context<{ Bindings: Env }>) => c.req.header("x-hb") === "1" && ["same-origin", "none", undefined].includes(c.req.header("sec-fetch-site"));
 async function deviceOf(c: Context<{ Bindings: Env }>, opt: { watch?: boolean; harness?: boolean; ownercli?: boolean } = {}) {
@@ -1114,6 +1115,7 @@ app.post("/api/me/cards/:id/answer", async c => {
   let won = false;
   try { won = Number((await c.env.DB.batch(rid ? [upd, c.env.DB.prepare("INSERT INTO f7_rid(rid, at) SELECT ?, ? WHERE changes() > 0").bind(rid, Date.now())] : [upd]))[0]?.meta?.changes || 0) > 0; }
   catch (e) { if (!queue.ridDup(e)) throw e; }
+  if (won) memberBoard.freshForget(me);   // 방금 답한 카드의 노드가 30초 막기 때문에 「질문」으로 남지 않게(다음 읽기가 바로 묶음)
   if (!won) {
     if (!rid || !(await queue.ridSeen(c.env.DB, rid))) return c.json({ error: "이미 답한 결정이에요" }, 400);   // 다른 답이 먼저 — 확정 실패(409 면 화면이 보낸 것으로 봄)
     if (await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true });   // 같은 rid 로 이미 답함 — 넘기기가 빠졌으면 아래로
@@ -1540,7 +1542,7 @@ app.get("/api/me/onboarding", async c => {
   const s = await signedIn(c), me = s ? await boardWho(c.env, s.user.email) : null; if (!me) return c.json({ error: "no" }, 403);   // owner_unified 가 켜지면 주인도 canon
   return c.json(await onboarding(c.env.DB, me, { server: c.env.PUBLIC_URL, push: await ledger.f7On(c.env.DB, "member_push").catch(() => false) }), 200, { "cache-control": "no-store" });
 });
-const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1", unreadkeep: v => v === "0" || v === "1", canvasback: v => v === "0" || v === "1", ibboth: v => v === "0" || v === "1", sbw: v => v === "0" || v === "72" || (/^[1-9]\d{2}$/.test(v) && +v >= 200 && +v <= 480) }
+const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1", unreadkeep: v => v === "0" || v === "1", canvasback: v => v === "0" || v === "1", ibboth: v => v === "0" || v === "1", mainmerge: v => v === "0" || v === "1", sbw: v => v === "0" || v === "72" || (/^[1-9]\d{2}$/.test(v) && +v >= 200 && +v <= 480) }
 app.get("/api/me/ui", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const rs = (await c.env.DB.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(s.user.email.toLowerCase()).all<{ k: string; v: string }>()).results || [];
@@ -1553,7 +1555,7 @@ app.post("/api/me/ui", async c => {   // { k: "theme" | "accent" | "still" | "fa
   const { k, v } = await c.req.json<{ k?: string; v?: string }>().catch(() => ({} as { k?: string; v?: string }));
   const key = String(k || ""), val = String(v ?? "");
   if (!Object.hasOwn(UI_PREF, key) || !UI_PREF[key](val)) return c.json({ ok: false, error: "모르는 값" }, 400);   // 객체 원형 이름(toString 등)이 검사를 지나 아무 값이나 저장되던 것
-  await c.env.DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(s.user.email.toLowerCase(), "ui:" + key, val, Date.now()).run();
+  await c.env.DB.batch(uiPrefStmts(c.env.DB, s.user.email.toLowerCase(), [[key, val]], Date.now()));   // at 유지 · #메인 처음 켠 시각(ui-pref.ts)
   return c.json({ ok: true });
 });
 app.post("/api/me/nodes/order", async c => {
@@ -2350,7 +2352,7 @@ async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) 
 }
 async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea: boolean | "x" = false) {
   const pg = await snap(c.env).get("page"); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
-  await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
+  await memberBoard.fresh(c.env, me, c.executionCtx).catch(e => console.error("묶기", e));
   const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot, await memberBoard.loadShared(c.env.DB, me, c.executionCtx))), tag = await memberBoard.etag(d);
   const html = (await tplHtml(c.env, c.executionCtx, pg)).replace("__BX_DATA__", () => d.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(tag));
   // 회원 값: 채널은 Primary 하나(보드 CH) · 내 이름 · 메인 봇 이름. 영역 칸이 하나라 트리 줄을 한 칸으로
@@ -2549,7 +2551,7 @@ app.all("*", async c => {
           if (r && r.status === 200 && !pa.rel && artView.viewable(c.req.method, c.req.header("sec-fetch-dest"), url.search)) c.executionCtx.waitUntil(artView.record(c.env.DB, me, pa.id).catch(e => console.error("열람 기록", e)));
           if (r) return r; }
         if (url.pathname.startsWith("/art/")) return docNav(c, url) ? c.redirect("/nf", 302) : c.text("not found", 404, { "cache-control": "no-store" });
-        if (url.pathname === "/api/data") { if (!memberBoard.dataGate(me)) return queue.retrySafe(c); await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e)); }
+        if (url.pathname === "/api/data") { if (!memberBoard.dataGate(me)) return queue.retrySafe(c); await memberBoard.fresh(c.env, me, c.executionCtx).catch(e => console.error("묶기", e)); }
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드
         if (sl) return sl;
         const r = await memberBoard.get(c.env.DB, me, await myBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"),
@@ -2693,7 +2695,7 @@ app.all("*", async c => {
     const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;
     const ag = await ledgerAges(c.env).catch(() => null);
     const stuck = !ag || ag.syncAge > 60_000; hit(c.req.raw, "ledger", !stuck);
-    const res = stuck ? null : await ownerRead.respond(rdb, ag ? async () => ag.cfg : () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st);
+    const res = stuck ? null : await ownerRead.respond(rdb, ag ? async () => ag.cfg : () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st, ownerMails(c.env, s.user.email));
     if (res) { if (ag) for (const [k, v] of Object.entries(ag.h)) res.headers.set(k, v); return res; }
   }
   const headers: Record<string, string> = {};

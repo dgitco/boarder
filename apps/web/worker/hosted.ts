@@ -6,7 +6,8 @@ export type HostedCall = { method: string; path: string; headers: Record<string,
 export type HostedOut = { status: number; headers: Record<string, string>; body: Uint8Array };
 type HEnv = { DB: D1Database };
 /** 코어 길이 확장 라우트에 빌려주는 것 — 로그인 메일(주인 · 회원 공통, 없으면 null) · 같은 사이트 쓰기 확인 */
-export type MountHelp = { me(c: Context<any>): Promise<string | null>; sameSite(c: Context<any>): boolean };
+export type MountHelp = { me(c: Context<any>): Promise<string | null>; sameSite(c: Context<any>): boolean;
+  device?(c: Context<any>): Promise<{ owner: string } | null> };
 /** 에이전트 도구를 부른 신원 — 전부 토큰에서(머리 값 아님). owner '' = 주인 토큰 */
 export type ToolWho = { env: any; owner: string; win: string; agent: string; test?: boolean };
 export type HostedToolDef = { name: string; title: string; description: string; inputSchema: Record<string, unknown>; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } };

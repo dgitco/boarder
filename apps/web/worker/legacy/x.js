@@ -50,7 +50,8 @@
   const V = k => root.querySelector(`.xv[data-v="${k}"]`), PC = matchMedia('(min-width: 861px)');
 
   // ── 데이터: 채널 글(뿌리) · 스레드 · 물음 · 읽지 않음 · 저장
-  const roots = () => { const out = []; for (const k of chs()){ const ms = cs().ch?.[k]?.messages || []; for (const m of ms) if (!m.deleted && !(m.thread && m.thread !== m.ts)) out.push({k, m}); for (const q of X.pend.get('new:' + k) || []) if (!ms.some(m => sameQ(m, q))) out.push({k, m: q}); }
+  // m.ch 가 다른 글 = #메인 한 줄기(board.html mainOn)로 primary 목록에 섞여 온 다른 채널 글 — 피드는 채널마다 따로 읽으니 겹치지 않게 뺌
+  const roots = () => { const out = []; for (const k of chs()){ const ms = cs().ch?.[k]?.messages || []; for (const m of ms) if (!m.deleted && !(m.thread && m.thread !== m.ts) && !(m.ch && m.ch !== k)) out.push({k, m}); for (const q of X.pend.get('new:' + k) || []) if (!ms.some(m => sameQ(m, q))) out.push({k, m: q}); }
     const have = new Set(out.map(x => x.m.ts)); for (const [t, {k}] of wantRoots()){ if (have.has(t)) continue; const m = (cs().thr?.[t]?.messages || []).find(y => y.ts === t); if (m && !m.deleted && !(m.thread && m.thread !== m.ts)){ out.push({k, m}); have.add(t); } }
     return out; };
   const upRoot = t0 => { let t = t0; for (let i = 0; i < 6; i++){ const m = (cs().thr?.[t]?.messages || []).find(y => y.ts === t); if (!m?.thread || m.thread === t) break; t = m.thread; } if (t !== t0){ if (!X.kids.has(t)) X.kids.set(t, new Set()); X.kids.get(t).add(t0); } return t; };   // 답글에 달린 글은 뿌리 스레드 목록에 안 나옴(서버는 thread = 뿌리만 돌려줌) — thr 이 그 조각을 합침

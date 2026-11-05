@@ -7,6 +7,7 @@ import { listDevices } from "./devices";
 import { prefsPatch } from "./node-prefs";
 import { cleanHide, readHide, saveHide } from "./side-order";
 import { FEATS, isFeat, featsOf, setFeat } from "./status-pages/feature";
+import { uiPrefStmts } from "./ui-pref";
 
 type Env = { DB: D1Database; PUBLIC_URL: string };
 type C = Context<{ Bindings: Env }>;
@@ -218,8 +219,7 @@ async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, c
   if (key === "ui") {
     const o = value && typeof value === "object" && !Array.isArray(value) ? Object.entries(value as Record<string, unknown>) : [];
     if (!o.length || o.length > 12 || o.some(([k, v]) => !Object.hasOwn(h.uiPref(), k) || typeof v !== "string" || !h.uiPref()[k](v))) return { error: `ui: { ${Object.keys(h.uiPref()).join(" | ")}: 값 } (화면과 같은 값 범위)`, status: 400 };
-    const now = Date.now();
-    await DB.batch(o.map(([k, v]) => DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(me, "ui:" + k, v as string, now)));
+    await DB.batch(uiPrefStmts(DB, me, o as [string, string][], Date.now()));
     return { after: Object.fromEntries(o) };
   }
   if (key === "features") {

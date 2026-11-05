@@ -73,18 +73,44 @@ test("빈 목록(--stop) · MCP · 역할을 같이 보낸 것은 건너뛰지 �
   assert.equal(audits(db), n + 1);
 });
 
-const { fresh, dataGate } = await import("../member-board.ts");
-test("fresh: 같은 사람 묶기가 도는 중이면 겹쳐 돌리지 않고, 끝나면 다음 것은 다시 묶음", async () => {
-  const { db, D1 } = d1(), post = app(D1), env = { DB: D1, PUBLIC_URL: "https://example.test" };
-  await post(body());
-  const log = () => db.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").run(MEMBER, "laptop:tmux:1", "progress", "새 줄", Date.now() + 1000);
-  log();
-  const n = audits(db);
-  await Promise.all(Array.from({ length: 8 }, () => fresh(env as never, MEMBER)));
-  assert.equal(audits(db), n + 1, "여덟 번 불러도 묶기 한 번");
-  db.prepare("UPDATE imp_audit SET at = 0 WHERE owner = ?").run(MEMBER);   // 다시 낡음
-  await fresh(env as never, MEMBER);
-  assert.ok((db.prepare("SELECT MAX(at) m FROM imp_audit WHERE owner = ?").get(MEMBER) as { m: number }).m > 0, "끝난 뒤에는 다시 묶음");
+const { fresh, dataGate, freshOpts, freshForget } = await import("../member-board.ts");
+test("fresh: 겹쳐 부르면 묶기 한 번 · 묶은 뒤 30초 안 읽기는 바로 안 묶고 남은 시간 뒤 한 번(조용해져도) · 대조만 한 읽기는 안 막음 · freshForget 은 풂", async () => {
+  const { db, D1 } = d1(), post = app(D1);
+  let groups = 0;   // regroup 횟수 = 그 imp_item 통째 읽기 질의 수
+  const spy = { ...D1, prepare: (sql: string) => { if (/^SELECT key, kind, engine, title, cwd, repo, /.test(sql)) groups++; return (D1 as any).prepare(sql); } } as unknown as D1Database;
+  const env = { DB: spy, PUBLIC_URL: "https://example.test" };
+  const real = { ...freshOpts }; let later: Promise<unknown>[] = [];
+  const ctx = { waitUntil: (p: Promise<unknown>) => { later.push(p); } };
+  freshOpts.sleep = async () => {};   // 남은 시간 기다림은 시험에서 바로
+  let bumps = 0; freshOpts.bump = (async () => { bumps++; }) as never;   // 미룬 묶기 뒤 화면 알림
+  try {
+    await post(body());
+    const stale = () => { db.prepare("UPDATE imp_audit SET at = 0 WHERE owner = ?").run(MEMBER); db.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").run(MEMBER, "laptop:tmux:1", "progress", "새 줄", Date.now() - 5); };   // 지금보다 앞 — 묶은 뒤에는 낡지 않음
+    freshForget(MEMBER); stale();
+    groups = 0;
+    await Promise.all(Array.from({ length: 8 }, () => fresh(env as never, MEMBER, ctx)));
+    assert.equal(groups, 1, "여덟 번 불러도 묶기 한 번");
+    assert.equal(later.length, 0, "막 묶었으니 미룰 것 없음");
+    stale();
+    groups = 0; await fresh(env as never, MEMBER, ctx);
+    assert.equal(groups, 0, "묶은 뒤 30초 안 읽기는 바로 안 묶음(D1 1위 regroup)");
+    assert.equal(later.length, 1, "대신 남은 시간 뒤 한 번을 걸어 둠");
+    await fresh(env as never, MEMBER, ctx); assert.equal(later.length, 1, "미룬 것은 사람마다 하나");
+    await Promise.all(later); later = [];
+    assert.equal(groups, 1, "그 뒤 아무 읽기가 없어도 묶음(막힌 뒤 조용해진 계정)");
+    assert.equal(bumps, 1, "미룬 묶기 뒤 화면에 알림 한 번");
+    db.prepare("UPDATE imp_audit SET at = 0 WHERE owner = ?").run(MEMBER);   // 낡음 표시만(노드는 그대로)
+    await fresh(env as never, MEMBER, ctx); await Promise.all(later); later = [];
+    assert.equal(bumps, 1, "미룬 묶기가 바꾼 것이 없으면 알리지 않음(알림마다 탭이 다시 읽음)");
+    freshForget(MEMBER);
+    await fresh(env as never, MEMBER, ctx);   // 낡지 않음 — 대조만
+    stale(); groups = 0;
+    await fresh(env as never, MEMBER, ctx);
+    assert.equal(groups, 1, "대조만 한 읽기는 30초를 걸지 않음 — 낡으면 바로 묶음");
+    stale(); freshForget(MEMBER); groups = 0;
+    await fresh(env as never, MEMBER);
+    assert.equal(groups, 1, "freshForget(카드 답 뒤) 하면 30초 안이어도 바로 묶음");
+  } finally { Object.assign(freshOpts, real); }
 });
 test("dataGate: 한 사람 5초에 60번까지, 넘으면 거절, 창이 지나면 다시 · 사람마다 따로", () => {
   const t = 1_000_000, me = "gate@example.com";
