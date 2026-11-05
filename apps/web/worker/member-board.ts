@@ -871,8 +871,10 @@ async function primaryRows(db: D1Database, me: string, before?: string, pre?: Aw
   const m = before ? /^(\d{10})\.(\d{6})$/.exec(before) : null, sec = m ? Number(m[1]) * 1000 : 0;
   const wins = [...(pre?.front?.wins || [])];
   const aliases = wins.length ? " OR (win IN (SELECT value FROM json_each(?)) AND (thread IS NULL OR thread = ''))" : "";
-  return (await db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? ${wins.length ? NOT_CHAT : ""} AND (thread = 'primary'${aliases})${m ? " AND (at < ? OR (at < ? AND id % 1000000 < ?))" : ""} ORDER BY at DESC, id DESC LIMIT 101`)
+  const rs = (await db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? ${wins.length ? NOT_CHAT : ""} AND (thread = 'primary'${aliases})${m ? " AND (at < ? OR (at < ? AND id % 1000000 < ?))" : ""} ORDER BY at DESC, id DESC LIMIT 101`)
     .bind(me, ...(wins.length ? [JSON.stringify(wins)] : []), ...(m ? [sec, sec + 1000, Number(m[2])] : [])).all<R>()).results;
+  if (wins.length) console.log(JSON.stringify({ ev: "primary_rows", wins: wins.length, rows: rs.length, front: rs.filter(r => r.thread !== "primary").length, before: !!m }));
+  return rs;
 }
 
 export const FEED_MAX = 50;
