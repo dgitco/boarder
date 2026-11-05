@@ -5,6 +5,8 @@ import type { Context } from "hono";
 import { paneLogs, ME, OWN, NOT_CHAT, QUIET, etag } from "./member-board";
 import { editRef } from "./task-convo";
 import { shows } from "./inbox-rules";
+import { verCache } from "./ver-cache";
+export const SEEN = verCache("member_seen_ver", "SELECT v FROM member_seen_ver WHERE owner = ?", "SELECT pane, at FROM member_seen WHERE owner = ?");
 
 type Env = { DB: D1Database };
 type C = Context<{ Bindings: Env }>;
@@ -47,11 +49,15 @@ async function seeUpTo(db: D1Database, me: string, pane: string, at: number) {
 // 읽지 않음에서 빼는 줄 = QUIET(member-board.ts — 화면 글의 quiet 표시와 같은 목록)
 export async function inbox(db: D1Database, me: string, ctx?: Ctx | null) {
   const { P, key, chanOf } = await chans(db, me, ctx), now = Date.now();
-  const [sn, sv, dr] = await db.batch([
-    db.prepare("SELECT pane, at FROM member_seen WHERE owner = ?").bind(me),
+  // 읽음 표시는 바뀜 번호(member_seen_ver, 0084 트리거)가 같으면 isolate 맡김(큰 회원 3,958줄 · 쓰기는 읽음을 올릴 때만) — 번호 표가 없으면 예전 질의로 한 번 더
+  let ss: ReturnType<typeof SEEN.stmts> | ReturnType<typeof SEEN.plain> = SEEN.stmts(db, me);
+  const mk = (x: { stmts: D1PreparedStatement[] }) => [x.stmts[0],
     db.prepare("SELECT kind, ref, at FROM member_saved WHERE owner = ? ORDER BY at DESC LIMIT ?").bind(me, SAVED_MAX),
     db.prepare("SELECT pane AS key, text, at FROM member_draft WHERE owner = ? ORDER BY at DESC LIMIT 100").bind(me),
-  ]);
+    ...x.stmts.slice(1)];
+  let B: D1Result[];
+  try { B = await db.batch(mk(ss)); } catch (e) { if (!SEEN.noTable(e)) throw e; ss = SEEN.plain(db, me); B = await db.batch(mk(ss)); }
+  const [, sv, dr] = B, sn = { results: await ss.done([B[0], ...B.slice(3)]) };
   const seen = new Map((sn.results as R[]).map(r => [String(r.pane), Number(r.at)]));
   const unread: R[] = [];
   const on = P.rules.on, keepRow = (r: R) => !on || shows({ win: String(r.win), kind: String(r.kind), text: r.text, wid: r.wid }, P.seatOf(r as { win: string }), P.rules.chief, r.kind === "reply");   // reply = 턴 답 훅(보드에서 그 창에 넣은 내 글에 대한 답, packages/cli turn.mjs) — 내 글에 온 답
