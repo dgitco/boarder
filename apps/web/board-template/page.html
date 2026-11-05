@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "f2f2f5d945d5";
+window.HB_VER = "a28ae9ddefdc";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1372,6 +1372,13 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
   #ans > .ah{position:relative}#ans > .ah .who:not(:has(.ibhr)){position:absolute;left:50%;transform:translateX(-50%);margin:0}#ans > .ah .hmore{margin-left:auto}   
   #ans > .ah:not(:has(.ibhr))::before{content:"";flex:none;width:0;height:44px}   
   #ans > .ah{gap:10px}
+  
+  #ans:has(> #mchatbox) > .ah:not(:has(.ibhr)){position:absolute;left:0;right:0;z-index:6;background:transparent;pointer-events:none}   
+  #ans:has(> #mchatbox) > .ah:not(:has(.ibhr)) > *{pointer-events:auto}
+  #ans:has(> #mchatbox):not(:has(> .ah .ibhr)) #cfeed{padding-top:70px}   
+  #ans:has(> #mchatbox):not(:has(> .ah .ibhr)) .cmain:has(> .nbanner:not(:empty), > .chd .stale){padding-top:70px}#ans:has(> #mchatbox) .cmain:has(> .nbanner:not(:empty), > .chd .stale) #cfeed{padding-top:8px}   
+  #ans .cth > .chd{position:absolute;top:0;left:0;right:0;z-index:6;background:transparent;pointer-events:none}#ans .cth > .chd > *{pointer-events:auto}   
+  #cthfeed{padding-top:64px}
   .cth > .chd .t{display:inline-flex;align-items:center;height:44px;box-sizing:border-box;padding:0 18px;border-radius:22px;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line);box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi)}
   .cth > .chd{height:60px;gap:10px}
   
