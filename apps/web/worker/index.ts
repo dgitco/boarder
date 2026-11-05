@@ -137,7 +137,7 @@ async function pageVer(env: Env) {
   if (Date.now() - verMemo.at < 60_000) return verMemo.v;
   verMemo.at = Date.now();
   verMemo.v = "";
-  try { const pg = await snap(env).get("page"); if (pg && Date.now() - Math.max(pg.at, pg.checked || 0) < 15_000) verMemo.v = String(JSON.parse(pg.body).ver || "").slice(0, 40); } catch { /* 다음 판에 */ }
+  try { const pg = await snap(env).get("page"); if (pg) verMemo.v = String(JSON.parse(pg.body).ver || "").slice(0, 40); } catch { /* 다음 판에 */ }
   return verMemo.v;
 }
 app.use("/api/data", async (c, next) => {
@@ -478,7 +478,7 @@ app.get("/api/board/:key", async c => {
   return new Response(r.body, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
 });
 
-app.get("/api/live", async c => {
+const liveGet = async (c: Context<{ Bindings: Env }>) => {
   const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401);
   if (chOf(c) === "test" || !(await ledger.f7On(c.env.DB, "read_live"))) return c.json({ error: "꺼짐" }, 404);   // 시험 통로는 스냅숏을 안 씀 — 예전 폴링
   const me = sb.user.email;
@@ -493,7 +493,10 @@ app.get("/api/live", async c => {
   });
   if (hosted.liveTags) Object.assign(o.t, await hosted.liveTags(c.env, me).catch(() => ({})));
   return c.json(o, 200, { "cache-control": "no-store" });
-});
+};
+app.get("/api/live", liveGet);
+const LIVE_ALIAS = /^\/(?:nodes|canvas|chat|w|settings|task-status|agents)(?:\/[^/]+){0,2}\/api\/live$/;
+app.use("*", async (c, next) => c.req.method === "GET" && LIVE_ALIAS.test(c.req.path) ? liveGet(c) : next());
 
 const SearchDoc = z.object({ id: z.string().min(3).max(300), kind: z.enum(["node", "card", "chat", "log", "art"]), title: z.string().max(2000), body: z.string().max(20000),
   node: z.string().max(300).nullish(), ch: z.string().max(40).nullish(), at: z.number(), meta: z.record(z.string(), z.unknown()).optional(), emb: z.boolean().optional(), ext: z.boolean().optional(), tags: z.array(z.string().max(60)).max(30).optional() });
@@ -2011,7 +2014,7 @@ async function artKind(env: Env, ch: string, id: string): Promise<string> {
 }
 
 const PASS_REQ = ["accept", "content-type", "if-none-match", "x-hb", "range", "x-file-name", "x-request-id"];
-const PASS_RES = ["x-retry-safe", "content-type", "content-encoding", "etag", "cache-control", "content-disposition", "last-modified", "content-range", "accept-ranges", "x-request-id"];
+const PASS_RES = ["x-retry-safe", "content-type", "content-encoding", "etag", "cache-control", "content-disposition", "last-modified", "content-range", "accept-ranges", "x-request-id", "x-snap-age"];
 const ART_ROOT = /^\/art\/([A-Za-z0-9]{16,40})\/$/;
 const ART_DEEP = /^\/art\/([A-Za-z0-9]{16,40})\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*\/){1,4}[A-Za-z0-9_-][^/?#]*\.(?:html|js|css|json|png|jpe?g|webp|gif|avif|svg|woff2?)$/;   // 마디 첫 글자는 점이 아님(.. 막음)
 const edgeCache = () => (caches as unknown as { default: Cache }).default;   // Workers 입구 캐시(DOM 타입엔 없음)
@@ -2087,13 +2090,13 @@ function filesShadow(c: Context<{ Bindings: Env }>, path: string, headers: Recor
 }
 const fromR2 = (out: Headers) => out.set("x-boarder-src", "r2");   // 확인용(완료 기준: 응답 머리로 R2 에서 온 것)
 
-async function ledgerFresh(env: Env) {
+// 스냅숏이 마지막으로 「맞음」을 받은 뒤 지난 ms
+const snapAge = (x: { at: number; checked?: number }) => Date.now() - Math.max(x.at, x.checked || 0);
+async function ledgerAges(env: Env) {
   const [cf, sy] = await Promise.all([snap(env).get("cfg"), snap(env).get("sync")]);
-  const ok = (x: { at: number; checked: number } | null, lim: number) => !!x && Date.now() - Math.max(x.at, x.checked || 0) < lim;
-  return ok(cf, 120_000) && ok(sy, 30_000);
+  return { cfg: cf, syncAge: sy ? snapAge(sy) : Infinity, h: { "x-cfg-age": cf ? String(snapAge(cf)) : "none", "x-sync-age": sy ? String(snapAge(sy)) : "none" } };
 }
 type Snap = { body: string; etag: string; at: number; checked: number } | null;
-const fresh2 = (x: Snap) => !!x && Date.now() - Math.max(x.at, x.checked || 0) < 120_000;
 function historySince(h: { oldest: number; rows: { open?: boolean; segs: [number, number, string][]; marks: [number][] }[] }, q: string | null) {
   // history.py history() 와 같은 거르기: since 뒤에 걸친 막대 · 표시만, 닫힌 지 오래된 창의 닫힘 막대 하나는 뺌
   const now = Date.now() / 1000, since = Math.max(q && /^\d{9,11}$/.test(q) ? Number(q) : now - 72 * 3600, h.oldest - 60), rows = [];
@@ -2108,7 +2111,7 @@ async function ownMisc(c: Context<{ Bindings: Env }>, url: URL): Promise<Respons
   const p = url.pathname, j = (o: unknown) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "snap" } });
   if (p === "/api/history") {
     if (!(await ledger.f7On(c.env.DB, "read_log"))) return null;
-    const h = await snap(c.env).get("history"); return fresh2(h) ? j(historySince(JSON.parse(h!.body), url.searchParams.get("since"))) : null;
+    const h = await snap(c.env).get("history"); if (!h) return null; const r = j(historySince(JSON.parse(h.body), url.searchParams.get("since"))); r.headers.set("x-snap-age", String(snapAge(h))); return r;
   }
   if (!["/emoji.json", "/api/push/key", "/api/drafts", "/api/chats"].includes(p) || !(await ledger.f7On(c.env.DB, "read_misc"))) return null;
   if (p === "/emoji.json") {
@@ -2117,8 +2120,7 @@ async function ownMisc(c: Context<{ Bindings: Env }>, url: URL): Promise<Respons
     return new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag, "x-f7": "snap" } });
   }
   if (p === "/api/drafts") { const d = await OS.get(c.env.DB, "drafts").catch(() => null); if (d) return j(d.v); }
-  if (p === "/api/drafts" && cookieOf(c, "bx_w")) return null;   // 방금 쓴 사람은 다리로(cfg 는 5초쯤 늦음)
-  const cf = await snap(c.env).get("cfg"); if (!fresh2(cf)) return null;
+  const cf = await snap(c.env).get("cfg"); if (!cf) return null;
   const v = JSON.parse(cf!.body) as { push_key?: string; drafts?: unknown; chats?: unknown };
   if (p === "/api/chats") return Array.isArray(v.chats) && !cookieOf(c, "bx_w") ? j({ chats: v.chats }) : null;
   if (p === "/api/push/key") return v.push_key ? j({ key: v.push_key }) : null;
@@ -2177,11 +2179,10 @@ app.get("/bxs/:f", async c => {
 });
 async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
   const [pg, dt] = await Promise.all([snap(env).get("page"), snap(env).get("data")]);
-  const fresh = (x: { at: number; checked: number }) => Date.now() - Math.max(x.at, x.checked || 0) < 15_000;
-  if (!pg || !dt || !fresh(pg) || !fresh(dt)) return null;
+  if (!pg || !dt) return null;
   const html = (await tplHtml(env, ctx, pg))
     .replace("__BX_DATA__", () => dt.body.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(dt.etag));
-  return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } as Record<string, string>, body: new TextEncoder().encode(html) };
+  return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-snap-age": String(Math.max(snapAge(pg), snapAge(dt))) } as Record<string, string>, body: new TextEncoder().encode(html) };
 }
 async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea: boolean | "x" = false) {
   const pg = await snap(c.env).get("page"); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
@@ -2437,12 +2438,12 @@ app.all("*", async c => {
       sent = new TextEncoder().encode(JSON.stringify(b));
     }
   }
-  const sk = c.req.method === "GET" && !url.search && chOf(c) === "owner" && !cookieOf(c, "bx_w") ? ({ "/api/data": "data", "/api/topics": "topics", "/api/chats": "chats" } as Record<string, string>)[url.pathname] : undefined;
-  if (sk) {
+  const sk = c.req.method === "GET" && !url.search && chOf(c) === "owner" ? ({ "/api/data": "data", "/api/topics": "topics", "/api/chats": "chats" } as Record<string, string>)[url.pathname] : undefined;
+  if (sk && !(sk === "chats" && cookieOf(c, "bx_w"))) {
     const ts = Date.now(), sn = await snap(c.env).get(sk); seg(c.req.raw, "snap", Date.now() - ts);
-    hit(c.req.raw, "snap", !!sn && Date.now() - Math.max(sn.at, sn.checked || 0) < 15_000);
-    if (sn && Date.now() - Math.max(sn.at, sn.checked || 0) < 15_000) {
-      const h = { etag: sn.etag, "cache-control": "private, no-cache", "x-content-type-options": "nosniff", "x-snap-age": String(Date.now() - Math.max(sn.at, sn.checked || 0)) };
+    hit(c.req.raw, "snap", !!sn && snapAge(sn) < 15_000);   // 「새 스냅숏」 비율은 예전 뜻 그대로 잼(낡아도 답은 스냅숏)
+    if (sn) {
+      const h = { etag: sn.etag, "cache-control": "private, no-cache", "x-content-type-options": "nosniff", "x-snap-age": String(snapAge(sn)) };
       if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === sn.etag) return new Response(null, { status: 304, headers: h });
       return new Response(sn.body, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
     }
@@ -2487,11 +2488,13 @@ app.all("*", async c => {
   const rd = c.req.method === "GET" && chOf(c) === "owner" ? ownerRead.route(url.pathname + url.search) : null;
   const flag = (n: string) => rd?.kind === "inbox" ? ledger.f7Peek(c.env.DB, n, peekWait(c)) : ledger.f7On(c.env.DB, n);
   const shadowRd = !!rd && await flag("shadow_" + rd.group);
-  if (rd && !cookieOf(c, "bx_w") && await flag("read_" + rd.group) && await ledgerFresh(c.env)) {
+  if (rd && await flag("read_" + rd.group)) {
     const st = rd.kind === "inbox";
     const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;
-    const res = await ownerRead.respond(rdb, () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st);
-    if (res) return res;
+    const ag = await ledgerAges(c.env).catch(() => null);
+    const stuck = !ag || ag.syncAge > 60_000; hit(c.req.raw, "ledger", !stuck);
+    const res = stuck ? null : await ownerRead.respond(rdb, ag ? async () => ag.cfg : () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st);
+    if (res) { if (ag) for (const [k, v] of Object.entries(ag.h)) res.headers.set(k, v); return res; }
   }
   const headers: Record<string, string> = {};
   for (const h of PASS_REQ) { const v = c.req.header(h); if (v) headers[h] = v; }

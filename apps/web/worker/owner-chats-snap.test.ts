@@ -66,9 +66,10 @@ test("주인 세션 목록: 새 스냅숏이면 다리 안 감", async () => {
   assert.equal((await r.json() as { chats: { sid: string }[] }).chats[0].sid, "snap");
   assert.equal(t.calls.length, 0);
 });
-test("주인 세션 목록: 스냅숏이 낡았으면 다리로", async () => {
+test("주인 세션 목록: 스냅숏이 낡아도 다리 안 감 — 낡음은 x-snap-age 로만", async () => {
   const t = setup(Date.now() - 60_000);
   const r = await t.get("/api/chats");
-  assert.equal((await r.json() as { chats: { sid: string }[] }).chats[0].sid, "bridge");
-  assert.deepEqual(t.calls, ["/api/chats"]);
+  assert.equal((await r.json() as { chats: { sid: string }[] }).chats[0].sid, "snap");
+  assert.ok(Number(r.headers.get("x-snap-age")) >= 60_000);
+  assert.deepEqual(t.calls, []);
 });
