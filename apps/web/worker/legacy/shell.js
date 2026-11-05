@@ -705,9 +705,9 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     return rows;
   }
   function gCard(r){
-    const k = r.kind === 'canvas' ? 'canvas' : r.kind === 'page' ? 'page' : 'doc', id = esc(r.id), pin = !!r.pin, v = encodeURIComponent([r.at || '', r.thumb || '', GV[r.id] || ''].join('|'));
+    const k = r.kind === 'canvas' ? 'canvas' : r.kind === 'page' ? 'page' : 'doc', id = esc(r.id), pin = !!r.pin, v = encodeURIComponent([r.at || '', k === 'canvas' ? r.thumb || '' : '', GV[r.id] || ''].join('|'));
     const t = esc(r.title || r.id), sub = esc([ART_ACCT[r.acct] || '', agoS(atSec(r.at))].filter(Boolean).join(' · '));
-    return `<div class="bx-cv-card k-${k}${pin ? ' pin' : ''}" data-id="${id}"><a class="bx-cv-th" href="art/${id}/" data-art="${id}" tabindex="-1" aria-hidden="true">${k === 'canvas' ? `<span class="bx-cv-ph">${I.canvas}</span><img src="/art/${id}/_thumb.jpg?v=${v}" alt="" loading="lazy" decoding="async" draggable="false">` : ''}</a>`
+    return `<div class="bx-cv-card k-${k}${pin ? ' pin' : ''}" data-id="${id}"><a class="bx-cv-th" href="art/${id}/" data-art="${id}" tabindex="-1" aria-hidden="true">${k === 'canvas' ? `<span class="bx-cv-ph">${I.canvas}</span>` : ''}${k !== 'doc' ? `<img src="/art/${id}/_thumb.jpg?v=${v}" alt="" loading="lazy" decoding="async" draggable="false">` : ''}</a>`
       + `<button type="button" class="bx-cv-star" data-star aria-pressed="${pin}" aria-label="${pin ? '고정 풀기' : '고정'}" title="${pin ? '고정 풀기' : '고정'}">${STAR}</button>`
       + `<div class="bx-cv-meta"><i class="bx-cv-ic" aria-hidden="true">${k === 'canvas' ? I.canvas : ''}</i><a class="bx-cv-tx" href="art/${id}/" data-art="${id}"><b>${t}</b><small>${sub}</small></a><button type="button" class="bx-cv-mo amv" data-bxmo aria-haspopup="menu" aria-expanded="false" aria-label="메뉴 — ${t}" title="메뉴">⋯</button></div></div>`;
   }

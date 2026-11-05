@@ -236,7 +236,6 @@ test("회원 썸네일 일감: 관리자 토큰만 · 없음 → 찍으면 빠�
   assert.equal((await s.go("/api/admin/mthumb/jobs", { headers: { authorization: "Bearer nope" } })).status, 403);
   const a = await (await s.put(TOK.A, { "project/canvas.json": JSON.stringify(CV2), "project/Overview.dc.html": BOARD, "project/Second.dc.html": BOARD })).json() as any;
   const b = await (await s.put(TOK.B, { "project/canvas.json": JSON.stringify(CV2), "project/Overview.dc.html": BOARD })).json() as any;
-  await s.put(TOK.A, { "index.html": PAGE });   // 페이지는 일감 아님
   let js = await jobs(s);
   assert.deepEqual(js.map(j => j.art).sort(), [a.id, b.id].sort());   // 없음 → 둘 다
   const ja = js.find(j => j.art === a.id);
@@ -266,6 +265,20 @@ test("회원 썸네일 일감: 관리자 토큰만 · 없음 → 찍으면 빠�
   const next = (await (await s.go(`/api/admin/mthumb/jobs?limit=1&skip=${first},bad!`, { headers: ADM })).json() as any).jobs;
   assert.equal(next.length, 1); assert.notEqual(next[0].art, first);
   assert.deepEqual((await (await s.go(`/api/admin/mthumb/jobs?limit=5&skip=${[a.id, b.id].join(",")}`, { headers: ADM })).json() as any).jobs, []);
+});
+
+test("회원 글(page) 썸네일 일감: 첫 화면 1280×800 · 지정 무시 · 다시 올리면 낡음 · 올린 그림은 같은 길로 서빙", async () => {
+  const s = await setup();
+  const pg = await (await s.put(TOK.A, { "index.html": PAGE })).json() as any;
+  let js = await jobs(s);
+  assert.deepEqual(js.map(j => [j.art, j.board, j.w, j.h, j.pref]), [[pg.id, "index.html", 1280, 800, ""]]);
+  assert.equal(await MC.tokenOk(SECRET, pg.id, js[0].bxt), js[0].mk);
+  assert.equal((await putThumb(s, js[0])).status, 200);
+  assert.deepEqual(await jobs(s), []);
+  assert.equal((await s.go(`/art/${pg.id}/_thumb.jpg`, { headers: { cookie: await cookie(A) } })).status, 200);
+  assert.equal((await s.put(TOK.A, { "index.html": PAGE + " " }, { id: pg.id })).status, 200);   // 다시 게시 → 낡음
+  js = await jobs(s); assert.equal(js.length, 1);
+  assert.equal((await putThumb(s, { ...js[0], ver: "old" })).status, 409);
 });
 
 test("회원 썸네일 올리기 · 서빙: JPEG 만 · 내 캔버스만 읽힘 · 지우면 같이 지워짐", async () => {

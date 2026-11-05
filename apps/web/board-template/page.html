@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "61c47f98ba44";
+window.HB_VER = "57375127dfab";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -6392,6 +6392,11 @@ function toolsHTML(m, k, root, inThread) {
 function splitImgs(text) {
   const imgs = [], out = [];
   for (const line of String(text || "").split("\n")) {
+    const fl = /^\s*📎\s*(.+?):\s*https?:\/\/[^\s/]+\/f\/([0-9a-f]{32})\?\S*\s*$/.exec(line);
+    if (fl && /\.(png|jpe?g|webp|gif)$/i.test(fl[1])) {
+      imgs.push({ src: "api/file/" + fl[2], name: fl[1], cap: "" });
+      continue;
+    }
     const hits = [];
     line.replace(/<(https?:\/\/[^<>|\s]+)(?:\|([^<>]*))?>/g, (m, u, l, i) => {
       const s = imgSrc(relinkU(u));
@@ -8351,7 +8356,7 @@ async function chatPost(body, base, rid0, oldKey, again, at0) {
   };
   const seen = (ts) => {
     const m = msgOf(ts);
-    return !!m && (!body.vnl || !!vf(m)) && (!pim?.length || (m.files || []).filter((f) => f.img).length >= pim.length);
+    return !!m && (!body.vnl || !!vf(m)) && (!pim?.length || (m.files || []).filter((f) => f.img).length + splitImgs(vtext(m)).imgs.length >= pim.length);
   };
   const swap = () => {
     if (pim?.length) (msgOf(j.posted)?.files || []).filter((f2) => f2.img).forEach((f2, i) => {

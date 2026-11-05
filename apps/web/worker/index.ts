@@ -2380,6 +2380,27 @@ app.all("*", async c => {
   const ee = await hosted.route?.(c, url, chOf(c), { req: PASS_REQ, res: PASS_RES }, (k, ms) => seg(c.req.raw, k, ms));
   if (ee) return ee;
   if (!["GET", "HEAD", "POST"].includes(c.req.method)) return c.json({ error: "안 되는 방법" }, 405);
+  {
+    const me = s.user.email.toLowerCase();
+    if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {
+      if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
+      return url.pathname === "/api/upload" ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
+    }
+    const fm = c.req.method === "GET" || c.req.method === "HEAD" ? /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname) : null;
+    if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));
+  }
+  // 파일 붙은 글: 회원과 같이 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 다리로(창이 링크로 받아 감)
+  let sent: Uint8Array | undefined;
+  if (c.req.method === "POST" && url.pathname === "/api/chat" && (c.req.header("content-type") || "").includes("json")) {
+    sent = new Uint8Array(await c.req.arrayBuffer()); let b: Record<string, unknown> | null = null;
+    try { b = JSON.parse(new TextDecoder().decode(sent)); } catch {}
+    if (b && typeof b === "object" && Array.isArray(b.files) && b.files.length && !b.delete && !b.react && b.edit === undefined) {
+      const f = await memberFiles.fileLines(c.env, s.user.email.toLowerCase(), c.env.PUBLIC_URL || url.origin, b.files as unknown[]);
+      if (!f.lines.length) return c.json({ ok: false, error: "파일을 찾지 못했어요" }, 400);
+      b.text = [String(b.text || "").trim(), ...f.lines].filter(Boolean).join("\n"); delete b.files;
+      sent = new TextEncoder().encode(JSON.stringify(b));
+    }
+  }
   const sk = c.req.method === "GET" && !url.search && chOf(c) === "owner" && !cookieOf(c, "bx_w") ? ({ "/api/data": "data", "/api/topics": "topics" } as Record<string, string>)[url.pathname] : undefined;
   if (sk) {
     const ts = Date.now(), sn = await snap(c.env).get(sk); seg(c.req.raw, "snap", Date.now() - ts);
@@ -2431,7 +2452,7 @@ app.all("*", async c => {
   const shell = /^\/art\/([A-Za-z0-9]{16,40})\/$/.exec(url.pathname);
   headers["accept-encoding"] = "gzip";
   if (shadowRd) delete headers["if-none-match"];   // 그림자 대조는 다리 몸통이 있어야 함(304 는 아래에서 Worker 가)
-  const body = c.req.method === "POST" ? new Uint8Array(await c.req.arrayBuffer()) : undefined;
+  const body = c.req.method === "POST" ? (sent ?? new Uint8Array(await c.req.arrayBuffer())) : undefined;
   if (body && body.length > 25 * 1024 * 1024) return c.json({ ok: false, error: "25MB 까지 올릴 수 있어요" }, 413);
   const own = url.pathname === "/" && c.req.method !== "POST" && chOf(c) === "owner" && await ledger.f7On(c.env.DB, "read_page") ? await ownPage(c.env, c.executionCtx).catch(() => null) : null;
   const fr = !own && (c.req.method === "GET" || c.req.method === "HEAD") ? await filesFirst(c, url.pathname + url.search, headers) : null;

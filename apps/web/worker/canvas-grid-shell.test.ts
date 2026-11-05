@@ -53,7 +53,9 @@ test("카드: 썸네일 16:10 그림 주소에 ?v=<at>, 별 · 메뉴 접근성 
   const pinned = g.gCard({ id: "abc", kind: "canvas", title: "t", at: "2026-11-05 08:00", acct: "b", pin: true });
   assert.match(pinned, /class="bx-cv-card k-canvas pin"/); assert.match(pinned, /aria-pressed="true" aria-label="고정 풀기"/);
   const page = g.gCard({ id: "p", kind: "page", title: "글", at: "2026-11-05 08:00", acct: "h" });
-  assert.ok(!page.includes("<img"), "캔버스가 아니면 그림 요청 없음(404 줄이기)");
+  assert.match(page, /<img src="\/art\/p\/_thumb\.jpg\?v=2026-11-05%2008%3A00%7C%7C" alt="" loading="lazy"/, "글(page)도 첫 화면 그림 — 지정 판 칸은 주소에 안 넣음");
+  assert.ok(!g.gCard({ id: "p", kind: "page", title: "글", at: "2026-11-05 08:00", acct: "h", thumb: "B.dc.html" }).includes("B.dc.html"), "지정은 캔버스만");
+  assert.ok(!g.gCard({ id: "d", kind: "doc", title: "글", at: "2026-11-05 08:00", acct: "h" }).includes("<img"), "마크다운 글(doc)은 그림 요청 없음");
   assert.equal((card.match(/data-i="image"/g) || []).length, 2, "캔버스 아이콘은 그림(Image) 하나 — 자리 표시 + 제목 옆");
   assert.ok(!page.includes("data-i=\"image\""));
 });

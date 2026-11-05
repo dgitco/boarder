@@ -225,6 +225,7 @@ export function parseArt(pathname: string): { id: string; rel: string; bare: boo
 export const THUMB = "_thumb.jpg";
 const thumbKey = (mk: string, id: string) => `mart/${mk}/${id}/${THUMB}`;
 const THUMB_MAX = 400_000;
+export const PAGE_BOARD = { board: "index.html", w: 1280, h: 800 };
 export type ThumbJob = { art: string; mk: string; board: string; w: number; h: number; ver: string; pref: string; bxt: string };
 export function thumbStale(have: { ver?: string; pref?: string } | null, m: { ver: string }, pref: string) {
   return !have || have.ver !== m.ver || (have.pref ?? "") !== pref;
@@ -245,13 +246,14 @@ export async function thumbJobs(env: Env & { BETTER_AUTH_SECRET: string }, limit
     const me = email.toLowerCase(), mk = await keyOf(me);
     const pr = await env.DB.prepare("SELECT art, thumb FROM member_artpref WHERE owner = ?").bind(me).all<{ art: string; thumb: string }>();
     const pref = new Map(pr.results.map(r => [r.art, r.thumb]));
-    for (const { id, m } of (await all(env, mk)).filter(x => x.m.kind === "canvas").sort((a, b) => Number(b.m.at) - Number(a.m.at))) {
+    for (const { id, m } of (await all(env, mk)).sort((a, b) => Number(b.m.at) - Number(a.m.at))) {
       if (out.length >= limit) break;
       if (skip.has(id)) continue;
       const h = await env.RESULTS.head(thumbKey(mk, id));
-      const want = pref.get(id) || "";
+      const isCv = m.kind === "canvas", want = isCv ? pref.get(id) || "" : "";
       if (!thumbStale(h?.customMetadata as { ver?: string; pref?: string } | null ?? null, m, want)) continue;
       let cj: Parameters<typeof pickBoard>[0] = {};
+      if (!isCv) { out.push({ art: id, mk, ...PAGE_BOARD, ver: m.ver, pref: "", bxt: await token(env.BETTER_AUTH_SECRET, mk, id, Date.now() + 15 * 60_000) }); continue; }
       try { const o = await env.RESULTS.get(fileKey(mk, id, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); if (o) cj = JSON.parse(await o.text()); } catch {}
       const pk = pickBoard(cj, want); if (!pk) continue;
       out.push({ art: id, mk, ...pk, ver: m.ver, pref: want, bxt: await token(env.BETTER_AUTH_SECRET, mk, id, Date.now() + 15 * 60_000) });
@@ -262,7 +264,7 @@ export async function thumbJobs(env: Env & { BETTER_AUTH_SECRET: string }, limit
 /** PUT /api/admin/mthumb/<mk>/<id>?ver=&pref= — 찍은 JPEG 저장. 표지가 없으면 404, 그 사이 새 판을 올렸으면(ver 다름) 409(버림 — 다음 일감에서 다시) */
 export async function putThumb(env: Env, mk: string, id: string, body: ArrayBuffer, ver: string, pref: string): Promise<[number, object]> {
   if (!/^[0-9a-f]{32}$/.test(mk) || !ID.test(id)) return [404, { error: "없는 캔버스" }];
-  const m = await metaOf(env, mk, id); if (!m || m.kind !== "canvas") return [404, { error: "없는 캔버스" }];
+  const m = await metaOf(env, mk, id); if (!m) return [404, { error: "없는 캔버스" }];
   if (m.ver !== ver) return [409, { error: "그 사이 새 판을 올렸어요" }];
   const b = new Uint8Array(body);
   if (b.length < 2000 || b.length > THUMB_MAX || b[0] !== 0xff || b[1] !== 0xd8) return [400, { error: "JPEG 가 아니에요" }];
