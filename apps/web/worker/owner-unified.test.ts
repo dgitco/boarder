@@ -323,11 +323,12 @@ test("켬: nodereopen · 할 일은 canon 회원 길(다리 0), 주인 메일 �
 test("켬: 하네스 MCP 읽기(조용한 POST)는 canon 의 나눠 쓰는 load 를 안 버림 — 쓰기는 버림", async () => {
   const t = await setup(), ag = { authorization: `Bearer ${ATOK}` };
   await t.flag("owner_unified", true);
-  const p1 = MB.loadRead(t.D1, OWNER, t.ctx);
+  MB.loadRead(t.D1, OWNER, t.ctx); const p1 = MB.readShareOf(OWNER);   // 나눠 쓰는 판(맡김 칸) — loadRead 는 기다림 상한으로 감싸 매번 새 Promise
+  assert.ok(p1, "나눠 쓰는 판이 맡겨짐");
   await t.req("POST", "/api/agent/promise_list", {}, ag);
-  assert.equal(MB.loadRead(t.D1, OWNER, t.ctx), p1, "읽기 도구 뒤에 나눠 쓰던 load 가 버려짐");
+  assert.equal(MB.readShareOf(OWNER), p1, "읽기 도구 뒤에 나눠 쓰던 load 가 버려짐");
   await t.req("POST", "/api/agent/inbox_status", { text: "쓰기" }, ag);
-  assert.notEqual(MB.loadRead(t.D1, OWNER, t.ctx), p1, "쓰기 뒤엔 버림");
+  assert.notEqual(MB.readShareOf(OWNER), p1, "쓰기 뒤엔 버림");
 });
 
 const ROOT = "1703300000.000100", REPLY = "1703300000.000200";

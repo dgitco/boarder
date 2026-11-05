@@ -159,11 +159,20 @@ const LOG_MAX = 600;
 const FRONT_NAMES = "SELECT json_extract(p.value, '$.name') FROM node_setting s, json_each(CASE WHEN json_valid(s.data) THEN CASE WHEN json_type(s.data, '$.front_door.pairs') = 'array' THEN json_extract(s.data, '$.front_door.pairs') END END) p WHERE s.owner = ?";
 type Ctx = { waitUntil(p: Promise<unknown>): void };
 const READ_TTL = 400, readShare = new Map<string, { at: number; p: ReturnType<typeof load> }>();
+export const readOpts = { wait: 2_000 };   // 시험이 바꿔 끼움
+export const readShareOf = (me: string) => readShare.get(me)?.p;   // 시험: 나눠 쓰는 판이 그대로인지(loadRead 는 상한으로 감싸 매번 새 Promise)
+function shareWait<T>(p: Promise<T>, own: () => Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let done = false;
+    const t = setTimeout(() => { if (done) return; done = true; own().then(resolve, reject); }, ms);
+    p.then(v => { if (done) return; done = true; clearTimeout(t); resolve(v); }, e => { if (done) return; done = true; clearTimeout(t); reject(e); });
+  });
+}
 // ver(owner_ver 번호)를 주면 같은 번호를 읽은 뒤 시작한 읽기끼리만 나눔 — 그 판은 그 번호보다 새것이라 번호 열쇠로 Cache API 에 넣어도 낡지 않음
 export function loadRead(db: D1Database, me: string, ctx?: Ctx | null, ver?: number): ReturnType<typeof load> {
   if (!ctx) return load(db, me);
   const k = ver === undefined ? me : `${me}#${ver}`, now = Date.now(), hit = readShare.get(k);
-  if (hit && now - hit.at < READ_TTL) return hit.p;
+  if (hit && now - hit.at < READ_TTL) return shareWait(hit.p, () => load(db, me), readOpts.wait);
   if (readShare.size > 500) readShare.clear();
   const p = load(db, me); readShare.set(k, { at: now, p });
   ctx.waitUntil(p.catch(() => { if (readShare.get(k)?.p === p) readShare.delete(k); }));   // 실패는 나눠 주지 않음(다음 요청이 새로)
@@ -173,17 +182,16 @@ export async function loadShared(db: D1Database, me: string, ctx?: Ctx | null): 
   return loadRead(db, me, ctx);
 }
 export function loadForget(me: string) { const m = me.toLowerCase(); for (const k of [...readShare.keys()]) if (k === m || k.startsWith(m + "#")) readShare.delete(k); }
-const GONE_TTL = 60_000, GONE_FRESH = 120_000, goneMemo = new Map<string, { at: number; p: Promise<R[]> }>();
+const GONE_TTL = 60_000, GONE_FRESH = 120_000, goneMemo = new Map<string, { at: number; v: R[] }>();
 const IMP_COLS = "key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle";
-export function goneForget(me: string) { goneMemo.delete(me.toLowerCase()); }   // 시험용: 사라진 시각을 되돌려 적은 뒤 맡김 비우기(운영은 60초 · 2분 새 읽기로 빈틈 없음)
-function goneRows(db: D1Database, me: string): Promise<R[]> {
+export function goneForget(me: string) { goneMemo.delete(me.toLowerCase()); }
+async function goneRows(db: D1Database, me: string): Promise<R[]> {
   const k = me.toLowerCase(), now = Date.now(), m = goneMemo.get(k);
-  if (m && now - m.at < GONE_TTL) return m.p;
+  if (m && now - m.at < GONE_TTL) return m.v;
   for (const [kk, v] of goneMemo) if (now - v.at >= GONE_TTL) goneMemo.delete(kk);
   if (goneMemo.size > 500) goneMemo.clear();
-  const p = db.prepare(`SELECT ${IMP_COLS} FROM imp_item WHERE owner = ? AND gone_at > ?`).bind(me, now - 24 * 3600_000).all().then(r => r.results as R[]);
-  goneMemo.set(k, { at: now, p }); p.catch(() => { if (goneMemo.get(k)?.p === p) goneMemo.delete(k); });   // 실패는 맡기지 않음
-  return p;
+  const v = (await db.prepare(`SELECT ${IMP_COLS} FROM imp_item WHERE owner = ? AND gone_at > ?`).bind(me, now - 24 * 3600_000).all()).results as R[];   // 실패면 throw — 맡기지 않음
+  goneMemo.set(k, { at: now, v }); return v;
 }
 let harnessKey = "";
 export const setHarnessKey = (k: string) => { harnessKey = k; };
@@ -191,6 +199,7 @@ export async function load(db: D1Database, me: string, readOnly = false) {   // 
   if (!readOnly) await closeStaleConnect(db, me);
   const tkP = tokenRows(db, me);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
   const goneP = goneRows(db, me);
+  goneP.catch(() => {});   // 실패는 아래 await 가 던짐 — batch 가 먼저 실패해도 처리 안 된 거부로 남지 않게
   const [nd, mi, it, lg, cd, dr, ew, ns, pw, mb, cx, rvd, hw] = await db.batch([
     db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ? OR COALESCE(NULLIF(pinned_name, ''), name) IN (${FRONT_NAMES})) ORDER BY updated_at DESC`).bind(me, Date.now() - 24 * 3600_000, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),

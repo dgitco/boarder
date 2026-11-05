@@ -10,7 +10,7 @@ register("data:text/javascript," + encodeURIComponent(`export async function res
   return n(s, c);
 }`));
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
-const { load, loadRead, loadForget, get } = await import("./member-board.ts");
+const { load, loadRead, loadForget, get, readOpts } = await import("./member-board.ts");
 
 const MIG = new URL("../migrations/", import.meta.url);
 function d1() {
@@ -120,4 +120,18 @@ test("노드 글 하나(GET /api/chat/n:<노드>/<ts>, 「읽지 않음」이 �
   assert.equal((await call(null))?.status, 200); const noCtx = count() - n;
   assert.equal(noCtx - withCtx, 1, "ctx 없으면 판을 한 번 더 읽음");
   loadForget(ME);
+});
+
+test("loadRead: 나눠 받은 판이 상한(readOpts.wait) 안에 안 오면 이 요청에서 새로 읽음 — 만든 요청이 끊겨도 안 매달림", async () => {
+  const { D1, count } = d1(), keep = readOpts.wait, who = "hang@example.com";
+  try {
+    readOpts.wait = 30;
+    let release: (() => void) | null = null;
+    const stuck = { ...D1, batch: (ss: any[]) => new Promise<any>(res => { release = () => res((D1 as any).batch(ss)); }) } as unknown as D1Database;
+    const first = loadRead(stuck, who, CTX);   // 이 판은 안 끝남(끊긴 요청 흉내)
+    const second = await loadRead(D1, who, CTX);   // 같은 사람 0.4초 안 — 나눠 받되 상한 뒤 새로 읽음
+    assert.ok(second && (second as any).byId, "상한 뒤 제 요청에서 읽은 판");
+    assert.equal(count(), 1, "새로 읽은 것은 한 번");
+    release!(); await first;
+  } finally { readOpts.wait = keep; loadForget(who); }
 });
