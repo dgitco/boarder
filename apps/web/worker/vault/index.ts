@@ -1,3 +1,4 @@
+import { isAdmin } from "../who";
 export { sealBlob, openBlob, sealedSize, BLOB_CHUNK, blobInfo, openBlobRange, type BlobInfo } from "./blob";
 
 export type VaultEnv = {
@@ -80,6 +81,8 @@ async function flagOn(env: VaultEnv, name: string) {
   return on;
 }
 export async function envelopeOn(env: VaultEnv, owner: string | null): Promise<boolean> {
+  // 주인 메일(열쇠 이전 뒤 canon 열쇠 · 엔진 DO 기기 주인)은 스위치 이름이 「envelope:owner」 하나 — engine.ts flagOwner 와 같게
+  if (owner && isAdmin(env as { ALLOW_EMAILS?: string }, owner)) owner = "";
   const on = (await flagOn(env, "envelope")) || (owner !== null && !owner.startsWith("x:") && (await flagOn(env, envelopeFlag(owner))));
   // 닫힌 채 실패: 스위치는 켰는데 KEK 비밀이 없으면 평문으로 조용히 쓰지 않고 던짐(쓰기가 크게 실패 — 되돌리기 = 스위치 끔)
   if (on && !env.DATA_KEK_CUR) throw new VaultError("envelope 스위치가 켜졌는데 DATA_KEK_CUR 가 없어요", "no_kek");

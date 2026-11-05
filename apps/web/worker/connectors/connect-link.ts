@@ -2,6 +2,9 @@ import type { Context, Hono } from "hono";
 import { API_PRESETS } from "./apis";
 import { PRESETS } from "./presets";
 import { oauthApi, titleOf } from "./connect-card";
+import { readKeys } from "../who";
+// 주인 열쇠 옮기는 동안(who.ts readKeys) '' · canon 둘 다 — 늘 「owner IN (?, ?)」 에 둘(회원은 같은 메일 두 번)
+const kp = (env: unknown, k: string) => { const r = readKeys(env as { ALLOW_EMAILS?: string }, k); return [r[0], r[r.length - 1]]; };
 
 type Env = { DB: D1Database; PUBLIC_URL: string };
 type C = Context<{ Bindings: Env }>;
@@ -41,7 +44,7 @@ export function mountConnectLink(host: Hono<any>, h: Hooks) {
     }
     const me = h.key(c.env, d.owner), now = Date.now();
     if (reconnect) {
-      const row = await c.env.DB.prepare("SELECT service FROM connection WHERE owner = ? AND id = ?").bind(me, reconnect).first<{ service: string }>();
+      const row = await c.env.DB.prepare("SELECT service FROM connection WHERE owner IN (?, ?) AND id = ?").bind(...kp(c.env, me), reconnect).first<{ service: string }>();
       if (!row || row.service !== service) return c.json({ error: "reconnect: 내 연결이 아니거나 서비스가 달라요" }, 400, NOSTORE);
     }
     const token = newToken();
@@ -58,9 +61,9 @@ export function mountConnectLink(host: Hono<any>, h: Hooks) {
     const id = c.req.param("id");
     if (!/^[0-9a-f]{16}$/.test(id)) return c.json({ error: "id" }, 400, NOSTORE);
     const me = h.key(c.env, d.owner);
-    const r = await c.env.DB.prepare("SELECT service, label, created_at, expires_at, used_at FROM connect_link WHERE substr(hash, 1, 16) = ? AND owner = ? AND device_id = ?").bind(id, me, d.id).first<{ service: string; label: string; created_at: number; expires_at: number; used_at: number | null }>();
+    const r = await c.env.DB.prepare("SELECT service, label, created_at, expires_at, used_at FROM connect_link WHERE substr(hash, 1, 16) = ? AND owner IN (?, ?) AND device_id = ?").bind(id, ...kp(c.env, me), d.id).first<{ service: string; label: string; created_at: number; expires_at: number; used_at: number | null }>();
     if (!r) return c.json({ error: "없는 링크" }, 404, NOSTORE);
-    const conn = r.used_at ? await c.env.DB.prepare("SELECT 1 FROM connection WHERE owner = ? AND service = ? AND label = ? AND updated_at >= ? AND status = 'ok'").bind(me, r.service, r.label, r.used_at).first() : null;   // 「계속」 누른 뒤에 갱신된 연결만(옛 연결의 토큰 갱신을 완료로 오판하지 않음)
+    const conn = r.used_at ? await c.env.DB.prepare("SELECT 1 FROM connection WHERE owner IN (?, ?) AND service = ? AND label = ? AND updated_at >= ? AND status = 'ok'").bind(...kp(c.env, me), r.service, r.label, r.used_at).first() : null;   // 「계속」 누른 뒤에 갱신된 연결만(옛 연결의 토큰 갱신을 완료로 오판하지 않음)
     return c.json({ state: conn ? "connected" : r.used_at ? "opened" : r.expires_at < Date.now() ? "expired" : "waiting", service: r.service }, 200, NOSTORE);
   });
 
@@ -70,7 +73,7 @@ export function mountConnectLink(host: Hono<any>, h: Hooks) {
     if (!TOKEN.test(token)) return page("<h2>링크가 맞지 않아요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 404);
     const me = await h.human(c);
     if (!me) return page(`<h2>먼저 로그인해요</h2><p class=sub>보더에 로그인한 브라우저에서 이 링크를 다시 열어요.</p><p><a href="${esc(c.env.PUBLIC_URL)}">보더 열기</a></p>`, 401);
-    const r = await c.env.DB.prepare("SELECT device_name, service, label, used_at, expires_at FROM connect_link WHERE hash = ? AND owner = ?").bind(await sha(token), h.key(c.env, me)).first<{ device_name: string; service: string; label: string; used_at: number | null; expires_at: number }>();
+    const r = await c.env.DB.prepare("SELECT device_name, service, label, used_at, expires_at FROM connect_link WHERE hash = ? AND owner IN (?, ?)").bind(await sha(token), ...kp(c.env, h.key(c.env, me))).first<{ device_name: string; service: string; label: string; used_at: number | null; expires_at: number }>();
     if (!r) return page("<h2>링크가 맞지 않아요</h2><p class=sub>이 계정으로 만든 링크가 아니에요. 링크를 만든 계정으로 로그인했는지 봐요.</p>", 404);
     if (r.used_at || r.expires_at < Date.now()) return page("<h2>이미 쓰였거나 만료된 링크예요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 410);
     return page(`<h2>${esc(titleOf(r.service))} 연결</h2><p>기기 「${esc(r.device_name)}」 이 ${esc(titleOf(r.service))}${r.label ? ` (${esc(r.label)})` : ""} 연결을 요청했어요. 내가 시킨 일이 아니면 닫아요.</p><p><button id=go>계속</button></p><p id=msg class=sub></p>
@@ -94,7 +97,7 @@ b.onclick=async()=>{b.disabled=true;msg.textContent='연결 화면으로 가는 
     const b = Object(await c.req.json().catch(() => ({}))) as { token?: unknown };
     const token = String(b.token ?? ""); if (!TOKEN.test(token)) return c.json({ error: "링크가 맞지 않아요" }, 404, NOSTORE);
     const now = Date.now();
-    const u = await c.env.DB.prepare("UPDATE connect_link SET used_at = NULL WHERE hash = ? AND owner = ? AND used_at IS NOT NULL AND used_at > ? AND expires_at > ?").bind(await sha(token), h.key(c.env, me), now - 2 * 60_000, now).run();
+    const u = await c.env.DB.prepare("UPDATE connect_link SET used_at = NULL WHERE hash = ? AND owner IN (?, ?) AND used_at IS NOT NULL AND used_at > ? AND expires_at > ?").bind(await sha(token), ...kp(c.env, h.key(c.env, me)), now - 2 * 60_000, now).run();
     return c.json({ ok: !!u.meta.changes }, 200, NOSTORE);
   });
 
@@ -105,7 +108,7 @@ b.onclick=async()=>{b.disabled=true;msg.textContent='연결 화면으로 가는 
     const b = Object(await c.req.json().catch(() => ({}))) as { token?: unknown };
     const token = String(b.token ?? ""); if (!TOKEN.test(token)) return c.json({ error: "링크가 맞지 않아요" }, 404, NOSTORE);
     const hash = await sha(token), now = Date.now();
-    const u = await c.env.DB.prepare("UPDATE connect_link SET used_at = ? WHERE hash = ? AND owner = ? AND used_at IS NULL AND expires_at > ? RETURNING service, label, reconnect").bind(now, hash, h.key(c.env, me), now).first<{ service: string; label: string; reconnect: string | null }>();
+    const u = await c.env.DB.prepare("UPDATE connect_link SET used_at = ? WHERE hash = ? AND owner IN (?, ?) AND used_at IS NULL AND expires_at > ? RETURNING service, label, reconnect").bind(now, hash, ...kp(c.env, h.key(c.env, me)), now).first<{ service: string; label: string; reconnect: string | null }>();
     if (!u) return c.json({ error: "이미 쓰였거나 만료됐거나 이 계정 링크가 아니에요" }, 410, NOSTORE);
     return c.json({ ok: true, service: u.service, label: u.label, reconnect: u.reconnect }, 200, NOSTORE);
   });

@@ -4,6 +4,7 @@ import { randomId } from "./seal";
 import { openSecret, sealSecret } from "../vault/secret";
 const SECRET = (id: string) => ({ tbl: "hook" as const, pk: id, col: "secret" as const });   // AAD pk = 훅 id(넣기 전에 만듦)
 import { maskText } from "../mcp/registry";
+import { readKeys } from "../who";
 
 type Env = { DB: D1Database; CONNECTOR_KEY?: string; PUBLIC_URL: string };
 type C = Context<{ Bindings: Env }>;
@@ -80,11 +81,13 @@ export function mountHooks(host: Hono<any>, who: Who, wake: Wake) {
     if (!c.env.CONNECTOR_KEY) return { err: c.json({ error: "준비 안 됨" }, 503) };
     return { w };
   };
-  const one = (c: C, owner: string) => c.env.DB.prepare("SELECT * FROM hook WHERE owner = ? AND id = ?").bind(owner, c.req.param("id")).first<Row>();
+  // 주인 열쇠 옮기는 동안 '' · canon 둘 다(who.ts readKeys) — 고칠 때는 그 줄 열쇠(h.owner)로
+  const ks = (c: C, owner: string) => readKeys(c.env as { ALLOW_EMAILS?: string }, owner), qs = (n: number) => Array(n).fill("?").join(", ");
+  const one = (c: C, owner: string) => { const k = ks(c, owner); return c.env.DB.prepare(`SELECT * FROM hook WHERE owner IN (${qs(k.length)}) AND id = ?`).bind(...k, c.req.param("id")).first<Row>(); };
 
   app.get("/api/hooks", async c => {
     const m = await me(c); if (m.err) return m.err;
-    const r = await c.env.DB.prepare("SELECT * FROM hook WHERE owner = ? ORDER BY created_at").bind(m.w.owner).all<Row>();
+    const k = ks(c, m.w.owner), r = await c.env.DB.prepare(`SELECT * FROM hook WHERE owner IN (${qs(k.length)}) ORDER BY created_at`).bind(...k).all<Row>();
     return c.json({ hooks: r.results.map(h => view(h, c.env.PUBLIC_URL)) });
   });
   app.post("/api/hooks", async c => {
@@ -109,7 +112,7 @@ export function mountHooks(host: Hono<any>, who: Who, wake: Wake) {
     if (b.target !== undefined) { sets.push("target = ?"); vals.push(b.target); }
     if (typeof b.enabled === "boolean") { sets.push("enabled = ?"); vals.push(b.enabled ? 1 : 0); }
     if (!sets.length) return c.json({ error: "name · target · enabled" }, 400);
-    try { await c.env.DB.prepare(`UPDATE hook SET ${sets.join(", ")} WHERE owner = ? AND id = ?`).bind(...vals, m.w.owner, h.id).run(); } catch { return c.json({ error: "그 이름은 이미 있어요" }, 409); }
+    try { await c.env.DB.prepare(`UPDATE hook SET ${sets.join(", ")} WHERE owner = ? AND id = ?`).bind(...vals, h.owner, h.id).run(); } catch { return c.json({ error: "그 이름은 이미 있어요" }, 409); }
     return c.json({ hook: view((await one(c, m.w.owner))!, c.env.PUBLIC_URL) });
   });
   app.post("/api/hooks/:id/rotate", async c => {
@@ -174,13 +177,17 @@ async function readCapped(stream: ReadableStream<Uint8Array> | null, max: number
 }
 
 /** 에이전트 도구 hook_events · hook_event(읽기만) — 본문은 「믿지 않는 자료」 표시와 함께 */
-export async function hookEvents(db: D1Database, owner: string, name: string | undefined, limit: number) {
-  const r = await db.prepare(`SELECT e.id, h.name AS hook, e.kind, e.summary, e.delivered, e.at FROM hook_event e JOIN hook h ON h.id = e.hook_id WHERE e.owner = ?${name ? " AND h.name = ?" : ""} ORDER BY e.at DESC LIMIT ?`)
-    .bind(...(name ? [owner, name, limit] : [owner, limit])).all();
+// owner = 열쇠 하나 또는 여럿(주인 열쇠 옮기는 동안 readKeys — 부르는 쪽이 env 로 만듦)
+const keyList = (owner: string | string[]) => Array.isArray(owner) ? (owner.length ? owner : [""]) : [owner];
+export async function hookEvents(db: D1Database, owner: string | string[], name: string | undefined, limit: number) {
+  const k = keyList(owner), q = k.map(() => "?").join(", ");
+  const r = await db.prepare(`SELECT e.id, h.name AS hook, e.kind, e.summary, e.delivered, e.at FROM hook_event e JOIN hook h ON h.id = e.hook_id WHERE e.owner IN (${q})${name ? " AND h.name = ?" : ""} ORDER BY e.at DESC LIMIT ?`)
+    .bind(...(name ? [...k, name, limit] : [...k, limit])).all();
   return { events: r.results };
 }
-export async function hookEvent(db: D1Database, owner: string, id: string) {
-  const e = await db.prepare("SELECT e.id, h.name AS hook, e.kind, e.summary, e.body, e.at FROM hook_event e JOIN hook h ON h.id = e.hook_id WHERE e.owner = ? AND e.id = ?").bind(owner, id).first<Record<string, unknown>>();
+export async function hookEvent(db: D1Database, owner: string | string[], id: string) {
+  const k = keyList(owner);
+  const e = await db.prepare(`SELECT e.id, h.name AS hook, e.kind, e.summary, e.body, e.at FROM hook_event e JOIN hook h ON h.id = e.hook_id WHERE e.owner IN (${k.map(() => "?").join(", ")}) AND e.id = ?`).bind(...k, id).first<Record<string, unknown>>();
   if (!e) throw new Error("없는 사건");
   const body = String(e.body || ""), parts: string[] = [];
   for (let i = 0; i < body.length; i += 3800) parts.push(body.slice(i, i + 3800));   // 도구 결과는 글마다 4000자에서 잘림 — 조각으로

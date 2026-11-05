@@ -1,4 +1,5 @@
 import { isAdmin } from "./who";
+import { f7On } from "./ledger";
 import { boardHead, stripHead } from "./board-head";
 import { DurableObject } from "cloudflare:workers";
 import { bumpMember } from "./live";
@@ -85,9 +86,10 @@ export async function ownerCfg(db: D1Database, owner: string) {
 }
 // 엔진이 붙어 있는 그 사람 기기(가장 최근 연락, 2분 안)
 export async function liveDevice(db: D1Database, owner: string, forPrimary = false) {
-  return (await db.prepare(`SELECT id FROM device WHERE owner = ? AND revoked_at IS NULL AND scope = 'full' AND engine_at > ?${forPrimary ? " AND coalesce(json_extract(engine, '$.primary'), 1) != 0" : ""} ORDER BY engine_at DESC LIMIT 1`).bind(owner, Date.now() - 120_000).first<{ id: string }>())?.id || null;
+  const scope = (await f7On(db, "owner_device")) ? "scope IN ('full', 'harness')" : "scope = 'full'";
+  return (await db.prepare(`SELECT id FROM device WHERE owner = ? AND revoked_at IS NULL AND ${scope} AND engine_at > ?${forPrimary ? " AND coalesce(json_extract(engine, '$.primary'), 1) != 0" : ""} ORDER BY engine_at DESC LIMIT 1`).bind(owner, Date.now() - 120_000).first<{ id: string }>())?.id || null;
 }
-async function deviceOk(db: D1Database, device: string, owner: string) {
+export async function deviceOk(db: D1Database, device: string, owner: string) {   // 시험이 부름(owner-unify.test.ts)
   const r = await db.prepare("SELECT d.revoked_at, d.scope, (SELECT 1 FROM invite WHERE email = d.owner) inv FROM device d WHERE d.id = ? AND d.owner = ?").bind(device, owner).first<{ revoked_at: number | null; scope: string | null; inv: number | null }>();
   return !!r && !r.revoked_at && (!!r.inv || r.scope === "harness");
 }

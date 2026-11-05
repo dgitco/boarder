@@ -2,6 +2,7 @@ import { redact } from "../session/redact";
 import { z } from "zod";
 import type { Tool } from "./codemode";
 import { roleEditSchema } from "../role-edit";
+import { readKeys } from "../who";
 import { shape, type View } from "./registry";
 import type { Hosted } from "../hosted";
 
@@ -242,7 +243,8 @@ async function raw_(ctx: Ctx, name: string, a: Record<string, any>): Promise<unk
   if (name === "hook_events" || name === "hook_event") {
     if (!ctx.conn) throw new Error("웹훅을 읽을 수 없는 토큰");
     const { hookEvents, hookEvent } = await import("../connectors/hooks");
-    return name === "hook_events" ? hookEvents(ctx.conn.env.DB, ctx.conn.owner, a.hook, a.limit) : hookEvent(ctx.conn.env.DB, ctx.conn.owner, a.event_id);
+    const ks = readKeys(ctx.conn.env as { ALLOW_EMAILS?: string }, ctx.conn.owner);   // 주인 열쇠 옮기는 동안 '' · canon 둘 다(who.ts)
+    return name === "hook_events" ? hookEvents(ctx.conn.env.DB, ks, a.hook, a.limit) : hookEvent(ctx.conn.env.DB, ks, a.event_id);
   }
   if (name === "feedback_send") {   // 주인 창이든 회원 창이든 D1 로(다리 · Slack 안 감) — owner 는 토큰이 정함
     if (!ctx.conn) throw new Error("피드백을 쓸 수 없는 토큰");

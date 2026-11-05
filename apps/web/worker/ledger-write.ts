@@ -18,7 +18,7 @@ type Tok = { k: "w" | "q" | "s" | "n" | "p" | "sp"; v: string };
 
 const BAD = new Set(["attach", "detach", "pragma", "vacuum", "create", "drop", "alter", "begin", "commit", "rollback", "savepoint", "release", "reindex", "analyze", "window"]);
 const ENDS = new Set(["where", "group", "order", "limit", "having", "window", "union", "except", "intersect", "returning", "set", "values", "select", "default"]);
-export const DENY_BASE = ["_cf_metadata", "account", "agent_token", "ai_session", "board_card", "board_log", "cli_profile", "connection", "connection_pending", "d1_migrations", "device", "device_code", "device_metric", "device_metric_hist", "engine_cmd", "engine_owner", "engine_window", "f7_flag", "feedback", "hook", "hook_event", "imp_audit", "imp_item", "imp_proposal", "invite", "member_bot", "mnode", "mnode_item", "node_setting", "role", "role_draft", "session", "sqlite_sequence", "tool_desc", "tool_state", "user", "user_pref", "verification"];
+export const DENY_BASE = ["_cf_metadata", "account", "agent_token", "ai_session", "board_card", "board_log", "cli_profile", "connection", "connection_pending", "d1_migrations", "device", "device_code", "device_metric", "device_metric_hist", "engine_cmd", "engine_owner", "engine_window", "f7_flag", "feedback", "hook", "hook_event", "imp_audit", "imp_item", "imp_proposal", "invite", "member_bot", "mig_owner", "mnode", "mnode_item", "node_setting", "role", "role_draft", "session", "sqlite_sequence", "tool_desc", "tool_state", "user", "user_pref", "verification"];
 const COLS = new Set(Object.values(S).flatMap(s => s.cols.map(c => c.toLowerCase())));
 const TABLEISH = new Set(["from", "join", "into", "update", "in", "table", "on"]);
 const TVF = new Set(["json_each", "json_tree"]);

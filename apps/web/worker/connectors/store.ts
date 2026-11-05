@@ -6,6 +6,7 @@ import { AuthError, forget, listTools, rpc, type Remote, type RemoteTool } from 
 import { exposedName, SEP } from "./naming";
 import { API_PRESETS, GoogleTokenError, googleApp, googleToken, githubApp, githubAppToken, runApi, slackApp, slackToken, toolsFor, type ApiSpec } from "./apis";
 import { accountFromText, whoamiFor } from "./identity";
+import { ownerIn } from "../who";
 
 export type Env = { DB: D1Database; CONNECTOR_KEY?: string; [k: string]: unknown };
 export type Row = {
@@ -29,16 +30,23 @@ export const TOOLS_TTL = 10 * 60_000;
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
 export const prefixOf = (r: Pick<Row, "service" | "label">) => r.label ? `${r.service}${SEP}${r.label}` : r.service;
 
+// 주인 열쇠 옮기는 동안(who.ts readKeys): 주인 열쇠('' · canon)면 두 열쇠 줄을 다 봄. 줄의 owner 칸이 그 줄 봉함 DEK 주인 — 쓰기 · 봉하기는 늘 row.owner 로
+const oin = (env: Env, owner: string) => ownerIn(env as { ALLOW_EMAILS?: string }, owner);
 export async function list(env: Env, owner: string): Promise<Row[]> {
-  return (await env.DB.prepare("SELECT * FROM connection WHERE owner = ? ORDER BY service, label").bind(owner).all<Row>()).results;
+  const w = oin(env, owner);
+  return (await env.DB.prepare(`SELECT * FROM connection WHERE ${w.sql} ORDER BY service, label`).bind(...w.args).all<Row>()).results;
 }
 export async function get(env: Env, owner: string, id: string): Promise<Row | null> {
-  return env.DB.prepare("SELECT * FROM connection WHERE owner = ? AND id = ?").bind(owner, id).first<Row>();
+  const w = oin(env, owner);
+  return env.DB.prepare(`SELECT * FROM connection WHERE ${w.sql} AND id = ?`).bind(...w.args, id).first<Row>();
 }
 
 /** 새 연결 또는 같은 service · label 을 다시 연결(토큰만 바꿈) */
-export async function upsert(env: Env, owner: string, v: { service: string; label: string; kind: Row["kind"]; url: string; auth: Auth; account?: string; read_only?: boolean }): Promise<string> {
+export async function upsert(env: Env, key: string, v: { service: string; label: string; kind: Row["kind"]; url: string; auth: Auth; account?: string; read_only?: boolean }): Promise<string> {
   const now = Date.now();
+  // 옮기는 동안: 같은 service · label 줄이 다른 주인 열쇠('' ↔ canon)로 이미 있으면 그 줄 열쇠로 씀 — 두 줄로 갈라지지 않고 봉함 DEK 도 그 줄 것 그대로
+  const w = oin(env, key), same = w.args.length > 1 ? await env.DB.prepare(`SELECT owner FROM connection WHERE ${w.sql} AND service = ? AND label = ? ORDER BY owner = ? DESC LIMIT 1`).bind(...w.args, v.service, v.label, key).first<{ owner: string }>() : null;
+  const owner = same ? same.owner : key;
   let id = "c_" + crypto.randomUUID().replace(/-/g, "").slice(0, 20);
   // 봉함 켜짐: 같은 service · label 줄이 있으면 ON CONFLICT 가 그 옛 id 를 남김 → AAD 의 pk 가 맞게 그 id 로 봉함
   if (await envelopeOn(env as unknown as VaultEnv, owner)) {
@@ -57,7 +65,7 @@ export async function upsert(env: Env, owner: string, v: { service: string; labe
   // 읽고 넣는 사이에 다른 요청이 같은 줄을 먼저 만들었으면(드묾) 남은 id 로 다시 봉함 — 그새 또 바뀌었으면 그쪽이 이김(auth = ? 맞을 때만)
   if (r!.id !== id && sealed.startsWith("v2.")) await env.DB.prepare("UPDATE connection SET auth = ? WHERE id = ? AND auth = ?").bind(await sealAuth(env, { owner, id: r!.id }, v.auth), r!.id, sealed).run();
   forget(r!.id);
-  try { await env.DB.prepare("UPDATE board_card SET state = 'closed', done = '연결했어요' WHERE owner = ? AND state = 'open' AND kind LIKE ? ESCAPE '\\'").bind(owner, `connect:${v.service}|%`).run(); } catch {}   // 「연결하기」 카드(connect-card.ts) 닫기
+  try { await env.DB.prepare("UPDATE board_card SET state = 'closed', done = '연결했어요' WHERE owner = ? AND state = 'open' AND kind LIKE ? ESCAPE '\\'").bind(key, `connect:${v.service}|%`).run(); } catch {}   // 「연결하기」 카드(connect-card.ts) 닫기
   return r!.id;
 }
 
@@ -79,10 +87,21 @@ export function obLive(env: Env, row: Pick<Row, "source">): boolean {
  * 이미 쓴 갱신 토큰을 다시 보냄 — 돌려 쓰는 서버(Slack · GitHub · OAuth 2.1)는 재사용을 잡아 토큰 줄 전체를 폐기함
  */
 async function newer(env: Env, row: Row): Promise<Auth | null> {
-  const fresh = await env.DB.prepare("SELECT auth FROM connection WHERE id = ?").bind(row.id).first<{ auth: string }>();
+  const fresh = await env.DB.prepare("SELECT auth, owner FROM connection WHERE id = ?").bind(row.id).first<{ auth: string; owner: string }>();
   if (!fresh || fresh.auth === row.auth) return null;
-  row.auth = fresh.auth;
+  row.auth = fresh.auth; row.owner = fresh.owner;
   return openAuth(env, row, fresh.auth);
+}
+async function writeAuth(env: Env, row: Row, next: Auth) {
+  for (let i = 0; i < 3; i++) {
+    const sealed = await sealAuth(env, row, next);
+    const r = await env.DB.prepare("UPDATE connection SET auth = ?, status = 'ok', error = NULL, updated_at = ? WHERE id = ? AND owner = ?").bind(sealed, Date.now(), row.id, row.owner).run();
+    if (r.meta.changes) { row.auth = sealed; return; }
+    const cur = await env.DB.prepare("SELECT owner FROM connection WHERE id = ?").bind(row.id).first<{ owner: string }>();
+    if (!cur) return;   // 그사이 끊음 — 쓸 줄이 없음
+    row.owner = cur.owner;
+  }
+  throw new Error("연결 열쇠가 바뀌는 중이에요 — 잠시 뒤 다시");
 }
 
 async function doRefresh(env: Env, row: Row, a: Auth): Promise<Auth> {
@@ -93,14 +112,12 @@ async function doRefresh(env: Env, row: Row, a: Auth): Promise<Auth> {
       const n = await newer(env, row); if (n) { if (!n.expires_at || n.expires_at > Date.now() + 60_000) return n; a = n; }
       const t = await refresh(a.token_endpoint!, a.refresh_token!, a.resource || row.url, clientOf(env, row, a));
       const next = { ...a, access_token: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
-      const sealed = await sealAuth(env, row, next);
-      await env.DB.prepare("UPDATE connection SET auth = ?, status = 'ok', error = NULL, updated_at = ? WHERE id = ?").bind(sealed, Date.now(), row.id).run();
-      row.auth = sealed;
+      await writeAuth(env, row, next);
       return next;
     } catch (e) {
       // 다른 isolate 가 먼저 갱신했으면 그 토큰을 씀
-      const fresh = await env.DB.prepare("SELECT auth FROM connection WHERE id = ?").bind(row.id).first<{ auth: string }>();
-      if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; return openAuth(env, row, fresh.auth); }
+      const fresh = await env.DB.prepare("SELECT auth, owner FROM connection WHERE id = ?").bind(row.id).first<{ auth: string; owner: string }>();
+      if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; row.owner = fresh.owner; return openAuth(env, row, fresh.auth); }
       const dead = e instanceof TokenError && (["invalid_grant", "bad_refresh_token", "invalid_client", "unauthorized_client"].includes(e.code || "") || (e.status >= 400 && e.status < 500 && e.status !== 429));
       await mark(env, row.id, dead ? "expired" : "error", dead ? "다시 연결이 필요해요" : (e instanceof Error ? e.message : String(e)).slice(0, 200));
       throw dead ? new AuthError("refresh") : e;
@@ -178,13 +195,11 @@ async function googleKey(env: Env, row: Row): Promise<string | undefined> {
       const n = await newer(env, row); if (n) { if (n.expires_at && n.expires_at > Date.now() + 60_000) return n; a = n; }
       const t = slack ? await slackToken(app, a.refresh_token!) : github ? await githubAppToken(app, a.refresh_token!) : await googleToken(app, { grant_type: "refresh_token", refresh_token: a.refresh_token! });
       const next: Auth = { ...a, key: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
-      const sealed = await sealAuth(env, row, next);
-      await env.DB.prepare("UPDATE connection SET auth = ?, status = 'ok', error = NULL, updated_at = ? WHERE id = ?").bind(sealed, Date.now(), row.id).run();
-      row.auth = sealed;
+      await writeAuth(env, row, next);
       return next;
     } catch (e) {
-      const fresh = await env.DB.prepare("SELECT auth FROM connection WHERE id = ?").bind(row.id).first<{ auth: string }>();
-      if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; return openAuth(env, row, fresh.auth); }
+      const fresh = await env.DB.prepare("SELECT auth, owner FROM connection WHERE id = ?").bind(row.id).first<{ auth: string; owner: string }>();
+      if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; row.owner = fresh.owner; return openAuth(env, row, fresh.auth); }
       const dead = e instanceof GoogleTokenError && (e.code === "invalid_grant" || (e.status >= 400 && e.status < 500 && e.status !== 429));
       await mark(env, row.id, dead ? "expired" : "error", dead ? "다시 연결이 필요해요" : (e instanceof Error ? e.message : String(e)).slice(0, 200));
       throw dead ? new AuthError(`${prefixOf(row)} 연결이 끊겼어요 — 보더 설정에서 다시 연결`) : e;
@@ -259,7 +274,7 @@ export async function probeAccount(env: Env, row: Row): Promise<string | null> {
 
 /** 끊기: 줄을 지움(원격 폐기는 routes 가 먼저 시도) */
 export async function remove(env: Env, owner: string, id: string) {
-  const r = await env.DB.prepare("DELETE FROM connection WHERE owner = ? AND id = ?").bind(owner, id).run();
+  const w = oin(env, owner), r = await env.DB.prepare(`DELETE FROM connection WHERE ${w.sql} AND id = ?`).bind(...w.args, id).run();
   forget(id);
   return (r.meta.changes || 0) > 0;
 }

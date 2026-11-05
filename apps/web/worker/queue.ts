@@ -1,4 +1,4 @@
-import { dataKey } from "./who";
+import { legacyKey } from "./who";
 import type { Context, Next } from "hono";
 import { isOwner, type Env as AuthEnv } from "./auth";
 import type { BoardSnap } from "./board";
@@ -19,7 +19,7 @@ const ridOf = (env: QEnv, email: string) => {
 };
 // 남긴 답 몸통(rids.body — 쓰기 답 원문) 봉함(f7_flag envelope): 그 사람 DEK(주인 ''), AAD pk = rid. 꺼짐이면 base64 그대로 · 읽기는 꼴로 가름
 const ve = (env: QEnv) => env as unknown as VaultEnv;
-export const dekOwner = (env: QEnv, email: string) => dataKey(env, email);
+export const dekOwner = (env: QEnv, email: string) => legacyKey(env, email);   // 옛 열쇠 그대로(주인 '') — rid 칸 · 이미 봉한 몸통이 이 DEK 라 열쇠 이전(who.ts owner_key_canon)과 따로
 export const RB = (rid: string) => ({ tbl: "rids", pk: rid, col: "body" });
 /** 그 사람의 rid 칸 DO(옮기기 · migrate.ts 가 씀) */
 export const ridCell = (env: QEnv, email: string) => ridOf(env, email);

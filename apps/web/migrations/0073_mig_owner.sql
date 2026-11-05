@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS mig_owner (
+  tbl TEXT NOT NULL,
+  pk TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (tbl, pk)
+);

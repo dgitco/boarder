@@ -9,6 +9,7 @@ import { onboarding } from "./member-onboarding";
 import { legal } from "./legal";
 import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
 import * as W from "./who";
+import * as OK from "./owner-key";
 import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, type Bot } from "./install";
 import { BUNDLE_KEYS } from "./harness-bundles";
 import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
@@ -99,6 +100,8 @@ import * as bxs from "./bxs";
 
 type Env = AuthEnv & PH & { SNAP: DurableObjectNamespace<import("./board").BoardSnap>; BRIDGE: DurableObjectNamespace<import("./bridge").Bridge>; RELAY_TOKEN: string; LEDGER_TOKEN?: string; ADMIN_TOKEN?: string; ENGINE: DurableObjectNamespace<Engine>; RESULTS: R2Bucket; CF_VERSION_METADATA: WorkerVersionMetadata; CONNECTOR_KEY?: string; SEARCH: DurableObjectNamespace<import("./search").Search>; AI: Ai; VOYAGE_API_KEY?: string; OB_EXPORT_SIGN_KEY?: string; OB_EXPORT_URL?: string; PUSH: DurableObjectNamespace<import("./push-do").Pusher>; VAPID_PRIVATE?: string; SOURCE_URL?: string; FAULT_OK?: string };
 const app = new Hono<{ Bindings: Env }>();
+// 주인 열쇠 스위치 owner_key_canon(who.ts dataKey): 요청마다 ledger 캐시(10초)에서 맞춤 — 캐시가 있으면 D1 을 안 부름(낡으면 뒤에서 다시 읽음)
+app.use("*", async (c, next) => { try { W.setCanonOn(!!(await ledger.f7Peek(c.env.DB, "owner_key_canon", p => c.executionCtx.waitUntil(p)))); } catch {} return next(); });
 const MC_PATHS = /^\/api\/(data|inbox|topics|chats|chat\/[^/]+(\/\d{9,11}\.\d{6})?)$/, MC_TTL = 10, MC_RATE = new Map<string, { at: number; n: number }>();
 app.use("*", async (c, next) => {
   const u = new URL(c.req.url), ck = c.req.header("cookie") || "";
@@ -686,6 +689,12 @@ async function cliDeviceOrOwnerWatch(c: Context<{ Bindings: Env }>) {
   const d = await cliDevice(c); if (d) return d;
   const w = await deviceOf(c, { watch: true }); return w && w.scope === "watch" && isOwner(c.env, w.owner) ? w : null;
 }
+async function boardDevice(c: Context<{ Bindings: Env }>) {
+  const on = await ledger.f7On(c.env.DB, "owner_device");
+  const d = await deviceOf(c, { harness: on }); if (!d) return null;
+  if (isOwner(c.env, d.owner)) return on && d.scope === "harness" ? d : null;
+  return d.scope === "full" && await member(c.env, d.owner) ? d : null;
+}
 // 설정 · 커넥터 · 비밀이 쓰는 줄 열쇠: 주인 = "" , 회원 = 메일(커넥터 who() 와 같음). 기기 목록은 주인 메일 넷 모두
 const cliKey = (env: Env, email: string) => W.dataKey(env, email);
 type CliManifest = { version: string; sha256: string };
@@ -1090,25 +1099,25 @@ async function cardTell(env: Env, me: string, k: { id?: string; wid: string | nu
   return true;
 }
 mountImport(app as never, {
-  device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
+  device: async c => boardDevice(c as never),
   member: async c => { const s = await signedIn(c as never); return s && !isOwner(c.env as never, s.user.email) ? s.user.email.toLowerCase() : null; },
   sameSite: c => sameSite(c as never),
   quiet: c => quiet(c.req.raw),
 });
 mountTaskConvo(app as never, {
-  device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
+  device: async c => boardDevice(c as never),
   member: async c => { const s = await signedIn(c as never); return s && !isOwner(c.env as never, s.user.email) ? s.user.email.toLowerCase() : null; },
   sameSite: c => sameSite(c as never),
   sync: (db, me, node) => memberBoard.syncTaskConvo(db, me, node),
 });
 // 옛 Slack 글 들여오기(slack-import.ts): 회원 기기만 — 들여오기와 같은 가림
-slackImport.mountSlackImport(app as never, { device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; } });
-memberCanvas.mountMemberCanvas(app as never, { device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; } });
+slackImport.mountSlackImport(app as never, { device: async c => boardDevice(c as never) });
+memberCanvas.mountMemberCanvas(app as never, { device: async c => boardDevice(c as never) });
 // Slack 들여오기를 커넥터로(slack-connector.ts, 온보딩 5층): 회원 기기만 — 그 회원의 Slack 봇 열쇠 연결로 서버가 읽어 회원 들여오기 길로 넣음
-mountSlackConnector(app as never, { device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; } });
+mountSlackConnector(app as never, { device: async c => boardDevice(c as never) });
 // 기기에서 커넥터 넣기(connect-request.ts, 온보딩 3층): 회원 기기(scope full)만 — 넣기는 그 회원 보드 카드의 허용 뒤
 connReq.mountConnectRequests(app as never, {
-  device: async c => { const d = await deviceOf(c as never); return d && !isOwner(c.env as never, d.owner) && await member(c.env as never, d.owner) ? d : null; },
+  device: async c => boardDevice(c as never),
   card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허용 — 늘 보냄(비밀 넣기와 같음)
 });
 mountConnectLink(app as never, {
@@ -1138,7 +1147,7 @@ devSettings.mountDeviceSettings(app as never, {
   setUnit: (env, me, unit) => setUnit(env as never, me, unit, "me"),
   uiPref: () => UI_PREF,
   nodeValues: { read: (env, me) => memberNodeVals(env as never, me), save: (env, me, raw) => saveNodeVals(env as never, me, raw) },
-  sessionSync: { get: (env, me) => sessions.syncOn(env as never, cliKey(env as never, me)), set: (env, me, on) => sessions.setSync(env as never, cliKey(env as never, me), on) },
+  sessionSync: { get: (env, me) => sessions.syncOn(env as never, W.legacyKey(env as never, me)), set: (env, me, on) => sessions.setSync(env as never, W.legacyKey(env as never, me), on) },   // 세션은 옛 열쇠 그대로(R2 조각 길 · 봉함 AAD 가 owner 에 묶임 — 열쇠 이전에서 뺌)
   flagsOff: env => (env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF,
   avatar: { get: (env, me) => memberBoard.myAvatar(env.DB, me), set: (env, me, face) => memberBoard.setMyAvatar(env.DB, me, face), clean: v => memberBoard.cleanFace(v), photoOk: (env, photo) => photoOk(env as never, photo), put: (env, body) => putPhoto(env as never, body) },
   card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허락 — 늘 보냄(커넥터 허용과 같음)
@@ -1375,7 +1384,7 @@ app.post("/api/me/feedback", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const me = s.user.email.toLowerCase();
   if (+(c.req.header("content-length") || 0) > 16_384) return c.json({ error: "너무 큼" }, 413);
-  const r = await addFeedback(c.env.DB, { owner: isOwner(c.env, me) ? "" : me, author: me, via: "web", test: chOf(c) === "test" }, await c.req.json().catch(() => ({})), flagOwner(c));
+  const r = await addFeedback(c.env.DB, { owner: W.dataKey(c.env, me), author: me, via: "web", test: chOf(c) === "test" }, await c.req.json().catch(() => ({})), flagOwner(c));
   return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
 });
 // 주인 감시 기기를 설정 · 커넥터 · 승인 CLI 기기(scope ownercli)로 올림 — 승인 링크(approval-link.ts ownercli.enable)에서 주인 본인 세션이 부름.
@@ -1796,8 +1805,8 @@ app.post("/api/admin/f7-flag", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ name?: string; on?: boolean; note?: string }>().catch(() => ({} as { name?: string; on?: boolean; note?: string }));
   if (/^envelope:/i.test(b.name || "")) b.name = b.name!.toLowerCase();
-  if (!/^(read|write|shadow|member)_[a-z]{2,20}$/.test(b.name || "")
-    && !/^envelope(:owner|:[^@\s:,]{1,64}@[^@\s:,]{1,190})?$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음> · envelope · envelope:<메일 | owner>" }, 400);
+  if (!/^(read|write|shadow|member)_[a-z]{2,20}$/.test(b.name || "") && !/^owner_(device|key_canon)$/.test(b.name || "")
+    && !/^envelope(:owner|:[^@\s:,]{1,64}@[^@\s:,]{1,190})?$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음> · owner_device · owner_key_canon · envelope · envelope:<메일 | owner>" }, 400);
   // e2e 판이 있는 사람의 envelope:<owner> 는 못 끔(vault adoptE2e 의 지킬 것 — 끄면 그 사람 쓰기가 봉해지지 않음)
   if (!b.on && /^envelope:/.test(b.name!)) {
     const who = b.name === "envelope:owner" ? "" : b.name!.slice("envelope:".length);
@@ -1838,6 +1847,24 @@ app.post("/api/admin/owner-engine/device", async c => {
   ]);
   for (const o of old) await engineOf(c.env, o.id).revoke().catch(() => null);
   return c.json({ token: tok, device_id: id, email: owner, server: c.env.PUBLIC_URL, scope: "harness", revoked: old.length }, 200, { "cache-control": "no-store" });
+});
+const okTables = (v: unknown) => Array.isArray(v) ? v.map(String).filter(t => OK.TABLES.some(x => x.tbl === t)) : undefined;
+app.get("/api/admin/owner-key/migrate", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const on = !!(await c.env.DB.prepare("SELECT 1 FROM f7_flag WHERE name = 'owner_key_canon' AND on_at IS NOT NULL").first().catch(() => null));
+  return c.json({ owner_key_canon: on, plan: await OK.plan(c.env as never, okTables(c.req.query("tables")?.split(","))) }, 200, { "cache-control": "no-store" });
+});
+app.post("/api/admin/owner-key/migrate", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ action?: string; tables?: string[]; dryRun?: boolean; page?: number }>().catch(() => ({} as { action?: string; tables?: string[]; dryRun?: boolean; page?: number }));
+  if (b.action !== "run" && b.action !== "back") return c.json({ error: "action = run · back" }, 400);
+  const dryRun = b.dryRun !== false;   // 기본은 쓰지 않음
+  const on = !!(await c.env.DB.prepare("SELECT 1 FROM f7_flag WHERE name = 'owner_key_canon' AND on_at IS NOT NULL").first().catch(() => null));   // 캐시 말고 지금 값
+  if (!dryRun && b.action === "run" && !on) return c.json({ error: "스위치 owner_key_canon 이 꺼져 있어요 — 켜고 10초 뒤 옮겨요" }, 409);
+  if (!dryRun && b.action === "back" && on) return c.json({ error: "스위치 owner_key_canon 이 켜져 있어요 — 끄고 10초 뒤 되돌려요" }, 409);
+  const o = { only: okTables(b.tables), dryRun, page: Number(b.page) || undefined };
+  const r = b.action === "run" ? await OK.run(c.env as never, o) : await OK.back(c.env as never, o);
+  return c.json({ ok: true, action: b.action, dryRun, results: r }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/admin/owner-engine/revoke", async c => {   // 되돌리기: 엔진 길 끔(다리는 그대로)
   if (!admin(c)) return c.json({ error: "no" }, 403);
@@ -1971,9 +1998,9 @@ app.post("/api/admin/connections/expire", async c => {
   return c.json({ ok: true, was });
 });
 
-mountHooks(app, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? { owner: allowed(c.env as unknown as Env, s.user.email) ? "" : s.user.email, email: s.user.email } : null; },
+mountHooks(app, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? { owner: W.dataKey(c.env as unknown as Env, s.user.email), email: s.user.email } : null; },
   async (env, _ctx, target, text) => { const r = await (boardTool(env as unknown as Env, "owner", "hook_wake", { target, text }, "boarder@worker") as Promise<{ delivered?: string }>); return String(r?.delivered || "woke"); });
-mountConnectors(app, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? { owner: allowed(c.env as unknown as Env, s.user.email) ? "" : s.user.email, email: s.user.email } : null; });
+mountConnectors(app, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? { owner: W.dataKey(c.env as unknown as Env, s.user.email), email: s.user.email } : null; });
 mountSales(app as never, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? s.user.email.toLowerCase() : null; }, (c, email) => member(c.env as never, email));
 
 mountTasks(app as never, async c => { const s = await signedIn(c as unknown as Context<{ Bindings: Env }>); return s ? s.user.email.toLowerCase() : null; }, memberBoard.paneOfId);

@@ -9,6 +9,7 @@ const PEND = (state: string) => ({ tbl: "connection_pending" as const, pk: state
 import { accountOfIdToken } from "./identity";
 import { exposedName } from "./naming";
 import * as store from "./store";
+import { ownerIn, sameKey } from "../who";
 import { API_PRESETS, apiReady, checkKey, githubApp, githubAuthUrl, githubExchange, googleAccountOf, googleApp, googleAuthUrl, googleToken, keyNames, parseAuth, slackApp, slackAuthUrl, slackExchange, type ApiSpec } from "./apis";
 
 type Env = store.Env & { PUBLIC_URL: string; ALT_URLS?: string };
@@ -188,13 +189,14 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     const q = new URL(c.req.url).searchParams, state = q.get("state") || "";
     const back = (to: string, k: string, v: string) => c.redirect(`/${to}${to.includes("?") ? "&" : "?"}${k}=${encodeURIComponent(v)}`, 302);
     const w = await who(c); if (!w) return c.redirect("/#settings/connectors?error=" + encodeURIComponent("보더에 로그인한 브라우저에서 다시 눌러 주세요"), 302);
-    const p = await c.env.DB.prepare("DELETE FROM connection_pending WHERE state = ? AND owner = ? RETURNING *").bind(state, w.owner).first<{ owner: string; service: string; label: string; url: string; auth: string; back: string; bind: string; expires_at: number }>();
+    const wk = ownerIn(c.env as { ALLOW_EMAILS?: string }, w.owner);   // 주인 열쇠 옮기는 동안 '' · canon 둘 다(who.ts)
+    const p = await c.env.DB.prepare(`DELETE FROM connection_pending WHERE state = ? AND ${wk.sql} RETURNING *`).bind(state, ...wk.args).first<{ owner: string; service: string; label: string; url: string; auth: string; back: string; bind: string; expires_at: number }>();
     if (!p) {
       const other = await c.env.DB.prepare("SELECT 1 AS x FROM connection_pending WHERE state = ? AND expires_at >= ?").bind(state, Date.now()).first();
       return back("#settings/connectors", "error", other ? "이 연결을 시작한 사람이 아니에요 — 시작한 계정으로 로그인해 주세요" : "연결 시간이 지났거나 이미 끝났어요 — 설정에서 상태를 보고 필요하면 다시 눌러요");
     }
     if (p.expires_at < Date.now()) return back("#settings/connectors", "error", "연결 시간이 지났어요 — 다시 눌러요");
-    if (p.owner !== w.owner) return back(p.back, "error", "이 연결을 시작한 사람이 아니에요");
+    if (!sameKey(c.env as { ALLOW_EMAILS?: string }, p.owner, w.owner)) return back(p.back, "error", "이 연결을 시작한 사람이 아니에요");
     if (q.get("error")) return back(p.back, "error", `${p.service}: ${q.get("error_description") || q.get("error")}`.slice(0, 200));
     const g = await openSecret<{ google?: boolean; slack?: boolean; github?: boolean; spec?: ApiSpec; redirect_uri?: string }>(c.env, p.owner, PEND(state), p.auth);
     if (g.slack && g.spec) {
@@ -261,7 +263,7 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     }
     if (typeof b.read_only === "boolean") { sets.push("read_only = ?"); vals.push(b.read_only ? 1 : 0); }
     if (!sets.length) return c.json({ error: "label · off · read_only" }, 400);
-    try { await c.env.DB.prepare(`UPDATE connection SET ${sets.join(", ")}, updated_at = ? WHERE owner = ? AND id = ?`).bind(...vals, Date.now(), m.w.owner, row.id).run(); }
+    try { await c.env.DB.prepare(`UPDATE connection SET ${sets.join(", ")}, updated_at = ? WHERE owner = ? AND id = ?`).bind(...vals, Date.now(), row.owner, row.id).run(); }   // row.owner: 옮기는 동안 그 줄 열쇠 그대로
     catch { return c.json({ error: "그 라벨은 이미 있어요" }, 409); }
     return c.json({ connection: view((await store.get(c.env, m.w.owner, row.id))!, m.rd) });
   });
