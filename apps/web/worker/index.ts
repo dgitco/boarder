@@ -76,6 +76,7 @@ import SCHEMA from "./ledger-schema";
 import * as files from "./files";
 import * as ownerRead from "./owner-read";
 import * as OS from "./owner-state";
+import * as ownerJobs from "./owner-jobs";
 import * as memberBoard from "./member-board";
 import * as memberVoice from "./member-voice";
 import { boardHead, HEAD_RE, withHead } from "./board-head";
@@ -402,6 +403,19 @@ app.post("/api/relay/after/done", async c => {
   if (!relayOk(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ seq?: number[]; res?: string }>().catch(() => ({} as { seq?: number[]; res?: string }));
   return c.json({ ok: true, n: await OS.afterDone(c.env.DB, b.seq || [], String(b.res || "")) });
+});
+app.post("/api/relay/jobs/take", async c => {
+  if (!relayOk(c)) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ limit?: number }>().catch(() => ({} as { limit?: number }));
+  return c.json({ jobs: await ownerJobs.take(c.env.DB, Number(b.limit) || 8) }, 200, { "cache-control": "no-store" });
+});
+app.get("/api/relay/jobs/stat", async c => relayOk(c) ? c.json(await ownerJobs.stat(c.env.DB), 200, { "cache-control": "no-store" }) : c.json({ error: "no" }, 403));
+app.post("/api/relay/jobs/:rid", async c => {
+  if (!relayOk(c)) return c.json({ error: "no" }, 403);
+  const rid = c.req.param("rid") || ""; if (!/^[\w-]{1,64}$/.test(rid) || rid === "take") return c.json({ error: "rid" }, 400);
+  const b = await c.req.json<{ status?: number; result?: unknown }>().catch(() => null); if (!b || typeof b !== "object") return c.json({ error: "JSON" }, 400);
+  const n = await ownerJobs.finish(c.env.DB, rid, Number(b.status), b.result);
+  return n ? c.json({ ok: true }) : c.json({ ok: false, error: "없는 줄" }, 404);
 });
 app.get("/api/relay/owner-state", async c => {
   if (!relayOk(c)) return c.json({ error: "no" }, 403);
@@ -1805,7 +1819,7 @@ app.post("/api/admin/f7-flag", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ name?: string; on?: boolean; note?: string }>().catch(() => ({} as { name?: string; on?: boolean; note?: string }));
   if (/^envelope:/i.test(b.name || "")) b.name = b.name!.toLowerCase();
-  if (!/^(read|write|shadow|member)_[a-z]{2,20}$/.test(b.name || "") && !/^owner_(device|key_canon)$/.test(b.name || "")
+  if (!/^(read|write|shadow|member)_[a-z][a-z_]{1,24}$/.test(b.name || "") && !/^owner_(device|key_canon)$/.test(b.name || "")
     && !/^envelope(:owner|:[^@\s:,]{1,64}@[^@\s:,]{1,190})?$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음> · owner_device · owner_key_canon · envelope · envelope:<메일 | owner>" }, 400);
   // e2e 판이 있는 사람의 envelope:<owner> 는 못 끔(vault adoptE2e 의 지킬 것 — 끄면 그 사람 쓰기가 봉해지지 않음)
   if (!b.on && /^envelope:/.test(b.name!)) {
@@ -2495,14 +2509,32 @@ app.all("*", async c => {
       const cut = (v: unknown, n: number) => String(v ?? "").slice(0, n);
       const t0 = String(b.text || "").trim().slice(0, 4000), mine = ((r[1] as { notes?: { id: number; target: string; who: string; text: string }[] }).notes || []).filter(n => n.who === "owner" && n.target === String(b.target || "").slice(0, 200) && n.text === t0);
       const nid = mine.length ? Math.max(...mine.map(n => Number(n.id) || 0)) : 0;
-      const sending = boardCall(c.env, chOf(c), { method: "POST", path: "/api/artpin", headers: { "content-type": "application/json", "x-hb": "1" }, body: new TextEncoder().encode(JSON.stringify({ art: cut(b.art, 40), target: cut(b.target, 200), page: cut(b.page, 200), text: cut(b.text, 4000), near: cut(b.near, 400), ...(nid ? { id: nid } : {}) })) })
-        .then(x => (JSON.parse(new TextDecoder().decode(x.body)) as { sent?: string | null }).sent ?? null, () => null).catch(() => null);
-      c.executionCtx.waitUntil(sending);
-      const sent = await Promise.race([sending, new Promise<null>(ok => setTimeout(() => ok(null), 3000))]);
-      if (sent) r = [r[0], { ...r[1], sent }];
+      const pin = new TextEncoder().encode(JSON.stringify({ art: cut(b.art, 40), target: cut(b.target, 200), page: cut(b.page, 200), text: cut(b.text, 4000), near: cut(b.near, 400), ...(nid ? { id: nid } : {}) }));
+      // 할 일 줄(write_owner_jobs): 창에 넣기도 실행기가 당겨서 — 다리 왕복 없음(줄을 못 만들면 예전처럼 다리)
+      const jobbed = await ledger.f7On(c.env.DB, "write_owner_jobs") ? await ownerJobs.accept(c.env.DB, "/api/artpin", pin).catch(() => null) : null;
+      if (!jobbed || jobbed.status >= 400) {
+        const sending = boardCall(c.env, chOf(c), { method: "POST", path: "/api/artpin", headers: { "content-type": "application/json", "x-hb": "1" }, body: pin })
+          .then(x => (JSON.parse(new TextDecoder().decode(x.body)) as { sent?: string | null }).sent ?? null, () => null).catch(() => null);
+        c.executionCtx.waitUntil(sending);
+        const sent = await Promise.race([sending, new Promise<null>(ok => setTimeout(() => ok(null), 3000))]);
+        if (sent) r = [r[0], { ...r[1], sent }];
+      }
     }
     if (r) { if (r[0] < 400) c.executionCtx.waitUntil(live.bumpLedger(c.env)); return c.json(r[1], r[0] as 200); }
     return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" });   // 색인 없음 — 쓰기 전이라 다시 보내도 됨
+  }
+  if (c.req.method === "POST" && chOf(c) === "owner" && ownerJobs.PATHS.has(url.pathname) && await ledger.f7On(c.env.DB, "write_owner_jobs")) {
+    if (c.req.header("x-hb") !== "1") return c.json({ ok: false, error: "forbidden" }, 403);   // 다른 사이트 폼 막기(server.py 와 같은 문)
+    sent ??= new Uint8Array(await c.req.arrayBuffer());
+    let q: Awaited<ReturnType<typeof ownerJobs.accept>>;
+    try { q = await ownerJobs.accept(c.env.DB, url.pathname, sent); } catch { return queue.retrySafe(c); }
+    if (q) return c.json(q.body, q.status as 202, { "cache-control": "no-store", "x-owner-job": q.state || "bad" });
+  }
+  // 할 일 줄로 받은 rid 의 답(스위치를 꺼도 쌓인 줄은 실행기가 마저 처리하니 늘 먼저 봄 — 표가 없거나 D1 오류면 아래 길 그대로)
+  if (c.req.method === "GET" && chOf(c) === "owner") {
+    const am = /^\/api\/answer\/([\w-]{1,64})$/.exec(url.pathname);
+    const j = am ? await ownerJobs.answer(c.env.DB, am[1]).catch(() => null) : null;
+    if (j) return c.json(j, 200, { "cache-control": "no-store", "x-f7": "job" });
   }
   // 주인 GET /api/answer/:rid — Worker 가 직접 D1 에 쓴 rid(f7_rid) · 남은 답이 4xx 인 것만 여기서. 다리가 받은 글(202 queued 등) · 모르는 rid · 칸 오류는 예전처럼 다리(_jobs)로
   if (c.req.method === "GET" && chOf(c) === "owner") {
