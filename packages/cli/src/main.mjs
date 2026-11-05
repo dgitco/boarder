@@ -249,7 +249,10 @@ export async function main(argv) {
         const { artifactHook } = await import('./artifact.mjs'), { canvasPut } = await import('./canvas.mjs');
         let j; try { j = JSON.parse(await readStdin()); } catch { return; }
         if (!loadDevice()?.token) return;
-        await artifactHook(j, { put: (f, fl) => canvasPut(f, fl, { log: m => console.error(`boarder artifact: ${String(m).split('\n')[0]}`) }), log: m => console.error(m) });
+        const { hookNote } = await import('./artifact.mjs');
+        const r = await artifactHook(j, { put: (f, fl) => canvasPut(f, fl, { log: m => console.error(`boarder artifact: ${String(m).split('\n')[0]}`) }), log: m => console.error(m) });
+        const note = hookNote(r);   // 실패 · 진짜 주소를 에이전트에게(끝 코드 0 의 stderr 는 안 보임) — 맥은 파이프 쓰기가 비동기라 다 쓰고 끝냄
+        if (note) await new Promise(res => process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: note } }) + '\n', res));
       } catch (e) { console.error(`boarder artifact: ${e.message}`); }
       process.exit(0);   // 시간 상한에 걸려 남은 올리기 연결이 있어도 바로 끝
     }

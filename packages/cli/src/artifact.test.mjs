@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { artifactHook, publishTool, acctLabel, resultInfo, stage } from './artifact.mjs';
+import { artifactHook, publishTool, acctLabel, resultInfo, stage, hookNote } from './artifact.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/boarder.mjs', import.meta.url));
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-art-'));
@@ -109,4 +109,32 @@ const run = (stdin, env = {}) => new Promise(res => {
 test('boarder hook artifact: 깨진 입력 · 기기 없음 · sdk 실행에서도 출력 없이 0', async () => {
   const good = JSON.stringify({ tool_name: 'mcp__claude-artifacts__publish_version', tool_input: { content: 'x' }, tool_response: result({ slug: UUID }) });
   for (const [stdin, env] of [['not json', {}], [good, {}], [good, { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' }]]) { const r = await run(stdin, env); assert.equal(r.code, 0); assert.equal(r.out, ''); }
+});
+
+test('hookNote: 실패면 「보더 주소 아직 없음」 + 다시 올리는 법(그 id), 성공이면 진짜 주소, 건너뜀이면 빈 글', () => {
+  const e = hookNote({ error: '캔버스 수 상한', id: 'abcdef0123456789abcd' });
+  assert.match(e, /올리기 실패: 캔버스 수 상한/); assert.match(e, /보더 주소\(\/art\/…\)는 아직 없어요/); assert.match(e, /--id abcdef0123456789abcd/);
+  assert.equal(hookNote({ ok: true, id: 'x', url: 'https://example.test/art/x/' }), '보더 캔버스에도 올렸어요: https://example.test/art/x/');
+  assert.equal(hookNote({ ok: true, id: 'x' }), ''); assert.equal(hookNote({ skipped: 'not a publish tool' }), ''); assert.equal(hookNote(undefined), '');
+});
+test('artifactHook: 성공이면 서버가 준 주소를 싣고, put 이 던지면 그 아티팩트 id 를 실음', async () => {
+  const ok = await artifactHook({ tool_name: 'mcp__claude-artifacts__publish_version', tool_input: { content: 'x' }, tool_response: result({ slug: UUID }) },
+    { put: async () => ({ ok: true, url: 'https://example.test/art/u/' }) });
+  assert.equal(ok.url, 'https://example.test/art/u/');
+  const bad = await artifactHook({ tool_name: 'mcp__claude-artifacts__publish_version', tool_input: { content: 'x' }, tool_response: result({ slug: UUID }) },
+    { put: async () => { throw Object.assign(new Error('캔버스 수 상한'), { status: 429 }); } });
+  assert.equal(bad.error, '캔버스 수 상한'); assert.equal(bad.id, UUID.replace(/-/g, ''));
+});
+test('boarder hook artifact: 기기는 있는데 서버가 안 닿으면 끝 코드 0 + 에이전트에게 실패 한 줄(PostToolUse additionalContext JSON)', async () => {
+  const H = fs.mkdtempSync(path.join(TMP, 'hd-')), B = path.join(H, 'b'); fs.mkdirSync(B, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(B, 'device.json'), JSON.stringify({ token: 'bxd_' + 'z'.repeat(40), server: 'http://127.0.0.1:9', device_id: 'dev-test' }), { mode: 0o600 });
+  const good = JSON.stringify({ tool_name: 'mcp__claude-artifacts__publish_version', tool_input: { content: '<!doctype html><title>t</title>x' }, tool_response: result({ slug: UUID }) });
+  const r = await new Promise(res => {
+    const c = spawn(process.execPath, [BIN, 'hook', 'artifact'], { env: { ...process.env, HOME: H, BOARDER_HOME: B, CLAUDE_CODE_ENTRYPOINT: 'cli' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = ''; c.stdout.on('data', d => out += d); c.on('close', code => res({ code, out })); c.stdin.end(good);
+  });
+  assert.equal(r.code, 0);
+  const o = JSON.parse(r.out.trim());
+  assert.equal(o.hookSpecificOutput.hookEventName, 'PostToolUse'); assert.match(o.hookSpecificOutput.additionalContext, /보더 캔버스로 올리기 실패/);
+  assert.match(o.hookSpecificOutput.additionalContext, /아직 없어요/);
 });

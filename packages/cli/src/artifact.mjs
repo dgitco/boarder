@@ -87,7 +87,12 @@ export function stage(tool, input, { root = os.tmpdir(), cwd, log = () => {} } =
   } catch (e) { rmSync(dir, { recursive: true, force: true }); throw e; }
 }
 
-/** 훅 입력(JSON) 하나 처리. put(folder, flags) 는 canvasPut 과 같은 인자. 결과 {skipped}|{ok}|{error} — 던지지 않음 */
+/** 훅 입력(JSON) 하나 처리. put(folder, flags) 는 canvasPut 과 같은 인자. 결과 {skipped}|{ok, url}|{error} — 던지지 않음 */
+export function hookNote(r) {
+  if (r?.error) return `보더 캔버스로 올리기 실패: ${String(r.error).slice(0, 300)} — 이 아티팩트의 보더 주소(/art/…)는 아직 없어요. 사람에게 보더 주소를 주지 말고 claude.ai 링크를 주거나, 고친 뒤 \`boarder canvas put <폴더> --id ${r.id || '<아티팩트 id>'}\` 로 다시 올려 나온 주소를 주세요.`;
+  if (r?.ok && r.url) return `보더 캔버스에도 올렸어요: ${r.url}`;
+  return '';
+}
 export async function artifactHook(input, { put, env = process.env, home = os.homedir(), log = () => {}, timeoutMs = 15_000 } = {}) {
   try {
     const tool = publishTool(input?.tool_name);
@@ -100,8 +105,9 @@ export async function artifactHook(input, { put, env = process.env, home = os.ho
     try {
       const flags = { id, ...(title ? { title } : {}) }, acct = acctLabel(env, home); if (acct) flags.acct = acct;
       // 훅 한도(setup 60초) 안에 끝내려고 15초 상한 — 망이 죽어도 게시마다 오래 멈추지 않게(canvasPut 의 fetch 는 180초)
-      let timer; await Promise.race([put(folder, flags), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`upload took over ${timeoutMs / 1000}s — gave up`)), timeoutMs); })]).finally(() => clearTimeout(timer));
-      return { ok: true, id };
-    } finally { rmSync(folder, { recursive: true, force: true }); }
-  } catch (e) { log(`boarder artifact: ${e.message}`); return { error: e.message }; }
+      let timer; const j = await Promise.race([put(folder, flags), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`upload took over ${timeoutMs / 1000}s — gave up`)), timeoutMs); })]).finally(() => clearTimeout(timer));
+      return { ok: true, id, ...(typeof j?.url === 'string' ? { url: j.url } : {}) };
+    } catch (e) { throw Object.assign(e, { artifactId: id }); }
+    finally { rmSync(folder, { recursive: true, force: true }); }
+  } catch (e) { log(`boarder artifact: ${e.message}`); return { error: e.message, ...(e.artifactId ? { id: e.artifactId } : {}) }; }
 }
