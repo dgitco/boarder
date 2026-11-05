@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "93a09af9f67b";
+window.HB_VER = "e1f44ca02d87";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -159,6 +159,9 @@ button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;paddin
 header{display:flex;align-items:center;gap:8px 20px;flex-wrap:wrap}
 header h1{font-size:15px;font-weight:600;margin:0}
 .tabs{display:flex;gap:2px;flex-wrap:wrap}
+
+.wrap > header > h1,#tabs,.wrap > .note{display:none!important}
+html:not(.bx) .wrap > header .hcl{display:none}
 .tabs button{padding:5px 10px;border-radius:6px;color:var(--muted);font-size:13px}
 .tabs button:hover{color:var(--ink)}
 .tabs button[aria-selected="true"]{color:var(--ink);background:var(--hover)}
@@ -1957,8 +1960,8 @@ html.hb-unkeep .inbr:first-child:has(> .ibun) .rtools{right:132px}
 })();
 </script>
   <header>
-    <h1>하네스</h1>
-    <nav class="tabs" role="tablist" id="tabs">
+    <h1 hidden>하네스</h1>
+    <nav class="tabs" role="tablist" id="tabs" hidden>
       <button role="tab" data-v="tree">① 트리</button>
       <button role="tab" data-v="timeline">② 타임라인</button>
       <button role="tab" data-v="arts">③ 아티팩트</button>
@@ -1979,7 +1982,7 @@ html.hb-unkeep .inbr:first-child:has(> .ibun) .rtools{right:132px}
       </div>
     </div>
   </header>
-  <div class="note">시안 · 실제 장부 스냅숏 · 깃발 노드를 누르면 답 화면 · 보내기를 눌러도 어떤 창에도 가지 않아요</div>
+  <div class="note" hidden>시안 · 실제 장부 스냅숏 · 깃발 노드를 누르면 답 화면 · 보내기를 눌러도 어떤 창에도 가지 않아요</div>
   <section class="view" id="v-tree" hidden></section>
   <section class="view" id="v-board" hidden></section>
   <section class="view" id="v-timeline" hidden></section>
