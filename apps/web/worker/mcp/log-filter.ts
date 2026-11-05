@@ -19,8 +19,8 @@ const PLACEHOLDER = /^(?:<[a-z가-힣ㄱ-ㅣ _.\-…]{1,40}>|<[A-Z][A-Z0-9_]{0,4
 const ENV_NAME = new RegExp(`^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$`), HAS_NAME = new RegExp(NAMES, "i");
 const isPlaceholder = (m: string) => PLACEHOLDER.test(m) || (ENV_NAME.test(m) && HAS_NAME.test(m));
 const BENIGN = /^(?:\d+|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+)$/;
-const META = /(?:COUNT|TTL|LIMIT|MAX|MIN|LEN|LENGTH|SIZE|USAGE|USED|BUDGET|NUM|RATE|EXPIRY|EXPIRES?|TIMEOUT|VERSION|TYPE|MODE|FORMAT|ALGO?|FIELDS?|KIND)/i;
-const metaName = (name: string) => META.test(name);
+const META = new Set(["COUNT", "TTL", "LIMIT", "MAX", "MIN", "LEN", "LENGTH", "SIZE", "USAGE", "USED", "BUDGET", "NUM", "RATE", "EXPIRY", "EXPIRE", "EXPIRES", "TIMEOUT", "VERSION", "TYPE", "MODE", "FORMAT", "ALG", "ALGO", "FIELD", "FIELDS", "KIND"]);
+const metaName = (name: string) => name.split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/).some(w => META.has(w.toUpperCase()));
 const benign = (m: string) => /^\d+$/.test(m) || (BENIGN.test(m) && m.split("-").every(p => /^[A-Za-z]+$/.test(p) || /^\d+$/.test(p) || p.length <= 3));
 
 // 공용 꼴(session/redact.ts) 가운데 뒤돌아보기가 없는 것은 그대로, 뒤돌아보기가 있는 셋(Bearer · 주소 비밀번호 · 이름=값)은 상한 있는 판으로
@@ -37,8 +37,13 @@ const KO_SEP = new RegExp(`(?<=${KO_PW}\\s{0,8}[:=：]\\s{0,8}["'「]?)${KO_VAL}
 const KO_SPACE = new RegExp(`(?<=${KO_PW}\\s{1,8}["'「]?)(?=${KO_VAL}{0,200}\\d)${KO_VAL}{6,}`, "g");
 const KO_TOK_ANY = new RegExp(`(?<=${KO_TOK}\\s{0,8}[:=：]?\\s{0,8}["'「]?)(?=${KO_VAL}{0,200}[A-Za-z])(?=${KO_VAL}{0,200}\\d)${KO_VAL}{8,}`, "g");
 const QUOTED = `(?:"[^"\\n]{1,200}"|'[^'\\n]{1,200}'|“[^”\\n]{1,200}”|‘[^’\\n]{1,200}’|「[^」\\n]{1,200}」)`;
-const Q_PW = new RegExp(`(?<=(?:${KO_PW}|\\bpw|\\bpasswd|\\bpassword(?:\\s{1,4}is)?)\\s{0,8}[:=：]?\\s{0,8})${QUOTED}`, "gi");
-const Q_NAME = new RegExp(`(${KO_TOK}|\\b${NAME_AROUND})(\\s{0,8}[:=：]?\\s{0,8})(${QUOTED})`, "gi");
+const Q_SEP = `["']?\\s{0,8}(?:=>|:=|[:=：])\\s{0,8}`, Q_SP = `\\s{1,8}`;
+//   붙은 꼴(password"x" · 비밀번호「x」로)도 받되, 닫는 따옴표 바로 뒤에 구분 기호 · 빈칸이 오는 자리(JSON 「": 」)는 값으로 안 잡음
+const Q_NOT_CLOSE = `(?!["'][\\s:=：,\\]})])`;   // 사이가 빈 경우에만 — 배열 「["password", "token"]」 도
+const Q_PW_NAME = `(?:${KO_PW}|\\bpw|\\bpasswd|\\bpassword(?:\\s{1,4}is)?)`;
+const Q_PW = new RegExp(`(?:(?<=${Q_PW_NAME}(?:${Q_SEP}|${Q_SP}))|(?<=${Q_PW_NAME})${Q_NOT_CLOSE})${QUOTED}`, "gi");
+const Q_NAME = new RegExp(`(${KO_TOK}|\\b${NAME_AROUND})(${Q_SEP}|${Q_NOT_CLOSE})(${QUOTED})`, "gi");
+const Q_NAME_SP = new RegExp(`(${KO_TOK}|\\b${NAME_AROUND})(${Q_SP})(${QUOTED})`, "gi");
 const inner = (m: string) => m.slice(1, -1).trim();
 const quotedValue = (m: string) => /[^\s가-힣ㄱ-ㅣ]/.test(inner(m)) && !isPlaceholder(inner(m));
 
@@ -57,7 +62,7 @@ const acct = (m: string) => { const n = m.replace(/\D/g, "").length, g = m.split
 // [꼴, 가릴지(값, 이름), 갈래 셋(이름 · 사이 · 값)이면 값만 가림]
 const RULES: [RegExp, ((m: string, name: string) => boolean)?, boolean?][] = [
   ...SHARED_KEPT.map(re => [re] as [RegExp]), [BEARER], [URL_PW],
-  [Q_PW, quotedValue], [Q_NAME, (m, name) => quotedValue(m) && !(benign(inner(m)) && (name.startsWith("토큰") || metaName(name))), true],   // 따옴표 통째 — 낱말 하나만 보는 꼴보다 먼저
+  [Q_PW, quotedValue], [Q_NAME, (m, name) => quotedValue(m) && !(benign(inner(m)) && (name.startsWith("토큰") || metaName(name))), true], [Q_NAME_SP, (m, name) => quotedValue(m) && !(benign(inner(m)) && (name.startsWith("토큰") || metaName(name) || (/^[a-z]+$/.test(name) && /[A-Za-z]/.test(inner(m))))), true],   // 따옴표 통째 — 낱말 하나만 보는 꼴보다 먼저
   [KEYVAL, (m, name) => !(benign(m) && metaName(name)), true],
   [KO_SEP], [KO_SPACE], [KO_TOK_ANY, m => !benign(m)],
   [RRN], [RRN_NEAR], [CARD, luhn], [CARD_NEAR, luhn], [ACCT, acct],

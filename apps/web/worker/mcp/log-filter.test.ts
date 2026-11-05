@@ -253,6 +253,16 @@ test("기술장 표본 — 진짜 비밀 · 주민 · 카드 · 계좌는 그대
   assert.equal(rejected(FAKE.pem), "pem"); assert.equal(rejected(FAKE.jwt), "jwt");
 });
 
+test("개수 · 시간 · 판 이름 예외는 낱말 단위로만 — 글자 조각(ADMIN 의 MIN · GENERATED 의 RATE)은 예외 아님", () => {
+  for (const [t, v] of [["ADMIN_PASSWORD=correct-horse-battery-staple", "correct-horse-battery-staple"], ["ADMIN_TOKEN=123456789012", "123456789012"],
+    ["GENERATED_TOKEN=4821-7730-1192", "4821-7730-1192"], ["adminPassword=12345678901", "12345678901"], ["TERMINAL_SECRET=alpha-beta-gamma", "alpha-beta-gamma"]] as [string, string][]) {
+    const f = masked(t); assert.ok(!f.text.includes(v), t); assert.equal(f.redacted, 1, t);
+  }
+  for (const t of ["token_count=12345678", "TOKEN_TTL=3600000000", "PASSWORD_MIN_LENGTH=12345678", "tokenCount=12345678", "maxTokens=12345678", "SECRET_EXPIRES=1801151234567"]) {
+    const f = masked(t); assert.equal(f.text, t, t); assert.equal(f.redacted, 0, t);
+  }
+});
+
 test("따옴표 안 빈칸 값은 닫는 따옴표까지 통째로 가림", () => {
   const a = "alpha", b = "beta";
   for (const t of [`비밀번호: "${a} ${b}"`, `pw: '${a} ${b}'`, `토큰 "${a} ${b} 123"`, `the password is "${a} ${b}"`, `암호 “${a} ${b}”`, `API_KEY="${a} ${b} gamma"`, `비번은 「${a} ${b}」 입니다`]) {
@@ -274,4 +284,29 @@ test("비밀 이름의 숫자 · 하이픈 값은 가림 · 개수 · 시간 이
   }
   const env = ["DB_PASSWORD=" + "8492" + "0173", "SECRET=" + "1234-5678" + "-9012", "TOKEN=" + "abcd-efgh" + "-ijkl-mnop"].join("\n");
   assert.equal(rejected(env), "env", "숫자 · 하이픈 비밀 값 셋도 .env 통째로 셈");
+});
+
+test("JSON · dict 꼴 비밀 값도 가림 · 구분 기호 없는 산문 따옴표는 통과", () => {
+  const PW = ["DB", "PASS" + "WORD"].join("_"), num = ["8492", "0173"].join(""), word = ["hunter2", "Pass99x"].join("");
+  for (const [t, v] of [[`{"${PW}": "${num}"}`, num], [`{"pass` + `word":"${word}"}`, word], [`{'api_` + `key': '${word}'}`, word], [`"${PW}" = "${word}"`, word], [`{"토큰": "${word}"}`, word]] as [string, string][]) {
+    const f = masked(t); assert.ok(!f.text.includes(v), t.slice(0, 14)); assert.ok(f.redacted >= 1, t.slice(0, 14));
+  }
+  for (const t of [`the secret "rotation-plan" 문서`, `secret "v2-2026-11" 판`, `{"token_count": "12345678"}`]) assert.equal(masked(t).text, t, t);
+});
+
+test("붙은 따옴표 값 · 빈칸만 둔 비밀 이름 값 · => · := 도 가림", () => {
+  const PW = ["DB", "PASS" + "WORD"].join("_"), num = ["8492", "0173"].join(""), word = ["hunter2", "Pass99x"].join(""), grp = ["1234", "5678", "9012"].join("-");
+  for (const [t, v] of [[`pass` + `word"${word}"`, word], [`비밀번호"alpha ${word}"`, word], [`비밀번호「${word}」로 바꿈`, word], [`TOKEN"${word}"`, word],
+    [`${PW} "${num}"`, num], [`APP_SEC` + `RET "${grp}"`, grp], [`'pass` + `word' => '${word}'`, word], [`pass` + `word := "${word}"`, word]] as [string, string][]) {
+    const f = masked(t); assert.ok(!f.text.includes(v), t.slice(0, 12)); assert.ok(f.redacted >= 1, t.slice(0, 12));
+  }
+  for (const t of [`비밀번호 '재설정' 버튼`, `{"type": "password"}`, `"max_tokens": "4096"`, `토큰 "128000"`]) assert.equal(masked(t).text, t, t);
+});
+
+test("구분 기호 뒤 따옴표 안이 빈칸으로 시작해도 가림 · 이름만 든 배열은 통과", () => {
+  const PW = ["DB", "PASS" + "WORD"].join("_"), word = ["hunter2", "Pass99x"].join("");
+  for (const [t, v] of [[`pass` + `word = " ${word}"`, word], [`pass` + `word: ' ${word} '`, word], [`비밀번호: " ${word}"`, word], [`토큰: " ${word}"`, word], [`{"${PW}": " ${word}"}`, word]] as [string, string][]) {
+    const f = masked(t); assert.ok(!f.text.includes(v), t.slice(0, 12)); assert.ok(f.redacted >= 1, t.slice(0, 12));
+  }
+  for (const t of [`["pass` + `word", "token"]`, `fields("pass` + `word")`, `{"type": "pass` + `word"}`]) assert.equal(masked(t).text, t, t);
 });
