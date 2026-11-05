@@ -110,14 +110,14 @@ test("주인만 올림: 회원 세션 · 기기 토큰 · 다른 기기 · 이�
 test("올린 주인 기기: 설정은 주인도 같은 자리에 쓰는 칸만 · 나머지는 409 · 카드 허락 길은 안내", async () => {
   const s = await setup(); await upgrade(s);
   const g = await s.get(DEVW); assert.equal(g.status, 200, g.text); assert.equal(g.j.owner, true); assert.equal(g.j.allowed_wide, true);
-  assert.deepEqual(Object.keys(g.j.values).sort(), ["features", "pins", "session_sync", "side_hide", "ui"], "아바타는 주인 줄(@owner)이 달라 빠짐");
+  assert.deepEqual(Object.keys(g.j.values).sort(), ["features", "node_values", "pins", "session_sync", "side_hide", "ui"], "아바타는 주인 줄(@owner)이 달라 빠짐");
   const ui = await s.set("ui", { theme: "dark" }, DEVW); assert.equal(ui.status, 200, ui.text);
   assert.equal(s.db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'ui:theme'").get(OWNER).v, "dark", "주인 이메일 자리(화면 길과 같음)");
   assert.equal((await s.set("side_hide", ["feed"], DEVW)).status, 200); assert.equal((await s.set("features", { taskboard: true }, DEVW)).status, 200);
   const sy = await s.set("session_sync", false, DEVW); assert.equal(sy.status, 200, sy.text);
   assert.equal(s.db.prepare("SELECT v FROM user_pref WHERE owner = '' AND k = 'session_sync'").get().v, "off", "세션 싱크는 주인 열쇠 \"\"");
   assert.equal((await s.set("session_sync", true, DEVW)).status, 403, "켜기는 사람 몫");
-  for (const k of ["node_values", "unit", "prefs", "task_channels", "bot_name", "front_door", "avatar"]) assert.equal((await s.set(k, k === "unit" ? "goal" : k === "bot_name" ? "x" : k === "avatar" ? { hue: 10 } : k === "task_channels" ? true : {}, DEVW)).status, 409, k);
+  for (const k of ["unit", "prefs", "task_channels", "bot_name", "front_door", "avatar"]) assert.equal((await s.set(k, k === "unit" ? "goal" : k === "bot_name" ? "x" : k === "avatar" ? { hue: 10 } : k === "task_channels" ? true : {}, DEVW)).status, 409, k);
   assert.equal((await s.call("POST", "/api/device/settings/allow", {}, s.dev(DEVW))).status, 409);
   const ns = JSON.parse(s.db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(OWNER).data); assert.deepEqual(Object.keys(ns), ["hide"], "노드 설정 그림자 칸(unit · prefs …)을 안 만들고 사이드 숨김만 (화면 길과 같은 자리)");
   assert.equal((await s.call("GET", "/api/device/devices", undefined, s.dev(DEVW))).j.devices.some((d: any) => d.id === "devW"), true);
@@ -161,4 +161,17 @@ test("주인 메일이 둘 이상이면 화면 설정 줄(ui · features · side
   assert.equal((await s.set("side_hide", ["feed"], DEVW)).status, 200);
   for (const m of [OWNER, "owner2@example.test"]) assert.deepEqual(JSON.parse(s.db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(m).data).hide, ["feed"], m);
   const g = await s.get(DEVW); assert.equal(g.j.values.ui.theme, "dark");
+});
+
+test("주인 노드 수치: 스위치(write_state) 켜짐 + seed 뒤 owner_state 에 씀(화면 길과 같은 OS.nodeSet), seed 전은 409", async () => {
+  const s = await setup(); await upgrade(s);
+  s.db.prepare("INSERT INTO f7_flag(name, on_at, note) VALUES ('write_state', ?, 'test')").run(Date.now());   // (스위치 켜짐 판정은 10초 캐시라 꺼짐은 따로 못 봄 — 꺼짐 · seed 전은 같은 null 거절 길)
+  const before = await s.set("node_values", { move_h: 5 }, DEVW); assert.equal(before.status, 409, "seed 전"); assert.match(before.j.error, /write_state|서버 파일/);
+  s.db.prepare("INSERT INTO owner_state(k, v, at, ver, ord) VALUES ('node_settings', ?, ?, 0, 0)").run(JSON.stringify({ check_min: 30, split_at: 3, move_h: 24, rename_h: 6, archive_h: 6 }), Date.now());
+  const r = await s.set("node_values", { move_h: 5, archive_h: 9999 }, DEVW); assert.equal(r.status, 200, r.text);
+  assert.equal(r.j.after.move_h, 5); assert.equal(r.j.after.archive_h, 168, "범위로 자름"); assert.equal(r.j.before.move_h, 24);
+  assert.equal(JSON.parse(s.db.prepare("SELECT v FROM owner_state WHERE k = 'node_settings'").get().v).move_h, 5, "정본 owner_state");
+  assert.equal(s.db.prepare("SELECT count(*) n FROM f7_after WHERE kind = 'state_file'").get().n >= 1, true, "서버 파일로 내리는 뒷일 줄");
+  assert.equal((await s.get(DEVW)).j.values.node_values.move_h, 5);
+  assert.equal(s.db.prepare("SELECT count(*) n FROM node_setting WHERE owner = ?").get(OWNER).n === 0 || !JSON.parse(s.db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(OWNER)?.data || "{}").move_h, true, "주인 이메일로 그림자 칸을 안 만듦");
 });

@@ -24,10 +24,11 @@ export type Hooks = {
   flagsOff?: (env: Env) => string | undefined;
   avatar: { get: (env: Env, me: string) => Promise<{ seed: string; hue: number; photo?: string } | null>; set: (env: Env, me: string, face: { seed: string; hue: number; photo?: string }) => Promise<unknown>;
     clean: (v: unknown) => { seed: string; hue: number; photo?: string } | null; photoOk: (env: Env, photo: string) => Promise<boolean>; put: (env: Env, body: Uint8Array<ArrayBuffer>) => Promise<{ id: string } | { error: string; status: 400 | 413 }> };
+  ownerNodeValues: { read: (env: Env) => Promise<Record<string, number> | null>; save: (env: Env, raw: unknown) => Promise<Record<string, number> | null> };
   isOwner: (env: Env, email: string) => boolean;
   mails: (env: Env, email: string) => string[];   // 이 사람의 기기 owner 메일들(주인은 넷)
 };
-export const OWNER_KEYS = ["pins", "side_hide", "ui", "features", "session_sync"] as const;
+export const OWNER_KEYS = ["pins", "side_hide", "ui", "features", "session_sync", "node_values"] as const;
 const OWNER_NO = "주인 보드의 이 칸은 서버 파일이 정본이라 아직 이 명령으로 못 바꿔요 — 보드 화면에서 해요";
 export const TOUCHY_BUNDLES = ["phone-alert", "external-send", "account-autoswitch"] as const;
 export const TOUCHY_RULES = ["outside", "ask"] as const;   // 바깥 발송 · 사람에게 묻기 규칙 — 끄면 에이전트가 승인 없이 움직이므로 같은 취급
@@ -101,7 +102,7 @@ async function readAll(env: Env, h: Hooks, me: string): Promise<Values> {
     readPrefs(db, me), readPins(db, me),
     db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me).first<{ v: string }>(),
     db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(me).first<{ name: string }>(),
-    h.nodeValues.read(env, me),
+    h.isOwner(env, me) ? h.ownerNodeValues.read(env).then(v => v ?? h.nodeValues.read(env, me)) : h.nodeValues.read(env, me),
     db.prepare("SELECT json_extract(data, '$.unit') u FROM node_setting WHERE owner = ? AND json_valid(data)").bind(me).first<{ u: string | null }>().catch(() => null),
     readHide(db, me),
     db.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(me).all<{ k: string; v: string }>(),
@@ -176,6 +177,10 @@ async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, c
     if (!o || !Object.values(o).length || !Object.values(o).every(v => typeof v === "number" && Number.isFinite(v))) return { error: "node_values: { check_min | split_at | move_h | rename_h | archive_h: 숫자 } (보낸 칸만 바뀜)", status: 400 };
     const bad = Object.keys(o).filter(k => !Object.hasOwn(cur.node_values, k));
     if (bad.length) return { error: `모르는 칸: ${bad.join(", ")}`, status: 400 };
+    if (h.isOwner(env, me)) {   // 주인: 정본 owner_state(화면 길과 같은 OS.nodeSet). 스위치가 꺼졌거나 seed 전이면 서버 파일이 정본이라 거절
+      const v = await h.ownerNodeValues.save(env, o);
+      return v ? { after: v } : { error: "주인 노드 수치의 정본이 아직 서버 파일이에요(write_state 꺼짐 또는 seed 전) — 보드 화면에서 해요", status: 409 };
+    }
     return { after: await h.nodeValues.save(env, me, o) };
   }
   if (key === "unit") {

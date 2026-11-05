@@ -1083,6 +1083,10 @@ devSettings.mountDeviceSettings(app as never, {
   device: async c => cliDevice(c as never) as never,
   isOwner: (env, email) => isOwner(env as never, email),
   mails: (env, email) => ownerMails(env as never, email),
+  ownerNodeValues: {
+    read: async env => (await OS.nodeSettings(env.DB)) as Record<string, number> | null,
+    save: async (env, raw) => { if (!(await ledger.f7On(env.DB, "write_state"))) return null; const r = await OS.nodeSet(env.DB, { values: raw as never }); return r && r[0] === 200 ? (r[1] as { values: Record<string, number> }).values : null; },
+  },
   ownWindow: (db, me, t) => ownWindow(db, me, t),
   regroup: (env, me) => regroup(env as never, me),
   setUnit: (env, me, unit) => setUnit(env as never, me, unit, "me"),
