@@ -29,6 +29,7 @@ export { Engine } from "./engine";
 export { Search } from "./search";
 export { Pusher } from "./push-do";
 import { mountRoleEdit, toolError } from "./role-edit";
+import { mountTokenRevoke, ownDevice, auditStmt, NOT_BLOCKED, noBlockTable, noRevokeTables, type RevokeDeps } from "./token-revoke";
 import { engineOf, chatToMain, approveDraft, deliverTo, ownerCfg, sysLine, RULES, engineSend, ownerWindows, harnessDevice, liveDevice, openedLastHour, OPEN_PER_HOUR, type Engine } from "./engine";
 import shellJs from "./legacy/shell.js?raw";
 import shellCss from "./legacy/shell.css?raw";
@@ -584,9 +585,9 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
     return "mismatch" as const;
   }
   const agent = `boarder@${who.host}:${who.pane}`;
-  const own = who.owner || (await unifiedAll(c.env) ? W.canon(c.env) : "");
+  const own = who.owner;
   REC.get(c.req.raw) && (REC.get(c.req.raw)!.who = who.owner || agent);
-  if (own && !who.owner) { const rec = REC.get(c.req.raw); if (rec) rec.dev = own; }   // 쓰기 뒤 canon 화면 칸에 알림(미들웨어 lw) — PostHog who 는 그대로 에이전트
+  if (!who.owner && await unifiedAll(c.env)) { const rec = REC.get(c.req.raw); if (rec) rec.dev = W.canon(c.env); }   // 쓰기 뒤 canon 화면 칸에 알림(미들웨어 lw) — PostHog who 는 그대로 에이전트
   if (who.owner) c.executionCtx.waitUntil(c.env.DB.prepare("UPDATE device SET last_at = ? WHERE id = (SELECT device_id FROM agent_token WHERE hash = ?)").bind(Date.now(), who.hash).run().catch(() => {}));
   const reg = await registry(c.env.DB, t => flag(t, "boarder@worker"), c.env.CF_VERSION_METADATA);
   const owner = who.hash.slice(0, 32);
@@ -885,12 +886,14 @@ app.post("/api/device/window", async c => {
   const key = String(b.key || ""); if (!/^[\w@.:/+-]{2,120}$/.test(key)) return c.json({ error: "창 키" }, 400);
   const tok = "bxa_" + rand(32), h = await sha(tok), now = Date.now(), host = `device:${d.id}`;
   // 기기 창은 늘 그 사람 D1 보드로(주인 기기는 canon) — 다리(주인 보드)로는 절대 안 감
-  await c.env.DB.batch([
-    c.env.DB.prepare("INSERT INTO agent_token(hash, pane, win, host, created_at, tools, owner, device_id) VALUES (?,?,?,?,?,'*',?,?)").bind(h, key, clean(b.name, 80) || key.slice(-40), host, now, own, d.id),
+  const issue = (guard: boolean) => c.env.DB.batch([
+    c.env.DB.prepare(`INSERT INTO agent_token(hash, pane, win, host, created_at, tools, owner, device_id) SELECT ?,?,?,?,?,'*',?,?${guard ? ` WHERE ${NOT_BLOCKED}` : ""}`).bind(h, key, clean(b.name, 80) || key.slice(-40), host, now, own, d.id, ...(guard ? [d.id, key] : [])),
     c.env.DB.prepare("UPDATE agent_token SET revoked_at = ? WHERE pane = ? AND host = ? AND revoked_at IS NULL AND hash != ?").bind(now, key, host, h),
     c.env.DB.prepare("UPDATE device SET last_at = ? WHERE id = ?").bind(now, d.id),
   ]);
+  const [ins] = await issue(true).catch(e => { if (noBlockTable(e)) return issue(false); throw e; });
   tokCache.clear();
+  if (!ins.meta.changes) return c.json({ error: "주인이 끊은 창이에요 — 보더 설정에서 다시 켜면 받을 수 있어요", blocked: true }, 403);
   return c.json({ token: tok });
 });
 app.post("/api/device/voice", async c => {
@@ -1502,13 +1505,16 @@ app.post("/api/me/devices/:id/ownercli", async c => {
   return c.json({ ok: true });
 });
 app.post("/api/me/devices/:id/revoke", async c => {
-  if (!sameSite(c)) return c.json({ error: "no" }, 403);
-  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  const id = c.req.param("id"), now = Date.now();
-  const ms = ownerMails(c.env, s.user.email);
-  const u = await c.env.DB.prepare(`UPDATE device SET revoked_at = ? WHERE id = ? AND owner IN (${ms.map(() => "?").join(",")}) AND revoked_at IS NULL`).bind(now, id, ...ms).run();
+  const id = c.req.param("id"), o = await ownDevice(c, revokeDeps, id); if (o instanceof Response) return o;
+  if (o.revoked) return c.json({ error: "없는 기기" }, 404);
+  const now = Date.now();
+  const cut = (withAudit: boolean) => c.env.DB.batch([
+    c.env.DB.prepare("UPDATE device SET revoked_at = ? WHERE id = ? AND owner = ? AND revoked_at IS NULL").bind(now, id, o.owner),
+    ...(withAudit ? [auditStmt(c.env.DB, { owner: o.owner, act: "revoke_device", device: id, by: o.me, at: now, nSql: "SELECT 1 + count(*) FROM agent_token WHERE device_id = ? AND revoked_at IS NULL", nArgs: [id], when: "EXISTS (SELECT 1 FROM device WHERE id = ? AND revoked_at = ?)", whenArgs: [id, now] })] : []),
+    c.env.DB.prepare("UPDATE agent_token SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL").bind(now, id),
+  ]);
+  const [u] = await cut(true).catch(e => { if (noRevokeTables(e)) return cut(false); throw e; });
   if (!u.meta.changes) return c.json({ error: "없는 기기" }, 404);
-  await c.env.DB.prepare("UPDATE agent_token SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL").bind(now, id).run();
   tokCache.clear();
   await engineOf(c.env, id).revoke().catch(() => null);   // 엔진 데몬도 끊음(4401, 다시 안 뜸)
   return c.json({ ok: true });
@@ -1518,6 +1524,8 @@ const memberOnly = async (c: Context<{ Bindings: Env }>) => {
   const s = await signedIn(c); return s ? boardWho(c.env, s.user.email) : null;
 };
 mountRoleEdit(app, memberOnly);
+const revokeDeps: RevokeDeps = { sameSite, signedIn, ownerMails, dropCache: () => tokCache.clear() };
+mountTokenRevoke(app, revokeDeps);
 const settingsWho = async (c: Context<{ Bindings: Env }>) => {
   if (!sameSite(c)) return null;
   const s = await signedIn(c); return s ? settingsKey(c.env, s.user.email) : null;

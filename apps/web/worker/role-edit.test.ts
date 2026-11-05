@@ -140,7 +140,7 @@ test("MCP role_edit 은 쓰기 도구로 등록되고 검사 · 가림 뒤 같�
   assert.ok(TOOLS.some(t => t.name === "role_edit"));
   assert.equal(SCHEMAS.role_edit.safeParse({ role_id: "r_shared" }).success, false);
   const fake = "sk-proj-" + "b".repeat(30);
-  assert.equal(maskWrites("role_edit", { role_id: "r_shared", instructions: fake }).instructions, "[secret]");
+  assert.equal(maskWrites("role_edit", { role_id: "r_shared", instructions: fake }).instructions, "[가림]");
   grant(s); const local = localTools(s.D1, A, "Primary", "https://example.test", "", undefined, undefined, undefined, s.env, DEV);
   const r: any = await runTool({ agent: "test", publicUrl: "https://example.test", op: async () => { throw new Error("relay 금지"); }, get: async () => ({}), local,
     view: { why: () => null, visible: () => true, desc: () => "", mask: () => false } as any }, "role_edit", { role_id: "r_shared", instructions: "MCP updated" });

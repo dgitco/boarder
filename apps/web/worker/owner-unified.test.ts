@@ -89,7 +89,8 @@ async function setup() {
   bot.run(MEMBER, "s2", 20, "모찌", "", "", "", T);
   const bridge: string[] = [], cells: string[] = [], bumps: string[] = [];
   const call = async (r: { path: string }) => { bridge.push(r.path); return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode('{"ok":true,"from":"bridge"}') }; };
-  const tool = async (name: string) => { bridge.push("tool:" + name); return { ok: true, from: "bridge" }; };
+  const agents: string[] = [];
+  const tool = async (name: string, _a?: unknown, agent?: string) => { bridge.push("tool:" + name); agents.push(String(agent)); return { ok: true, from: "bridge" }; };
   const snaps: Record<string, string> = { data: '{"from":"snap-data"}', topics: '{"from":"snap-topics"}', page: PAGE, sync: "{}", cfg: CFG };
   const rids = new Map<string, Map<string, { status: number } | null>>();   // rid 칸(DO)마다 받은 rid — 끝나면 답 상태
   const ridCell = (n: string) => { let m = rids.get(n); if (!m) rids.set(n, m = new Map()); return m; };
@@ -123,7 +124,7 @@ async function setup() {
     db.prepare("INSERT INTO owner_job_beat(id, at) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET at = excluded.at").run(Date.now());
     await ledger.f7On(D1, "__reset__");
   };
-  return { db, D1, env, ctx, r2, req, adm, flag, human, bridge, cells, bumps, reset, ownerWrites };
+  return { db, D1, env, ctx, r2, req, adm, flag, human, bridge, agents, cells, bumps, reset, ownerWrites };
 }
 
 test("스위치 이름: owner_unified · owner_unified:<주인 메일>(대문자도 소문자로) 받음, 회원 메일 · 꼴이 틀린 이름은 400", async () => {
@@ -239,20 +240,31 @@ test("켬: 주인 full 기기 창 토큰 · 음성이 열림(canon 보드) — �
   assert.equal((await t.req("POST", "/api/device/window", { key: "tmux:m:1", name: "m" }, { authorization: `Bearer ${MDEV}` })).status, 200, "회원 기기 그대로");
 });
 
-test("전체 켬: 주인 창 토큰(owner 빈 값)의 도구가 canon D1 보드로 — 끄면 · 메일별이면 다리", async () => {
-  const t = await setup(), ag = { authorization: `Bearer ${ATOK}` };
-  t.reset();
+test("전체 켬이어도 owner-host 주인 창 토큰(owner 빈 값)의 도구는 주인 장부로 — 회원 보드(board_log canon) 0줄", async () => {
+  const t = await setup(), ag = { authorization: `Bearer ${ATOK}` }, dv = { authorization: `Bearer ${OFULL}` };
   const tools = () => t.bridge.filter(x => x !== "tool:flag");
-  await t.req("POST", "/api/agent/inbox_status", { text: "끔 상태" }, ag);
-  assert.deepEqual(tools(), ["tool:inbox_status"], "끄면 다리 도구");
-  await t.flag("owner_unified:" + OWNER, true); t.reset();
-  await t.req("POST", "/api/agent/inbox_status", { text: "메일별 상태" }, ag);
-  assert.deepEqual(tools(), ["tool:inbox_status"], "메일별 스위치는 화면만 — 에이전트 글은 그대로 다리");
-  await t.flag("owner_unified", true); t.reset();
-  const r = await t.req("POST", "/api/agent/inbox_status", { text: "켬 상태" }, ag);
+  for (const f of ["", "owner_unified:" + OWNER, "owner_unified"]) {
+    if (f) await t.flag(f, true);
+    t.reset();
+    for (const [name, args] of [["inbox_status", { text: "상태 " + f }], ["inbox_log", { kind: "progress", text: "진행 " + f }], ["inbox_ask", { question: "물음 " + f, choices: ["가", "나"] }]] as const) {
+      const r = await t.req("POST", "/api/agent/" + name, args, ag);
+      assert.equal(r.status, 200, name + " " + r.text);
+    }
+    assert.deepEqual(tools(), ["tool:inbox_status", "tool:inbox_log", "tool:inbox_ask"], "주인 장부 도구 " + f);
+    assert.ok(t.agents.slice(-3).every(x => /:%77$/.test(x)), "릴레이가 받는 에이전트에 owner-host 판(%N) — inbox_log · ask 가 그 창 몫: " + t.agents.slice(-3).join(","));
+  }
+  assert.equal((t.db.prepare("SELECT count(*) n FROM board_log WHERE owner = ?").get(OWNER) as { n: number }).n, 0, "회원 보드 줄 0");
+  assert.equal((t.db.prepare("SELECT count(*) n FROM board_card WHERE owner = ?").get(OWNER) as { n: number }).n, 0, "회원 카드 0");
+  const w = await t.req("POST", "/api/device/window", { key: "tmux:work:1", name: "창" }, dv);
+  assert.equal(w.status, 200, w.text); t.reset();
+  const r = await t.req("POST", "/api/agent/inbox_status", { text: "canon 토큰 상태" }, { authorization: `Bearer ${w.j.token}` });
   assert.equal(r.status, 200, r.text);
-  assert.deepEqual(tools(), [], "켜면 다리 0");
-  assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(OWNER, "켬 상태"), "canon 보드 줄");
+  assert.deepEqual(tools(), [], "canon 기기 창 토큰은 다리 안 감");
+  t.reset();
+  const m = await t.req("POST", "/api/device/window", { key: "tmux:m:1", name: "m" }, { authorization: `Bearer ${MDEV}` });
+  await t.req("POST", "/api/agent/inbox_status", { text: "회원 상태" }, { authorization: `Bearer ${m.j.token}` });
+  assert.deepEqual(tools(), [], "회원 창 토큰은 그대로 제 D1 보드 · 다리 0");
+  assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(MEMBER, "회원 상태"));
 });
 
 test("회원 회귀 없음 · 역할 기능은 그대로 주인에게(켬이어도)", async () => {

@@ -1,9 +1,9 @@
-import { redact } from "../session/redact";
 import { z } from "zod";
 import type { Tool } from "./codemode";
 import { roleEditSchema } from "../role-edit";
 import { readKeys } from "../who";
 import { shape, type View } from "./registry";
+import { filterArgs } from "./log-filter";
 import type { Hosted } from "../hosted";
 
 export type Ctx = {
@@ -224,15 +224,26 @@ async function listCards(ctx: Ctx, query: string | undefined, limit: number) {
 
 const WRITES = new Set(["inbox_ask", "inbox_log", "inbox_close", "inbox_say", "inbox_status", "chat_say", "chat_split", "role_draft", "role_edit", "promise_add", "promise_done", "feedback_send"]);
 const NO_MASK = new Set(["cwd", "node", "thread", "thread_id", "card_id", "replaced_by", "promise_id", "role_id"]);
-const maskDeep = (v: unknown): unknown => typeof v === "string" ? redact(v) : Array.isArray(v) ? v.map(maskDeep) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, NO_MASK.has(k) ? x : maskDeep(x)])) : v;
-export const maskWrites = <T extends Record<string, any>>(name: string, a: T): T => (WRITES.has(name) ? maskDeep(a) as T : a);
+export const WRITE_TOOLS: ReadonlySet<string> = WRITES;
+export const maskWrites = <T extends Record<string, any>>(name: string, a: T): T => (WRITES.has(name) ? filterArgs(a, NO_MASK).args : a);
 export async function run(ctx: Ctx, name: string, raw: Record<string, unknown>): Promise<unknown> {
   const schema = schemaOf(name); if (!schema) throw new Error(`없는 도구: ${name}`);
   const no = ctx.view.why(name); if (no) throw new Error(no);
   const r = schema.safeParse(raw ?? {});
   if (!r.success) throw new Error(`입력이 맞지 않음: ${r.error.issues.map(i => `${i.path.join(".")} ${i.message}`).join("; ")}`);
-  const a = maskWrites(name, r.data as Record<string, any>);
-  return shape(name, await raw_(ctx, name, a), ctx.view.mask(name));
+  // 쓰기 도구는 저장 · 전송 전에 서버 거르개(log-filter.ts) — PEM · JWT · .env 통째는 거절, 그 밖 비밀 · 주민 · 계좌 · 카드 꼴은 「[가림]」.
+  //   거른 뒤 칸 · 종류 · 길이를 다시 검사(가림이 글을 늘릴 수 있음). 기록에는 개수 · 까닭 낱말만 — 원문 없음
+  let n = 0, a = r.data as Record<string, any>;
+  if ((MEMBER_ONLY.has(name) || (name === "inbox_log" && a.kind === "reply")) && !ctx.local) throw new Error("회원 보드 전용 도구예요");
+  if (WRITES.has(name)) {
+    let f: ReturnType<typeof filterArgs<Record<string, any>>>;
+    try { f = filterArgs(a, NO_MASK); } catch (e) { console.log(JSON.stringify({ ev: "write_reject", tool: name, why: (e as { why?: string }).why ?? "?" })); throw e; }
+    if (!schema.safeParse(f.args).success) throw new Error("가린 뒤 꼴이 맞지 않아 저장하지 않았어요 — 값을 빼고 다시 보내 주세요");
+    a = f.args; n = f.redacted;
+    if (n) console.log(JSON.stringify({ ev: "write_redact", tool: name, n }));
+  }
+  const out = await raw_(ctx, name, a);
+  return shape(name, n && out && typeof out === "object" ? { ...out, redacted: n } : out, ctx.view.mask(name));
 }
 async function raw_(ctx: Ctx, name: string, a: Record<string, any>): Promise<unknown> {
   if (name === "session_search" || name === "session_handoff") {

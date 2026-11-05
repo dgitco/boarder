@@ -8,14 +8,14 @@ const { maskWrites } = await import("./tools.ts");
 const FAKE = "bxa_" + "FAKEfake0123456789".repeat(3);
 
 test("글 쓰는 도구: 글 · 물음 · 설명 · 깊은 칸의 비밀 꼴을 가림", () => {
-  assert.equal(maskWrites("inbox_log", { kind: "progress", text: `토큰 ${FAKE} 끝` }).text, "토큰 [secret] 끝");
-  assert.equal(maskWrites("inbox_say", { thread_id: "1793000000.000001", text: FAKE }).text, "[secret]");
+  assert.equal(maskWrites("inbox_log", { kind: "progress", text: `토큰 ${FAKE} 끝` }).text, "토큰 [가림] 끝");
+  assert.equal(maskWrites("inbox_say", { thread_id: "1793000000.000001", text: FAKE }).text, "[가림]");
   assert.equal(maskWrites("chat_say", { text: `Bearer ${FAKE}` }).text.includes(FAKE), false);
   const a = maskWrites("inbox_ask", { question: `물음 ${FAKE}`, body: `설명 ${FAKE}`, choices: [`안 ${FAKE}`, "아니요"] });
   assert.ok(!JSON.stringify(a).includes(FAKE));
   assert.deepEqual(a.choices[1], "아니요");
   const s = maskWrites("chat_split", { thread: "1793000000.000001", parts: [{ node: "노드", text: FAKE }] });
-  assert.equal(s.parts[0].text, "[secret]");
+  assert.equal(s.parts[0].text, "[가림]");
 });
 
 test("보통 글 · id 는 그대로, 토큰 이야기 낱말도 그대로", () => {
