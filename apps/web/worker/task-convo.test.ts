@@ -597,6 +597,10 @@ test("화면이 읽은 뒤 사람이 글을 지우면: 늦게 도는 맞춰 넣�
   assert.deepEqual(all, ["그대로인 글"], "지운 글 · 낡은 글 없음");
   await syncTaskConvo(D1, A, "tk_6386");   // 다음 읽기가 새 글로
   assert.deepEqual(db.prepare("SELECT text FROM task_convo WHERE owner = ? ORDER BY at").all(A).map((x: any) => x.text), ["고친 뒤", "그대로인 글"]);
+  let inserts = 0; const spy = { ...D1, batch: async (ss: any[]) => { inserts += ss.filter(x => /INSERT INTO task_convo/.test(x.sql)).length; return (D1 as any).batch(ss); } } as unknown as D1Database;
+  const again = await syncTaskConvo(spy, A, "tk_6386");
+  assert.equal(inserts, 0); assert.equal(again.added, 0); assert.ok(again.dup >= 2);
+  assert.deepEqual(db.prepare("SELECT text FROM task_convo WHERE owner = ? ORDER BY at").all(A).map((x: any) => x.text), ["고친 뒤", "그대로인 글"]);
 });
 
 test("접은 글 안 줄의 반응이 스레드에 보임 · 장부 창 밖으로 밀린 보드 줄도 반응을 닮", async () => {

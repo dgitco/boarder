@@ -588,9 +588,12 @@ export async function syncTaskConvo(db: D1Database, me: string, nodeId: string, 
     return { layer: mine || !desk || isDesk(L, String(r.win), desk) ? "human" : "agents", who: mine ? me : String(r.win), at: Number(r.at), source: "board", text: String(r.text || ""), src_ref: "board_log:" + r.id, log: { id: Number(r.id), win: String(r.win), text: String(r.text || "") } };
   });
   for (const c of allCards.filter(c => CARD_TS.test(String(c.id)) && L.nodeOfWin(String(c.win)) === n)) rows.push({ layer: "human", who: String(c.win), at: Number(c.at), source: "card", text: [c.question, c.body].filter(Boolean).join("\n\n") || "·", src_ref: "card:" + c.id });
-  const r = await addRows(db, me, key, rows.filter(r => r.text));
+  const want = rows.filter(r => r.text);
+  const have = want.length ? new Set((await db.prepare("SELECT src_ref FROM task_convo WHERE owner = ? AND task_id = ?").bind(me, key).all<{ src_ref: string }>()).results.map(x => x.src_ref)) : new Set<string>();
+  const fresh = want.filter(r => !have.has(r.src_ref));
+  const r = fresh.length ? await addRows(db, me, key, fresh) : { added: 0, dup: 0 };
   older.done();
-  return r;
+  return { added: r.added, dup: r.dup + (want.length - fresh.length) };
 }
 const AGENTS_TS = /^\d{10}\.98\d{4}$/;
 const hashOf = (s: string) => { let h = 0; for (const ch of s) h = (Math.imul(h, 31) + ch.charCodeAt(0)) >>> 0; return h % 10000; };
