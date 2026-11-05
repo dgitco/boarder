@@ -16,13 +16,16 @@ export const askedAt = (v: unknown): number | null => {
 };
 type Card = { id: string; state: string; question: string; choices: string; answer: string | null; answered_at: number | null; done: string | null; win: string; at: number };
 
-// onLine = 에이전트가 보드에 쓴 글 한 줄(inbox_log · inbox_say · chat_say)마다 — 폰 알림이 답 · 부름 · 진행 글을 가름(member-push.ts lineWhy). 상태 줄(inbox_status)은 안 부름
-export function localTools(db: D1Database, owner: string, win: string, publicUrl: string, key = "", onCard?: (card: { id: string; question: string; kind?: string; urgent: boolean; at: number; orig_at: number | null }) => void, send?: SplitSend, onLine?: (l: PushLine) => void, roleEnv?: EngEnv, device?: string | null) {
+export function localTools(db: D1Database, owner: string, win: string, publicUrl: string, key = "", onCard?: (card: { id: string; question: string; kind?: string; urgent: boolean; at: number; orig_at: number | null }) => void, send?: SplitSend, onLine?: (l: PushLine) => void, roleEnv?: EngEnv, device?: string | null, deviceName?: string | null) {
   const wid = /:(ew_[a-z0-9]{6,30})$/.exec(key)?.[1] ?? null;
-  const log = async (kind: string, text: string, thread?: string, ev?: { tool: PushLine["tool"]; unblocks?: string }) => {
-    const r = await db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?) RETURNING id").bind(owner, win, kind, text, thread ?? null, Date.now(), wid).first<{ id: number }>();
+  const devName = deviceName || null;
+  type Meta = { task?: string; phase?: string; wait_cond?: string };
+  const log = async (kind: string, text: string, thread?: string, ev?: { tool: PushLine["tool"]; unblocks?: string }, m: Meta = {}) => {
+    const r = await db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid, task, device, phase, wait_cond) VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id")
+      .bind(owner, win, kind, text, thread ?? null, Date.now(), wid, m.task ?? null, devName, m.phase ?? null, m.wait_cond ?? null).first<{ id: number }>();
     if (ev && r && onLine) onLine({ id: Number(r.id), tool: ev.tool, kind, text, thread: thread ?? null, unblocks: ev.unblocks, win });
   };
+  const sameDevice = (d: unknown) => { if (d !== undefined && d !== devName) throw new Error("device 가 이 창 열쇠의 기기와 다름"); };
   const card = (id: string) => db.prepare("SELECT id, state, question, choices, answer, answered_at, done, win, at FROM board_card WHERE id = ? AND owner = ?").bind(id, owner).first<Card>();
   const answerOf = (c: Card) => c.answer ? { choice: c.answer, text: c.answer, by: owner, at: String(c.answered_at || "") } : null;
   async function wait(id: string, timeoutS: number) {
@@ -38,8 +41,8 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
   }
   return async (name: string, a: Record<string, any>): Promise<unknown> => {
     switch (name) {
-      case "inbox_log": await log(a.kind, a.text + (a.evidence?.length ? `\n${a.evidence.join("\n")}` : ""), a.thread, { tool: "inbox_log", unblocks: a.unblocks }); return { ok: true };
-      case "inbox_status": await log("status", a.text); return { ok: true, shown: true };
+      case "inbox_log": sameDevice(a.device); await log(a.kind, a.text + (a.evidence?.length ? `\n${a.evidence.join("\n")}` : ""), a.thread, { tool: "inbox_log", unblocks: a.unblocks }, { task: a.task, wait_cond: a.wait_cond }); return { ok: true };
+      case "inbox_status": sameDevice(a.device); await log("status", a.text, undefined, undefined, { task: a.task, phase: a.kind, wait_cond: a.wait_cond }); return { ok: true, shown: true };
       case "inbox_say": {
         if (!(await card(a.thread_id)) && !(await nodeRoot(db, owner, a.thread_id))) {
           if (!(await primaryRoot(db, owner, a.thread_id))) throw new Error("없는 스레드 — 이 사람 보드의 카드 id 나 노드 글 · Primary 내 글 스레드 id 만");

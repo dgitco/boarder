@@ -233,7 +233,7 @@ test("기술장 표본 — 정상 글은 전부 그대로", () => {
     "ms 1801151234567 타임스탬프", "ms 1701151234567", "송금 1730812345678 ms", "이체 완료 후 영수증 1793000000",
     "입금 확인 연락처 010-1234-5678", "은행 업무 사업자번호 123-45-67890", "계좌 확인 요청 건 2026-11-05 · 2026-11-05T14:30",
     "계좌번호 110123456789 는 확인 중", "PR 7109 7111 7113 7125", "1,234,500원 입금 예정 · 한도 5,000,000원",
-    "token_count=12345678", "TOKEN_TTL=3600000000", "credentials: required-fields", "HMAC_VERSION: v2-2026-11",
+    "token_count=12345678", "TOKEN_TTL=3600000000", "HMAC_VERSION: v2-2026-11", "PASSWORD_MIN_LENGTH=12345678",
     "토큰 gpt-4o-mini-2024-07-18", "14:30 배포 / 15:00 확인", "PR #1234 #1235 · 커밋 abc1234def",
     "비밀번호 변경 안내 · 인증번호 6자리 · 암호화 정책 · secret: 없음", "-----BEGIN CERTIFICATE----- " + "MIIB".repeat(12) + " 공개 인증서 설명",
   ];
@@ -258,7 +258,7 @@ test("따옴표 안 빈칸 값은 닫는 따옴표까지 통째로 가림", () =
   for (const t of [`비밀번호: "${a} ${b}"`, `pw: '${a} ${b}'`, `토큰 "${a} ${b} 123"`, `the password is "${a} ${b}"`, `암호 “${a} ${b}”`, `API_KEY="${a} ${b} gamma"`, `비번은 「${a} ${b}」 입니다`]) {
     const f = masked(t); assert.ok(!f.text.includes(a) && !f.text.includes(b), t); assert.equal(f.redacted, 1, t);
   }
-  for (const t of [`비밀번호 '재설정' 버튼`, `토큰 "128000"`, `비밀번호: "<값>"`, `credentials: "required-fields"`]) assert.equal(masked(t).text, t, t);
+  for (const t of [`비밀번호 '재설정' 버튼`, `토큰 "128000"`, `비밀번호: "<값>"`, `token_count: "12345678"`]) assert.equal(masked(t).text, t, t);
 });
 
 test("은행 이름만 붙은 계좌 하이픈 묶음도 가림 · 전화 · 사업자번호 · 날짜는 통과", () => {
@@ -266,4 +266,12 @@ test("은행 이름만 붙은 계좌 하이픈 묶음도 가림 · 전화 · 사
     const f = masked(t); assert.ok(!f.text.includes(v), t); assert.equal(f.redacted, 1, t);
   }
   for (const t of ["신한 연락처 010-1234-5678", "기업 사업자번호 123-45-67890", "하나 남은 일 2026-11-05", "우리 팀 1차 끝"]) assert.equal(masked(t).text, t, t);
+});
+
+test("비밀 이름의 숫자 · 하이픈 값은 가림 · 개수 · 시간 이름은 통과", () => {
+  for (const [name, v] of [["DB_PASSWORD", "8492" + "0173"], ["DB_PASSWORD", "hunter-" + "2024-pass"], ["SECRET", "1234-5678" + "-9012"], ["TOKEN", "abcd-efgh" + "-ijkl-mnop"], ["db_secret", "abc-def" + "-ghi"], ["credentials", "required" + "-fields"]]) {
+    for (const t of [`${name}=${v}`, `${name}: "${v}"`]) { const f = masked(t); assert.ok(!f.text.includes(v), t); assert.ok(f.text.startsWith(name), "이름은 남김"); assert.equal(f.redacted, 1, t); }
+  }
+  const env = ["DB_PASSWORD=" + "8492" + "0173", "SECRET=" + "1234-5678" + "-9012", "TOKEN=" + "abcd-efgh" + "-ijkl-mnop"].join("\n");
+  assert.equal(rejected(env), "env", "숫자 · 하이픈 비밀 값 셋도 .env 통째로 셈");
 });

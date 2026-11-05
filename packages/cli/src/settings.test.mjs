@@ -1,7 +1,7 @@
 // node --test packages/cli/src/settings.test.mjs — boarder 설정 명령의 인자 → 서버 값 · 되돌리는 명령(지어낸 값). 서버까지의 끝에서 끝 시험은 apps/web/worker/device-settings.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-const { valueOf, undoOf, SETTINGS_COMMANDS, COMMAND_KEYS } = await import('./settings.mjs');
+const { valueOf, undoOf, SETTINGS_COMMANDS, COMMAND_KEYS, windowsPath } = await import('./settings.mjs');
 import { readFileSync } from 'node:fs';
 
 test('인자 → 값: on/off · off 는 지움 · 빠지면 사용법(undefined · null)', () => {
@@ -62,4 +62,14 @@ test('화면 칸 ↔ 명령 대조: 서버 설정 KEYS 마다 CLI 명령이 하�
   const keys = JSON.parse(/export const KEYS = (\[[^\]]+\]) as const/.exec(src)[1]);
   assert.deepEqual([...keys].sort(), [...COMMAND_KEYS].sort());
   assert.ok(SETTINGS_COMMANDS.includes('devices'));
+});
+
+test('boarder windows 질의: --since 30m · 2h · 1d 는 지금부터 거꾸로 밀리초 · 그 밖은 그대로 · 빈 플래그는 안 보냄', () => {
+  const now = 1_762_340_000_000;
+  assert.equal(windowsPath({}, now), '/api/device/windows');
+  assert.equal(windowsPath({ since: '2h', task: '4321' }, now), `/api/device/windows?since=${now - 7_200_000}&task=4321`);
+  assert.equal(windowsPath({ since: '30m' }, now), `/api/device/windows?since=${now - 1_800_000}`);
+  assert.equal(windowsPath({ since: '1d', limit: '50', cursor: 'abc_-' }, now), `/api/device/windows?since=${now - 86_400_000}&limit=50&cursor=abc_-`);
+  assert.equal(windowsPath({ since: '2026-11-05T21:00:00+09:00', task: true }, now), '/api/device/windows?since=2026-11-05T21%3A00%3A00%2B09%3A00', 'ISO 는 그대로 · 값 없는 --task 는 안 보냄');
+  assert.ok(SETTINGS_COMMANDS.includes('windows') && SETTINGS_COMMANDS.includes('window'), '창 하나(window) 와 모든 창(windows) 둘 다');
 });

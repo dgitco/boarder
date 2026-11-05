@@ -17,6 +17,8 @@ export const SETTINGS_HELP = `Board settings from this machine (show: any member
   boarder connections                                             your connections: id, service, status, read-only, how many tools are off (use the id with approve)
   boarder avatar show | set [--seed <word>] [--hue 0-359] [--photo <png|jpg|webp file> | --photo-id <id> | --no-photo]   your avatar (only the parts you pass change)
   boarder devices                                                 your machines on this board: name, tools, scope, last seen (revoking stays on the board screen)
+  boarder windows [--since 2h|<ms>|<ISO>] [--task 1234] [--limit 100] [--cursor <next>]
+                                                                  every window that wrote a line to your board since (default 1 day): machine, window, name, task, last line, open/parked/closed, blocked, waiting (read only)
   boarder node-values show | set check_min=30 split_at=3 move_h=24 rename_h=6 archive_h=6   node numbers (only the ones you pass change)
   boarder unit show | set goal|agent                              what a channel groups: one goal or one agent
   boarder prefs show | set park_on=false park_h=6 task_dots=true tree_tidy=true primary_item=auto rules.<key>=false bundles.<name>=false
@@ -35,7 +37,7 @@ const COMMANDS = { pins: 'pins', 'task-channels': 'task_channels', 'task-repo': 
   'node-values': 'node_values', unit: 'unit', prefs: 'prefs', 'side-hide': 'side_hide', ui: 'ui', features: 'features', 'session-sync': 'session_sync', avatar: 'avatar' };
 const OBJECT_CMDS = new Set(['node-values', 'prefs', 'ui', 'features']);   // k=v 쌍(또는 --json)으로 받는 칸
 export const COMMAND_KEYS = Object.values(COMMANDS);   // 서버 device-settings.ts KEYS 와 같아야 함(settings.test.mjs 가 대조)
-export const SETTINGS_COMMANDS = ['settings', ...Object.keys(COMMANDS), 'roles', 'window', 'devices', 'connections', 'approve'];
+export const SETTINGS_COMMANDS = ['settings', ...Object.keys(COMMANDS), 'roles', 'window', 'devices', 'windows', 'connections', 'approve'];
 
 const fail = (msg, code = 1) => { console.error(msg); process.exit(code); };
 const out = j => console.log(JSON.stringify(j));
@@ -123,6 +125,15 @@ async function allow(flags) {
   }
 }
 
+/** boarder windows 질의: --since 는 30m · 2h · 1d(지금부터 거꾸로)나 밀리초 · ISO 그대로 */
+export function windowsPath(flags, now = Date.now()) {
+  const qs = new URLSearchParams(), rel = /^(\d{1,4})([mhd])$/.exec(String(flags.since ?? ''));
+  if (rel) qs.set('since', String(now - Number(rel[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[rel[2]]));
+  else if (typeof flags.since === 'string') qs.set('since', flags.since);
+  for (const k of ['task', 'limit', 'cursor']) if (typeof flags[k] === 'string' || typeof flags[k] === 'number') qs.set(k, String(flags[k]));
+  const q = qs.toString(); return '/api/device/windows' + (q ? '?' + q : '');
+}
+
 export async function settingsCommand(cmd, sub, pos, flags) {
   if (cmd === 'settings') {
     if (sub === 'allow') return allow(flags);
@@ -140,6 +151,7 @@ export async function settingsCommand(cmd, sub, pos, flags) {
   }
   if (cmd === 'connections') return out(await call('GET', '/api/device/connections'));
   if (cmd === 'devices') return out(await call('GET', '/api/device/devices'));
+  if (cmd === 'windows') return out(await call('GET', windowsPath(flags)));
   if (cmd === 'window') {
     const w = windowKey();
     if (sub === 'show') return out({ key: w.key, name: w.name, server: server(), token_saved: !!loadWindow(w.key)?.token, env_token: !!process.env.BOARDER_TOKEN?.trim() });

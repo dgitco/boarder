@@ -4,7 +4,7 @@ export type Seat = "chief" | "dept" | null;
 export type RuleLine = { win: string; kind: string; text?: string | null; wid?: string | null };
 export type Chief = { name: string; win: string; wid: string | null };
 
-const QUIET = new Set(["status", "start", "progress", "done"]);
+const QUIET = new Set(["status", "start", "progress", "done", "waiting", "session_start", "session_end"]);
 // 기계 줄: 보더 자신(시스템 줄 「보더」 · 들여오기) · 기기 도구 줄(<기기>:boarder) · 시스템 종류
 const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;
 export const isMachine = (l: RuleLine) => l.win === "보더" || OWN.test(l.win) || /:boarder$/.test(l.win) || l.kind === "sys";

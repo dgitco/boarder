@@ -29,6 +29,7 @@ export { Engine } from "./engine";
 export { Search } from "./search";
 export { Pusher } from "./push-do";
 import { mountRoleEdit, toolError } from "./role-edit";
+import { mountWindows } from "./member-windows";
 import { mountTokenRevoke, ownDevice, auditStmt, NOT_BLOCKED, noBlockTable, noRevokeTables, type RevokeDeps } from "./token-revoke";
 import { engineOf, chatToMain, approveDraft, deliverTo, ownerCfg, sysLine, RULES, engineSend, ownerWindows, harnessDevice, liveDevice, openedLastHour, OPEN_PER_HOUR, type Engine } from "./engine";
 import shellJs from "./legacy/shell.js?raw";
@@ -559,14 +560,14 @@ app.get("/api/relay/ws", async c => {
   return bridge(c.env, new URL(c.req.url).searchParams.get("ch") || "owner").fetch(c.req.raw);
 });
 const sha = async (t: string) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)))].map(b => b.toString(16).padStart(2, "0")).join("");
-const tokCache = new Map<string, { pane: string; win: string; host: string; tools: string; owner: string; device_id: string | null; hash: string; at: number }>();
+const tokCache = new Map<string, { pane: string; win: string; host: string; tools: string; owner: string; device_id: string | null; device_name?: string | null; hash: string; at: number }>();
 const flagAt = new Map<string, number>();
 async function bound(env: Env, tok: string) {
   if (!/^bxa_[A-Za-z0-9_-]{30,80}$/.test(tok)) return null;
   const h = await sha(tok), hit = tokCache.get(h);
   const alive = async <T extends { owner: string }>(v: T) => v.owner && isOwner(env, v.owner) && !(await unifiedAll(env)) ? null : v;
   if (hit && Date.now() - hit.at < 10_000) return alive(hit);
-  const r = await env.DB.prepare("SELECT t.pane, t.win, t.host, t.tools, t.owner, t.device_id FROM agent_token t LEFT JOIN device d ON d.id = t.device_id WHERE t.hash = ? AND t.revoked_at IS NULL AND (t.device_id IS NULL OR d.revoked_at IS NULL)").bind(h).first<{ pane: string; win: string; host: string; tools: string; owner: string; device_id: string | null }>();
+  const r = await env.DB.prepare("SELECT t.pane, t.win, t.host, t.tools, t.owner, t.device_id, d.name AS device_name FROM agent_token t LEFT JOIN device d ON d.id = t.device_id WHERE t.hash = ? AND t.revoked_at IS NULL AND (t.device_id IS NULL OR d.revoked_at IS NULL)").bind(h).first<{ pane: string; win: string; host: string; tools: string; owner: string; device_id: string | null; device_name: string | null }>();
   if (!r) { tokCache.delete(h); return null; }
   if (tokCache.size > 1000) tokCache.clear();
   const v = { ...r, hash: h, at: Date.now() }; tokCache.set(h, v); return alive(v);
@@ -605,8 +606,9 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
       return `${c.env.PUBLIC_URL}/api/agent/result/${id}`;
     },
     owner, person: who.owner || "",   // person = 봉함 DEK 주인(주인 '')
-    ...(own ? { local: localTools(c.env.DB, own, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, own, card)), splitSender(c.env, own), line => c.executionCtx.waitUntil(memberLinePush(c.env, own, line)), c.env, who.device_id) } : {}),
+    ...(own ? { local: localTools(c.env.DB, own, who.win || who.pane, c.env.PUBLIC_URL, who.pane, card => c.executionCtx.waitUntil(memberCardPush(c.env, own, card)), splitSender(c.env, own), line => c.executionCtx.waitUntil(memberLinePush(c.env, own, line)), c.env, who.device_id, who.device_name) } : {}),
     host: who.host, win: who.win || who.pane,
+    alive: async () => !!(await c.env.DB.prepare("SELECT 1 FROM agent_token t LEFT JOIN device d ON d.id = t.device_id WHERE t.hash = ? AND t.revoked_at IS NULL AND (t.device_id IS NULL OR d.revoked_at IS NULL)").bind(who.hash).first()),
     conn: { env: c.env, owner: who.owner || "", scope: who.tools ?? "*", card: own ? (card: { id: string; question: string }) => c.executionCtx.waitUntil(memberCardPush(c.env, own, card)) : undefined, catalog: (() => { let p: ReturnType<typeof catalog> | undefined; return () => (p ??= catalog(c.env, who.owner || "", w => c.executionCtx.waitUntil(w))); })() },
   };
 }
@@ -1203,6 +1205,10 @@ mountApprovalLink(app as never, {
   key: (env, email) => cliKey(env as never, email),
   mails: (env, email) => ownerMails(env as never, email),
   isOwner: (env, email) => isOwner(env as never, email),
+});
+mountWindows(app as never, {
+  human: async c => { const s = await signedIn(c as never); return s ? { me: await boardWho(c.env as never, s.user.email) } : null; },
+  device: async c => { const d = await deviceOf(c as never); return d ? await deviceWho(c.env as never, d.owner) : undefined; },
 });
 devSettings.mountDeviceSettings(app as never, {
   device: async c => cliDevice(c as never) as never,

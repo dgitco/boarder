@@ -155,3 +155,40 @@ test("마이그레이션 0077 전(token_audit · window_block 표 없음)에도 
   assert.equal(await alive(w), false, "그 기기 창 열쇠 401");
   assert.equal((await call("GET", "/api/device/me", null, { authorization: `Bearer ${d.tok}` })).status, 401, "기기 열쇠 401");
 });
+
+async function rpc(call: any, tok: string, name: string, args: unknown) {
+  const r = await call("POST", "/mcp", { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }, { authorization: `Bearer ${tok}` });
+  assert.equal(r.status, 200, JSON.stringify(r.j));
+  const t = String(r.j.result.content[0].text);
+  try { return JSON.parse(t); } catch { return t; }   // 코드 실행 결과는 글(값 + console 줄)
+}
+const logs = (db: any, kind = "progress") => (db.prepare("SELECT text FROM board_log WHERE kind = ? ORDER BY id").all(kind) as { text: string }[]).map(r => r.text);
+const cutTrigger = (db: any) => db.exec("CREATE TRIGGER cut_mid AFTER INSERT ON board_log WHEN NEW.text = 'cut' BEGIN UPDATE agent_token SET revoked_at = 1 WHERE revoked_at IS NULL; END");
+
+test("묶음(calls) 안: 끊긴 뒤 다음 쓰기 부르기는 401 꼴로 실패 · 읽기 부르기는 됨", async () => {
+  const { db, call, device, win } = setup();
+  const d = await device(A, "laptop"), t = (await win(d, "m:1")).j.token;
+  cutTrigger(db);
+  const out = await rpc(call, t, "boarder_execute_write", { calls: [
+    { key: "a", tool: "inbox_log", arguments: { kind: "progress", text: "cut" } },
+    { key: "b", tool: "inbox_wait", arguments: { card_id: "w:1", timeout_s: 0 } },   // 읽기 도구(없는 카드 → 바로 closed)
+    { key: "c", tool: "inbox_log", arguments: { kind: "progress", text: "after" } },
+  ] });
+  assert.ok(!String(out.a).startsWith("ERROR"), JSON.stringify(out.a));
+  assert.ok(!String(out.b).startsWith("ERROR"), "읽기는 그대로: " + JSON.stringify(out.b));
+  assert.match(String(out.c), /^ERROR 401 열쇠가 끊겼어요/);
+  assert.deepEqual(logs(db), ["cut"], "끊긴 뒤 쓰기는 장부에 안 들어감");
+});
+
+test("코드 실행 안: 끊긴 뒤 tools.call 쓰기는 던짐 · 끊지 않으면 그대로 다 됨", async () => {
+  const { db, call, device, win } = setup();
+  const d = await device(A, "laptop"), t = (await win(d, "m:2")).j.token;
+  const code = `async () => { await tools.call("inbox_log", { kind: "progress", text: input.first }); let e = null; try { await tools.call("inbox_log", { kind: "progress", text: "second" }); } catch (x) { e = String(x.message || x); } return { e }; }`;
+  const ok = await rpc(call, t, "boarder_execute_write", { code, input: { first: "one" } });
+  assert.equal(JSON.stringify(ok).includes("401"), false, "끊지 않으면 그대로: " + JSON.stringify(ok));
+  assert.deepEqual(logs(db), ["one", "second"]);
+  cutTrigger(db);
+  const r = await rpc(call, t, "boarder_execute_write", { code, input: { first: "cut" } });
+  assert.ok(JSON.stringify(r).includes("401 열쇠가 끊겼어요"), "스크립트가 받은 오류: " + JSON.stringify(r));
+  assert.deepEqual(logs(db), ["one", "second", "cut"], "끊긴 뒤 「second」는 안 들어감");
+});

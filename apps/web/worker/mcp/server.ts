@@ -37,10 +37,12 @@ const describeAny = (ctx: Ctx, name: string) => isConnectorTool(name)
   ? (ctx.conn ? withConnectHint(ctx, name, () => describeTool(ctx.conn!, ctx.conn!.scope, name)) : Promise.reject(new Error(`없는 도구: ${name}`)))
   : Promise.resolve(describe(ctx.view, name));
 
+export const REVOKED_MSG = "401 열쇠가 끊겼어요 — 이 창 · 기기를 주인이 끊었어요";
 async function execute(ctx: Ctx, args: any, write: boolean) {
-  let calls = 0;
+  let calls = 0, recheck = false;
   const one = async (name: string, a: Record<string, unknown>) => {
     if (++calls > MAX_CALLS) throw new Error(`도구 부르기는 ${MAX_CALLS} 번까지`);
+    if (recheck && write && (isConnectorTool(name) || !onlyReads(name)) && ctx.alive && !(await ctx.alive())) throw new Error(REVOKED_MSG);
     if (isConnectorTool(name)) {
       if (!ctx.conn) throw new Error(`없는 도구: ${name}`);
       return shape(name, await withConnectHint(ctx, name, () => runTool(ctx.conn!.env, ctx.conn!, ctx.conn!.scope, name, a, write)), true);   // 가림 · 긴 글 자르기는 inbox 도구와 같게
@@ -49,6 +51,7 @@ async function execute(ctx: Ctx, args: any, write: boolean) {
     return run(ctx, name, a);
   };
   if (args?.tool) return big(ctx, JSON.stringify(await one(String(args.tool), args.arguments || {}), null, 2));
+  recheck = true;   // 여기부터는 여러 번 부르는 길(묶음 · 코드) — 쓰기 부르기마다 열쇠 다시 확인
   if (Array.isArray(args?.calls)) {
     const out: Record<string, unknown> = {};
     for (const [i, c] of args.calls.entries()) { try { out[c.key ?? i] = await one(String(c.tool), c.arguments || {}); } catch (e) { out[c.key ?? i] = `ERROR ${e instanceof Error ? e.message : e}`; } }

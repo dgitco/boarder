@@ -21,7 +21,7 @@ import { secretCommand, SECRET_HELP } from './secret.mjs';
 import { deviceCommand, DEVICE_HELP } from './device.mjs';
 
 const VERSION = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version;
-const KIND = { 시작: 'start', 진행: 'progress', 막힘: 'blocked', 끝: 'done', 결정: 'decision', 장애: 'incident', 마감: 'deadline' };
+const KIND = { 시작: 'start', 진행: 'progress', 막힘: 'blocked', 기다림: 'waiting', 끝: 'done', 결정: 'decision', 장애: 'incident', 마감: 'deadline', 세션시작: 'session_start', 세션끝: 'session_end' };
 const HELP = `boarder ${VERSION} — Boarder for your AI tools
 
 Set up
@@ -35,7 +35,9 @@ Set up
 ${VIEW_HELP}
 
 Report (from an AI tool's session)
-  boarder log <start|progress|blocked|done|decision|incident|deadline> "<one line>" [--evidence <url>]...
+  boarder log <start|progress|blocked|waiting|done|decision|incident|deadline|session_start|session_end> "<one line>" [--evidence <url>]... [--task <#123>] [--wait-for "<what>"]
+                                    --task: the task this line belongs to (#123 or a short ledger id) · --wait-for: waiting/blocked only, what you wait for
+                                    (waiting · session_start · session_end need a member board; the device is set by the server from this window's key)
   boarder ask "<question>" --choice "<A>" --choice "<B>" [--rec A] [--wait <s>] [--urgent] [--asked-at <time>] [--backlog]
                                     --urgent = phone notification: only when a person must handle it now (security incident,
                                     customer-facing outage, a schedule that must be acted on now). --asked-at / --backlog: re-posting an older question (no notification)
@@ -44,7 +46,7 @@ Report (from an AI tool's session)
   boarder say <card id|thread id> "<text>"
   A board message starts with a head like [보드 · <channel | Primary>( · 스레드 <id> | · 카드 <id>)] — answer in the same place:
     Primary → boarder chat · Primary · 스레드 <id> → boarder chat --thread <id> · 카드 <id> → boarder say <id> · 스레드 <id> → boarder say <id> · channel only → boarder log
-  boarder status "<what this window is doing, 40 chars>"
+  boarder status "<what this window is doing, 40 chars>" [--kind <start|progress|blocked|waiting|done|session_start|session_end>] [--task <#123>] [--wait-for "<what>"]
   boarder cards ["<words>"] [--limit 15]
   boarder feedback "<text>" [--kind bug|idea|other]   feedback about Boarder to the people who make it
 
@@ -267,10 +269,10 @@ export async function main(argv) {
     const plan = {
       ask: () => ['inbox_ask', { question: pos[0], choices: flags.choice || [], recommend: flags.rec, urgency: flags.urgency, urgent: !!flags.urgent, backlog: !!flags.backlog, asked_at: flags['asked-at'], body: flags.body, due: flags.due, wait_s: num(flags.wait) }],
       wait: () => ['inbox_wait', { card_id: pos[0], timeout_s: num(flags.timeout) ?? 600 }],
-      log: () => ['inbox_log', { kind: KIND[pos[0]] || pos[0], text: pos[1], unblocks: flags.me ? 'me' : undefined, evidence: flags.evidence }],
+      log: () => ['inbox_log', { kind: KIND[pos[0]] || pos[0], text: pos[1], unblocks: flags.me ? 'me' : undefined, evidence: flags.evidence, task: flags.task, wait_cond: flags['wait-for'] }],   // task · wait_cond 는 줄 때만(안 주면 JSON 에서 빠짐 — 옛 서버도 그대로)
       close: () => ['inbox_close', { card_id: pos[0], done: pos[1] }],
       say: () => ['inbox_say', { thread_id: pos[0], text: pos[1] }],
-      status: () => ['inbox_status', { text: pos[0] }],
+      status: () => ['inbox_status', { text: pos[0], kind: flags.kind ? KIND[flags.kind] || flags.kind : undefined, task: flags.task, wait_cond: flags['wait-for'] }],
       cards: () => ['inbox_cards', { query: pos[0], limit: num(flags.limit) }],
       feedback: () => ['feedback_send', { text: pos.join(' '), kind: flags.kind }],
       split: () => ['chat_split', { thread: pos[0], ...(flags.why ? { why: flags.why } : {}), parts: (flags.part || []).map(x => { const i = String(x).indexOf(':'); return i < 0 ? { node: '', text: String(x) } : { node: String(x).slice(0, i).trim(), text: String(x).slice(i + 1).trim() }; }) }],

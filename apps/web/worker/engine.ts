@@ -632,7 +632,8 @@ export class Engine extends DurableObject<EngEnv> {
     const db = this.env.DB, { rules } = await ownerCfg(db, owner), done: string[] = [];
     const rows = (await db.prepare("SELECT * FROM engine_window WHERE device_id = ? AND kind = 'role' AND state IN ('idle','background','busy')").bind(device).all<Win>()).results;
     for (const w of rows) {
-      const last = await db.prepare("SELECT kind, at FROM board_log WHERE owner = ? AND wid = ? AND kind IN ('start','progress','blocked','done','decision','incident','deadline') ORDER BY at DESC LIMIT 1").bind(owner, w.id).first<{ kind: string; at: number }>();
+      const last = await db.prepare("SELECT kind, at FROM board_log WHERE owner = ? AND wid = ? AND kind IN ('start','progress','blocked','waiting','done','decision','incident','deadline') ORDER BY at DESC LIMIT 1").bind(owner, w.id).first<{ kind: string; at: number }>();
+      const held = last?.kind === "blocked" || last?.kind === "waiting";
       const card = await db.prepare("SELECT waited_at FROM board_card WHERE owner = ? AND wid = ? AND state = 'open' ORDER BY at DESC LIMIT 1").bind(owner, w.id).first<{ waited_at: number | null }>();
       const waiting = !!card && (card.waited_at || 0) > now - 120_000;
       if (w.state === "busy" && !waiting) continue;   // 그냥 일하는 중
@@ -645,11 +646,11 @@ export class Engine extends DurableObject<EngEnv> {
         }
         await this.close(w.id); await sysLine(db, owner, `「${w.name}」 창이 일을 끝내고 닫혔어요`, w.id); done.push(`close ${w.id}`); continue;
       }
-      if ((last?.kind === "blocked" || card) && quiet >= rules.park_min * 60_000) {
+      if ((held || card) && quiet >= rules.park_min * 60_000) {
         if (!(await this.park(w.id, card ? "사람 답 기다림" : "막힘")).ok) continue;
         await sysLine(db, owner, `「${w.name}」 창을 주차했어요 — ${card ? "질문에 답하면" : "채팅으로 말하면"} 다시 열려요`, w.id); done.push(`park ${w.id}`); continue;
       }
-      if (idle && last?.kind !== "blocked" && last?.kind !== "done" && !card && now - Math.max(since, w.woke_at || 0) >= rules.wake_min * 60_000) {
+      if (idle && !held && last?.kind !== "done" && !card && now - Math.max(since, w.woke_at || 0) >= rules.wake_min * 60_000) {
         try { await this.cmd("send", { id: w.id, text: WAKE }); await db.prepare("UPDATE engine_window SET woke_at = ? WHERE id = ?").bind(now, w.id).run(); done.push(`wake ${w.id}`); } catch {}
       }
     }

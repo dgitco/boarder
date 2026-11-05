@@ -18,6 +18,7 @@ export type Ctx = {
   local?: (name: string, args: Record<string, any>) => Promise<unknown>;
   flag?: (text: string) => void;
   win?: string;
+  alive?: () => Promise<boolean>;
   conn?: import("../connectors/mcp").Conn & { env: import("../connectors/store").Env; owner: string; scope: string; card?: (card: { id: string; question: string }) => void };
 };
 
@@ -27,6 +28,12 @@ const safe = (max: number, multiline = false) => z.string().trim().min(1).max(ma
   .refine(v => !v.startsWith("-"), "「-」로 시작할 수 없음");
 const line = (max: number) => safe(max);
 export const REPLY_MAX = 3000;
+export const TASK = z.string().regex(/^#\d{1,6}$|^[a-z][a-z0-9_-]{1,23}$/, "task 꼴이 아님(#123 또는 짧은 장부 id)");
+export const DEVICE = z.string().regex(/^[\w.@-]{1,60}$/, "device 꼴이 아님");
+const waitCond = line(120);
+export const PHASES = ["start", "progress", "blocked", "waiting", "done", "session_start", "session_end"] as const;
+export const MEMBER_LOG_KINDS = ["waiting", "session_start", "session_end"] as const;
+const WAIT_PHASES = new Set<string>(["waiting", "blocked"]);
 const tsId = z.string().regex(/^\d{10}\.\d{6}$|^q:[a-z]+:[\w.-]{1,60}$|^w:\d{1,9}$/, "카드 id 꼴이 아님");
 
 export const SCHEMAS = {
@@ -46,15 +53,22 @@ export const SCHEMAS = {
   }),
   inbox_wait: z.object({ card_id: tsId, timeout_s: z.number().int().min(0).max(600).default(60) }),
   inbox_log: z.object({
-    kind: z.enum(["start", "progress", "blocked", "done", "decision", "incident", "deadline", "reply"]),
+    kind: z.enum(["start", "progress", "blocked", "done", "decision", "incident", "deadline", "reply", ...MEMBER_LOG_KINDS]),
     text: z.string().trim().min(1).max(REPLY_MAX).refine(v => !CTRL.test(v), "제어 문자는 못 씀"),
     unblocks: z.enum(["me", "other"]).optional(),
     evidence: z.array(z.string().url().max(500).refine(v => !CTRL_NL.test(v), "제어 문자는 못 씀")).max(10).optional(),
     thread: z.string().regex(/^\d{10}\.\d{6}$/).optional(),
-  }).superRefine((v, c) => { if (v.kind !== "reply" && !line(400).safeParse(v.text).success) c.addIssue({ code: "custom", path: ["text"], message: "한 줄 · 400자 · 「-」로 시작 못 함(reply 만 여러 줄)" }); }),
+    task: TASK.optional(),
+    device: DEVICE.optional(),
+    wait_cond: waitCond.optional(),
+  }).strict().superRefine((v, c) => {
+    if (v.kind !== "reply" && !line(400).safeParse(v.text).success) c.addIssue({ code: "custom", path: ["text"], message: "한 줄 · 400자 · 「-」로 시작 못 함(reply 만 여러 줄)" });
+    if (v.wait_cond !== undefined && !WAIT_PHASES.has(v.kind)) c.addIssue({ code: "custom", path: ["wait_cond"], message: "wait_cond 는 waiting · blocked 줄에만" });
+  }),
   inbox_close: z.object({ card_id: tsId, done: line(300), replaced_by: tsId.optional() }),
   inbox_say: z.object({ thread_id: z.string().regex(/^\d{10}\.\d{6}$/), text: safe(3000, true) }),
-  inbox_status: z.object({ text: line(40) }),
+  inbox_status: z.object({ text: line(40), kind: z.enum(PHASES).optional(), task: TASK.optional(), device: DEVICE.optional(), wait_cond: waitCond.optional() }).strict()
+    .superRefine((v, c) => { if (v.wait_cond !== undefined && !(v.kind && WAIT_PHASES.has(v.kind))) c.addIssue({ code: "custom", path: ["wait_cond"], message: "wait_cond 는 kind waiting · blocked 에만" }); }),
   inbox_cards: z.object({ query: safe(80).optional(), limit: z.number().int().min(1).max(30).default(15) }),
   hook_events: z.object({ hook: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/).optional(), limit: z.number().int().min(1).max(50).default(20) }),
   hook_event: z.object({ event_id: z.string().regex(/^(ev|he)_[\w-]{8,40}$/) }),
@@ -77,7 +91,6 @@ export const MEMBER_ONLY = new Set<string>(["chat_say", "chat_split", "role_draf
 const READS = new Set<string>(["role_list", "promise_list", "inbox_wait", "inbox_cards", "hook_events", "hook_event", "session_search", "session_handoff"]);
 export const onlyReads = (n: string) => READS.has(n);
 
-// 보이는 설명(boarder_search · boarder_describe) — 입력 꼴은 zod 와 같게 손으로(작아서)
 const CORE_TOOLS: (Tool & { name: ToolName })[] = [
   { name: "inbox_ask", title: "Ask the human a decision",
     description: "Put a decision card in front of the human: a one-line question (bold conclusion, ≤80 chars ideal), 1–6 choices like \"A: plan — why\", the recommended letter first. Returns card_id and thread_id; with wait_s it waits for the answer. urgency incident/today also notifies at once. urgent=true sends a phone notification (people who widened their alerts also get other new cards) — set it ONLY when a person must handle it right now: a security incident, a customer-facing outage, or a schedule that must be acted on now (default false: the card just waits on the board). When re-posting an older/backlog question (e.g. catching up after setup), pass asked_at (its original time) or backlog=true so it does not notify. Ask only what only the human can decide.",
@@ -88,8 +101,8 @@ const CORE_TOOLS: (Tool & { name: ToolName })[] = [
     inputSchema: { type: "object", properties: { card_id: { type: "string" }, timeout_s: { type: "number" } }, required: ["card_id"] },
     annotations: { readOnlyHint: true, destructiveHint: false } },
   { name: "inbox_log", title: "Log progress",
-    description: "Write one line to the work ledger: kind start|progress|blocked|done. blocked with unblocks=me means the human must unblock it. done takes evidence links. Use this instead of asking when nothing needs the human. decision (\"<what to decide> — 추천: <A> / 대안: <B>\"), incident and deadline also go straight to your lead, who vets them before the human sees them.",
-    inputSchema: { type: "object", properties: { kind: { type: "string", enum: ["start", "progress", "blocked", "done", "decision", "incident", "deadline"] }, text: { type: "string" }, unblocks: { type: "string", enum: ["me", "other"] }, evidence: { type: "array", items: { type: "string" } }, thread: { type: "string" } }, required: ["kind", "text"] },
+    description: "Write one line to the work ledger: kind start|progress|blocked|waiting|done (session_start|session_end on member boards). task = the task number (#123). waiting/blocked may say what you wait for in wait_cond. blocked with unblocks=me means the human must unblock it. done takes evidence links. Use this instead of asking when nothing needs the human. decision (\"<what to decide> — 추천: <A> / 대안: <B>\"), incident and deadline also go straight to your lead, who vets them before the human sees them.",
+    inputSchema: { type: "object", properties: { kind: { type: "string", enum: ["start", "progress", "blocked", "waiting", "done", "decision", "incident", "deadline", "session_start", "session_end"] }, text: { type: "string" }, unblocks: { type: "string", enum: ["me", "other"] }, evidence: { type: "array", items: { type: "string" } }, thread: { type: "string" }, task: { type: "string", description: "Task this line belongs to: \"#123\" or a short ledger id like \"lead\"" }, wait_cond: { type: "string", description: "waiting/blocked only: what you wait for, one short line (≤120)" } }, required: ["kind", "text"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "inbox_close", title: "Close a card",
     description: "Close a card after acting on the answer: done says in one line how it was handled (the human sees it). replaced_by when a new card replaces it. Linked cards and questions close with it.",
@@ -101,7 +114,7 @@ const CORE_TOOLS: (Tool & { name: ToolName })[] = [
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "inbox_status", title: "Set your status line",
     description: "One short verb phrase (≤40 chars) of what you're doing now, or \"idle\". Shown on your node in the human's tree. Set it when you start a new step, not on every action.",
-    inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    inputSchema: { type: "object", properties: { text: { type: "string" }, kind: { type: "string", enum: ["start", "progress", "blocked", "waiting", "done", "session_start", "session_end"], description: "Work phase now" }, task: { type: "string", description: "\"#123\" or a short ledger id" }, wait_cond: { type: "string", description: "kind waiting/blocked only: what you wait for (≤120)" } }, required: ["text"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "inbox_cards", title: "List cards waiting on the human",
     description: "Cards in front of the human now (open or answered-being-handled): card_id, state, kind, area, title, thread. Filter with query words. Check it before inbox_ask so you don't ask what's already asked.",
@@ -223,7 +236,7 @@ async function listCards(ctx: Ctx, query: string | undefined, limit: number) {
 }
 
 const WRITES = new Set(["inbox_ask", "inbox_log", "inbox_close", "inbox_say", "inbox_status", "chat_say", "chat_split", "role_draft", "role_edit", "promise_add", "promise_done", "feedback_send"]);
-const NO_MASK = new Set(["cwd", "node", "thread", "thread_id", "card_id", "replaced_by", "promise_id", "role_id"]);
+const NO_MASK = new Set(["cwd", "node", "thread", "thread_id", "card_id", "replaced_by", "promise_id", "role_id", "task", "device"]);
 export const WRITE_TOOLS: ReadonlySet<string> = WRITES;
 export const maskWrites = <T extends Record<string, any>>(name: string, a: T): T => (WRITES.has(name) ? filterArgs(a, NO_MASK).args : a);
 export async function run(ctx: Ctx, name: string, raw: Record<string, unknown>): Promise<unknown> {
@@ -270,6 +283,10 @@ async function raw_(ctx: Ctx, name: string, a: Record<string, any>): Promise<unk
   }
   if ((MEMBER_ONLY.has(name) || (name === "inbox_log" && a.kind === "reply")) && !ctx.local) throw new Error("회원 보드 전용 도구예요");
   if (ctx.local) return ctx.local(name, a);
+  if (name === "inbox_log" || name === "inbox_status") {
+    if (name === "inbox_log" && (MEMBER_LOG_KINDS as readonly string[]).includes(a.kind)) throw new Error("회원 보드 전용 종류예요");
+    const { task: _t, device: _d, wait_cond: _w, ...rest } = a; a = name === "inbox_status" ? { text: rest.text } : rest;
+  }
   if (name === "inbox_wait") return waitAnswer(ctx, a.card_id, a.timeout_s);
   if (name === "inbox_cards") return listCards(ctx, a.query, a.limit);
   // urgent · asked_at · backlog 는 회원 폰 알림(local.ts)용 — 주인 보드(다리)엔 안 보냄(주인 알림은 push.ts 급함 글 규칙)

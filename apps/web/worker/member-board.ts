@@ -538,7 +538,7 @@ function nodeAliases(nodes: Node[]) {
   const m = Object.fromEntries(nodes.filter(n => !n.archived_at).flatMap(n => (n.aliases || []).flatMap(a => [[a.id, n.pane], [a.name, n.pane], [paneOfId(a.id), n.pane]])));
   return Object.keys(m).length ? { node_aliases: m } : {};
 }
-export const QUIET = new Set(["status", "start", "progress", "done"]);
+export const QUIET = new Set(["status", "start", "progress", "done", "waiting", "session_start", "session_end"]);
 function msg(r: R, my: string, mainName: string) {
   const mine = r.win === ME || r.kind === "me";   // me = 노드 채팅에서 내가 그 창에 넣은 글
   return { ts: tsOf(r.at, r.id), lid: Number(r.id) || 0, thread: null, who: mine ? "owner" : "agent", name: mine ? my : r.win === "보더" ? "보더" : mainName, board: false, text: String(r.text || ""), buttons: [], files: [], replies: 0, latest: null, rnames: [], reactions: [], owner: null, ...(QUIET.has(String(r.kind)) ? { quiet: true } : {}), ...(mine ? { src: String(r.text || "") } : {}) };

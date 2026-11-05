@@ -2,7 +2,7 @@
 import { paneLogs } from "./member-board";
 import { shows, chiefTrouble } from "./inbox-rules";
 import { seatsFromData } from "./role-seat";
-const QUIET_KINDS = new Set(["status", "start", "progress", "done"]);
+const QUIET_KINDS = new Set(["status", "start", "progress", "done", "waiting", "session_start", "session_end"]);
 
 export type PushWhy = "card" | "reply" | "call" | "progress";
 export type ProgressPref = "digest" | "off";
