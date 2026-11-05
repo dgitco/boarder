@@ -144,3 +144,27 @@ test("같은 목록이어도 기기 기능(features)이 바뀌면 알림 그대�
   assert.equal(r.same, true, "목록은 같음");
   assert.equal(quiets.length, 1, "기능이 바뀌었으니 알림");
 });
+
+test("비교할 줄은 아직 있는 것만 읽음 — 사라졌다 다시 온 항목은 살아나고, 사라진 줄(7일 치)은 비교 질의가 안 읽음", async () => {
+  const { db, D1 } = d1();
+  const seen: { sql: string; n: number }[] = [];
+  const spy = { ...D1, prepare: (sql: string) => {
+    const st = (D1 as any).prepare(sql);
+    if (/^SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, handle, gone_at FROM imp_item/.test(sql))
+      return { ...st, bind: (...a: unknown[]) => { const b = st.bind(...a); return { ...b, all: async () => { const r = await b.all(); seen.push({ sql, n: r.results.length }); return r; } }; } };
+    return st; } } as unknown as D1Database;
+  const post = app(spy);
+  await post(body());
+  await post({ ...body(), items: body().items.slice(0, 1) });
+  const gone = db.prepare("SELECT gone_at, state FROM imp_item WHERE owner = ? AND key = ?").get(MEMBER, "window:laptop:tmux:2") as { gone_at: number | null; state: string };
+  assert.ok(gone.gone_at && gone.state === "gone", "사라짐 표시");
+  for (let i = 0; i < 50; i++) db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, cwd, repo, branch, refs, state, win, session, seen_at, gone_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(MEMBER, `window:laptop:old:${i}`, "devMember01", "window", "tmux-own", "옛 창", "", "", "", "[]", "gone", `laptop:old:${i}`, "", 1, Date.now() - 3600_000);
+  seen.length = 0;
+  await post(body(3000));   // 둘째 창이 다시 옴
+  assert.equal(seen.length, 1); assert.equal(seen[0].n, 1, "비교 질의는 아직 있는 첫째 창 한 줄만(사라진 51줄 안 읽음)");
+  const back = db.prepare("SELECT gone_at, state, state_at FROM imp_item WHERE owner = ? AND key = ?").get(MEMBER, "window:laptop:tmux:2") as { gone_at: number | null; state: string; state_at: number };
+  assert.deepEqual([back.gone_at, back.state, back.state_at], [null, "idle", 3000], "다시 온 항목은 살아남");
+  const plan = (db.prepare("EXPLAIN QUERY PLAN " + seen[0].sql).all(MEMBER, "devMember01") as { detail: string }[]).map(r => r.detail).join(" | ");
+  assert.match(plan, /imp_item_owner \(owner=\? AND gone_at=\?\)/, plan);
+});

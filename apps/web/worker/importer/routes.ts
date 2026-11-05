@@ -227,7 +227,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     let featChanged = false;
     if (b.features) { const f = JSON.stringify(b.features); featChanged = Number((await DB.prepare("UPDATE device SET features = ? WHERE id = ? AND (features IS NULL OR features != ?)").bind(f, d.id, f).run())?.meta?.changes || 0) > 0; }
     const valid = b.items.map(x => ItemIn.safeParse(x)).filter(x => x.success).map(x => x.data!), items = valid.slice(0, 600), dropped = b.items.length - items.length;
-    const have = new Map(((await DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, handle, gone_at FROM imp_item WHERE owner = ? AND device_id = ?").bind(owner, d.id).all()).results as Record<string, unknown>[]).map(r => [String(r.key), r]));
+    const have = new Map(((await DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, handle, gone_at FROM imp_item WHERE owner = ? AND gone_at IS NULL AND device_id = ?").bind(owner, d.id).all()).results as Record<string, unknown>[]).map(r => [String(r.key), r]));
     const sig = (r: Record<string, unknown>) => JSON.stringify([r.kind, r.engine || "", r.title || "", r.cwd || "", r.repo || "", r.branch || "", typeof r.refs === "string" ? r.refs : JSON.stringify(r.refs || []), r.state || "", r.state_at ?? null, r.win || "", r.session || ""]);
     const st: D1PreparedStatement[] = [];
     for (const i of items) {

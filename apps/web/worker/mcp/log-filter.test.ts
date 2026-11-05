@@ -409,3 +409,32 @@ test("원문 짝 재검사는 원문의 사이 글자(「 is 」) 그대로 자�
   const v = jj("a b ", "c1x9");
   const f = filterText(`API_TOKEN is "${v}"`); assert.ok("reject" in f || !f.text.includes(v));
 });
+
+test("따옴표 값 끝 낱말이 비밀 이름이어도, 뒤에 여는 따옴표가 없으면 값으로 가림", () => {
+  for (const [t, v] of [[`비밀번호 "${jj("dragon fly ", "secret")}": 오늘부터`, "dragon"], [`pass` + `word: "${jj("x9Q ", "token")}": 힌트`, "x9Q"]] as [string, string][]) {
+    const f = filterText(t); assert.ok("reject" in f || !f.text.includes(v), t.slice(0, 14));
+  }
+});
+
+test("비교식 · 화살표 함수의 코드 꼴 값은 그대로 · 맨 낱말 값은 가림", () => {
+  for (const t of ["if (pass" + "word === undefined) return", ".map(token => token.trim())", "apiKey => apiKey.active", "token == nullOrEmpty"]) assert.equal(masked(t).text, t, t);
+  for (const v of [jj("Hunter2", "Pass99"), jj("rzTThf", "yjRvx")]) { const f = masked(`DB_PASS` + `WORD => ${v}`); assert.ok(!f.text.includes(v)); }
+});
+
+test("== · => 뒤 점 든 값은 첫 마디가 이름 · process · this · self 일 때만 코드로 봄", () => {
+  for (const [t, v] of [[`pass` + `word==${jj("Hunter2", ".Pass99")}`, "Pass99"], [`api_` + `key=>${jj("correct", ".horse.battery")}`, "horse"], [`pass` + `word => ${jj("some", ".value")}`, "value"], [`pass` + `word==${jj("Hunter2", "Pass99")}()`, "Pass99"]] as [string, string][]) {
+    const f = filterText(t); assert.ok("reject" in f || !f.text.includes(v), t.slice(0, 16));
+  }
+  for (const t of ["token => token.id", "token === process.env.TOKEN", "secret === null", ".map(token => token.trim())"]) assert.equal(masked(t).text, t, t);
+});
+
+test("따옴표 값 앞 == 도 사이로 받음", () => {
+  const f = filterText(`비밀번호==“${jj("open ses", "ame 42")}”`); assert.ok("reject" in f || (!f.text.includes("sesame") && !f.text.includes("open")));
+});
+
+test("닫는 따옴표 빠진 값이 다음 이름을 먹어도 뒷조각 · 같은 이름 뒤 값이 남지 않음(가리거나 거절)", () => {
+  const ph = jj("open ses", "ame 42"), x = jj("Xk9mQ2", "vL8pZ"), y = jj("q7Rt", "Zx2mWp");
+  for (const [t, vs] of [[`INPUT_TOKEN == "${y} 끝&OLD_TOKEN == "${ph}": x`, [y, "sesame 42"]], [`pw == "「${x}」 pw == "${y}" 끝`, [x, y]], [`INPUT_TOKEN: "${y} 끝&OLD_TOKEN: "${ph}": x`, [y, "sesame 42"]]] as [string, string[]][]) {
+    const f = filterText(t); assert.ok("reject" in f || vs.every(v => !f.text.includes(v)), t.slice(0, 18));
+  }
+});
