@@ -1,5 +1,6 @@
 
 import { tokenRows } from "./agent-token-cache";
+import { mapStmts, mapPlain, noVerTable } from "./map-cache";
 import { regroup } from "./importer/routes";
 import { bumpMember } from "./live";   // 30초 막기 뒤 미룬 묶기가 끝나면 화면에 알림
 import { parseConnectKind, titleOf, readsOf, oauthApi, CONNECT_TTL } from "./connectors/connect-card";
@@ -218,9 +219,10 @@ export async function load(db: D1Database, me: string, readOnly = false) {   // 
   const tkP = tokenRows(db, me);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
   const goneP = goneRows(db, me), archP = archivedRows(db, me);
   goneP.catch(() => {}); archP.catch(() => {});   // 실패는 아래 await 가 던짐 — batch 가 먼저 실패해도 처리 안 된 거부로 남지 않게
-  const [nd, mi, it, lg, cd, dr, ew, ns, pw, mb, cx, rvd, hw] = await db.batch([
+  let ms: ReturnType<typeof mapStmts> | ReturnType<typeof mapPlain> = mapStmts(db, me);   // 노드 ↔ 항목은 바뀜 번호가 같으면 맡긴 줄(map-cache.ts) — 이 칸은 번호, 맡김이 없으면 줄은 batch 끝에
+  const mk = (ms: { stmts: D1PreparedStatement[] }) => [
     db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND archived_at IS NULL UNION SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND archived_at > ? UNION SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND pinned_name IN (${FRONT_NAMES}) UNION SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND name IN (${FRONT_NAMES}) AND COALESCE(pinned_name, '') = '' ORDER BY updated_at DESC`).bind(me, me, Date.now() - ARCH_FRESH, me, me, me, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
-    db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
+    ms.stmts[0],
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at > ?").bind(me, me, Date.now() - GONE_FRESH),   // 6분 안 사라짐만 — 하루 치는 goneP(5분 맡김)
     db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT ${LOG_MAX}`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
     db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
@@ -232,7 +234,13 @@ export async function load(db: D1Database, me: string, readOnly = false) {   // 
     db.prepare("SELECT id, win, kind, question, at, answered_at FROM board_card WHERE owner = ? AND state = 'closed' ORDER BY at DESC LIMIT 50").bind(me),
     REVOKED(db, me),
     ...(readOnly || (!!harnessKey && me === harnessKey) ? [db.prepare("SELECT id, name, state, state_at, note, handle, created_at FROM engine_window WHERE owner = ? AND kind = 'harness' AND state NOT IN ('closed','gone') ORDER BY id LIMIT 300").bind(me)] : []),
-  ]);
+    ...ms.stmts.slice(1),
+  ];
+  let B: D1Result[];
+  try { B = await db.batch(mk(ms)); }
+  catch (e) { if (!noVerTable(e)) throw e; ms = mapPlain(db, me); B = await db.batch(mk(ms)); }   // 번호 표가 없음(이주 전 · 지운 뒤) — 예전 질의로 한 번 더
+  const nB = B.length - (ms.stmts.length - 1);   // 맡김 줄 문장(없을 수 있음)은 늘 맨 끝 — hw 칸이 조건부라 끝에서 셈
+  const [nd, , it, lg, cd, dr, ew, ns, pw, mb, cx, rvd, hw] = B.slice(0, nB), mi = { results: await ms.done([B[1], ...B.slice(nB)]) };
   const tk = { results: await tkP };
   const fresh = it.results as R[], seenKey = new Set(fresh.map(r => String(r.key)));   // 새로 읽은 줄(아직 있음 · 6분 안 사라짐)이 맡긴 옛 줄을 이김 — 다시 살아난 항목이 닫힌 것으로 안 보이게
   const allItems = [...fresh, ...(await goneP).filter(r => !seenKey.has(String(r.key)))];

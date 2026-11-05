@@ -1,4 +1,5 @@
 import { tokenRows, RAW } from "../agent-token-cache";
+import { mapStmts, mapPlain, noVerTable } from "../map-cache";
 import { taskIssueFor } from "./task-repo";
 import { REVOKED, withRv } from "./revoked";
 import { cleanPins, readPins, savePins } from "../side-order";
@@ -107,18 +108,24 @@ export async function regroup(env: Env, owner: string) {
   const t = now();
   const wnP = tokenRows(env.DB, owner);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
   const goneP = rgGone(env.DB, owner, t); goneP.catch(() => {});   // 실패는 아래 await 가 던짐 — batch 가 먼저 실패해도 처리 안 된 거부로 남지 않게
-  const [it, lg, cd, mp, nd, ns, rl, em, tk, rvd] = await env.DB.batch([
+  let ms: ReturnType<typeof mapStmts> | ReturnType<typeof mapPlain> = mapStmts(env.DB, owner);   // 노드 ↔ 항목은 바뀜 번호가 같으면 맡긴 줄(map-cache.ts, 사본) — 이 칸은 번호, 맡김이 없으면 줄은 batch 끝에
+  const mk = (ms: { stmts: D1PreparedStatement[] }) => [
     env.DB.prepare(`SELECT ${RG_COLS} FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT ${RG_COLS} FROM imp_item WHERE owner = ? AND gone_at > ?`).bind(owner, owner, t - RG_FRESH),
     env.DB.prepare(`SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) AND kind != 'me' ${notChat("board_log")} ORDER BY at DESC LIMIT 400`).bind(owner),
     env.DB.prepare(`SELECT id, win, state, question, at FROM board_card WHERE owner = ? ${notChat("board_card")} ORDER BY at DESC LIMIT 200`).bind(owner),
-    env.DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(owner),
+    ms.stmts[0],
     env.DB.prepare("SELECT id, name, pinned_name, area, state, why, counts, created_at, updated_at, archived_at FROM mnode WHERE owner = ? AND id NOT LIKE 'sl\\_%' ESCAPE '\\' AND id NOT LIKE 'tk\\_%' ESCAPE '\\'").bind(owner),
     env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT name FROM role WHERE owner = ? UNION SELECT name FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed','gone')").bind(owner, owner),
     env.DB.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(owner),   // 보더 메인 봇이 떠 있나(있으면 들여온 primary 는 노드)
     env.DB.prepare("SELECT id, name, pinned_name, task, counts, archived_at FROM mnode WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(owner),
     REVOKED(env.DB, owner),
-  ]);
+    ...ms.stmts.slice(1),
+  ];
+  let RB: D1Result[];
+  try { RB = await env.DB.batch(mk(ms)); }
+  catch (e) { if (!noVerTable(e)) throw e; ms = mapPlain(env.DB, owner); RB = await env.DB.batch(mk(ms)); }   // 번호 표가 없음 — 예전 질의로 한 번 더
+  const [it, lg, cd, , nd, ns, rl, em, tk, rvd] = RB, mp = { results: await ms.done([RB[3], ...RB.slice(10)]) };
   const wn = { results: await wnP };
   it.results = mergeGone(it.results as RgRow[], await goneP);
   const items = withRv(it.results as (Item & { refs: string })[], rvd.results as { id: string }[]).map(r => ({ ...r, refs: json<string[]>(r.refs as unknown as string, []) }));
