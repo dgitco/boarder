@@ -245,3 +245,11 @@ test("Range: 회원 캔버스 영상은 206 조각 · 끝 n 바이트 · 파일 
   const r7 = await get(`/art/${j.id}/`, "bytes=0-9");   // 판(HTML)은 Range 를 안 봄 — 표를 끼운 통째
   assert.equal(r7.status, 200); assert.match(await r7.text(), /지어낸 글/);
 });
+
+test("목록 칸 at 은 주인 판처럼 서울 시각 「YYYY-MM-DD HH:MM」(표지의 초 · ms 숫자를 바꿈, 글자는 그대로)", async () => {
+  const { seoulAt } = await import("./member-canvas.ts");
+  assert.equal(seoulAt("1793818282"), "2026-11-05 03:51");
+  assert.equal(seoulAt("1793818282123"), "2026-11-05 03:51");
+  assert.equal(seoulAt("2026-11-05 08:18"), "2026-11-05 08:18");
+  assert.equal(seoulAt(undefined), "");
+});

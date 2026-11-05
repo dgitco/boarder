@@ -68,6 +68,11 @@ async function dropVer(env: Env, mk: string, id: string, ver: string) {
 }
 
 const autoFolder = (m: Meta) => m.acct || "캔버스";
+export function seoulAt(v: unknown): string {
+  const s = String(v ?? ""); if (!/^\d{9,13}$/.test(s)) return s;
+  const ms = s.length > 11 ? Number(s) : Number(s) * 1000, d = new Date(ms + 9 * 3600_000);
+  return d.toISOString().slice(0, 16).replace("T", " ");
+}
 export async function list(env: Env, email: string) {
   const me = email.toLowerCase();
   const [rows, fr, nr, pr] = await Promise.all([all(env, await keyOf(email)),
@@ -77,7 +82,7 @@ export async function list(env: Env, email: string) {
   const mv = new Map(fr.results.map(r => [r.art, r.folder])), cnt = new Map(nr.results.map(r => [r.art, Number(r.n)])), pref = new Map(pr.results.map(r => [r.art, r]));
   const out: Record<string, { kind: "page" | "canvas"; title: string; at: string; acct: string; folder: string; moved: boolean; notes: number; pin: boolean; thumb: string }> = {};
   for (const { id, m } of rows.sort((a, b) => Number(b.m.at) - Number(a.m.at)))
-    out[id] = { kind: m.kind === "canvas" ? "canvas" : "page", title: m.title || id, at: m.at, acct: m.acct || "", folder: mv.get(id) || autoFolder(m), moved: mv.has(id), notes: cnt.get(id) || 0, pin: !!pref.get(id)?.pin, thumb: pref.get(id)?.thumb || "" };
+    out[id] = { kind: m.kind === "canvas" ? "canvas" : "page", title: m.title || id, at: seoulAt(m.at), acct: m.acct || "", folder: mv.get(id) || autoFolder(m), moved: mv.has(id), notes: cnt.get(id) || 0, pin: !!pref.get(id)?.pin, thumb: pref.get(id)?.thumb || "" };
   return out;
 }
 
