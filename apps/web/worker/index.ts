@@ -2262,6 +2262,20 @@ async function ledgerAges(env: Env) {
   const [cf, sy] = await Promise.all([snap(env).get("cfg"), snap(env).get("sync")]);
   return { cfg: cf, syncAge: sy ? snapAge(sy) : Infinity, h: { "x-cfg-age": cf ? String(snapAge(cf)) : "none", "x-sync-age": sy ? String(snapAge(sy)) : "none" } };
 }
+const OWN_CHAT_POST = new Set([...ownerJobs.PATHS, "/api/draft", "/api/nodepri"].filter(p => p !== "/api/clientlog"));
+/** 켠 주인(ownU)의 대화 · 카드 읽기: owner-read 답(주인 길과 같은 몸통 · ETag · 나이 머리). 다리로 안 감 — cfg 가 아직 없거나 D1 오류면 503(다시 읽기), 등록 안 된 채널은 404 */
+async function ownerD1(c: Context<{ Bindings: Env }>, rd: ownerRead.Route) {
+  const ag = await ledgerAges(c.env).catch(() => null);
+  const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;   // 주인 길과 같음(자주 쓰는 반응만 복제본)
+  const get = ag ? async () => ag.cfg : () => snap(c.env).get("cfg");
+  const res = await ownerRead.respond(rdb, get, rd, c.req.header("if-none-match"), rd.kind === "inbox");
+  if (res) { if (ag) for (const [k, v] of Object.entries(ag.h)) res.headers.set(k, v); return res; }
+  const cfg = await ownerRead.cfgOf(get).catch(() => null);
+  if (cfg?.channels && (rd.kind === "channel" || rd.kind === "thread") && !Object.prototype.hasOwnProperty.call(cfg.channels, rd.a || "")) return c.json({ error: "없는 채널이에요" }, 404, { "cache-control": "no-store" });
+  return queue.retrySafe(c);
+}
+/** 켠 주인 화면의 채널 목록(HB_CH): 주인 채널 표(cfg 스냅숏 — 기본 다섯 + 에이전트 채널). cfg 가 없으면 기본 다섯 */
+const ownerChans = async (env: Env) => ownerRead.channelsOf(await ownerRead.cfgOf(() => snap(env).get("cfg")).catch(() => null));
 type Snap = { body: string; etag: string; at: number; checked: number } | null;
 function historySince(h: { oldest: number; rows: { open?: boolean; segs: [number, number, string][]; marks: [number][] }[] }, q: string | null) {
   // history.py history() 와 같은 거르기: since 뒤에 걸친 막대 · 표시만, 닫힌 지 오래된 창의 닫힘 막대 하나는 뺌
@@ -2350,13 +2364,15 @@ async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) 
     .replace("__BX_DATA__", () => dt.body.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(dt.etag));
   return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-snap-age": String(Math.max(snapAge(pg), snapAge(dt))) } as Record<string, string>, body: new TextEncoder().encode(html) };
 }
-async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea: boolean | "x" = false) {
+async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea: boolean | "x" = false, chans: string[] = ["primary"]) {   // chans = 채널 목록(회원 Primary 하나, 켠 주인은 주인 채널 표)
   const pg = await snap(c.env).get("page"); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
   await memberBoard.fresh(c.env, me, c.executionCtx).catch(e => console.error("묶기", e));
-  const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot, await memberBoard.loadShared(c.env.DB, me, c.executionCtx))), tag = await memberBoard.etag(d);
+  const data = await memberBoard.data(c.env.DB, me, bot, await memberBoard.loadShared(c.env.DB, me, c.executionCtx)), d = JSON.stringify(data), tag = await memberBoard.etag(d);
+  const named = new Map(((data as { agents?: unknown }).agents as { key?: string; name?: string; lead?: string | null }[] | undefined || []).filter(a => a && typeof a.key === "string").map(a => [a.key!, a]));
+  const agents = chans.length > 1 ? chans.filter(k => !["primary", "company", "personal", "dgit", "shop"].includes(k)).map(k => ({ key: k, name: String(named.get(k)?.name || k).slice(0, 60), lead: named.get(k)?.lead ?? null })) : null;
   const html = (await tplHtml(c.env, c.executionCtx, pg)).replace("__BX_DATA__", () => d.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(tag));
   // 회원 값: 채널은 Primary 하나(보드 CH) · 내 이름 · 메인 봇 이름. 영역 칸이 하나라 트리 줄을 한 칸으로
-  const member = `<script>window.HB_CH = ["primary"]; window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name, avatar: await memberBoard.myAvatar(c.env.DB, me).catch(() => null), push: await ledger.f7On(c.env.DB, "member_push").catch(() => false), unit: await c.env.DB.prepare("SELECT json_extract(data, '$.unit') u FROM node_setting WHERE owner = ? AND json_valid(data)").bind(me).first<{ u: string | null }>().then(r => r?.u === "agent" || r?.u === "goal" ? r.u : null).catch(() => null) }).replace(/</g, "\\u003c")}</script><style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>`;
+  const member = `<script>window.HB_CH = ${JSON.stringify(chans).replace(/</g, "\\u003c")};${agents ? ` window.HB_AGENTS = ${JSON.stringify(agents).replace(/</g, "\\u003c")};` : ""} window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name, avatar: await memberBoard.myAvatar(c.env.DB, me).catch(() => null), push: await ledger.f7On(c.env.DB, "member_push").catch(() => false), unit: await c.env.DB.prepare("SELECT json_extract(data, '$.unit') u FROM node_setting WHERE owner = ? AND json_valid(data)").bind(me).first<{ u: string | null }>().then(r => r?.u === "agent" || r?.u === "goal" ? r.u : null).catch(() => null) }).replace(/</g, "\\u003c")}</script><style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>`;
   const res = new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "frame-ancestors 'self'", "x-frame-options": "SAMEORIGIN", "x-boarder-src": "member" } });
   return boardShell(c, res, me, member, await ledger.f7On(c.env.DB, "write_queue"), ea);
 }
@@ -2512,14 +2528,16 @@ app.all("*", async c => {
     return new Response(page.body, { status: 200, headers: h });
   }
   const bw = await boardWho(c.env, s.user.email), ownU = bw !== null && isOwner(c.env, s.user.email);
-  const ownKeep = ownU && (url.pathname.startsWith("/art/") || /^\/api\/(arts$|artnotes\/|artowner\/|artnote$|artfolder$|artstar$|artthumb$|voice\/)/.test(url.pathname));
+  const ownKeep = ownU && (url.pathname.startsWith("/art/") || /^\/api\/(arts$|artnotes\/|artowner\/|artnote$|artfolder$|artstar$|artthumb$|voice\/)/.test(url.pathname)
+    || (c.req.method === "POST" && OWN_CHAT_POST.has(url.pathname))   // 대화 · 카드 쓰기도 주인 길(아래 OWN_CHAT_POST) — 읽기는 아래 회원 길 안에서 owner-read
+    || (c.req.method === "GET" && /^\/api\/answer\//.test(url.pathname)));
   if (bw !== null && !ownKeep) {
     if (/^\/(assets|icons)\//.test(url.pathname)) return c.env.ASSETS.fetch(c.req.raw);
     if (url.pathname === "/ea" && c.req.method === "GET") return c.redirect("/es" + url.search, 302);
     if ((url.pathname === "/" || url.pathname === "/es" || url.pathname === "/feed") && c.req.method === "GET") {
       const bot = await myBot(c.env, bw), js = { blob: blobJs, pick: botPickJs };   // 주인(canon)은 canon 줄이 아직 없으면 「@owner」 — 온보딩으로 안 빠짐
       if (!bot) return c.html(memberOnboard(s.user.email, js), 200, { ...NOFRAME, "cache-control": "no-store" });
-      const pg = await memberPage(c, bw, (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>().catch(() => null))?.name, bot, url.pathname === "/feed" ? "x" : url.pathname === "/es");
+      const pg = await memberPage(c, bw, (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>().catch(() => null))?.name, bot, url.pathname === "/feed" ? "x" : url.pathname === "/es", ownU ? await ownerChans(c.env) : undefined);
       return pg ?? c.html("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><p style='font:15px system-ui;padding:40px'>일시적인 오류가 발생했어요</p>", 503, { ...NOFRAME, "cache-control": "no-store", "retry-after": "5" });
     }
     {
@@ -2533,6 +2551,13 @@ app.all("*", async c => {
           if (!(await ledger.f7On(c.env.DB, "write_queue"))) return c.json({ ok: true, state: "ok" });   // rid 칸이 없으면 예전처럼
           try { const a = await queue.answerOf(c.env, ownU ? s.user.email : me, ans[1]); return a ? c.json({ ok: true, ...a }, 200, { "cache-control": "no-store" }) : c.json({ state: "unknown" }, 404, { "cache-control": "no-store" }); }
           catch { return queue.retrySafe(c); }   // rid 칸을 못 부름 = 모름(화면은 같은 rid 로)
+        }
+        if (ownU) {
+          const rd = ownerRead.route(url.pathname + url.search); if (rd) return ownerD1(c, rd);
+          if (url.pathname === "/api/drafts") {   // 초안 정본 = D1 owner_state(write_state) — 아직 안 올렸으면(seed 전) cfg 사본(주인 길 ownMisc 와 같음)
+            const d = await OS.get(c.env.DB, "drafts").catch(() => null); if (d) return c.json(d.v, 200, { "cache-control": "no-store", "x-f7": "d1" });
+            const cf = await ownerRead.cfgOf(() => snap(c.env).get("cfg")).catch(() => null); return cf ? c.json(cf.drafts || {}, 200, { "cache-control": "no-store", "x-f7": "snap" }) : queue.retrySafe(c);
+          }
         }
         const fm = /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, ownU ? ownerMails(c.env, s.user.email) : me, fm[1], url.searchParams.has("dl"));
         if (url.pathname === "/api/voice/modes") return c.json(await memberVoice.modes(c.env.DB, me, url.searchParams.get("pane") || ""), 200, { "cache-control": "no-store" });
@@ -2572,7 +2597,14 @@ app.all("*", async c => {
           : url.pathname === "/api/voice/rtc/note" ? await memberVoice.note(c.env as never, me, b) : await memberVoice.end(c.env.DB, me, b);
         return c.json(o, st as 200);
       }
-      if (c.req.method === "POST") return memberPost(c, me, url);
+      if (c.req.method === "POST") {
+        const r = await memberPost(c, me, url);
+        if (ownU && r.status < 500) {   // 켠 주인이 회원 길로 쓴 rid 표지 — 그 rid 의 답(주인 길)이 회원 판정으로(다리에 묻지 않게). 5xx 는 모름이라 안 남김
+          const rid = queue.ridOfBody(await c.req.json().catch(() => null));
+          if (rid) await queue.memberMark(c.env.DB, rid, r.status < 400).catch(e => console.error("rid 표지", e));
+        }
+        return r;
+      }
     }
     if (docNav(c, url)) return c.redirect("/nf", 302);
     return c.json({ error: "no" }, 403);
@@ -2596,11 +2628,17 @@ app.all("*", async c => {
   }
   // 파일 붙은 글: 회원과 같이 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 다리로(창이 링크로 받아 감)
   let sent: Uint8Array | undefined, ours: string[] = [];   // ours = 아래에서 Worker 가 붙인 첨부 줄(비밀 판정에서 뺌)
+  // 켠 주인(ownU)의 할 일 없애기: 화면이 HB_CH 라 회원 꼴(/api/todo {rid, id: 카드 ts, drop})로 보냄 → 주인 꼴(/api/cardcheck {rid, ts} — 주인 화면 inbox.js 와 같은 길 · 카드 닫힘)
+  if (ownU && c.req.method === "POST" && url.pathname === "/api/todo") {
+    sent = new Uint8Array(await c.req.arrayBuffer()); let b: Record<string, unknown> | null = null;
+    try { b = JSON.parse(new TextDecoder().decode(sent)); } catch {}
+    if (b && typeof b === "object" && !Array.isArray(b) && b.drop === true && typeof b.id === "string") { url.pathname = "/api/cardcheck"; sent = new TextEncoder().encode(JSON.stringify({ rid: b.rid, ts: b.id })); }
+  }
   if (c.req.method === "POST" && url.pathname === "/api/chat") {
     sent = new Uint8Array(await c.req.arrayBuffer()); let b: Record<string, unknown> | null = null;
     try { b = JSON.parse(new TextDecoder().decode(sent)); } catch {}
     if (b && typeof b === "object" && Array.isArray(b.files) && b.files.length && !b.delete && !b.react && b.edit === undefined) {
-      const f = await memberFiles.fileLines(c.env, s.user.email.toLowerCase(), c.env.PUBLIC_URL || url.origin, b.files as unknown[]);
+      const f = await memberFiles.fileLines(c.env, ownU && bw ? bw : s.user.email.toLowerCase(), c.env.PUBLIC_URL || url.origin, b.files as unknown[]);   // 켠 주인(ownU)은 회원 길로 올려 canon 이 올린 파일
       if (!f.lines.length) return c.json({ ok: false, error: "파일을 찾지 못했어요" }, 400);
       b.text = [String(b.text || "").trim(), ...f.lines].filter(Boolean).join("\n"); delete b.files; ours = f.lines;
       sent = new TextEncoder().encode(JSON.stringify(b));
@@ -2678,6 +2716,12 @@ app.all("*", async c => {
     const am = /^\/api\/answer\/([\w-]{1,64})$/.exec(url.pathname);
     const j = am ? await ownerJobs.answer(c.env.DB, am[1]).catch(() => null) : null;
     if (j) return c.json(j, 200, { "cache-control": "no-store", "x-f7": "job" });
+  }
+  // 켠 주인(ownU)이 회원 길로 쓴 rid(세션 새로 열기 · 세션 글 등 — 표지 「<rid>.m.*」): 회원 판정(rid 칸 answerOf, 모르면 표지 결과). 다리는 그 글을 모름
+  if (c.req.method === "GET" && ownU) {
+    const am = /^\/api\/answer\/([\w-]{1,64})$/.exec(url.pathname);
+    const mk = am ? await queue.memberMarkOf(c.env.DB, am[1]).catch(() => null) : null;
+    if (am && mk) { const a = await queue.answerOf(c.env, s.user.email, am[1]).catch(() => null); return c.json({ ok: true, ...(a ?? { state: mk }) }, 200, { "cache-control": "no-store", "x-f7": "member" }); }
   }
   // 주인 GET /api/answer/:rid — Worker 가 직접 D1 에 쓴 rid(f7_rid) · 남은 답이 4xx 인 것만 여기서. 다리가 받은 글(202 queued 등) · 모르는 rid · 칸 오류는 예전처럼 다리(_jobs)로
   if (c.req.method === "GET" && chOf(c) === "owner") {

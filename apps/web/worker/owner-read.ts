@@ -599,6 +599,10 @@ export async function build(db: D1Database, cfg: Cfg | null, rt: Route, now = Da
   return nodechat(db, cfg, rt.a!, now, cache);
 }
 
+/** 주인 채널 목록(board.html CH 와 같은 차례): 기본 다섯 + cfg 에 등록한 에이전트 채널. owner_unified 로 회원 길에 든 주인 화면의 HB_CH(회원은 ["primary"]) */
+export function channelsOf(cfg: Cfg | null) {
+  return [...CHANNELS, ...Object.keys(cfg?.channels || {}).filter(k => !CHANNELS.includes(k) && AGENT_CH.test(k))];
+}
 // cfg 스냅숏(릴레이 칸 cfg): 바뀐 때(etag)만 다시 풂
 let cfgMemo: { etag: string; v: Cfg } | null = null;
 export async function cfgOf(get: () => Promise<{ body: string; etag: string } | null>) {

@@ -32,6 +32,12 @@ export const ridOfBody = (b: unknown) => { const r = String((b as { rid?: unknow
 export const ridRow = (db: D1Database, rid: string) => db.prepare("INSERT INTO f7_rid(rid, at) VALUES (?, ?)").bind(rid, Date.now());
 export const ridDup = (e: unknown) => /UNIQUE constraint failed: f7_rid/i.test(String((e as Error)?.message || e));
 export const ridSeen = async (db: D1Database, rid: string) => !!(await db.prepare("SELECT 1 FROM f7_rid WHERE rid = ?").bind(rid).first());
+export const memberMark = (db: D1Database, rid: string, ok: boolean) => db.prepare("INSERT OR IGNORE INTO f7_rid(rid, at) VALUES (?, ?)").bind(`${rid}.m.${ok ? "ok" : "fail"}`, Date.now()).run();
+/** 그 rid 를 회원 길이 썼으면 "ok" | "fail"(다시 보내 둘 다 있으면 ok), 아니면 null */
+export async function memberMarkOf(db: D1Database, rid: string): Promise<"ok" | "fail" | null> {
+  const r = await db.prepare("SELECT max(rid) r FROM f7_rid WHERE rid > ? AND rid < ?").bind(rid + ".m.", rid + ".m/").first<{ r: string | null }>();
+  return r?.r ? (r.r.endsWith(".ok") ? "ok" : "fail") : null;
+}
 /** rid 와 함께 batch 하나로 — 이미 쓴 rid 면 false(쓰지 않음), 새로 썼으면 true. 그 밖 D1 오류는 던짐 */
 export async function ridBatch(db: D1Database, rid: string, st: D1PreparedStatement[], wait?: (p: Promise<unknown>) => void) {
   if (!rid) { await db.batch(st); return true; }
