@@ -232,7 +232,7 @@ app.use("*", async (c, next) => {
   const rn = (rec as { renew?: Renew }).renew;
   if (rn?.done && rn.done === rn.email) rec.cookies.push(await bxCookie(c, rn.email, rn.th));
   const lw = rec.who && /^[^@\s:%]+@[^@\s:%]+$/.test(rec.who) ? rec.who : rec.dev;
-  const lwU = !!lw && isOwner(c.env, lw) && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && await unifiedOn(c.env, lw);
+  const lwU = !!lw && isOwner(c.env, lw) && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && (lw !== rec.who ? W.unifiedAnyIn(await ledger.f7All(c.env.DB), c.env) : await unifiedOn(c.env, lw));
   if (lw && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && !(lwU && rec.quiet)) memberBoard.loadForget(lwU ? W.canon(c.env) : lw);
   if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && (!isOwner(c.env, lw) || lwU) && !/^\/api\/(relay\/|device\/metrics|device\/taskboard|me\/taskboard|me\/devboard|me\/features$|draft$|cardcheck$|me\/tasks\/view$)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok). 상태 페이지 쓰기는 보드 화면 값을 안 바꿈(그 페이지가 스스로 다시 읽음)
     c.executionCtx.waitUntil(live.bumpMember(c.env, lw));
@@ -2550,7 +2550,7 @@ app.all("*", async c => {
     return new Response(page.body, { status: 200, headers: h });
   }
   const bw = await boardWho(c.env, s.user.email), ownU = bw !== null && isOwner(c.env, s.user.email);
-  const ownKeep = ownU && (url.pathname.startsWith("/art/") || /^\/api\/(arts$|artnotes\/|artowner\/|artnote$|artfolder$|artstar$|artthumb$|voice\/)/.test(url.pathname)
+  const ownKeep = ownU && (url.pathname.startsWith("/art/") || (url.pathname.startsWith("/api/push/") && url.pathname !== "/api/push/prefs") || url.pathname === "/sw.js" || /^\/api\/(arts$|artnotes\/|artowner\/|artnote$|artfolder$|artstar$|artthumb$|voice\/)/.test(url.pathname)
     || (c.req.method === "POST" && OWN_CHAT_POST.has(url.pathname))   // 대화 · 카드 쓰기도 주인 길(아래 OWN_CHAT_POST) — 읽기는 아래 회원 길 안에서 owner-read
     || (c.req.method === "GET" && /^\/api\/answer\//.test(url.pathname)));
   if (bw !== null && !ownKeep) {

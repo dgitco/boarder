@@ -106,7 +106,7 @@ async function setup() {
   const RESULTS = { list: async () => ({ objects: [], truncated: false }), head: async () => null, get: async (k: string) => r2.get(k) ?? null, put: async (k: string, v: unknown) => { r2.set(k, v); }, delete: async (k: string) => { r2.delete(k); } };
   const env: any = { DB: D1, RESULTS, SNAP, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: `${OWNER},${OWNER2}`, PUBLIC_URL: "https://example.test", ADMIN_TOKEN: ADMIN, RELAY_TOKEN: "relay-made-up",
     ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call, tool }) },
-    ENGINE: { idFromName: (n: string) => n, get: () => ({ revoke: async () => 0 }) }, PUSH: { idFromName: (n: string) => n, get: () => ({}) } };
+    ENGINE: { idFromName: (n: string) => n, get: () => ({ revoke: async () => 0 }) }, PUSH: { idFromName: (n: string) => n, get: (n: string) => new Proxy({}, { get: (_o, k) => k === "then" ? undefined : async () => k === "key" ? "k-" + n : [200, { ok: true, from: n }] }) } };
   const pending: Promise<unknown>[] = [];
   const ctx = { waitUntil: (p: Promise<unknown>) => { pending.push(p.catch(() => {})); }, passThroughOnException() {} };
   const req = async (method: string, path: string, body?: unknown, h: Record<string, string> = {}) => {
@@ -574,4 +574,32 @@ test("꺼진 회원 폴링 표는 예전 그대로 data · chat 만 — DO 칸�
   const lv = await t.req("GET", "/api/live", undefined, await t.human(MEMBER));
   assert.equal(lv.status, 200, lv.text);
   assert.deepEqual(Object.keys(lv.j?.t || {}).filter(k => k === "data" || k === "todo" || k === "chat").sort(), ["chat", "data"], "회원 표: " + lv.text);
+});
+
+test("켬: 웹 푸시(/api/push/* · /sw.js)는 주인 길(주인 구독 칸) — 회원은 회원 칸", async () => {
+  const t = await setup(), h = await t.human(OWNER), hm = await t.human(MEMBER);
+  for (const f of ["member_push", "write_push"]) await ledger.setFlag(t.D1, f, true);
+  await t.flag("owner_unified:" + OWNER, true); t.reset();
+  const k = await t.req("GET", "/api/push/key", undefined, h);
+  assert.equal(k.j?.key, "k-owner", "켠 주인 = 주인 구독 칸: " + k.text);
+  const sub = await t.req("POST", "/api/push/subscribe", { sub: { endpoint: "https://push.example.test/x" } }, h);
+  assert.equal(sub.j?.from, "owner", "구독도 주인 칸: " + sub.text);
+  assert.equal((await t.req("GET", "/sw.js", undefined, h)).status, 200);
+  const pf = await t.req("POST", "/api/push/prefs", { wide: true }, h);
+  assert.equal(pf.status, 200, "알림 범위 칸은 회원 칸 그대로(주인 pushRoute 엔 없음): " + pf.text); assert.notEqual(pf.j?.from, "owner");
+  const mk = await t.req("GET", "/api/push/key", undefined, hm);
+  assert.notEqual(mk.j?.key, "k-owner", "회원은 제 칸: " + mk.text);
+  assert.deepEqual(t.bridge, [], "다리 0");
+});
+
+test("메일별 미리 보기: 하네스 기기 쓰기(로그인 메일 없음)도 켠 주인 칸(live:<canon>)에 알림 — 다 끄면 안 감", async () => {
+  const t = await setup(), HT = "bxd_" + "h".repeat(32), T = Date.now(), U = `live:${OWNER}@apac`;
+  t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devH2", OWNER, "owner-host harness", "", await sha(HT), T, T, "harness", T);
+  await ledger.setFlag(t.D1, "shadow_unified", true); await ledger.f7On(t.D1, "__reset__");
+  const S0 = Math.floor(T / 1000), up = () => t.req("POST", "/api/device/owner-state", { v: 1, at: S0, panes: {}, topics: {}, leads: { primary: "%15", leads: {}, windows: {} }, agents: [], parked: [], archived: [], promises: [], snoozed: [], ch_keys: {}, attn: null }, { authorization: `Bearer ${HT}` });
+  t.reset(); const r0 = await up(); assert.equal(r0.status, 200, r0.text);
+  assert.ok(!t.bumps.includes(U), "다 끄면 회원 칸에 안 감: " + t.bumps.join(","));
+  await t.flag("owner_unified:" + OWNER2, true); t.reset();   // canon 이 아닌 주인 메일 하나만 켬
+  const r1 = await up(); assert.equal(r1.status, 200, r1.text);
+  assert.ok(t.bumps.includes(U), "켠 주인 칸에 알림: " + t.bumps.join(","));
 });
