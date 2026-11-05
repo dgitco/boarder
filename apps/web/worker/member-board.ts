@@ -333,7 +333,7 @@ export async function paneLogs(db: D1Database, me: string, ctx?: Ctx | null) {
   // 메인 봇 판의 뿌리 글(Primary 채팅 새 글 · 있던 primary 창의 보고 줄 · 보더 시스템 줄) — 자리표 쓰는 사람의 읽지 않음(비서실장 채팅)이 씀. 내 글 · 스레드 답은 뺌
   const prim = L.logs.filter(r => r.kind !== "me" && r.win !== ME && !OWN.test(String(r.win)) && (r.thread === "primary" || (!r.thread && L.isPrimWin(String(r.win)))));
   const mineAt = Math.max(0, ...L.logs.filter(r => r.thread === "primary" && r.win === ME).map(r => Number(r.at)));   // 내가 Primary 에 마지막으로 쓴 때 — 그 앞 글은 읽은 것(스레드 「마지막이 내 글」과 같은 뜻)
-  return { chans, paneOfLog, prim, mineAt, seatOf, rules: { on: L.seatAll.length > 0, chief: chiefOf(L.seatAll) } };
+  return { chans, paneOfLog, prim, mineAt, seatOf, isPrimWin: (w: string) => L.isPrimWin(w), rules: { on: L.seatAll.length > 0, chief: chiefOf(L.seatAll) } };
 }
 async function withReacts(db: D1Database, me: string, out: R[]) {
   const lids = out.map(m => m.lid).filter((x): x is number => !!x);
@@ -1106,8 +1106,12 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
         const said = (await primaryReplies(db, me, [m[2]])).get(m[2]) || [];
         return j({ channel: "primary", root: m[2], owner: null, messages: await splitMarks(db, me, primaryThreadMsgs(pr, said, mainName, my, m[2]), my) });   // 나눈 글이면 갈래 칩
       }
-      const rows = await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary' AND id % 1000000 = ? AND at >= ? AND at < ?").bind(me, Number(m[2].split(".")[1]), Number(m[2].split(".")[0]) * 1000, Number(m[2].split(".")[0]) * 1000 + 1000).all<R>();
-      return j({ channel: "primary", root: m[2], owner: null, messages: rows.results.map(r => msg(r, my, mainName)) });
+      const sec = Number(m[2].split(".")[0]) * 1000;
+      const rows = await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND (thread = 'primary' OR thread IS NULL) AND id % 1000000 = ? AND at >= ? AND at < ?").bind(me, Number(m[2].split(".")[1]), sec, sec + 1000).all<R>();
+      let hit = (rows.results as R[]).filter(r => r.thread === "primary");
+      if (!hit.length && rows.results.length) { const L2 = pL || L || await loadShared(db, me, ctx); hit = (rows.results as R[]).filter(r => !r.thread && r.kind !== "me" && L2.isPrimWin(String(r.win))); }
+      const said = hit.length && !hit[0].thread ? (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, m[2]).all<R>()).results as R[] : [];
+      return j({ channel: "primary", root: m[2], owner: null, messages: await withReacts(db, me, [...hit.map(r => msg(r, my, mainName)), ...said.map(r => ({ ...msg(r, my, mainName), thread: m![2] }))]) });
     }
     const L = fd ? await loadShared(db, me, ctx) : null, rows = await primaryRows(db, me, url.searchParams.get("before") || undefined, L), page = rows.slice(0, 100);
     const th = await primaryReplies(db, me, page.filter(r => r.win === ME).map(r => tsOf(r.at, r.id)));

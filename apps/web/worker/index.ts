@@ -351,6 +351,7 @@ app.put("/api/relay/snap/:key", async c => {
   try { JSON.parse(body); } catch { return c.json({ error: "JSON 아님" }, 400); }
   const t1 = Date.now(), push = key === "data" && await ledger.f7Peek(c.env.DB, "read_push", peekWait(c)), lazy = await snapLazy(c), t2 = Date.now();
   const r = await snap(c.env).putT(key, body, push, lazy);
+  if (r.changed) c.executionCtx.waitUntil(live.mirrorOwnerSnap(c.env, key, r.etag).catch(() => 0));
   return c.json({ ok: true, etag: r.etag }, 200, { "x-snap-timing": await snapTiming(c, t0, t1, t2, r, lazy) });   // server-timing 은 요청 시간 미들웨어가 덮어씀
 });
 const peekWait = (c: Context<{ Bindings: Env }>) => (p: Promise<unknown>) => c.executionCtx.waitUntil(p);
@@ -518,7 +519,7 @@ const liveGet = async (c: Context<{ Bindings: Env }>) => {
   }
   const o = await live.table(c.env, me, async () => {
     const dt = await live.liveOf(c.env, me, um).tags().catch(() => null);
-    return { ...(dt?.t.data ? { data: dt.t.data } : {}), chat: dt?.t.chat || "~0" } as { data: string; chat: string };
+    return { ...(dt?.t || {}), chat: dt?.t.chat || "~0" } as { data: string; chat: string };
   }, um);
   if (hosted.liveTags) Object.assign(o.t, await hosted.liveTags(c.env, me).catch(() => ({})));
   return c.json(o, 200, { "cache-control": "no-store" });
@@ -2301,6 +2302,13 @@ function historySince(h: { oldest: number; rows: { open?: boolean; segs: [number
   }
   return { now: Math.round(now), since: Math.round(since), oldest: h.oldest, rows };
 }
+async function ownSnapRead(c: Context<{ Bindings: Env }>, url: URL): Promise<Response | null> {
+  const k = url.pathname === "/api/topics" ? "topics" : "history", sn = await snap(c.env).get(k); if (!sn) return null;
+  if (k === "history") { const r = new Response(JSON.stringify(historySince(JSON.parse(sn.body), url.searchParams.get("since"))), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "snap", "x-snap-age": String(snapAge(sn)) } }); return r; }
+  const h = { etag: sn.etag, "cache-control": "private, no-cache", "x-content-type-options": "nosniff", "x-snap-age": String(snapAge(sn)), "x-f7": "snap" };
+  if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === sn.etag) return new Response(null, { status: 304, headers: h });
+  return new Response(sn.body, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
+}
 async function ownMisc(c: Context<{ Bindings: Env }>, url: URL): Promise<Response | null> {
   const p = url.pathname, j = (o: unknown) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "snap" } });
   if (p === "/api/history") {
@@ -2572,6 +2580,7 @@ app.all("*", async c => {
             const d = await OS.get(c.env.DB, "drafts").catch(() => null); if (d) return c.json(d.v, 200, { "cache-control": "no-store", "x-f7": "d1" });
             const cf = await ownerRead.cfgOf(() => snap(c.env).get("cfg")).catch(() => null); return cf ? c.json(cf.drafts || {}, 200, { "cache-control": "no-store", "x-f7": "snap" }) : queue.retrySafe(c);
           }
+          if (url.pathname === "/api/topics" || url.pathname === "/api/history") return (await ownSnapRead(c, url)) ?? queue.retrySafe(c);
         }
         const fm = /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, ownU ? ownerMails(c.env, s.user.email) : me, fm[1], url.searchParams.has("dl"));
         if (url.pathname === "/api/voice/modes") return c.json(await memberVoice.modes(c.env.DB, me, url.searchParams.get("pane") || ""), 200, { "cache-control": "no-store" });

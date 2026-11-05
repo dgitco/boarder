@@ -183,6 +183,17 @@ test("열어서 읽음(seen only thread, 에이전트 단위 회원): 그 스레
   u = (await MI.inbox(s.db, A)).unread; assert.deepEqual(u.map((x: any) => x.ts), [tsOf(s.now - 30_000, b2)]);
 });
 
+test("저장: Primary 글 · 그 스레드 답은 채널 primary · 뿌리 스레드로(「스레드 열기」가 api/chat//<ts> 로 가 없는 스레드)", async () => {
+  const s = setup();
+  const r0 = s.log(A, "보더", "첫 화면 글", s.now - 9000, "me", "primary"), root = tsOf(s.now - 9000, r0);
+  const r1 = s.log(A, "보더", "그 스레드 답", s.now - 8000, "me", "p:" + root), reply = tsOf(s.now - 8000, r1);
+  for (const ts of [root, reply]) assert.equal((await MI.inboxPost(s.db, A, { op: "save", ts })).status, 200);
+  const sv = (await MI.inbox(s.db, A)).saved;
+  const a = sv.find((x: any) => x.ts === root)!, b = sv.find((x: any) => x.ts === reply)!;
+  assert.equal(a.chan, "primary"); assert.equal(a.thread, null);
+  assert.equal(b.chan, "primary"); assert.equal(b.thread, root);
+});
+
 test("저장: 내 글 · 내 카드만, 남의 것 404, 풀면 빠짐", async () => {
   const s = setup(); const mine = s.log(A, "영업 창", "저장할 글", s.now - 5000), theirs = s.log(B, "남의 창", "남의 글", s.now - 4000);
   s.card("1793400000.000001", A); s.card("1793400000.000002", B, "남의 창");
@@ -260,4 +271,50 @@ test("모아 보기 GET: ETag 이 붙고 같은 ETag(W/ 꼴 포함)이면 304, �
   s.log(A, "영업 창", "새 답", s.now + 1000);
   (await import("./member-board.ts")).loadForget(A);   // 실제 쓰기 길은 미들웨어(index.ts)가 그 isolate 의 나눠 쓰던 판을 버림 — GET 이 0.4초 나눠 쓰기(loadRead)를 타므로 같게
   const r3 = (await MI.route(c(t!) as never, A, U))!; assert.equal(r3.status, 200);
+});
+
+test("저장한 글 → 화면이 부를 api/chat/<chan>/<thread||ts> 로 그 글이 보임(Primary · 다른 노드 창 답 · 카드에 쓴 내 답 · 초안)", async () => {
+  const s = setup(), raw = (s.db as any), sl = (ms: number) => new Promise(r => setTimeout(r, ms));
+  await raw.prepare("INSERT INTO mnode(owner, id, name, state, created_at, updated_at) VALUES (?,?,?,?,?,?)").bind(A, "n-lead", "회사", "working", s.now, s.now).run();
+  await raw.prepare("INSERT INTO mnode_item(owner, item, node) VALUES (?,?,?)").bind(A, "win:팀장", "n-lead").run();
+  s.card("1793000000.000777", A, "영업 창");
+  const t0 = Date.now() - 9000;
+  const r0 = s.log(A, "나", "첫 화면 글", t0, "me", "primary"), root = tsOf(t0, r0);
+  const r1 = s.log(A, "나", "그 스레드 답", t0 + 1000, "me", "p:" + root), reply = tsOf(t0 + 1000, r1);
+  const r2 = s.log(A, "팀장", "제가 맡을게요", t0 + 2000, "say", "1793000000.000777"), lead = tsOf(t0 + 2000, r2);
+  const r3 = s.log(A, "나", "카드에 쓴 내 답", t0 + 3000, "me", "1793000000.000777"), mine = tsOf(t0 + 3000, r3);
+  await sl(5);
+  for (const ts of [root, reply, lead, mine]) assert.equal((await MI.inboxPost(s.db, A, { op: "save", ts })).status, 200, ts);
+  const ib = await MI.inbox(s.db, A);
+  for (const ts of [root, reply, lead, mine]) {
+    const x = ib.saved.find((y: any) => y.ts === ts)!;
+    assert.ok(x.chan, `채널 빈 칸 아님: ${ts}`);
+    const res = await MB.get(s.db, A, { name: "메인 봇" }, new URL(`https://x/api/chat/${encodeURIComponent(x.chan)}/${x.thread || x.ts}`), async () => null);
+    assert.equal(res!.status, 200, `${x.chan}/${x.thread || x.ts}`);
+    const j = (await res!.json()) as any;
+    assert.ok(j.messages.some((m: any) => m.ts === ts), `그 글이 스레드에 보임: ${x.chan} ${x.text}`);
+  }
+  assert.equal(ib.saved.find((y: any) => y.ts === lead)!.chan, "n:예시 팀 영업", "다른 노드 창 답은 카드가 사는 노드 채널");
+  await raw.prepare("INSERT INTO member_draft(owner, pane, text, at) VALUES (?,?,?,?)").bind(A, "th:" + root, "쓰다 만 답", Date.now()).run();
+  const dr = (await MI.inbox(s.db, A)).drafts.find((d: any) => d.key === "th:" + root);
+  assert.ok(dr, "초안 줄"); assert.equal(dr.chan, "primary", "Primary 스레드 초안도 primary");
+});
+
+test("저장한 답 뿌리 찾기 한도 없음 — 서로 다른 카드 25개에 다른 노드 창이 단 답을 저장해도 모두 카드가 사는 채널 · 글 뿌리 조회는 (owner, at) 색인", async () => {
+  const s = setup(), raw = (s.db as any), sl = (ms: number) => new Promise(r => setTimeout(r, ms));
+  await raw.prepare("INSERT INTO mnode(owner, id, name, state, created_at, updated_at) VALUES (?,?,?,?,?,?)").bind(A, "n-lead", "회사", "working", s.now, s.now).run();
+  await raw.prepare("INSERT INTO mnode_item(owner, item, node) VALUES (?,?,?)").bind(A, "win:팀장", "n-lead").run();
+  const t0 = Date.now() - 60_000, replies: string[] = [];
+  for (let i = 0; i < 25; i++) {
+    const card = `17930000${String(10 + i).padStart(2, "0")}.000${String(100 + i)}`; s.card(card, A, "영업 창");
+    const r = s.log(A, "팀장", `답 ${i}`, t0 + i * 1000, "say", card); replies.push(tsOf(t0 + i * 1000, r));
+  }
+  const g0 = Date.now() - 30_000, g = s.log(A, "영업 창", "노드 첫 글", g0), gts = tsOf(g0, g), gr = s.log(A, "팀장", "그 글에 답", g0 + 500, "say", gts);
+  replies.push(tsOf(g0 + 500, gr));
+  await sl(5);
+  for (const ts of replies) assert.equal((await MI.inboxPost(s.db, A, { op: "save", ts })).status, 200, ts);
+  const sv = (await MI.inbox(s.db, A)).saved;
+  for (const ts of replies) assert.equal(sv.find((x: any) => x.ts === ts)?.chan, "n:예시 팀 영업", ts);
+  const plan = (s.q("EXPLAIN QUERY PLAN SELECT j.key AS k, b.win FROM json_each(?) j CROSS JOIN board_log b WHERE b.owner = ? AND b.at >= json_extract(j.value, '$.s') AND b.at < json_extract(j.value, '$.s') + 1000 AND b.id % 1000000 = json_extract(j.value, '$.i')", "[]", A) as any[]).map(r => r.detail).join(" | ");
+  assert.match(plan, /SEARCH b USING INDEX/, plan);
 });

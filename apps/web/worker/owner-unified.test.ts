@@ -87,23 +87,24 @@ async function setup() {
   bot.run("@owner", "s1", 10, "총괄", "", "", "", T);
   bot.run(OWNER, "s1", 10, "총괄", "", "", "", T);   // owner_unified_prep face 가 옮긴 canon 줄
   bot.run(MEMBER, "s2", 20, "모찌", "", "", "", T);
-  const bridge: string[] = [], cells: string[] = [], bumps: string[] = [];
+  const bridge: string[] = [], cells: string[] = [], bumps: string[] = [], marks: [string, Record<string, string>][] = [];
   const call = async (r: { path: string }) => { bridge.push(r.path); return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode('{"ok":true,"from":"bridge"}') }; };
   const agents: string[] = [];
   const tool = async (name: string, _a?: unknown, agent?: string) => { bridge.push("tool:" + name); agents.push(String(agent)); return { ok: true, from: "bridge" }; };
-  const snaps: Record<string, string> = { data: '{"from":"snap-data"}', topics: '{"from":"snap-topics"}', page: PAGE, sync: "{}", cfg: CFG };
+  const snaps: Record<string, string> = { data: '{"from":"snap-data"}', topics: '{"from":"snap-topics"}', page: PAGE, sync: "{}", cfg: CFG, history: JSON.stringify({ oldest: 1, rows: [{ open: true, segs: [[1, 9e12, "work"]], marks: [] }] }) };
   const rids = new Map<string, Map<string, { status: number } | null>>();   // rid 칸(DO)마다 받은 rid — 끝나면 답 상태
   const ridCell = (n: string) => { let m = rids.get(n); if (!m) rids.set(n, m = new Map()); return m; };
   const SNAP = { idFromName: (n: string) => n, get: (n: string) => { cells.push(n); return {
     get: async (k: string) => k in snaps ? { body: snaps[k], etag: `"e-${k}"`, at: Date.now(), checked: Date.now() } : null,
-    tags: async () => ({ t: { data: "d-" + n }, age: 0, boot: "b" }), bump: async () => { bumps.push(n); return 0; },
+    tags: async () => ({ t: { data: "d-" + n, todo: "t-" + n }, age: 0, boot: "b" }), bump: async (bt?: Record<string, string>) => { bumps.push(n); if (bt) marks.push([n, bt]); return 0; },
+    putT: async (k: string, b: string) => { const changed = snaps[k] !== b; snaps[k] = b; return { etag: `"e-${k}-${b.length}"`, ms: 0, colo: "x", changed }; },
     claim: async (rid: string) => { const m = ridCell(n), v = m.get(rid); if (v) return { state: "done", status: v.status, body: "", ct: "application/json" }; if (m.has(rid)) return { state: "busy" }; m.set(rid, null); return { state: "new" }; },
     done: async (rid: string, status: number) => { ridCell(n).set(rid, { status }); return 0; }, release: async (rid: string) => { ridCell(n).delete(rid); return 0; },
     look: async (rid: string) => ridCell(n).get(rid) ? "done" : "none",
   }; } };
   const r2 = new Map<string, unknown>();
   const RESULTS = { list: async () => ({ objects: [], truncated: false }), head: async () => null, get: async (k: string) => r2.get(k) ?? null, put: async (k: string, v: unknown) => { r2.set(k, v); }, delete: async (k: string) => { r2.delete(k); } };
-  const env: any = { DB: D1, RESULTS, SNAP, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: `${OWNER},${OWNER2}`, PUBLIC_URL: "https://example.test", ADMIN_TOKEN: ADMIN,
+  const env: any = { DB: D1, RESULTS, SNAP, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: `${OWNER},${OWNER2}`, PUBLIC_URL: "https://example.test", ADMIN_TOKEN: ADMIN, RELAY_TOKEN: "relay-made-up",
     ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call, tool }) },
     ENGINE: { idFromName: (n: string) => n, get: () => ({ revoke: async () => 0 }) }, PUSH: { idFromName: (n: string) => n, get: () => ({}) } };
   const pending: Promise<unknown>[] = [];
@@ -117,14 +118,14 @@ async function setup() {
   const adm = { authorization: `Bearer ${ADMIN}` };
   const flag = async (name: string, on: boolean) => { const r = await req("POST", "/api/admin/f7-flag", { name, on }, adm); assert.equal(r.status, 200, r.text); };
   const human = async (email: string) => ({ cookie: await cookie(email), "x-hb": "1", "sec-fetch-site": "same-origin" });
-  const reset = () => { bridge.length = 0; cells.length = 0; bumps.length = 0; };
+  const reset = () => { bridge.length = 0; cells.length = 0; bumps.length = 0; marks.length = 0; };
   // 주인 쓰기 길(운영과 같게): 글 D1 먼저(write_chat_d1) · 할 일 줄(write_owner_jobs), 실행기가 방금 당김(beat)
   const ownerWrites = async () => {
     for (const f of ["write_chat_d1", "write_owner_jobs"]) await ledger.setFlag(D1, f, true);
     db.prepare("INSERT INTO owner_job_beat(id, at) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET at = excluded.at").run(Date.now());
     await ledger.f7On(D1, "__reset__");
   };
-  return { db, D1, env, ctx, r2, req, adm, flag, human, bridge, agents, cells, bumps, reset, ownerWrites };
+  return { db, D1, env, ctx, r2, req, adm, flag, human, bridge, agents, cells, bumps, marks, reset, ownerWrites };
 }
 
 test("스위치 이름: owner_unified · owner_unified:<주인 메일>(대문자도 소문자로) 받음, 회원 메일 · 꼴이 틀린 이름은 400", async () => {
@@ -535,4 +536,34 @@ test("피드 묶음 길(POST /api/feed/threads): 켠 주인은 빈 답(스레드
   const cross = await t.req("POST", "/api/feed/threads", body, { ...m, "sec-fetch-site": "cross-site" });
   assert.equal(cross.status, 403, "같은 사이트가 아니면 403");
   assert.deepEqual(t.bridge, [], "다리 호출 없음");
+});
+
+test("켬: 주인 주제 · 지난 판은 주인 스냅숏(회원 표 아님) · 다리 0 — 회원은 그대로", async () => {
+  const t = await setup(), h = await t.human(OWNER), hm = await t.human(MEMBER);
+  await t.flag("owner_unified:" + OWNER, true); t.reset();
+  const tp = await t.req("GET", "/api/topics", undefined, h);
+  assert.equal(tp.status, 200, tp.text); assert.deepEqual(tp.j, { from: "snap-topics" }, "주제 = 주인 스냅숏");
+  assert.equal(tp.h.get("etag"), '"e-topics"');
+  assert.equal((await t.req("GET", "/api/topics", undefined, { ...h, "if-none-match": 'W/"e-topics"' })).status, 304, "같은 판이면 304");
+  const hs = await t.req("GET", "/api/history", undefined, h);
+  assert.equal(hs.status, 200, hs.text); assert.equal(hs.j.rows.length, 1, "지난 판 = 주인 스냅숏 줄");
+  assert.deepEqual(t.bridge, [], "다리 0");
+  const mt = await t.req("GET", "/api/topics", undefined, hm);
+  assert.equal(mt.h.get("x-boarder-src"), "member", "회원은 그대로 제 표"); assert.notDeepEqual(mt.j, { from: "snap-topics" });
+});
+
+test("켬: 릴레이가 주제 · 지난 판 · cfg 스냅숏을 바꿔 올리면 켠 주인 칸(live:<canon>)에도 그 표시 — data 는 안 보냄 · 끄면 주인 칸만 · 폴링 표는 칸 전부", async () => {
+  const t = await setup(), h = await t.human(OWNER), rl = { authorization: "Bearer relay-made-up" }, U = `live:${OWNER}@apac`;
+  const put = async (k: string, b: unknown) => { const r = await t.req("PUT", "/api/relay/snap/" + k, b, rl); assert.equal(r.status, 200, k + " " + r.text); };
+  t.reset(); await put("topics", { topics: [1] });
+  assert.deepEqual(t.marks.filter(m => m[0] === U), [], "끄면 회원 칸에 안 감");
+  await t.flag("owner_unified:" + OWNER, true); t.reset();
+  await put("topics", { topics: [1, 2] }); await put("history", { oldest: 1, rows: [] }); await put("cfg", { ...JSON.parse(CFG), drafts: { a: 1 } }); await put("data", { from: "snap-data-2" });
+  const um = t.marks.filter(m => m[0] === U).map(m => Object.keys(m[1])[0]).sort();
+  assert.deepEqual(um, ["drafts", "history", "topics"], "주제 · 지난 판 · 초안만 — data 는 안 보냄: " + JSON.stringify(t.marks));
+  t.reset(); await put("topics", { topics: [1, 2] });
+  assert.deepEqual(t.marks.filter(m => m[0] === U), [], "같은 판이면 안 보냄");
+  await ledger.setFlag(t.D1, "read_live", true); await ledger.f7On(t.D1, "__reset__");
+  const lv = await t.req("GET", "/api/live", undefined, h);
+  assert.equal(lv.j?.t?.todo, "t-" + U, "폴링 표에 DO 칸 전부(할 일 등): " + lv.text);
 });

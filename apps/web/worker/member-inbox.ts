@@ -72,17 +72,31 @@ export async function inbox(db: D1Database, me: string, ctx?: Ctx | null) {
     db.prepare("SELECT id, win, question, state, at FROM board_card WHERE owner = ? AND id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(cardIds)),
   ]);
   const logs = new Map((lg.results as R[]).map(r => [String(r.id), r])), cards = new Map((cd.results as R[]).map(r => [String(r.id), r]));
+  const savedChan = (r: { win: string; kind?: string; thread?: string | null }) => chanOf(r) || (P.paneOfLog(r) === PRIMARY || (r.kind === "me" && !r.thread && P.isPrimWin(String(r.win))) ? "primary" : "");
+  const rootTs = [...new Set(savedRows.filter(x => x.kind === "log").map(x => logs.get(String(x.ref))).map(r => String(r?.thread || "")).filter(t => TS.test(t)))];
+  const homeOf = new Map<string, { win: string; kind?: string; thread?: string | null }>();
+  if (rootTs.length) {
+    const pairs = JSON.stringify(rootTs.map(t => { const [a, b] = t.split("."); return { s: Number(a) * 1000, i: Number(b) }; }));
+    const rs = await db.batch([
+      db.prepare("SELECT id, win FROM board_card WHERE owner = ? AND id IN (SELECT value FROM json_each(?))").bind(me, JSON.stringify(rootTs)),
+      db.prepare("SELECT j.key AS k, b.win, b.kind, b.thread FROM json_each(?) j CROSS JOIN board_log b WHERE b.owner = ? AND b.at >= json_extract(j.value, '$.s') AND b.at < json_extract(j.value, '$.s') + 1000 AND b.id % 1000000 = json_extract(j.value, '$.i')").bind(pairs, me),
+    ]);
+    for (const c of (rs[0].results as R[])) homeOf.set(String(c.id), { win: String(c.win) });
+    for (const r of (rs[1].results as R[])) { const t = rootTs[Number(r.k)]; if (t && !homeOf.has(t)) homeOf.set(t, { win: String(r.win), kind: r.kind ? String(r.kind) : undefined, thread: r.thread ? String(r.thread) : null }); }
+  }
+  const chanOfSaved = (r: R) => { const h = TS.test(String(r.thread || "")) ? homeOf.get(String(r.thread)) : undefined; return (h && savedChan(h)) || savedChan(r as { win: string }); };
+  const savedThread = (t: unknown) => { const v = String(t || ""), m = PTH.exec(v); return TS.test(v) ? v : m ? m[1] : null; };
   const saved: R[] = [];
   for (const s of savedRows) {
-    if (s.kind === "log") { const r = logs.get(String(s.ref)); if (r) saved.push({ ts: tsOf(r.at, r.id), chan: chanOf(r as { win: string }), thread: TS.test(String(r.thread || "")) ? r.thread : null, text: cut(r.text, 400), at: Number(r.at) / 1000, who: r.kind === "me" ? "owner" : "agent", author: String(r.win), saved_at: Number(s.at) / 1000 }); }
-    else { const r = cards.get(String(s.ref)); if (r) saved.push({ ts: r.id, chan: chanOf({ win: r.win }), thread: null, text: cut(r.question, 400), at: Number(r.at) / 1000, who: "agent", author: String(r.win), saved_at: Number(s.at) / 1000 }); }
+    if (s.kind === "log") { const r = logs.get(String(s.ref)); if (r) saved.push({ ts: tsOf(r.at, r.id), chan: chanOfSaved(r), thread: savedThread(r.thread), text: cut(r.text, 400), at: Number(r.at) / 1000, who: r.kind === "me" ? "owner" : "agent", author: String(r.win), saved_at: Number(s.at) / 1000 }); }
+    else { const r = cards.get(String(s.ref)); if (r) saved.push({ ts: r.id, chan: savedChan({ win: r.win }), thread: null, text: cut(r.question, 400), at: Number(r.at) / 1000, who: "agent", author: String(r.win), saved_at: Number(s.at) / 1000 }); }
   }
   // 초안: 열쇠는 틀 것 그대로(「chan:<채널>」 · 「th:<스레드 ts>」 · 「card:<카드>」)
   // 스레드 초안(「th:<ts>」)은 열쇠에 채널이 없음 — 그 스레드 머리 글(내 글 · 카드)에서 채널을 찾아 붙임(없으면 빈 칸 그대로)
   const drafts = await Promise.all((dr.results as R[]).filter(d => String(d.text || "").trim()).map(async d => {
     const k = String(d.key), th = k.startsWith("th:") ? k.slice(3) : null;
     const head = th ? (await logByTs(db, me, th)) || (await cardByTs(db, me, th)) : null;
-    const chan = k.startsWith("chan:") ? k.slice(5) : head ? chanOf({ win: String(head.win), kind: head.kind, thread: head.thread }) : "";
+    const chan = k.startsWith("chan:") ? k.slice(5) : head ? savedChan({ win: String(head.win), kind: head.kind ? String(head.kind) : undefined, thread: head.thread ? String(head.thread) : null }) : "";
     return { key: k, chan, thread: th, card: k.startsWith("card:") ? k.slice(5) : null, text: cut(d.text, 400), at: Number(d.at) / 1000 };
   }));
   return { unread: unread.slice(0, UNREAD_MAX), drafts, saved, saved_ids: saved.map(x => x.ts) };

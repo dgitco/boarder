@@ -20,6 +20,11 @@ export const bump = async (env: LEnv, email: string, t: Record<string, string>, 
   const [n] = await Promise.all([own, liveOf(env, email, true).bump(t, undefined, ugap).catch(() => 0)]);
   return n;
 };
+const SNAP_MIRROR: Record<string, string> = { topics: "topics", history: "history", cfg: "drafts" };
+export const mirrorOwnerSnap = async (env: LEnv, key: string, etag: string) => {
+  const k = SNAP_MIRROR[key]; if (!k || !(await unifiedAny(env))) return 0;
+  return liveOf(env, canon(env), true).bump({ [k]: etag }).catch(() => 0);
+};
 export const bumpLedger = (env: LEnv) => bump(env, env.ALLOW_EMAILS.split(",")[0].trim(), { chat: "~" + Date.now() });
 const MEMBER_BUMP_GAP = 5000;
 export const bumpMember = (env: LEnv, email: string) => { const v = "~" + Date.now(); return bump(env, email, { data: v, chat: v }, isOwner(env, email) ? undefined : MEMBER_BUMP_GAP, MEMBER_BUMP_GAP); };

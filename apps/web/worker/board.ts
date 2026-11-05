@@ -114,7 +114,7 @@ export class BoardSnap extends DurableObject<object> {
       this.obj = o && typeof o === "object" && !Array.isArray(o) ? { etag, o } : null;
     }
     if (LIVE_KEY[key] && old !== etag) this.bump({ [LIVE_KEY[key]]: etag }, dd);   // 값 = 그 스냅숏 ETag — 화면이 가진 ETag 와 같으면 안 다시 읽음
-    return { etag, ms: Date.now() - t0, colo: this.where() };
+    return { etag, ms: Date.now() - t0, colo: this.where(), changed: old !== etag };
   }
   obj: { etag: string; o: unknown } | null = null;
   async patch(key: string, base: string, opsText: string, push = false, lazy = false) {
