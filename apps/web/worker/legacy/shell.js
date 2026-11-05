@@ -31,6 +31,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     search: lu('search'),
     panel: lu('panel-left'),
     fold: lu('chevron-down', 13),
+    gridv: lu('layout-grid', 16),
+    listv: '<svg class="lu" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   };
   const IBK = ['unread', 'saved', 'drafts'], IBN = {unread: '읽지 않음', saved: '저장', drafts: '초안'};
   const S = {ib: null, chat: null, last: 'primary', ret: null};
@@ -634,7 +636,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   addEventListener('popstate', apply);
 
   const KIND_NAME = () => ({'': '전체', ...ART_KIND});
-  const saveAQ = () => { try { localStorage.setItem('hb-arts-q', JSON.stringify({kind: AQ.kind, acct: AQ.acct, folder: AQ.folder})); } catch (e) {} };
+  const saveAQ = () => { try { localStorage.setItem('hb-arts-q', JSON.stringify({kind: AQ.kind, acct: AQ.acct, folder: AQ.folder, tab: AQ.tab, view: AQ.view})); } catch (e) {} };
   let A = null;
   function artsInit(){
     const v = $id('v-arts'), arts = v?.querySelector('.arts'), main = arts?.querySelector('.amain');
@@ -647,7 +649,12 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const th = mk('div', 'bx-th', '<span>이름</span><span>계정</span><span>바뀐 때</span>');
     main.prepend(top, bar); main.querySelector('.artq').after(dd); $id('artl').before(th);
     bar.append(main.querySelector('[data-aqk="acct"]'));
-    A = {v, arts, main, aside, top, bar, dd, kind: main.querySelector('[data-aqk="kind"]'), km: top.querySelector('.bx-kmenu'), kd: top.querySelector('.bx-kd')};
+    // 안 A 격자: 탭(최근 · 고정 · 전체) · 격자 ↔ 표 단추 · 카드 판. 표는 보드 원본(#artl) 그대로 두고 격자일 때만 감춤
+    const tabs = mk('div', 'bx-cv-tabs', GTAB.map(([k, n]) => `<button type="button" role="tab" data-tab="${k}">${n}</button>`).join('')); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', '캔버스 보기');
+    const vt = mk('div', 'bx-cv-vt', `<button type="button" data-vw="grid" aria-label="격자로 보기" title="격자">${I.gridv}</button><button type="button" data-vw="table" aria-label="표로 보기" title="표">${I.listv}</button>`); vt.setAttribute('role', 'group'); vt.setAttribute('aria-label', '보기 방식');
+    const grid = mk('div', 'bx-cv-grid'); grid.setAttribute('aria-live', 'polite'); bar.prepend(tabs); $id('artl').after(grid);
+    $id('artq').placeholder = '찾기 — 제목 · 내용';
+    A = {tabs, vt, grid, v, arts, main, aside, top, bar, dd, kind: main.querySelector('[data-aqk="kind"]'), km: top.querySelector('.bx-kmenu'), kd: top.querySelector('.bx-kd')};
     const kmSet = o => { A.km.hidden = !o; A.kd.setAttribute('aria-expanded', !!o); };
     A.kd.addEventListener('click', () => { if (PC.matches) kmSet(A.km.hidden); });
     A.km.addEventListener('click', e => { if (e.target.closest('[data-aqv]')) setTimeout(() => kmSet(false), 0); });
@@ -661,23 +668,164 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       else if (k) AQ.folder = '';
     }, true);
     dd.addEventListener('change', e => { const s = e.target.closest('[data-bxsel]'); if (!s) return; AQ[s.dataset.bxsel] = s.value; saveAQ(); artsDraw(); });
+    const setTab = t => { AQ.tab = t; saveAQ(); gridDraw(true); }, setView = w => { AQ.view = w; saveAQ(); gridDraw(true); mark(); };
+    v.addEventListener('click', e => {
+      const tb = e.target.closest('[data-tab]'), vw = e.target.closest('[data-vw]'), st = e.target.closest('[data-star]'), mo = e.target.closest('[data-bxmo]'), ln = e.target.closest('.bx-cv-th, .bx-cv-tx');
+      if (tb) return setTab(tb.dataset.tab);
+      if (vw) return setView(vw.dataset.vw);
+      if (st){ e.stopPropagation(); const id = st.closest('.bx-cv-card').dataset.id; return gPin(id, !ARTS[id]?.pin); }
+      if (mo){ e.stopPropagation(); return gMenu(mo); }
+      if (ln && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button)){ e.preventDefault(); e.stopPropagation(); const id = ln.dataset.art; if (ARTS[id]){ if (!ans.hidden) closeAns(); openArt(id); } }
+    });
+    tabs.addEventListener('keydown', e => { if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return; const i = GTAB.findIndex(x => x[0] === gTab()); setTab(GTAB[(i + (e.key === 'ArrowRight' ? 1 : GTAB.length - 1)) % GTAB.length][0]); tabs.querySelector('[aria-selected="true"]')?.focus(); });
+    grid.addEventListener('error', e => { if (e.target.tagName === 'IMG') e.target.remove(); }, true);   // 그림이 아직 없으면(404) 아이콘 자리가 그대로 남음
+    $id('artq').addEventListener('input', gridFind);
     new MutationObserver(mark).observe($id('artl'), {childList: true});
     artsLay(); return true;
   }
   function artsLay(){   // 종류 단추: PC 제목 아래 고르개 · 폰 위 알약 줄. 영역 고르개: PC 계정 알약 줄 오른쪽 · 폰 찾기 아래
     if (!A) return;
     (PC.matches ? A.km : A.bar).append(A.kind);
-    if (PC.matches) A.bar.append(A.dd); else A.main.querySelector('.artq').after(A.dd);
+    if (PC.matches){ A.bar.append(A.dd, A.vt); } else A.main.querySelector('.artq').after(A.dd);
+    gridDraw(true);
+  }
+  const STAR = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.8l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 8.1l5-.7z"/></svg>';
+  const GTAB = [['recent', '최근'], ['pin', '고정'], ['all', '전체']], GRECENT = 24;
+  const gTab = () => AQ.tab === 'pin' || AQ.tab === 'all' ? AQ.tab : 'recent';
+  const gTbl = () => AQ.view === 'table' && PC.matches;   // 폰은 표가 없음(단추도 없음)
+  const atSec = at => { const m = /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/.exec(at || ''); return m ? Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00+09:00`) / 1000 : 0; };   // 목록 칸 at = 서울 시각 「YYYY-MM-DD HH:MM」
+  const GV = {};   // 썸네일을 바꾼 뒤 다시 받게 하는 표지(?v=)
+  let GQ = {q: '', ids: new Set()}, gSig = '', gQt = 0;
+  function gridRows(){
+    const q = (AQ.q || '').trim().toLowerCase(), f = AQ.folder || '', tab = gTab();
+    let rows = Object.entries(ARTS).map(([id, x]) => ({id, ...x})).filter(r => (!AQ.kind || r.kind === AQ.kind) && (!AQ.acct || r.acct === AQ.acct) && inFolder(r, f)
+      && (!q || (r.title || '').toLowerCase().includes(q) || r.id.toLowerCase().includes(q) || GQ.q === q && GQ.ids.has(r.id)));
+    rows.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+    if (tab === 'pin') rows = rows.filter(r => r.pin); else if (tab === 'recent') rows = rows.slice(0, GRECENT);
+    return rows;
+  }
+  function gCard(r){
+    const k = r.kind === 'canvas' ? 'canvas' : r.kind === 'page' ? 'page' : 'doc', id = esc(r.id), pin = !!r.pin, v = encodeURIComponent([r.at || '', r.thumb || '', GV[r.id] || ''].join('|'));
+    const t = esc(r.title || r.id), sub = esc([ART_ACCT[r.acct] || '', agoS(atSec(r.at))].filter(Boolean).join(' · '));
+    return `<div class="bx-cv-card k-${k}${pin ? ' pin' : ''}" data-id="${id}"><a class="bx-cv-th" href="art/${id}/" data-art="${id}" tabindex="-1" aria-hidden="true">${k === 'canvas' ? `<span class="bx-cv-ph">${I.canvas}</span><img src="/art/${id}/_thumb.jpg?v=${v}" alt="" loading="lazy" decoding="async" draggable="false">` : ''}</a>`
+      + `<button type="button" class="bx-cv-star" data-star aria-pressed="${pin}" aria-label="${pin ? '고정 풀기' : '고정'}" title="${pin ? '고정 풀기' : '고정'}">${STAR}</button>`
+      + `<div class="bx-cv-meta"><i class="bx-cv-ic" aria-hidden="true">${k === 'canvas' ? I.canvas : ''}</i><a class="bx-cv-tx" href="art/${id}/" data-art="${id}"><b>${t}</b><small>${sub}</small></a><button type="button" class="bx-cv-mo amv" data-bxmo aria-haspopup="menu" aria-expanded="false" aria-label="메뉴 — ${t}" title="메뉴">⋯</button></div></div>`;
+  }
+  function gridDraw(force){
+    if (!A?.grid) return;
+    const tbl = gTbl(), tab = gTab();
+    A.v.classList.toggle('bx-cv-on', !tbl);
+    A.tabs.querySelectorAll('[data-tab]').forEach(b => { const on = b.dataset.tab === tab; b.setAttribute('aria-selected', on); b.tabIndex = on ? 0 : -1; });
+    A.vt.querySelectorAll('[data-vw]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.vw === 'table') === tbl));
+    if (tbl) return;
+    const rows = gridRows(), sig = tab + '|' + rows.map(r => [r.id, r.title, r.at, r.pin ? 1 : 0, r.thumb || '', r.acct, GV[r.id] || ''].join('~')).join('|') + (ARTS_OK ? '' : '?');
+    if (!force && sig === gSig) return; gSig = sig;
+    A.grid.innerHTML = rows.length ? rows.map(gCard).join('')
+      : !Object.keys(ARTS).length && !ARTS_OK ? `<div class="bx-cv-none">${LOADING}</div>`
+      : `<div class="bx-cv-none"><b>${tab === 'pin' && !AQ.q && !AQ.acct && !AQ.kind && !AQ.folder ? '고정한 캔버스가 없어요' : '맞는 캔버스가 없어요'}</b><span>${tab === 'pin' ? '카드에 마우스를 올리고 별을 누르면 여기 모여요.' : '찾는 말이나 영역 · 계정 거르기를 바꿔 보세요.'}</span></div>`;
+  }
+  function gridFind(){
+    clearTimeout(gQt); const q = (AQ.q || '').trim().toLowerCase();
+    if (q.length < 2){ if (GQ.q){ GQ = {q: '', ids: new Set()}; gridDraw(); } return; }
+    gQt = setTimeout(async () => {
+      try { const j = await (await fetch('api/search?q=' + encodeURIComponent(q), {cache: 'no-store', credentials: 'same-origin'})).json();
+        if ((AQ.q || '').trim().toLowerCase() !== q) return;
+        GQ = {q, ids: new Set((j.arts || []).map(a => String(a.id || '').replace(/^[a-z]:/, '')))}; gridDraw(); } catch (e) {}
+    }, 300);
+  }
+  function gPin(id, on){
+    const was = ARTS[id]; if (!was) return; let got = on;
+    optDo({key: 'artstar:' + id, apply: () => { ARTS[id] = {...was, pin: on}; gridDraw(); },
+      send: () => optPost('api/artstar', {art: id, on}).then(j => { if (typeof j?.pin === 'boolean') got = j.pin; }),
+      undo: () => { ARTS[id] = was; gridDraw(); }})
+      .then(ok => { if (!ok) return; ARTS[id] = {...ARTS[id], pin: got}; gridDraw(); toast(got ? '고정했어요' : '고정을 풀었어요'); });
+  }
+  const gw = {};
+  const gHead = async id => { try { const r = await fetch('/art/' + encodeURIComponent(id) + '/_thumb.jpg?w=' + Date.now(), {cache: 'no-store', credentials: 'same-origin'}); return r.ok ? [r.headers.get('etag'), r.headers.get('last-modified'), (await r.blob()).size].join('|') : '404'; } catch (e) { return null; } };   // 머리말에 ETag 가 없는 길도 있어 받은 크기를 같이 봄
+  async function gThumbWatch(id){
+    clearTimeout(gw[id]); const t0 = Date.now(), base = await gHead(id); GV[id] = t0; gridDraw();
+    const tick = async () => {
+      if (Date.now() - t0 > 420000 || !ARTS[id]) return delete gw[id];
+      const now = await gHead(id), blind = !base || base === '||' || now === null;
+      if (now !== base || blind){ GV[id] = Date.now(); gridDraw(); if (!blind) return delete gw[id]; }
+      gw[id] = setTimeout(tick, blind ? 45000 : 30000);
+    };
+    gw[id] = setTimeout(tick, 15000);
+  }
+  window.BXThumbWatch = gThumbWatch;
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && typeof current !== 'undefined' && current === 'arts' && typeof loadArts === 'function') loadArts(); });
+  function gThumb(id, board){
+    const was = ARTS[id]; if (!was) return; let got = board;
+    optDo({key: 'artthumb:' + id, apply: () => { ARTS[id] = {...was, thumb: board}; gridDraw(); },
+      send: () => optPost('api/artthumb', {art: id, board}).then(j => { if (typeof j?.thumb === 'string') got = j.thumb; }),
+      undo: () => { ARTS[id] = was; gridDraw(); }})
+      .then(ok => { if (!ok) return; ARTS[id] = {...ARTS[id], thumb: got}; GV[id] = Date.now(); gridDraw();
+        toast(got ? '썸네일로 지정했어요 — 새 그림은 잠시 뒤 보여요' : '첫 판으로 되돌렸어요 — 새 그림은 잠시 뒤 보여요'); gThumbWatch(id); });
+  }
+  // ⋯ 메뉴: 보드의 폴더 옮기기 팝업과 같은 자리 · 같은 모양(#amvp — 바깥을 누르면 · Esc 로 보드가 닫아 줌)
+  function gMenu(btn){
+    const was = btn.getAttribute('aria-expanded') === 'true'; amvClose(); if (was) return;
+    const card = btn.closest('.bx-cv-card'), id = card.dataset.id, it = ARTS[id]; if (!it) return;
+    const items = [['open', '열기'], ['tab', '새 탭에서 열기'], ['copy', '링크 복사'], null, ['pin', it.pin ? '고정 풀기' : '고정'],
+      ...(it.kind === 'canvas' ? [['thumb', '썸네일 바꾸기…'], ...(it.thumb ? [['first', '첫 판으로 되돌리기']] : [])] : []), ['move', '폴더 옮기기…']];
+    const p = mk('div'); p.id = 'amvp'; p.className = 'bx-cv-menu'; p.setAttribute('role', 'menu');
+    p.innerHTML = items.map(x => x ? `<button type="button" role="menuitem" data-gm="${x[0]}">${x[1]}</button>` : '<hr>').join('');
+    document.body.append(p); btn.setAttribute('aria-expanded', 'true');
+    const r = btn.getBoundingClientRect(), h = p.offsetHeight;
+    p.style.left = Math.max(12, Math.min(innerWidth - p.offsetWidth - 12, r.right - p.offsetWidth)) + 'px';
+    p.style.top = (r.bottom + 4 + h > innerHeight - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4) + 'px';
+    p.querySelector('button').focus();
+    p.addEventListener('keydown', e => { const bs = [...p.querySelectorAll('button')], i = bs.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); bs[(i + (e.key === 'ArrowDown' ? 1 : -1) + bs.length) % bs.length].focus(); } });
+    p.addEventListener('click', e => {
+      const b = e.target.closest('[data-gm]'); if (!b) return; const m = b.dataset.gm; amvClose(); btn.focus();
+      if (m === 'open'){ if (!ans.hidden) closeAns(); openArt(id); }
+      else if (m === 'tab') window.open('/art/' + encodeURIComponent(id) + '/', '_blank', 'noopener');
+      else if (m === 'copy') copyLink(id);
+      else if (m === 'pin') gPin(id, !it.pin);
+      else if (m === 'thumb') gPick(id);
+      else if (m === 'first') gThumb(id, '');
+      else if (m === 'move'){ btn.dataset.amv = id; amvOpen(btn); delete btn.dataset.amv; }
+    });
+  }
+  async function copyLink(id){
+    const u = location.origin + '/canvas/' + encodeURIComponent(id);
+    try { await navigator.clipboard.writeText(u); toast('링크를 복사했어요'); }
+    catch (e) { const t = mk('textarea'); t.value = u; t.style.cssText = 'position:fixed;opacity:0'; document.body.append(t); t.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e2) {} t.remove(); toast(ok ? '링크를 복사했어요' : '복사하지 못했어요 — ' + u, 5000, !ok); }
+  }
+  let gp = null;
+  function gPickClose(){ if (!gp) return; const o = gp.opener; gp.el.remove(); gp = null; o?.focus?.(); }
+  async function gPick(id){
+    gPickClose(); const it = ARTS[id]; if (!it) return;
+    const el = mk('div', 'bx-cv-tp', `<div class="bx-cv-tpb" role="dialog" aria-modal="true" aria-label="썸네일 바꾸기"><div class="bx-cv-tph"><b>썸네일 바꾸기</b><span>${esc(it.title || id)}</span><button type="button" data-x aria-label="닫기">×</button></div><div class="bx-cv-tpl"><p class="bx-cv-tpm">판 목록을 불러오는 중이에요</p></div></div>`);
+    document.body.append(el); gp = {el, id, opener: document.activeElement};
+    el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-x]')) return gPickClose();
+      const b = e.target.closest('[data-board]'); if (b){ const bd = b.dataset.board; gPickClose(); gThumb(id, bd === it.first ? '' : bd); } });
+    el.addEventListener('keydown', e => { if (e.key === 'Escape'){ e.stopPropagation(); gPickClose(); } }, true);
+    el.querySelector('[data-x]').focus();
+    const box = el.querySelector('.bx-cv-tpl');
+    try {
+      const r = await fetch('/art/' + encodeURIComponent(id) + '/canvas.json', {cache: 'no-store', credentials: 'same-origin'}); if (!r.ok) throw 0;
+      const cj = await r.json(), bs = cj.boards && typeof cj.boards === 'object' ? cj.boards : {};
+      const names = [...new Set([...(cj.order || []), ...Object.keys(bs)])].filter(n => bs[n] && typeof n === 'string' && !n.includes('/') && n.endsWith('.html'));
+      if (!gp || gp.el !== el) return;
+      if (!names.length) throw 0;
+      it.first = names[0]; const cur = it.thumb && names.includes(it.thumb) ? it.thumb : names[0], W = 232, H = 145;
+      box.innerHTML = names.map(n => { const b = bs[n], w = +b.w || 1520, s = W / w;
+        return `<button type="button" class="bx-cv-tpi" data-board="${esc(n)}" aria-pressed="${n === cur}"><span class="bx-cv-tpv"><iframe src="/art/${encodeURIComponent(id)}/${encodeURIComponent(n)}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title="판 미리보기" style="width:${w}px;height:${Math.ceil(H / s)}px;transform:scale(${s})"></iframe></span><span class="bx-cv-tpt">${esc(b.title || n.replace(/\.dc\.html$|\.html$/, ''))}${n === cur ? '<em>현재</em>' : ''}</span></button>`; }).join('');
+      box.querySelector('[aria-pressed="true"]')?.focus();
+    } catch (e) { if (gp?.el === el) box.innerHTML = '<p class="bx-cv-tpm">판 목록을 불러오지 못했어요. 잠시 뒤 다시 해 보세요.</p>'; }
   }
   function arts(){ if (artsInit()) mark(); }
   function mark(){
     if (!A) return;
     for (const r of A.v.querySelectorAll('.arow')){ const k = r.querySelector('.k')?.textContent.trim(); r.classList.add(k === ART_KIND.canvas ? 'k-canvas' : k === ART_KIND.page ? 'k-page' : 'k-doc');
       const a = r.querySelector('a[data-art]');
-      if (a && !a.querySelector('.bx-art-thumb')) a.insertAdjacentHTML('afterbegin', artThumb(a.dataset.art));
+      if (a && (typeof gTbl !== 'function' || gTbl()) && !a.querySelector('.bx-art-thumb')) a.insertAdjacentHTML('afterbegin', artThumb(a.dataset.art));   // 격자일 때는 숨은 표에 미리보기 틀을 411개 달지 않음(표로 바꿀 때 mark 가 다시 돎)
     }
+    if (typeof gridDraw === 'function') gridDraw();
     const fold = AQ.folder || '';
-    A.top.querySelector('.bx-kt').textContent = PC.matches ? (KIND_NAME()[AQ.kind] || '전체') : '캔버스';
+    A.top.querySelector('.bx-kt').textContent = PC.matches && (AQ.kind || typeof gTbl === 'function' && gTbl()) ? (KIND_NAME()[AQ.kind] || '전체') : '캔버스';
     const rec = Object.entries(ARTS).map(([id, x]) => ({id, ...x})).sort((a, b) => (b.at || '').localeCompare(a.at || '')).slice(0, 5);
     A.aside.querySelector('.bx-rec').innerHTML = rec.map(r => `<a href="art/${r.id}/" class="k-${r.kind || 'doc'}"><i></i><span>${esc(r.title || r.id)}</span></a>`).join('');
     const areas = [...A.v.querySelectorAll('.afold [data-af]')].map(b => b.dataset.af).filter(a => a && !a.includes('/'));

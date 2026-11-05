@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "30a1d3436a98";
+window.HB_VER = "fdb1801c470a";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -10105,6 +10105,7 @@ function artMsg(e) {
     if (typeof at.board === "string" && at.board !== MEET.at?.board) meetTell({ board: at.board });
   } else if (e.source === f.contentWindow && e.data === "hb-art-ready") {
     f.contentWindow.postMessage({ hbMeetAvail: LIVE && ARTS[artId(f.src)]?.kind === "canvas" }, "*");
+    f.contentWindow.postMessage({ hbThumbAt: String(ARTS[artId(f.src)]?.thumb || "") }, "*");
     if (document.body.classList.contains("meet")) meetPost(true);
   } else if (e.source === f.contentWindow && e.data === "hb-art-meet") {
     const id = artId(f.src);
@@ -10122,7 +10123,7 @@ function artMsg(e) {
 addEventListener("message", artMsg);
 function artApi(f, q) {
   const id = (f.getAttribute("src").match(/^art\/([A-Za-z0-9]{16,40})\//) || [])[1], path = String(q.path || ""), body = q.body;
-  const ok = id && (body ? path === "api/artnote" && body.art === id && (ARTS[id]?.kind === "canvas" || !/^(?:📍|✅)/.test(String(body.text || "").trim())) : path === "api/artnotes/" + id);
+  const ok = id && (body ? path === "api/artnote" && body.art === id && (ARTS[id]?.kind === "canvas" || !/^(?:📍|✅)/.test(String(body.text || "").trim())) || path === "api/artthumb" && body.art === id && typeof body.board === "string" && ARTS[id]?.kind === "canvas" : path === "api/artnotes/" + id);
   const reply = (status, j) => f.contentWindow?.postMessage({ hbApiR: q.rid, status, j }, "*");
   if (id && LIVE && ARTS[id]?.kind === "canvas" && (path === "mic/start" || path === "mic/stop")) return artMic(path, reply);
   if ((path === "meet/point" || path === "meet/said") && (MEET.art !== id || ARTS[id]?.kind !== "canvas")) return reply(403, { error: "안 되는 길" });
@@ -10139,7 +10140,14 @@ function artApi(f, q) {
   }
   const tok = id && !body && ARTS[id]?.kind === "canvas" && /^api\/arttok\/[A-Za-z0-9]{16,40}$/.test(path);
   if (!ok && !tok || !LIVE) return reply(403, { error: "안 되는 길" });
-  fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-HB": "1" }, body: JSON.stringify(body) } : { cache: "no-store" }).then((r) => r.json().catch(() => ({})).then((j) => reply(r.status, j))).catch((e) => reply(0, { error: String(e) }));
+  fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-HB": "1" }, body: JSON.stringify(body) } : { cache: "no-store" }).then((r) => r.json().catch(() => ({})).then((j) => {
+    if (path === "api/artthumb" && r.ok && j.ok !== false && ARTS[id]) {
+      ARTS[id] = { ...ARTS[id], thumb: String(j.thumb ?? body.board) };
+      window.BXThumbWatch?.(id);
+      if (current === "arts") artsDraw();
+    }
+    reply(r.status, j);
+  })).catch((e) => reply(0, { error: String(e) }));
 }
 let ART_REC = null;
 function artMicStop() {
@@ -10210,7 +10218,7 @@ function viewArts() {
       if (f) AQ.folder = f.dataset.af;
       else AQ[c.parentElement.dataset.aqk] = c.dataset.aqv;
       try {
-        localStorage.setItem("hb-arts-q", JSON.stringify({ kind: AQ.kind, acct: AQ.acct, folder: AQ.folder }));
+        localStorage.setItem("hb-arts-q", JSON.stringify({ kind: AQ.kind, acct: AQ.acct, folder: AQ.folder, tab: AQ.tab, view: AQ.view }));
       } catch (e2) {
       }
       artsDraw();
