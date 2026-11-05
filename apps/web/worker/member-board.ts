@@ -148,6 +148,10 @@ export function loadRead(db: D1Database, me: string, ctx?: Ctx | null, ver?: num
   ctx.waitUntil(p.catch(() => { if (readShare.get(k)?.p === p) readShare.delete(k); }));   // 실패는 나눠 주지 않음(다음 요청이 새로)
   return p;
 }
+export async function loadShared(db: D1Database, me: string, ctx?: Ctx | null): ReturnType<typeof load> {
+  const r = await db.prepare("SELECT v FROM owner_ver WHERE owner = ?").bind(me).first<{ v: number }>().catch(() => null);
+  return r && Number.isSafeInteger(r.v) ? loadRead(db, me, ctx, r.v) : load(db, me);
+}
 export function loadForget(me: string) { const m = me.toLowerCase(); for (const k of [...readShare.keys()]) if (k === m || k.startsWith(m + "#")) readShare.delete(k); }
 export async function load(db: D1Database, me: string) {
   await closeStaleConnect(db, me);
@@ -939,29 +943,29 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
   if (/^\/api\/answer\/[\w-]{1,64}$/.test(p)) return j({ ok: true, state: "ok" });   // 회원 쓰기는 바로 끝나서 기다릴 일 없음
   if (p === "/emoji.json") { const e = await emoji(); return e ? new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag } }) : j({ cats: [], e: {} }); }
   const nm = /^\/api\/chat\/n:(.{1,200})\/(\d{10}\.\d{6})$/.exec(dp);
-  const nL = nm && PEER_TS.test(nm[2]) ? await loadRead(db, me, ctx) : null;
+  const nL = nm && PEER_TS.test(nm[2]) ? await loadShared(db, me, ctx) : null;
   if (nm && nL) { const f = await nodePeerThread(db, me, nL, nm[1], nm[2], my, mainName, String(url.searchParams.get("id") || "")); if (f) return j(f); }
   if (nm) return j(await nodeThread(db, me, nm[1], nm[2], my, String(url.searchParams.get("id") || ""), true, nL) ?? { channel: "n:" + nm[1], root: nm[2], owner: null, messages: [] });
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?$/.exec(p);
   if (m) {
     if (m[1] !== "primary") return j({ channel: m[1], messages: [], more: false, cursor: null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
     if (m[2]) {
-      const pL = foldOn && PEER_TS.test(m[2]) ? await loadRead(db, me, ctx) : null;
+      const pL = foldOn && PEER_TS.test(m[2]) ? await loadShared(db, me, ctx) : null;
       if (pL) { const a = await primaryPeerThread(db, me, pL, m[2], my, mainName); if (a) return j(a); }
       if (AGENTS_TS.test(m[2])) { const a = await agentsThread(db, me, m[2], my, mainName); if (a) return j(a); }   // 태스크 「에이전트끼리」 접은 글
       if (FOLD_TS.test(m[2])) {
-        const L = pL || await load(db, me), f = [...L.nodes, ...(L.front?.nodes || [])].map(n => convoFold(n, mainName, my)).find(x => x?.root.ts === m![2]);
+        const L = pL || await loadShared(db, me, ctx), f = [...L.nodes, ...(L.front?.nodes || [])].map(n => convoFold(n, mainName, my)).find(x => x?.root.ts === m![2]);
         if (f) return j({ channel: "primary", root: m[2], owner: null, messages: [f.root, ...f.replies] });
       }
       const card = await cardBy(db, me, m[2]);
       if (card) {
         const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, m[2]).all<R>()).results;
         const replies = [...said.map(r => ({ at: Number(r.at), m: { ...msg(r, my, String(r.win)), thread: m![2] } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card, my) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch: "primary" }));
-        const cL = foldOn ? pL || await loadRead(db, me, ctx) : null;   // 접기를 켠 사람만 판을 읽음(끈 사람은 main 처럼 load 없음)
+        const cL = foldOn ? pL || await loadShared(db, me, ctx) : null;   // 접기를 켠 사람만 판을 읽음(끈 사람은 main 처럼 load 없음)
         const cn = cL?.front && cL.agentsFold && cL.isPrimWin(String(card.win)) ? { name: mainName } : {};
         return j({ channel: "primary", root: m[2], owner: null, messages: await withReacts(db, me, [{ ...cardMsg(card, said, my), ch: "primary", ...cn }, ...replies]) });
       }
-      const L = fd ? pL || await load(db, me) : null;
+      const L = fd ? pL || await loadShared(db, me, ctx) : null;
       for (const n of L?.front?.nodes || []) {
         const old = await nodeThread(db, me, n.name, m[2], my, n.id, true, L);
         if (old) return j(old);
@@ -974,7 +978,7 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
       const rows = await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary' AND id % 1000000 = ? AND at >= ? AND at < ?").bind(me, Number(m[2].split(".")[1]), Number(m[2].split(".")[0]) * 1000, Number(m[2].split(".")[0]) * 1000 + 1000).all<R>();
       return j({ channel: "primary", root: m[2], owner: null, messages: rows.results.map(r => msg(r, my, mainName)) });
     }
-    const L = fd ? await load(db, me) : null, rows = await primaryRows(db, me, url.searchParams.get("before") || undefined, L), page = rows.slice(0, 100);
+    const L = fd ? await loadShared(db, me, ctx) : null, rows = await primaryRows(db, me, url.searchParams.get("before") || undefined, L), page = rows.slice(0, 100);
     const th = await primaryReplies(db, me, page.filter(r => r.win === ME).map(r => tsOf(r.at, r.id)));
     // 에이전트끼리 접기(켠 사람): 앞단 노드 창의 에이전트끼리 줄은 섞지 않고 맨 위 접힌 글 하나로 — 더 옛 쪽(before)에서도 빼고, 접은 글은 첫 쪽에만
     const pfRows = L ? frontPeerRows(L) : [], seenId = new Set(pfRows.map(r => String(r.id)));
@@ -997,7 +1001,7 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
     const raw = String(url.searchParams.get("w") || "").trim(), t = raw.replace(/^\d+\s+/, "").trim();
     if (!t) return j({ error: "노드 이름" }, 400);
     const byId = String(url.searchParams.get("id") || "");   // 업무 화면: 같은 이름 노드가 있어도 그 노드로(내 노드 안에서만)
-    const L = await load(db, me);
+    const L = await loadShared(db, me, ctx);
     if (L.front && (byId ? L.front.nodes.some(n => n.id === byId) : L.front.aliases.includes(raw))) return get(db, me, bot, new URL("/api/chat/primary", url), emoji, undefined, my);
     const n = L.resolveNode(raw, byId) || L.resolveNode(t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
     const inCard = (r: R) => CARD_TS.test(String(r.thread || ""));

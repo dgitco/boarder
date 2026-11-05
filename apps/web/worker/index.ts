@@ -460,7 +460,7 @@ app.get("/api/live", async c => {
     return live.liveOf(c.env, me).fetch(c.req.raw);
   }
   const o = await live.table(c.env, me, async () => {
-    const m = me.toLowerCase(), [d, l] = await Promise.all([memberBoard.data(c.env.DB, m, await memberBot(c.env, m), await memberBoard.loadRead(c.env.DB, m, c.executionCtx)), c.env.DB.prepare("SELECT max(id) n FROM board_log WHERE owner = ?").bind(m).first<{ n: number | null }>()]);
+    const m = me.toLowerCase(), [d, l] = await Promise.all([memberBoard.data(c.env.DB, m, await memberBot(c.env, m), await memberBoard.loadShared(c.env.DB, m, c.executionCtx)), c.env.DB.prepare("SELECT max(id) n FROM board_log WHERE owner = ?").bind(m).first<{ n: number | null }>()]);
     const tag = await memberBoard.etag(JSON.stringify(d));
     return { data: tag, chat: tag + (l?.n ?? 0) };
   });
@@ -2157,7 +2157,7 @@ async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) 
 async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea: boolean | "x" = false) {
   const pg = await snap(c.env).get("page"); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
   await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
-  const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot, await memberBoard.loadRead(c.env.DB, me, c.executionCtx))), tag = await memberBoard.etag(d);
+  const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot, await memberBoard.loadShared(c.env.DB, me, c.executionCtx))), tag = await memberBoard.etag(d);
   const html = (await tplHtml(c.env, c.executionCtx, pg)).replace("__BX_DATA__", () => d.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(tag));
   // 회원 값: 채널은 Primary 하나(보드 CH) · 내 이름 · 메인 봇 이름. 영역 칸이 하나라 트리 줄을 한 칸으로
   const member = `<script>window.HB_CH = ["primary"]; window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name, avatar: await memberBoard.myAvatar(c.env.DB, me).catch(() => null), push: await ledger.f7On(c.env.DB, "member_push").catch(() => false), unit: await c.env.DB.prepare("SELECT json_extract(data, '$.unit') u FROM node_setting WHERE owner = ? AND json_valid(data)").bind(me).first<{ u: string | null }>().then(r => r?.u === "agent" || r?.u === "goal" ? r.u : null).catch(() => null) }).replace(/</g, "\\u003c")}</script><style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>`;
