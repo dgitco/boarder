@@ -1179,7 +1179,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   let q = 0, on = '';
   const paint = () => {
     q = 0;
-    if (!(typeof D === 'object' && Array.isArray(D?.task_side)) || typeof CS !== 'object') return;
+    if (!(typeof D === 'object' && (Array.isArray(D?.task_side) || D?.agents_fold)) || typeof CS !== 'object') return;
     const ts = (CS.ch?.[CS.at]?.messages || []).find(m => m.fold?.agents)?.ts || '';
     if (ts === on) return;
     on = ts;

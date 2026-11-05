@@ -199,6 +199,11 @@ test("새 칸: 노드 수치 · 단위 · prefs · 사이드 숨김 · 모양 ·
   assert.equal((await s.get()).j.values.prefs.bundles["phone-alert"], false, "안 바뀜");
   assert.equal((await s.set("prefs", { bundles: { "phone-alert": false } })).status, 200, "값이 그대로면 통과");
   assert.equal((await s.set("prefs", { nope: 1 })).status, 400);
+  // 에이전트끼리 접기(agents_fold): 알림 · 읽지 않음을 바꾸는 칸이라 기기 허락만으로는 못 켬 — 값이 그대로(꺼짐 → 꺼짐)면 통과
+  const af = await s.set("prefs", { agents_fold: true });
+  assert.equal(af.status, 403, af.text); assert.match(af.j.error, /approval_required: prefs\.agents_fold/);
+  assert.equal((await s.get()).j.values.prefs.agents_fold, false, "안 바뀜");
+  assert.equal((await s.set("prefs", { agents_fold: false })).status, 200, "값이 그대로면 통과");
   // 사이드 숨김 · 모양 · 기능 · 세션 싱크
   assert.deepEqual((await s.set("side_hide", ["feed"])).j.after, ["feed"]); assert.equal((await s.set("side_hide", ["x"])).j.after.length, 0, "모르는 열쇠는 버림");
   const ui = await s.set("ui", { theme: "dark", still: "1" }); assert.equal(ui.status, 200, ui.text); assert.equal((await s.get()).j.values.ui.theme, "dark");

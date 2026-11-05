@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "b97178657452";
+window.HB_VER = "ec683b3a2740";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1912,13 +1912,25 @@ p.mdi{padding-left:1em;text-indent:-1em}
 .ah .who .ibvw button{height:24px;padding:0 10px;border:0;border-radius:999px;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
 .ah .who .ibvw button[aria-selected="true"]{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--line)}
 .ah .who .ibvw button.ibic{width:30px;padding:0;display:grid;place-items:center}
-@media (max-width:640px){.ah .who:has(.ibhr){flex-wrap:wrap;row-gap:6px;column-gap:8px}.ah .who:has(.ibhr) .n{flex:1 0 100%}.ah .who .ibhr{margin-left:0;flex-wrap:wrap;gap:6px}.ah .who:has(.ibhr) .ibmg{flex:none}}
+
+.ah .who:has(.ibhr){container:ibh / inline-size}
+.ah .who .ibhm{display:none;width:30px;height:30px;border:0;border-radius:8px;background:none;color:var(--soft);place-items:center;cursor:pointer;flex:none}
+.ah .who .ibhm:hover,.ah .who .ibhm[aria-expanded="true"]{color:var(--ink);background:var(--sunk)}
+@container ibh (max-width: 420px){.ah .who .ibmg,.ah .who .ibhr > :not(.ibhm){display:none}.ah .who .ibhm{display:grid}.ah .who:has(.ibhr) .n{flex:1}}
+.ibdd{position:fixed;z-index:60;min-width:224px;padding:4px;border-radius:12px;background:var(--surface);box-shadow:0 0 0 1px var(--line),0 8px 24px var(--shadow)}
+.ibdd button{display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 10px;border:0;border-radius:8px;background:none;color:var(--ink);font:inherit;font-size:13.5px;text-align:left;cursor:pointer}
+.ibdd button:hover,.ibdd button:focus-visible{background:var(--hover);outline:none}
+.ibdd svg,.ibsheet svg{flex:none;color:var(--soft)}.ibdd svg{width:16px;height:16px}
+.ibdd .iblab,.ibsheet .iblab{padding:6px 10px 2px;font-size:11.5px;color:var(--muted)}
+.ibdd .ibsep,.ibsheet .ibsep{height:1px;margin:4px 6px;background:var(--line)}
+.ibdd .ibr,.ibsheet .ibr{margin-left:auto;display:inline-flex;align-items:center;gap:2px;color:var(--soft);font-style:normal;font-size:12.5px;white-space:nowrap}
+.ibsheet .sl{border-top:0;padding-top:0}.ibsheet .sl button{gap:14px}
+.ibsheet .iblab{padding:4px 6px 2px;font-size:12.5px}
 .inbr.ibdn{opacity:.55}.inbr.ibdn .ud,.inbr.ibdn .un{display:none}
 
 
-html.hb-unkeep .inbr.ibdn{opacity:1}html.hb-unkeep .inbr.ibdn > :not(.ibun){opacity:.55}
+html.hb-unkeep .inbr.ibdn{opacity:1}   
 html.hb-unkeep .ibi{position:relative}
-html.hb-unkeep .ibi.done > .msg, html.hb-unkeep .ibi.done > .ibth{opacity:.6}
 .ibun{flex:none;align-self:center;margin-left:8px;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:3px 10px;font:inherit;font-size:12px;line-height:1.4;cursor:pointer;white-space:nowrap}
 html.hb-unkeep .inbr:first-child:has(> .ibun) .rtools{right:132px}   
 .ibi > .ibun{position:absolute;top:8px;right:12px;z-index:2;margin:0}
@@ -8900,9 +8912,9 @@ document.addEventListener("click", (e) => {
 }, true);
 const tapOn = () => {
   try {
-    return localStorage.getItem("hb-tapthread") === "1";
+    return localStorage.getItem("hb-tapthread") !== "0";
   } catch (e) {
-    return false;
+    return true;
   }
 };
 try {
@@ -11941,7 +11953,7 @@ setInterval(() => {
     const tabs = !pick ? "" : `<span class="ibvw ibmg" role="tablist" aria-label="거르개">${[["turn", "결정"], ["unread", "읽지 않음"], ["both", "전체"]].map(([v, l]) => `<button role="tab" aria-selected="${v === "both" ? k === "unread" && BOTH : v === k && !BOTH}" data-ibmg="${v}">${l}</button>`).join("")}</span>`;
     const seg = !pick ? "" : `<span class="ibvw" role="tablist" aria-label="보기">${[["open", "펼쳐보기"], ["list", "목록"]].map(([v, l]) => `<button role="tab" class="ibic" aria-selected="${VIEW[k] === v}" aria-label="${l}" title="${l}" data-ibview="${v}">${IC[v]}</button>`).join("")}</span>`;
     if (!pick) return "";
-    return `${tabs}<span class="ibhr">${seg}${k === "turn" ? `<button class="ibflt" data-ibdone aria-pressed="${S.doneOn}">끝난 것</button>` : ""}${k === "unread" && left ? '<button class="ibrall" data-ibrall>모두 읽음</button>' : ""}</span>`;
+    return `${tabs}<span class="ibhr">${seg}${k === "turn" ? `<button class="ibflt" data-ibdone aria-pressed="${S.doneOn}">끝난 것</button>` : ""}${k === "unread" && left ? '<button class="ibrall" data-ibrall>모두 읽음</button>' : ""}<button class="ibhm" data-ibhm aria-haspopup="menu" aria-expanded="false" aria-label="보기 설정" title="보기 설정"><svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.75" cy="10" r="1.4" fill="currentColor"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/><circle cx="15.25" cy="10" r="1.4" fill="currentColor"/></svg></button></span>`;
   }
   let IO = null, ioRoot = null;
   const OBS = /* @__PURE__ */ new Set();
@@ -12044,6 +12056,123 @@ setInterval(() => {
     if (!S.unread.some((z) => (z.thread || z.ts) === (x.thread || x.ts))) S.unread = [...S.unread, { ...y, kept: true }];
     emit();
   }
+  const HSV = (d) => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const HI = {
+    turn: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
+    unread: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h8"/><circle cx="19" cy="5" r="2"/>',
+    both: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/>',
+    open: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 8h8"/><path d="M7 12h10"/><path d="M7 16h6"/>',
+    list: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M21 9H3"/><path d="M21 15H3"/>',
+    done: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    all: '<path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/>',
+    chk: '<path d="M20 6 9 17l-5-5"/>',
+    next: '<path d="m9 18 6-6-6-6"/>',
+    back: '<path d="m15 18-6-6 6-6"/>'
+  };
+  const HNAME = { open: "펼쳐보기", list: "목록" };
+  let HM = null;
+  function hmClose(focus) {
+    if (!HM) return;
+    const b = HM.btn;
+    HM.host.remove();
+    HM.scrim?.remove();
+    b?.setAttribute("aria-expanded", "false");
+    const w = HM;
+    HM = null;
+    if (focus && w.btn?.isConnected) w.btn.focus();
+    removeEventListener("resize", hmClose);
+  }
+  function hmHTML(lvl) {
+    const k = fk(CS.at), f = FD[k];
+    if (!f) return "";
+    const cur2 = k === "unread" && BOTH ? "both" : k, left = k === "unread" ? f.items.filter((x) => !f.done.has(idOf(k, x))).length : 0;
+    const it = (ic, label, attrs, o = {}) => `<button type="button" role="${o.radio ? "menuitemradio" : o.check ? "menuitemcheckbox" : "menuitem"}"${o.radio || o.check ? ` aria-checked="${!!o.on}"` : ""} ${attrs}>${HSV(HI[ic])}<span>${label}</span>${o.on ? `<i class="ibr">${HSV(HI.chk)}</i>` : o.right ? `<i class="ibr">${o.right}</i>` : ""}</button>`;
+    if (lvl === "shape") return `<button type="button" role="menuitem" class="ibback" data-ibsub="">${HSV(HI.back)}<span>모양</span></button>` + ["open", "list"].map((v) => it(v, HNAME[v], `data-ibview="${v}"`, { radio: 1, on: VIEW[k] === v })).join("");
+    return `<div class="iblab">거르기</div>` + [["turn", "결정"], ["unread", "읽지 않음"], ["both", "전체"]].map(([v, l]) => it(v, l, `data-ibmg="${v}"`, { radio: 1, on: v === cur2 })).join("") + `<div class="ibsep"></div>` + it(VIEW[k], "모양", 'data-ibsub="shape" aria-haspopup="menu"', { right: `${HNAME[VIEW[k]]} ${HSV(HI.next)}` }) + (k === "turn" ? it("done", "끝난 것 보기", "data-ibdone", { check: 1, on: S.doneOn }) : "") + (k === "unread" && left ? it("all", "모두 읽음", "data-ibrall") : "");
+  }
+  function hmOpen(btn) {
+    hmClose();
+    const phone = matchMedia("(hover: none)").matches, host = document.createElement("div");
+    let scrim = null;
+    if (phone) {
+      scrim = document.createElement("div");
+      scrim.className = "sscrim";
+      host.className = "msheet ibsheet";
+      host.setAttribute("role", "dialog");
+      host.setAttribute("aria-label", "보기 설정");
+      host.innerHTML = '<div class="grab"></div><div class="sl" role="menu"></div>';
+      document.body.append(scrim, host);
+    } else {
+      host.className = "ibdd";
+      host.setAttribute("role", "menu");
+      host.setAttribute("aria-label", "보기 설정");
+      document.body.append(host);
+      const r = btn.getBoundingClientRect();
+      host.style.top = r.bottom + 6 + "px";
+      host.style.right = Math.max(8, innerWidth - r.right) + "px";
+    }
+    HM = { btn, host, scrim, phone, lvl: "main" };
+    btn.setAttribute("aria-expanded", "true");
+    hmDraw(true);
+    addEventListener("resize", hmClose);
+  }
+  function hmDraw(first) {
+    const box = HM.phone ? HM.host.querySelector(".sl") : HM.host;
+    box.innerHTML = hmHTML(HM.lvl);
+    const t = box.querySelector('[aria-checked="true"], .ibback') || box.querySelector("button");
+    if (first || HM.lvl === "shape") t?.focus();
+    else box.querySelector('[data-ibsub="shape"]')?.focus();
+  }
+  document.addEventListener("click", (e) => {
+    const t = e.target, hb = t.closest?.("[data-ibhm]");
+    if (hb) {
+      e.stopPropagation();
+      e.preventDefault();
+      return HM ? hmClose() : hmOpen(hb);
+    }
+    if (!HM) return;
+    const sub = t.closest?.("[data-ibsub]");
+    if (sub && HM.host.contains(sub)) {
+      e.stopPropagation();
+      e.preventDefault();
+      HM.lvl = sub.dataset.ibsub || "main";
+      return hmDraw();
+    }
+    if (HM.host.contains(t)) {
+      if (t.closest("button")) setTimeout(() => hmClose(), 0);
+      return;
+    }
+    hmClose();
+  }, true);
+  document.addEventListener("keydown", (e) => {
+    if (!HM || e.isComposing) return;
+    const bs = [...HM.host.querySelectorAll('button[role^="menuitem"]')], i = bs.indexOf(document.activeElement);
+    const eat = () => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    if (e.key === "ArrowDown") {
+      eat();
+      bs[(i + 1) % bs.length]?.focus();
+    } else if (e.key === "ArrowUp") {
+      eat();
+      bs[(i - 1 + bs.length) % bs.length]?.focus();
+    } else if (e.key === "ArrowRight" && document.activeElement?.dataset.ibsub) {
+      eat();
+      HM.lvl = document.activeElement.dataset.ibsub;
+      hmDraw();
+    } else if (e.key === "ArrowLeft" && HM.lvl === "shape") {
+      eat();
+      HM.lvl = "main";
+      hmDraw();
+    } else if (e.key === "Escape") {
+      eat();
+      if (HM.lvl === "shape") {
+        HM.lvl = "main";
+        hmDraw();
+      } else hmClose(true);
+    } else if (e.key === "Tab") hmClose();
+  }, true);
   document.addEventListener("click", (e) => {
     if (!(typeof chatOn === "function" && chatOn() && isIbCh(CS.at))) return;
     const t = e.target, f = FD[fk(CS.at)];

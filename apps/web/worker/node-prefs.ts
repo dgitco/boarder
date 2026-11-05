@@ -3,8 +3,8 @@ import { BUNDLE_KEYS, BUNDLE_DEF } from "./harness-bundles";
 import { pickOf, PARK_H_LIM, PARK_QUIET_MS, type PrimaryPick } from "./importer/group";
 import { frontDoorOf, type FrontDoor } from "./front-door";
 
-export type NodePrefs = { park_on: boolean; park_h: number; primary_item: PrimaryPick; rules: Required<Rules>; bundles: Record<string, boolean>; task_dots: boolean; task_channels: boolean; task_repo: string; front_door: FrontDoor | null; tree_tidy: boolean | null };
-export const PREF_DEF: NodePrefs = { park_on: true, park_h: PARK_QUIET_MS / 3600_000, primary_item: "auto", task_dots: false, task_channels: false, task_repo: "", front_door: null, tree_tidy: null, bundles: { ...BUNDLE_DEF }, rules: Object.fromEntries(RULE_KEYS.map(k => [k, true])) as Required<Rules> };
+export type NodePrefs = { park_on: boolean; park_h: number; primary_item: PrimaryPick; rules: Required<Rules>; bundles: Record<string, boolean>; task_dots: boolean; task_channels: boolean; task_repo: string; front_door: FrontDoor | null; tree_tidy: boolean | null; agents_fold: boolean };
+export const PREF_DEF: NodePrefs = { park_on: true, park_h: PARK_QUIET_MS / 3600_000, primary_item: "auto", task_dots: false, task_channels: false, task_repo: "", front_door: null, tree_tidy: null, agents_fold: false, bundles: { ...BUNDLE_DEF }, rules: Object.fromEntries(RULE_KEYS.map(k => [k, true])) as Required<Rules> };
 /** "owner/repo" 꼴만(github.com · .git · 대문자는 정리) — 틀리면 null */
 export const repoOf = (v: unknown): string | null => {
   if (typeof v !== "string") return null;
@@ -30,6 +30,7 @@ export function prefsOf(data: unknown): NodePrefs {
     task_repo: repoOf(d.task_repo) || "",
     front_door: frontDoorOf(d.front_door),
     tree_tidy: typeof d.tree_tidy === "boolean" ? d.tree_tidy : null,
+    agents_fold: d.agents_fold === true,
     rules: Object.fromEntries(RULE_KEYS.map(k => [k, r[k] !== false])) as Required<Rules>,
     bundles: Object.fromEntries(BUNDLE_KEYS.map(k => [k, typeof b[k] === "boolean" ? b[k] : BUNDLE_DEF[k]])) as Record<string, boolean>,
   };
@@ -45,6 +46,7 @@ export function prefsPatch(raw: unknown): Partial<NodePrefs> | null {
   if (typeof b.task_dots === "boolean") out.task_dots = b.task_dots;
   if (typeof b.task_channels === "boolean") out.task_channels = b.task_channels;
   if (typeof b.tree_tidy === "boolean") out.tree_tidy = b.tree_tidy;
+  if (typeof b.agents_fold === "boolean") out.agents_fold = b.agents_fold;
   const repo = repoOf(b.task_repo); if (repo !== null) out.task_repo = repo;   // "" = 지우기
   if (b.front_door === null) out.front_door = null;   // null = 끄기
   else { const fd = frontDoorOf(b.front_door); if (fd) out.front_door = fd; }
@@ -69,6 +71,7 @@ export async function savePrefs(db: D1Database, owner: string, patch: Partial<No
   if (patch.task_channels !== undefined) put("task_channels", "json(?)", JSON.stringify(patch.task_channels));
   if (patch.task_repo !== undefined) put("task_repo", "?", patch.task_repo);
   if (patch.tree_tidy !== undefined && patch.tree_tidy !== null) put("tree_tidy", "json(?)", JSON.stringify(patch.tree_tidy));
+  if (patch.agents_fold !== undefined) put("agents_fold", "json(?)", JSON.stringify(patch.agents_fold));
   if (patch.front_door !== undefined) put("front_door", "json(?)", JSON.stringify(patch.front_door));
   if (patch.park_h !== undefined) put("park_h", "?", patch.park_h);
   if (patch.primary_item !== undefined) put("primary_item", "?", patch.primary_item);

@@ -117,8 +117,19 @@ export async function fileGet(c: C, me: string, id: string, dl: boolean) {
 }
 export async function signedGet(c: C, id: string) {
   if (!(await linkOk(c.env.BETTER_AUTH_SECRET, id, c.req.query("e") || "", c.req.query("t") || ""))) return c.text("link expired or invalid\n", 403);
+  const key = new Request(new URL(`/f/${id}`, c.req.url).toString()), cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+  const hit = await cache?.match(key).catch(() => undefined);
+  if (hit) { const h = new Headers(hit.headers); h.set("cache-control", "private, max-age=300"); h.set("x-bx-cache", "hit"); return new Response(hit.body, { status: hit.status, headers: h }); }
   const o = await c.env.RESULTS.get(`mfiles/${id}`); if (!o) return c.text("not found\n", 404);
-  const r = await headers(o, false); return new Response(r.body, { headers: r.h });
+  const r = await headers(o, false), res = new Response(r.body, { headers: r.h });
+  let ctx: { waitUntil(p: Promise<unknown>): void } | undefined; try { ctx = (c as unknown as { executionCtx: typeof ctx }).executionCtx; } catch { /* ctx 없는 시험 */ }
+  if (cache && ctx && c.req.method === "GET" && o.size <= 8 * 1024 * 1024) {
+    const ch = new Headers(r.h); ch.set("cache-control", "public, max-age=3600");
+    const [a, b] = res.body!.tee();
+    ctx.waitUntil(cache.put(key, new Response(b, { headers: ch })).catch(() => {}));
+    return new Response(a, { headers: r.h });
+  }
+  return res;
 }
 /** 글에 붙은 파일 id → 창이 받아 갈 「📎 이름: 서명 링크」 줄. 내 파일만, 모르는 · 남의 id 는 빼고 셈 */
 export async function fileLines(env: Env, me: string, base: string, ids: unknown[]) {

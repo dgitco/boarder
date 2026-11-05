@@ -40,8 +40,8 @@
 
   // ── 상태
   const DK = 'bx-x-done', ld = () => { try { const o = JSON.parse(localStorage.getItem(DK) || '{}'), cut = Date.now() - 14 * 864e5; return new Map(Object.entries(o).filter(([, t]) => t > cut)); } catch { return new Map(); } };
-  const FLK = 'bx-x-fl', flLoad = () => { try { const v = localStorage.getItem(FLK); return v === 'ask' || v === 'info' ? v : 'all'; } catch { return 'all'; } };
-  const X = {fl: flLoad(), tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map(), pend: new Map(), kids: new Map(), ready: false, page: 10, shown: null, shownFl: '', paintAt: 0};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
+  const FLK = 'bx-x-fl', flLoad = () => { try { const v = localStorage.getItem(FLK); return v === 'ask' || v === 'un' ? v : 'all'; } catch { return 'all'; } };
+  const X = {fl: flLoad(), tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map(), pend: new Map(), kids: new Map(), ready: false, page: 10, shown: null, shownFl: '', paintAt: 0, unKeep: new Set()};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
   const keepDone = () => { try { localStorage.setItem(DK, JSON.stringify(Object.fromEntries(X.done))); } catch {} };
   const root = document.createElement('div'); root.id = 'bxx'; document.body.append(root);
   root.innerHTML = `<div class="xv" data-v="home"></div><div class="xv" data-v="thread" hidden></div><div class="xv" data-v="save" hidden></div><div class="xv" data-v="me" hidden></div>
@@ -121,7 +121,7 @@
     const goto = q && o.feed ? `<button type="button" class="xgo" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}">${MSG}<span>${o.more ? `<b>투표</b>에서 고르기 · ${E(o.more)}` : '<b>2/2 투표</b>에서 고르기 · 눌러서 열기'}</span></button>` : '';
     const sz = o.reply || o.ans ? 28 : 42;
     return `<article class="xp${m.pendingX ? (m.failX ? ' xfail' : ' xpend') : ''}${o.joined ? ' j' : ''}${o.reply ? ' xr' : ''}${o.more2 ? ' xr2' : ''}${o.main ? ' xm' : ''}${o.ans ? ' xa' : ''}${o.ask ? ' ask' : ''}" data-ts="${E(m.ts)}" data-k="${E(k)}" data-root="${E(o.root || m.ts)}">${o.joined ? '<i class="xl"></i>' : ''}${o.reply ? '<i class="xcv"></i>' : ''}`
-      + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${embeds(m, bd)}${goto}${o.pollHere ? '' : ''}${m.pendingX ? (m.failX ? `<div class="xfl"><span>보내지 못했어요</span><button type="button" data-xretry="${E(m.ts)}">다시 보내기</button><button type="button" data-xdrop="${E(m.ts)}">지우기</button></div>` : '') : acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
+      + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${embeds(m, bd)}${goto}${o.pollHere ? '' : ''}${m.pendingX ? (m.failX ? `<div class="xfailrow"><span>보내지 못했어요</span><button type="button" data-xretry="${E(m.ts)}">다시 보내기</button><button type="button" data-xdrop="${E(m.ts)}">지우기</button></div>` : '') : acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
   }
   function unit(x){
     if (x.deck) return `<div class="xu ask xdeck" data-root="${E(x.dm.ts)}" data-k="${E(x.k)}">${post(x.k, x.dm, {feed: true, ask: true, turn: true, root: x.m.ts, sts: x.sts})}</div>`;   // ✓ 는 덱 글만 내림(스레드 칸 그대로), 글을 누르면 그 스레드
@@ -135,7 +135,7 @@
     const rows = cm.map((c, i) => post(k, c, {reply: true, feed: true, brief: c === tail && !qOf(c), more2: i < cm.length - 1, root: m.ts, n, ask: x.ask, turn: tgt === c, un: x.un, sts: x.sts, ...(qOf(c) ? bo : {})}));
     return wrap(x, post(k, m, {joined: true, feed: true, ask: x.ask, turn: tgt === m, sts: x.sts, ...(bq === m ? bo : {})}) + rows.join(''));
   }
-  const wrap = (x, h) => `<div class="xu${x.ask ? ' ask' : ''}" data-root="${E(x.m.ts)}" data-k="${E(x.k)}">${h}</div>`;
+  const wrap = (x, h) => `<div class="xu${x.ask ? ' ask' : ''}${x.un ? ' un' : ''}" data-root="${E(x.m.ts)}" data-k="${E(x.k)}">${h}</div>`;
 
   // ── 홈(X2 · X9): 맨 위 새 글 칸 + 피드
   const NAMES = () => Object.fromEntries(chs().map(k => [k, k === 'primary' ? (AN().primary || 'Primary') : String(AN()[k] || k).replace(/\s*리드\s*$/, '')]));
@@ -160,7 +160,7 @@
   let lastSig = '';
   function drawHome(force){
     fetchWanted();
-    const v = V('home'), all = items(), it = X.fl === 'ask' ? all.filter(y => y.ask) : X.fl === 'info' ? all.filter(y => !y.ask) : all, sig = JSON.stringify([X.fl, all.filter(y => y.ask).length]) + JSON.stringify([it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked, x.m.failX]), it.map(x => isSaved(x.m.ts))]);
+    const v = V('home'), all = items(), it = X.fl === 'ask' ? all.filter(y => y.ask) : X.fl === 'un' ? all.filter(y => (y.un && X.unKeep.add(keyOf(y))) || X.unKeep.has(keyOf(y))) : all, sig = JSON.stringify([X.fl, all.filter(y => y.ask).length]) + JSON.stringify([it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked, x.m.failX]), it.map(x => isSaved(x.m.ts))]);
     if (!force && sig === lastSig && v.firstChild) return; lastSig = sig;
     // 글 칸은 한 번만 만듦(다시 그려도 쓰던 글 · 포커스 · 한글 조합 · 첨부 · 토픽 창이 그대로) — 피드만 바꿈
     if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd"><button type="button" class="xdrb" data-xdr aria-label="메뉴">${DR2}</button><button type="button" class="xpri" data-xpri></button><button type="button" class="xfnd" data-xfind aria-label="찾기">${FND}</button></header>${composer()}<div class="xfl" role="tablist" aria-label="거르개"></div><div class="xfeed"></div>`;
@@ -168,10 +168,10 @@
     const sl = v.querySelector('.xsel'); if (sl) sl.textContent = `${NAMES()[X.sel] || X.sel} ▾`;
     if (!X.ready){ const f = v.querySelector('.xfeed'); if (!f.querySelector('.xspin')) f.innerHTML = SPIN; return; }
     const st = v.scrollTop, an = anchorOf(v);
-    const nAsk = all.filter(y => y.ask).length; v.querySelector('.xfl').innerHTML = [['all', '전체'], ['ask', `결정${nAsk ? ` ${nAsk}` : ''}`], ['info', '정보']].map(([k, l]) => `<button type="button" role="tab" aria-selected="${X.fl === k}" data-xfl="${k}">${l}</button>`).join('');
+    v.querySelector('.xfl').innerHTML = [['ask', '결정'], ['un', '읽지 않음'], ['all', '전체']].map(([k, l]) => `<button type="button" role="tab" aria-selected="${X.fl === k}" data-xfl="${k}">${l}</button>`).join('');
     const pg = pageOf(it), more = pg.length < it.length;
     { const fd = v.querySelector('.xfeed'), back = keepThumb(fd);
-      fd.innerHTML = pg.length ? pg.map(unit).join('') + (more ? `<div class="xmore">${SPIN}</div>` : '') : `<p class="xempty">${X.fl === 'ask' ? '지금 고를 것이 없어요' : '글이 없어요'}</p>`; back(); }
+      fd.innerHTML = pg.length ? pg.map(unit).join('') + (more ? `<div class="xmore">${SPIN}</div>` : '') : `<p class="xempty">${X.fl === 'ask' ? '지금 고를 것이 없어요' : X.fl === 'un' ? '읽지 않은 글이 없어요' : '글이 없어요'}</p>`; back(); }
     v.scrollTop = st; anchorTo(v, an); watchSeen(); watchMore(v, more);
     const sh = new Set(pg), next = it.filter(x => !sh.has(x)).slice(0, 10);   // 다음 10칸 댓글은 미리 받아 둠(그리기 · 읽음은 안 함)
     for (const x of [...pg, ...next]){ const t = thr(x.m.ts), l = t && t[t.length - 1]; if (x.m.replies && (!t || (x.m.latest && l && +x.m.latest > +l.ts))) loadThr(x.k, x.m.ts); }   // 한 번 읽은 스레드도 새 답이 왔으면 다시(안 그러면 피드 댓글이 옛 글에 멈춤)
@@ -317,7 +317,7 @@
       if (k === 'dm') return void (location.href = '/es');
       return show(k); }
     if (q('[data-xtab-fab]')) return compose();
-    { const fl = q('[data-xfl]'); if (fl){ X.fl = fl.dataset.xfl; X.page = 10; try { localStorage.setItem(FLK, X.fl); } catch {} V('home').scrollTop = 0; return drawHome(true); } }
+    { const fl = q('[data-xfl]'); if (fl){ X.fl = fl.dataset.xfl; X.unKeep.clear(); X.page = 10; try { localStorage.setItem(FLK, X.fl); } catch {} V('home').scrollTop = 0; return drawHome(true); } }
     { const xa2 = q('[data-xart]'), al = t.closest('a[href]'), am = al && /\/(?:canvas|art)\/(hb[1-9A-HJ-NP-Za-km-z]{22})/.exec(al.getAttribute('href') || ''), id = xa2?.dataset.xart || am?.[1];
       if (id){ e.preventDefault(); e.stopPropagation(); return openCanvas(id); } }
     if (q('[data-xfind]')) return void document.querySelector('.bx-sb [data-go="find"], .bx-dr [data-go="find"]')?.click();

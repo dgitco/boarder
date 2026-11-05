@@ -32,6 +32,9 @@ export const OWNER_KEYS = ["pins", "side_hide", "ui", "features", "session_sync"
 const OWNER_NO = "주인 보드의 이 칸은 서버 파일이 정본이라 아직 이 명령으로 못 바꿔요 — 보드 화면에서 해요";
 export const TOUCHY_BUNDLES = ["phone-alert", "external-send", "account-autoswitch"] as const;
 export const TOUCHY_RULES = ["outside", "ask"] as const;   // 바깥 발송 · 사람에게 묻기 규칙 — 끄면 에이전트가 승인 없이 움직이므로 같은 취급
+// 사람 몸에 닿는 보드 설정 칸 — 에이전트끼리 접기(agents_fold)는 알림을 진행 묶음으로 바꾸고 읽지 않음 수에서 빼므로 폰 알림 묶음과 같은 취급.
+//   승인 링크 동사가 아직 없어 보드 화면 설정(「에이전트끼리 접기」 스위치)에서 사람이 바꿈
+export const TOUCHY_PREFS = ["agents_fold"] as const;
 
 export const TTL = 10 * 60_000;
 export const ALLOW = "허용", DENY = "거절";
@@ -194,7 +197,8 @@ async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, c
     const touchy = TOUCHY_BUNDLES.filter(k => patch.bundles && k in patch.bundles && patch.bundles[k] !== (cur.prefs.bundles as Record<string, boolean> | undefined)?.[k]);
     const rulesNow = cur.prefs.rules as Record<string, boolean> | undefined;
     for (const k of TOUCHY_RULES) if (patch.rules && k in patch.rules && patch.rules[k as never] !== rulesNow?.[k]) touchy.push(`rules.${k}` as never);
-    if (touchy.length) return { error: `approval_required: ${touchy.join(", ")} 는 사람 몸에 닿아 기기 허락만으로는 못 바꿔요 — 사람이 링크로 승인해요: ${touchy.map(t => t.startsWith("rules.") ? `boarder approve rule.set name=${t.slice(6)} on=…` : `boarder approve bundle.set name=${t} on=…`).join(" · ")}`, status: 403 };
+    for (const k of TOUCHY_PREFS) if (k in patch && patch[k] !== undefined && patch[k] !== !!cur.prefs[k]) touchy.push(`prefs.${k}` as never);
+    if (touchy.length) return { error: `approval_required: ${touchy.join(", ")} 는 사람 몸에 닿아 기기 허락만으로는 못 바꿔요 — 사람이 링크로 승인해요: ${touchy.map(t => t.startsWith("rules.") ? `boarder approve rule.set name=${t.slice(6)} on=…` : t.startsWith("prefs.") ? `보드 화면 설정에서 사람이 「${t.slice(6)}」 스위치를 바꿔요` : `boarder approve bundle.set name=${t} on=…`).join(" · ")}`, status: 403 };
     await savePrefs(DB, me, patch);
     if (patch.primary_item !== undefined || patch.park_on !== undefined || patch.park_h !== undefined || patch.tree_tidy !== undefined) await h.regroup(env, me);
     const after = { ...(await readPrefs(DB, me)) } as Record<string, unknown>; delete after.task_channels; delete after.task_repo; delete after.front_door;

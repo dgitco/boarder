@@ -62,24 +62,40 @@ export function seatView(db: D1Database, me: string, now = Date.now()) {
   p.catch(() => { if (m!.get(me)?.p === p) m!.delete(me); });   // 실패는 두지 않음 — 다음 줄이 다시 읽음
   return p;
 }
+// node_setting.data 의 agents_fold(node-prefs prefsOf 와 같은 값 — true 만 켬)
+const foldOf = (data: unknown) => { try { const d = typeof data === "string" ? JSON.parse(data) : data; return !!d && typeof d === "object" && (d as { agents_fold?: unknown }).agents_fold === true; } catch { return false; } };
 /**
  * 글 한 줄의 알림 종류: 턴 답(inbox_log reply — 보드에서 창에 넣은 내 글에 대한 답) · 사람 글 스레드의 답 = reply,
  * 막힘 unblocks=me · 장애 = call, 그 밖 = progress. card = 그 스레드가 내 카드
  */
-export async function lineWhy(db: D1Database, me: string, l: PushLine): Promise<{ why: PushWhy | "none"; card: boolean; fresh?: boolean }> {
+export async function lineWhy(db: D1Database, me: string, l: PushLine): Promise<{ why: PushWhy | "none"; card: boolean; fresh?: boolean; fold?: boolean }> {
   const t = await humanThread(db, me, l.thread);
-  const seated = seatsFromData((await db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string | null }>().catch(() => null))?.data).length > 0;   // 자리표 없는 사람은 보드 전체를 안 읽음(예전 그대로)
+  const sd = (await db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string | null }>().catch(() => null))?.data;
+  const seated = seatsFromData(sd).length > 0;   // 자리표 없는 사람은 보드 전체를 안 읽음(예전 그대로)
+  const fold = foldOf(sd);   // 에이전트끼리 접기(agents_fold) — 같은 줄에서 봄, peerReply 가 설정을 다시 안 읽게
   const P = seated ? await seatView(db, me) : null;
   if (P?.rules.on) {
     const seat = P.seatOf({ win: l.win, kind: l.kind, thread: l.thread }), human = t.human || (l.tool === "inbox_log" && l.kind === "reply");
     const line = { win: l.win, kind: l.kind, text: l.text };
-    if (!shows(line, seat, P.rules.chief, human)) return { why: seat && QUIET_KINDS.has(l.kind) ? "progress" : "none", card: t.card };
-    if (chiefTrouble(line, P.rules.chief) || l.kind === "incident" || (l.kind === "blocked" && l.unblocks === "me")) return { why: "call", card: t.card };
-    return { why: "reply", card: t.card, fresh: !human };
+    if (!shows(line, seat, P.rules.chief, human)) return { fold, why: seat && QUIET_KINDS.has(l.kind) ? "progress" : "none", card: t.card };
+    if (chiefTrouble(line, P.rules.chief) || l.kind === "incident" || (l.kind === "blocked" && l.unblocks === "me")) return { fold, why: "call", card: t.card };
+    return { fold, why: "reply", card: t.card, fresh: !human };
   }
-  if (l.tool === "inbox_log" && l.kind === "reply") return { why: "reply", card: t.card };
-  if (l.tool === "inbox_log" && (l.kind === "incident" || (l.kind === "blocked" && l.unblocks === "me"))) return { why: "call", card: t.card };
-  return { why: t.human ? "reply" : "progress", card: t.card };
+  if (l.tool === "inbox_log" && l.kind === "reply") return { fold, why: "reply", card: t.card };
+  if (l.tool === "inbox_log" && (l.kind === "incident" || (l.kind === "blocked" && l.unblocks === "me"))) return { fold, why: "call", card: t.card };
+  return { fold, why: t.human ? "reply" : "progress", card: t.card };
+}
+/**
+ * 에이전트끼리 접기(node-prefs agents_fold, agents-fold.ts)를 켠 사람에게 이 턴 답이 「에이전트끼리」 줄인가: 스레드 없는 inbox_log reply 인데
+ * 그 창의 앞 답 뒤로 내가 보드에서 넣은 글(kind me)이 없음 = 다른 창이 넣은 글(herdr-say 등)의 답. 화면 접힌 칸과 같은 판정(peerIds)을 줄 하나로 —
+ * 내 글이 어느 채널이든 있으면 사람 답으로 셈(알림이 빠지는 쪽보다 남는 쪽으로 틀림). 끈 사람 · 다른 줄은 늘 false(예전 그대로)
+ */
+export async function peerReply(db: D1Database, me: string, l: PushLine, fold?: boolean) {   // fold = lineWhy 가 읽은 설정 값(없으면 여기서 읽음)
+  if (l.tool !== "inbox_log" || l.kind !== "reply" || l.thread || fold === false) return false;
+  if (fold === undefined && !(await db.prepare("SELECT 1 x FROM node_setting WHERE owner = ? AND json_valid(data) AND json_extract(data, '$.agents_fold') = 1").bind(me).first().catch(() => null))) return false;   // node-prefs prefsOf 와 같은 값(true 만)
+  const prev = await db.prepare("SELECT MAX(id) id FROM board_log WHERE owner = ? AND win = ? AND kind = 'reply' AND (thread IS NULL OR thread = '') AND id < ?").bind(me, l.win, l.id).first<{ id: number | null }>();
+  const mine = await db.prepare("SELECT 1 x FROM board_log WHERE owner = ? AND kind = 'me' AND id > ? AND id < ? LIMIT 1").bind(me, Number(prev?.id || 0), l.id).first();
+  return !mine;
 }
 /** reply · call 알림 글. 누르면: Primary 내 글 스레드 → 그 스레드, 카드 스레드 → 그 카드, 그 밖 → 보드 첫 화면 */
 export function lineMsg(l: PushLine, why: "reply" | "call", card = false, fresh = false) {
@@ -99,9 +115,9 @@ export async function routeCard(db: D1Database, me: string, card: PushCard, pu: 
 export async function routeLine(db: D1Database, me: string, line: PushLine, pu: Pu) {
   const m = me.toLowerCase(), pr = await pu.mPrefs(m);
   if (pr[0] !== 200 || (pr[1] as { wide?: boolean }).wide !== true) return null;
-  const { why, card, fresh } = await lineWhy(db, me, line);
+  const { why, card, fresh, fold } = await lineWhy(db, me, line);
   if (why === "none") return null;
-  if (why === "progress") return pu.mDigest(m);
+  if (why === "progress" || (why === "reply" && await peerReply(db, me, line, fold))) return pu.mDigest(m);   // 에이전트끼리 줄(접기를 켠 사람)은 「답이 왔어요」가 아니라 진행 묶음
   if (why !== "card") return pu.mNotify(m, lineMsg(line, why, card, fresh), `log:${line.id}`, { wide: true });
   return null;
 }

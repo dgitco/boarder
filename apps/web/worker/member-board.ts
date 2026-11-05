@@ -10,8 +10,9 @@ import { splitMarks, splitMove } from "./member-split";
 import { seatsFromData } from "./role-seat";
 import { chiefOf, type Seat } from "./inbox-rules";
 import { orderFromData, rankOf, deptOf } from "./node-order";
-import { frontDoorNode, readFrontDoor } from "./front-door";
+import { frontDoorFromData, frontDoorNode, readFrontDoor } from "./front-door";
 import { addRows, dropRef, RESERVED, type ConvoRow } from "./task-convo";
+import { peerIds, peerKey, peerTail, peerTs, PEER_TS } from "./agents-fold";
 
 type R = Record<string, any>;
 const FREQ = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];   // owner-read FREQ_DEFAULT
@@ -130,6 +131,8 @@ async function fresh0(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
 
 const closeStaleConnect = (db: D1Database, me: string) => db.prepare("UPDATE board_card SET state = 'closed', done = '만료' WHERE owner = ? AND state = 'open' AND kind LIKE 'connect:%' AND at < ?").bind(me, Date.now() - CONNECT_TTL).run().catch(() => {});   // 10분 지난 「연결하기」 카드(connect-card.ts)
 // 앞단 설정(node_setting.data.front_door.pairs[].name — front-door.ts)의 노드 이름들. 설정 없음 · 망가진 값이면 빈 목록
+// 내 설정 한 줄(node_setting.data) — readFrontDoor 와 같은 읽기 하나. 앞단(front_door)과 에이전트끼리 접기(agents_fold)를 같이 봄. 못 읽으면 null(앞단 없음)
+const settingData = (db: D1Database, me: string) => db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>().then(r => r?.data ?? null).catch(() => null);
 const LOG_MAX = 600;
 const FRONT_NAMES = "SELECT json_extract(p.value, '$.name') FROM node_setting s, json_each(CASE WHEN json_valid(s.data) THEN CASE WHEN json_type(s.data, '$.front_door.pairs') = 'array' THEN json_extract(s.data, '$.front_door.pairs') END END) p WHERE s.owner = ?";
 type Ctx = { waitUntil(p: Promise<unknown>): void };
@@ -197,6 +200,8 @@ export async function load(db: D1Database, me: string) {
   const mains = new Map((nd.results as R[]).map(n => [String(n.id), json<{ main?: string }>(n.counts, {}).main || ""]));
   for (const n of nodes) { const m = mains.get(n.id); if (m) n.windows.sort((a, b) => Number(b.key === m) - Number(a.key === m)); }
   const pastOf = new Map<string, string>(); for (const r of nd.results as R[]) { const ps = json<{ past?: unknown }>(r.counts, {}).past; for (const w of Array.isArray(ps) ? ps : []) if (typeof w === "string") pastOf.set(w, String(r.id)); }
+  const sessNode = new Map<string, string>();
+  for (const [item, node] of nodeOfItem) { const s = items.get(item)?.session; if (s && !primKeys.has(item) && !primKeys.has(String(s))) sessNode.set(String(s), node); }
   const nodeOfKey = (k: string) => byId.get(nodeOfItem.get(itemOfWin.get(k) || `win:${k}`) || (tcOn ? nodeOfItem.get(`window:${k}`) : undefined) || pastOf.get(k) || "");
   const winNode = new Map<string, Node | null>();
   const nodeOfWin = (win: string) => {
@@ -206,6 +211,7 @@ export async function load(db: D1Database, me: string) {
     const item = itemOfWin.get(k) || `win:${k}`;
     let n = byId.get(nodeOfItem.get(item) || (tcOn ? nodeOfItem.get(`window:${k}`) : undefined) || pastOf.get(k) || pastOf.get(win) || "") || aliasNode(win) || frontNodes.find(n => n.name === win) || null;   // 예전 그대로
     if (!n) for (const o of keysOfWin.get(win) || []) if (o !== k && (n = nodeOfKey(o) || null)) break;
+    if (!n && prefs.agents_fold) { const s = items.get(itemOfWin.get(k) || "")?.session || items.get(itemOfWin.get(win) || "")?.session; if (s) n = byId.get(sessNode.get(String(s)) || "") || null; }
     winNode.set(win, n); return n;
   };
   const winsOf = (n: Node) => [...new Set([...keysOfWin.keys(), ...[...keysOfWin.values()].flat(), ...[...items.values()].map(i => String(i.win || "")), ...[...nodeOfItem.keys()].filter(k => /^(?:window|win):/.test(k)).map(k => k.replace(/^(?:window|win):/, "")), ...pastOf.keys()])].filter(w => w && nodeOfWin(w) === n).concat(n.name, (n.aliases || []).map(a => a.name)).sort();
@@ -229,9 +235,11 @@ export async function load(db: D1Database, me: string) {
   const primaryWin = String((pw.results[0] as R | undefined)?.v || ""), defaultNode = primaryWin ? byId.get(nodeOfItem.get(primaryWin) || "") || nodes.find(n => n.windows.some(w => w.key === primaryWin)) || null : null;
   const tidy = tidyOn(prefs, roleNames.length), seatRole = new Map<string, string>();
   for (const n of nodes) { if (n.archived_at) continue; const x = seatRows.find(x => x.node ? x.node === n.id : n.id.startsWith("tk_") && n.name === x.name); if (x) seatRole.set(n.id, x.name); }
-  const seatIds = new Set(seatRole.keys());
-  return { tidy, seatIds, seatRole, seatAll, order: orderFromData((ns.results[0] as R | undefined)?.data), keysOf: (win: string) => keysOfWin.get(win) || [], winsOf, resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes, roleWins,
-    parents: parentsOf((ns.results[0] as R | undefined)?.data), faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
+  const seatIds = new Set(seatRole.keys()), parents = parentsOf((ns.results[0] as R | undefined)?.data);
+  // 에이전트 화면(에이전트끼리 접기가 걸리는 채널): 자리표 부서 노드 · 맨 위(top)로 둔 노드 · 엔진 역할 창이 묶인 노드. 업무 · 작업자 노드는 아님
+  const agentScreen = (n: Node) => seatIds.has(n.id) || parents[n.id] === TOP || roleWins.has(n.name) || [...n.wins].some(w => roleWins.has(w));
+  return { agentsFold: prefs.agents_fold, agentScreen, tidy, seatIds, seatRole, seatAll, order: orderFromData((ns.results[0] as R | undefined)?.data), keysOf: (win: string) => keysOfWin.get(win) || [], winsOf, resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes, roleWins,
+    parents, faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
 // 채널(pane)마다 에이전트 글 — 모아 보기 읽지 않음 · 저장(member-inbox.ts)이 씀. 채널 = 노드 + 노드에 안 묶인 역할 창(메인 봇은 따로), 이름은 틀 노드 채팅 열쇠(「n:<이름>」)와 같음.
@@ -240,8 +248,11 @@ export async function paneLogs(db: D1Database, me: string) {
   const L = await load(db, me);
   const agent = (r: R) => r.kind !== "me" && r.win !== ME && !OWN.test(r.win);
   const chans = [
-    ...L.nodes.map(n => ({ pane: n.pane, name: n.name, rows: L.logs.filter(r => !inPrim(r) && agent(r) && L.nodeOfWin(r.win) === n) })),
-    ...L.engineNodes.map(w => ({ pane: paneOfId(w.id), name: String(w.name), rows: L.logs.filter(r => !inPrim(r) && agent(r) && r.win === w.name) })),
+    // 에이전트끼리 접기(켠 사람 · 에이전트 화면만): 접힌 칸 줄은 읽지 않음에 안 셈
+    ...L.nodes.map(n => { const peer = L.agentsFold && L.agentScreen(n) && !(L.taskChannels && n.id.startsWith("tk_")) ? peersOf(L, nodeRows(L, n)) : null;
+      return { pane: n.pane, name: n.name, rows: L.logs.filter(r => !inPrim(r) && agent(r) && L.nodeOfWin(r.win) === n && !peer?.has(String(r.id))) }; }),
+    ...L.engineNodes.map(w => { const peer = L.agentsFold ? peersOf(L, L.logs.filter(r => !inPrim(r) && r.win === w.name)) : null;
+      return { pane: paneOfId(w.id), name: String(w.name), rows: L.logs.filter(r => !inPrim(r) && agent(r) && r.win === w.name && !peer?.has(String(r.id))) }; }),
   ];
   const engineOf = new Map(L.engineNodes.map(w => [String(w.name), paneOfId(w.id)]));
   const paneOfLog = (r: { win: string; kind?: string; thread?: string | null }) => inPrim(r) || (r.kind !== "me" && L.isPrimWin(String(r.win))) ? PRIMARY   // 있던 primary 창의 보고 줄 = 메인 봇 판(data() %1 과 같게)
@@ -464,7 +475,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const dept = (id: string) => deptOf(id, { parents: L.parents, seatName, fields: tasks.get(id)?.fields, seats: L.roleNames });
   return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 60_000) * 60, open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
-    cards: [], cardlist, cardsdone, attn: null, relinks: {}, ...nodeAliases(L.nodes), ...(L.taskChannels ? { task_channels: true, task_side: taskSide(L.nodes, tasks, lastAt, nowMin, L.roleNames.length ? dept : undefined) } : {}), ...(L.roleNames.length ? { role_seats: seatOrder } : {}), ...(L.tidy ? { tree_tidy: true } : {}), ...(L.front ? { front_door: { name: L.front.name, pane: L.front.pane, aliases: L.front.aliases } } : {}), todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
+    cards: [], cardlist, cardsdone, attn: null, relinks: {}, ...nodeAliases(L.nodes), ...(L.taskChannels ? { task_channels: true, task_side: taskSide(L.nodes, tasks, lastAt, nowMin, L.roleNames.length ? dept : undefined) } : {}), ...(L.roleNames.length ? { role_seats: seatOrder } : {}), ...(L.tidy ? { tree_tidy: true } : {}), ...(L.agentsFold ? { agents_fold: true } : {}), ...(L.front ? { front_door: { name: L.front.name, pane: L.front.pane, aliases: L.front.aliases } } : {}), todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
 }
 
 // 업무 노드의 옛 채널 별칭 → 그 업무 판(채널 = 태스크를 켠 사람만 생김). 없으면 칸도 안 넣음(꺼진 사람의 판이 예전과 같게)
@@ -676,6 +687,44 @@ async function agentsThread(db: D1Database, me: string, ts: string, my: string, 
   const f = (await foldOf(db, me, await load(db, me), ts, my, mainName))?.f; if (!f) return null;
   return { channel: "primary", root: ts, owner: null, messages: await withReacts(db, me, [{ ...f.root, ts }, ...f.replies.map(m => ({ ...m, thread: ts }))] as R[]) };   // 낡은 ts 로 열어도 칸이 그 ts 로 이어짐
 }
+function peersOf(L: Loaded, rows: R[]) {
+  if (!L.agentsFold) return new Set<string>();
+  const ids = peerIds(rows.filter(r => !OWN.test(String(r.win))).map(r => ({ id: r.id, win: String(r.win), kind: String(r.kind), thread: r.thread, at: Number(r.at) })), ME);
+  if (ids.size) { const rep = new Set(L.logs.filter(r => r.thread).map(r => String(r.thread))); for (const r of rows) if (ids.has(String(r.id)) && rep.has(tsOf(r.at, r.id))) ids.delete(String(r.id)); }
+  return ids;
+}
+function peerFold(rows: R[], ids: Set<string>, key: string, ch: string, my: string, mainName: string) {
+  const ag = rows.filter(r => ids.has(String(r.id))).sort((a, b) => Number(a.at) - Number(b.at) || Number(a.id) - Number(b.id));
+  if (!ag.length) return null;
+  const ts = peerTs(Number(ag[0].at), key);
+  const replies = ag.map(r => ({ ...msg(r, my, String(r.win)), thread: ts, ch, layer: "agents", quiet: true }));
+  const text = `에이전트끼리 ${ag.length} — 다른 에이전트와 주고받은 글을 접어 뒀어요. 눌러서 펼쳐 봐요`;
+  const root = { ...msg({ id: 0, win: "보더", kind: "chat", text, at: Number(ag[0].at) }, my, mainName), ts, lid: 0, ch, replies: ag.length, latest: replies.at(-1)!.ts, rnames: [...new Set(ag.map(r => String(r.win)))].slice(0, 5), fold: { agents: ag.length }, layer: "agents", quiet: true };
+  return { root, replies };
+}
+const peerThreadOf = (f: ReturnType<typeof peerFold>, ts: string, ch: string, home?: string) => ({ channel: ch, root: ts, owner: null, ...(home ? { home } : {}), messages: f ? [{ ...f.root, ts }, ...f.replies.map(m => ({ ...m, thread: ts }))] : [] });   // 낡은 ts 로 열어도 그 ts 로 이어짐
+// 메인 봇 채팅의 접은 줄 = 앞단(front_door)으로 접은 노드 창들의 뿌리 줄(내 글 포함)
+const frontPeerRows = (L: Loaded) => L.front && L.agentsFold ? L.logs.filter(r => !inPrim(r) && !OWN.test(String(r.win)) && !CARD_TS.test(String(r.thread || "")) && L.front!.wins.has(String(r.win))) : [];
+//   L = 부르는 쪽이 이미 읽은 판(설정 agents_fold · 앞단이 켜진 사람만 읽음 — 끈 사람은 이 길에서 load 를 안 부름)
+async function primaryPeerThread(db: D1Database, me: string, L: Loaded, ts: string, my: string, mainName: string) {
+  if (!L.front || !L.agentsFold || !PEER_TS.test(ts) || peerTail(ts) !== peerKey(PRIMARY)) return null;
+  if (await primaryRoot(db, me, ts) || await cardBy(db, me, ts) || await rowAt(db, me, ts)) return null;
+  const rows = frontPeerRows(L);
+  return peerThreadOf(peerFold(rows, peersOf(L, rows), PRIMARY, "primary", my, mainName), ts, "primary");
+}
+// 부서장 에이전트 칸(노드 채널)의 접은 줄 — 노드 채팅(/api/nodechat)과 같은 줄(카드 스레드 줄 빼고 최근 300)
+function screenRows(L: Loaded, n: Node | null, ew: R | undefined) {
+  return L.logs.filter(r => !inPrim(r) && !CARD_TS.test(String(r.thread || "")) && !OWN.test(String(r.win)) && (n ? inNode(L, n, r) : r.win === ew!.name)).slice(0, 300);
+}
+const screenOn = (L: Loaded, n: Node | null, ew: R | undefined) => L.agentsFold && (n ? L.agentScreen(n) && !(L.taskChannels && n.id.startsWith("tk_")) : !!ew);
+async function nodePeerThread(db: D1Database, me: string, L: Loaded, raw: string, ts: string, my: string, mainName: string, nodeId = "") {
+  if (!L.agentsFold || !PEER_TS.test(ts)) return null;
+  const t = raw.replace(/^\d+\s+/, "").trim(), n = L.resolveNode(raw, nodeId) || L.resolveNode(t) || null, ew = n ? undefined : L.engineNodes.find(x => x.name === raw || x.name === t);
+  if ((!n && !ew) || !screenOn(L, n, ew) || peerTail(ts) !== peerKey(n ? n.id : String(ew!.id))) return null;
+  if (await rowAt(db, me, ts) || await cardBy(db, me, ts)) return null;
+  const rows = screenRows(L, n, ew);
+  return peerThreadOf(peerFold(rows, peersOf(L, rows), n ? n.id : String(ew!.id), "n:" + raw, my, mainName), ts, "n:" + raw, n ? n.name : String(ew!.name));
+}
 // 태스크 채널 글로 나왔지만 뿌리가 아닌 줄(표에만 있는 기기 줄 · 뿌리가 밀린 답 줄)에 쓴 답글이 갈 곳: root = 그 뿌리 스레드(뿌리 · 카드가 그 태스크 것), root 없음 = 그 태스크 채널 글(뿌리가 지워졌거나 기기 줄). null = 이 길 아님(예전대로)
 async function taskReplyHome(db: D1Database, me: string, channel: string, ts: string) {
   if (await nodeRoot(db, me, ts)) return null;
@@ -690,8 +739,8 @@ async function taskReplyHome(db: D1Database, me: string, channel: string, ts: st
   const root = await rowAt(db, me, up);
   return !root ? { n } : !root.thread && !OWN.test(String(root.win)) && inNode(L, n, root) ? { n, root: up } : null;
 }
-async function nodeThread(db: D1Database, me: string, raw: string, ts: string, my = ME, nodeId = "", climb = true): Promise<R | null> {   // nodeId = 노드 번호(업무 화면 — 같은 이름 노드가 있어도 그 노드로). 내 노드 안에서만 찾음
-  const t = raw.replace(/^\d+\s+/, "").trim(), L = await load(db, me);
+async function nodeThread(db: D1Database, me: string, raw: string, ts: string, my = ME, nodeId = "", climb = true, pre?: Loaded | null): Promise<R | null> {   // nodeId = 노드 번호(업무 화면 — 같은 이름 노드가 있어도 그 노드로). 내 노드 안에서만 찾음. pre = 같은 요청에서 이미 읽은 판(없으면 읽음)
+  const t = raw.replace(/^\d+\s+/, "").trim(), L = pre || await load(db, me);
   const allNodes = [...L.nodes, ...(L.front?.nodes || [])], n = L.resolveNode(raw, nodeId) || L.resolveNode(t) || (nodeId ? allNodes.find(x => x.id === nodeId) : undefined) || allNodes.find(x => x.name === raw) || allNodes.find(x => x.name === t), ew = L.engineNodes.find(x => x.name === raw || x.name === t);
   if (!n && !ew) return null;
   const aliased = !!n && !!L.front?.nodes.includes(n), home = aliased ? L.front!.name : n ? n.name : String(ew!.name), ch = aliased ? "primary" : "n:" + raw;
@@ -708,7 +757,7 @@ async function nodeThread(db: D1Database, me: string, raw: string, ts: string, m
   if (n && L.taskChannels && n.id.startsWith("tk_")) {
     const d = r ? null : await deviceRowAt(db, me, n.id.slice(3), ts);
     if (d) return { channel: ch, root: ts, owner: null, home, messages: [{ ...convoRowMsg(d, my), ch }] };
-    if (r && isReply(r) && !OWN.test(String(r.win)) && mineWin(String(r.win), String(r.kind))) return (climb ? await nodeThread(db, me, raw, String(r.thread), my, nodeId, false) : null) || { channel: ch, root: ts, owner: null, home, messages: await withReacts(db, me, [{ ...msg(r, my, String(r.win)), ch }]) };
+    if (r && isReply(r) && !OWN.test(String(r.win)) && mineWin(String(r.win), String(r.kind))) return (climb ? await nodeThread(db, me, raw, String(r.thread), my, nodeId, false, L) : null) || { channel: ch, root: ts, owner: null, home, messages: await withReacts(db, me, [{ ...msg(r, my, String(r.win)), ch }]) };
   }
   if (!r || inPrim(r) || CARD_TS.test(String(r.thread || "")) || OWN.test(String(r.win)) || !mineWin(String(r.win), String(r.kind))) return null;
   const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, ts).all<R>()).results;
@@ -818,7 +867,9 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
 async function getInner(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null, tv?: (() => Promise<string | null>) | null): Promise<Response | null> {
   // 내 이름(who): 글 이름이 나가는 채팅 길에서만 읽음 — 함수면 그때 한 번(index.ts 는 user 표를 읽는 함수로 넘김, /api/data 폴링엔 안 읽음)
   // 앞단 설정(front_door)은 채팅 · 노드 채팅 · 세션 길에서만 읽음(작은 읽기 하나 — /api/data 는 load 가 읽음)
-  const fd = /^\/api\/(chat\/primary|nodechat$|sesslog$)/.test(url.pathname) ? await readFrontDoor(db, me) : null;
+  //   같은 한 줄에서 에이전트끼리 접기(agents_fold)도 봄 — 끈 사람은 접은 글 길에서 load 를 더 부르지 않음(읽기 수 main 과 같음)
+  const nsd = /^\/api\/(chat\/primary|nodechat$|sesslog$)/.test(url.pathname) ? await settingData(db, me) : undefined;
+  const fd = nsd === undefined ? null : frontDoorFromData(nsd), foldOn = !!fd && prefsOf(nsd).agents_fold;
   const p = url.pathname, mainName = fd?.name || bot?.name || "Primary", my = myName(me, typeof who === "function" ? (/^\/api\/(chat\/|nodechat$|sesslog$)/.test(p) ? await who().catch(() => null) : null) : who);
   const j = (o: unknown, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" } });
   if (p === "/api/data") {   // 보드처럼 ETag — 안 바뀌면 빈 304(20초 폴링)
@@ -857,25 +908,31 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
   if (/^\/api\/answer\/[\w-]{1,64}$/.test(p)) return j({ ok: true, state: "ok" });   // 회원 쓰기는 바로 끝나서 기다릴 일 없음
   if (p === "/emoji.json") { const e = await emoji(); return e ? new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag } }) : j({ cats: [], e: {} }); }
   const nm = /^\/api\/chat\/n:(.{1,200})\/(\d{10}\.\d{6})$/.exec(dp);
-  if (nm) return j(await nodeThread(db, me, nm[1], nm[2], my, String(url.searchParams.get("id") || "")) ?? { channel: "n:" + nm[1], root: nm[2], owner: null, messages: [] });
+  const nL = nm && PEER_TS.test(nm[2]) ? await loadRead(db, me, ctx) : null;
+  if (nm && nL) { const f = await nodePeerThread(db, me, nL, nm[1], nm[2], my, mainName, String(url.searchParams.get("id") || "")); if (f) return j(f); }
+  if (nm) return j(await nodeThread(db, me, nm[1], nm[2], my, String(url.searchParams.get("id") || ""), true, nL) ?? { channel: "n:" + nm[1], root: nm[2], owner: null, messages: [] });
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?$/.exec(p);
   if (m) {
     if (m[1] !== "primary") return j({ channel: m[1], messages: [], more: false, cursor: null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
     if (m[2]) {
+      const pL = foldOn && PEER_TS.test(m[2]) ? await loadRead(db, me, ctx) : null;
+      if (pL) { const a = await primaryPeerThread(db, me, pL, m[2], my, mainName); if (a) return j(a); }
       if (AGENTS_TS.test(m[2])) { const a = await agentsThread(db, me, m[2], my, mainName); if (a) return j(a); }   // 태스크 「에이전트끼리」 접은 글
       if (FOLD_TS.test(m[2])) {
-        const L = await load(db, me), f = [...L.nodes, ...(L.front?.nodes || [])].map(n => convoFold(n, mainName, my)).find(x => x?.root.ts === m![2]);
+        const L = pL || await load(db, me), f = [...L.nodes, ...(L.front?.nodes || [])].map(n => convoFold(n, mainName, my)).find(x => x?.root.ts === m![2]);
         if (f) return j({ channel: "primary", root: m[2], owner: null, messages: [f.root, ...f.replies] });
       }
       const card = await cardBy(db, me, m[2]);
       if (card) {
         const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, m[2]).all<R>()).results;
         const replies = [...said.map(r => ({ at: Number(r.at), m: { ...msg(r, my, String(r.win)), thread: m![2] } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card, my) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch: "primary" }));
-        return j({ channel: "primary", root: m[2], owner: null, messages: await withReacts(db, me, [{ ...cardMsg(card, said, my), ch: "primary" }, ...replies]) });
+        const cL = foldOn ? pL || await loadRead(db, me, ctx) : null;   // 접기를 켠 사람만 판을 읽음(끈 사람은 main 처럼 load 없음)
+        const cn = cL?.front && cL.agentsFold && cL.isPrimWin(String(card.win)) ? { name: mainName } : {};
+        return j({ channel: "primary", root: m[2], owner: null, messages: await withReacts(db, me, [{ ...cardMsg(card, said, my), ch: "primary", ...cn }, ...replies]) });
       }
-      const L = fd ? await load(db, me) : null;
+      const L = fd ? pL || await load(db, me) : null;
       for (const n of L?.front?.nodes || []) {
-        const old = await nodeThread(db, me, n.name, m[2], my, n.id);
+        const old = await nodeThread(db, me, n.name, m[2], my, n.id, true, L);
         if (old) return j(old);
       }
       const pr = await primaryRoot(db, me, m[2]);
@@ -888,15 +945,19 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
     }
     const L = fd ? await load(db, me) : null, rows = await primaryRows(db, me, url.searchParams.get("before") || undefined, L), page = rows.slice(0, 100);
     const th = await primaryReplies(db, me, page.filter(r => r.win === ME).map(r => tsOf(r.at, r.id)));
+    // 에이전트끼리 접기(켠 사람): 앞단 노드 창의 에이전트끼리 줄은 섞지 않고 맨 위 접힌 글 하나로 — 더 옛 쪽(before)에서도 빼고, 접은 글은 첫 쪽에만
+    const pfRows = L ? frontPeerRows(L) : [], seenId = new Set(pfRows.map(r => String(r.id)));
+    const pIds = L && pfRows.length ? peersOf(L, [...pfRows, ...page.filter(r => r.thread !== "primary" && !seenId.has(String(r.id)))]) : L?.front && L.agentsFold ? peersOf(L, page.filter(r => r.thread !== "primary")) : new Set<string>();
     const tagOf = (win: unknown) => { const t = L?.front?.from(String(win)); return t ? { tag: t } : {}; };
-    const msgs = page.map(r => r.thread === "primary" ? withPrimaryThread(msg(r, my, mainName), th.get(tsOf(r.at, r.id)), mainName, my) : { ...withThread(msg(r, my, mainName), threadReplies(L?.logs || [], tsOf(r.at, r.id)), my), ...tagOf(r.win) }).reverse();
+    const msgs = page.filter(r => !pIds.has(String(r.id))).map(r => r.thread === "primary" ? withPrimaryThread(msg(r, my, mainName), th.get(tsOf(r.at, r.id)), mainName, my) : { ...withThread(msg(r, my, mainName), threadReplies(L?.logs || [], tsOf(r.at, r.id)), my), ...tagOf(r.win) }).reverse();
     if (!url.searchParams.get("before") && L?.front) {
       for (const n of L.front.nodes) { const fold = convoFold(n, mainName, my); if (fold) msgs.unshift({ ...fold.root, tag: "옛 " + n.name }); }
       // 닫힌 카드도 옛 노드 채팅처럼 계속 보임. Primary 카드 스레드의 답/승인은 기존 길.
       const cards = (await db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results;
-      msgs.push(...cards.filter(c => CARD_TS.test(String(c.id)) && L.isPrimWin(String(c.win))).map(c => ({ ...cardMsg(c, L.logs.filter(r => r.thread === c.id), my), ch: "primary", ...tagOf(c.win) })));
+      msgs.push(...cards.filter(c => CARD_TS.test(String(c.id)) && L.isPrimWin(String(c.win))).map(c => ({ ...cardMsg(c, L.logs.filter(r => r.thread === c.id), my), ch: "primary", ...(L.agentsFold ? { name: mainName } : tagOf(c.win)) })));
     }
     if (L?.front) msgs.sort((a, b) => a.ts.localeCompare(b.ts));
+    if (!url.searchParams.get("before") && L && pfRows.length) { const pf = peerFold(pfRows, pIds, PRIMARY, "primary", my, mainName); if (pf) msgs.unshift(pf.root); }
     await withReacts(db, me, msgs);
     await splitMarks(db, me, msgs, my);   // 나눈 내 글 = 갈래 칩(splits, 주인 owner-read splitMarks 꼴)
     return j({ channel: "primary", messages: msgs, more: rows.length > 100, cursor: page.length ? tsOf(page.at(-1)!.at, page.at(-1)!.id) : null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
@@ -916,12 +977,16 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
     const cards = (await db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results
       .filter(c => CARD_TS.test(String(c.id)) && (n ? L.nodeOfWin(String(c.win)) === n : ew ? c.win === ew.name : false));
     const tl = n ? await taskLayers(db, me, L, n, my, mainName) : null;   // 업무 노드(채널 = 태스크): 에이전트끼리 줄은 접은 글 하나로
-    const out = [...rows.filter(r => !tl?.agentRefs.has("board_log:" + r.id)).map(r => ({ at: Number(r.at), m: { ...withThread(msg(r, my, r.win), threadReplies(L.logs, tsOf(r.at, r.id)), my), ch: "n:" + (n?.name ?? (ew ? String(ew.name) : t)), ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, ...(stuck.get(String(r.wid)) ? { waiting: true } : {}), to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })),
-      ...cards.map(c => ({ at: Number(c.at), m: { ...cardMsg(c, L.logs.filter(r => r.thread === c.id), my), ch: "primary" } })), ...(tl?.extra || [])]
+    // 에이전트끼리 접기(켠 사람 · 에이전트 화면 — 태스크 두 겹이 없는 칸): 다른 에이전트와 주고받은 줄은 맨 위 접힌 글 하나로
+    const pRows = !tl && screenOn(L, n || null, ew) ? screenRows(L, n || null, ew) : null, peer = pRows ? peersOf(L, pRows) : null;
+    const pf = pRows && peer?.size ? peerFold(pRows, peer, n ? n.id : String(ew!.id), "n:" + t, my, mainName) : null;
+    const out = [...rows.filter(r => !tl?.agentRefs.has("board_log:" + r.id) && !peer?.has(String(r.id))).map(r => ({ at: Number(r.at), m: { ...withThread(msg(r, my, r.win), threadReplies(L.logs, tsOf(r.at, r.id)), my), ch: "n:" + (n?.name ?? (ew ? String(ew.name) : t)), ...(stuck.has(String(r.wid)) ? { dlv: { ok: false, ...(stuck.get(String(r.wid)) ? { waiting: true } : {}), to: String(n?.windows.find(w => w.win === r.win)?.title || n?.name || ew?.name || r.win) } } : {}) } })),
+      ...cards.map(c => ({ at: Number(c.at), m: { ...cardMsg(c, L.logs.filter(r => r.thread === c.id), my), ch: "primary", ...(pRows ? { name: n?.name ?? String(ew!.name) } : {}) } })), ...(tl?.extra || [])]   // 에이전트 화면(접기 켬): 카드 글쓴이 = 그 에이전트 이름
       .sort((a, b) => a.at - b.at).slice(-300).map(x => x.m);
     const fold = n ? convoFold(n, mainName, my) : null;
     if (fold) out.unshift(fold.root);
     if (tl?.fold) out.unshift(tl.fold.root);
+    if (pf) out.unshift(pf.root);
     await withReacts(db, me, out as R[]);
     await splitMarks(db, me, out as R[], my, L);   // Primary 에서 나눠 온 몫 글 = split_from(인용 상자)
     return j({ channel: "n:" + t, messages: out, stale_min: 0, more: false, ...(tl ? { layers: tl.counts } : {}) });

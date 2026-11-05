@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { refsOf, normRepo, tomlMcp, frontmatter, collectMcp, since, sameAsSent, markSent, SAME_MAX, codexSessions, apiFail } from './importer.mjs';
+import { ownPaneKeep, agentInFront, refsOf, normRepo, tomlMcp, frontmatter, collectMcp, since, sameAsSent, markSent, SAME_MAX, codexSessions, apiFail } from './importer.mjs';
 
 test('링크 뽑기: Slack 스레드 · GitHub 이슈/PR · Linear · 리포 안 #번호', () => {
   const r = refsOf('see https://acme.slack.com/archives/C0000000001/p1700000000000100 and https://github.com/Acme/Ledger/pull/88 and linear.app/acme/issue/ENG-12 fix #3720', 'github.com/acme/ledger');
@@ -71,4 +71,43 @@ test('JSON 아닌 서버 실패 줄: 메서드 · 경로를 붙이고 쿼리 · 
   assert.equal(apiFail('GET', '/api/topics', 500), 'Boarder 500 GET /api/topics');
   assert.equal(apiFail('POST', '/api/import?token=bxd_secret&x=1#h', 502), 'Boarder 502 POST /api/import');
   assert.ok(!apiFail('GET', '/api/x?token=bxd_secret', 500).includes('secret'));
+});
+
+const pane = (o) => ({ pane: '%1', wid: '@1', bx: '', cmd: 'claude', ...o });
+test('판 거르기: 엔진 창(@bx_id) 안의 판은 나눈 판까지 모두 빠짐 → 엔진 창 항목 하나만 남음', () => {
+  const four = [pane({ pane: '%188', wid: '@183', bx: 'ew_rw565d8c906d', cmd: 'claude' }), pane({ pane: '%358', wid: '@183', bx: 'ew_rw565d8c906d', cmd: 'codex' }), pane({ pane: '%360', wid: '@183', bx: 'ew_rw565d8c906d', cmd: 'codex' }), pane({ pane: '%362', wid: '@183', bx: 'ew_rw565d8c906d', cmd: 'zsh' })];
+  const eng = new Set(['ew_rw565d8c906d']);
+  assert.deepEqual(four.filter(p => ownPaneKeep(p, { live: true, engIds: eng })), []);
+});
+test('판 거르기: 앞에서 도는 것이 셸뿐인 판은 빠짐(예전 codex 표지가 남아도)', () => {
+  assert.equal(ownPaneKeep(pane({ cmd: 'zsh' }), { live: false, fg: false }), false);
+  assert.equal(ownPaneKeep(pane({ cmd: '-bash' }), { live: false, fg: false }), false);
+  assert.equal(ownPaneKeep(pane({ cmd: 'fish' }), { live: false, fg: false }), false);
+});
+test('판 거르기: 한 창에 에이전트 판 둘(정말 두 대화)은 둘 다 남음 · 셸 앞이어도 살아 있는 Claude 면 남음', () => {
+  const two = [pane({ pane: '%10', wid: '@50', cmd: 'claude' }), pane({ pane: '%11', wid: '@50', cmd: 'node' })];
+  assert.equal(two.filter(p => ownPaneKeep(p, { live: false })).length, 2);
+  assert.equal(ownPaneKeep(pane({ cmd: 'zsh' }), { live: true }), true);
+});
+test('판 거르기: 다른 tmux 서버와 창 번호(@N)가 같아도 @bx_id 가 없으면 남음', () => {
+  assert.equal(ownPaneKeep(pane({ wid: '@183', cmd: 'claude' }), { live: false }), true);
+});
+
+test('판 거르기: zsh -c · sh -c 로 띄운 에이전트(판의 앞 그룹)는 상태 파일이 없어도 남음', () => {
+  const pt = new Map([[100, { ppid: 1, pgid: 100, tpgid: 100, args: 'sh -c cd X && codex' }], [101, { ppid: 100, pgid: 100, tpgid: 100, args: 'node /opt/codex/bin/codex' }]]);
+  assert.equal(agentInFront(100, 101, pt), true);
+  assert.equal(ownPaneKeep(pane({ cmd: 'sh' }), { live: false, fg: agentInFront(100, 101, pt) }), true);
+  assert.equal(ownPaneKeep(pane({ cmd: 'zsh' }), { live: false, fg: true }), true);
+});
+test('판 거르기: 대화형 셸로 돌아온 뒤 남은 자식(다른 그룹 · 상태 파일 없음)만 빈 판으로 빠짐', () => {
+  const pt = new Map([[200, { ppid: 1, pgid: 200, tpgid: 200, args: '-zsh' }], [201, { ppid: 200, pgid: 201, tpgid: 200, args: 'node codex' }]]);
+  assert.equal(agentInFront(200, 201, pt), false);
+  assert.equal(ownPaneKeep(pane({ cmd: 'zsh' }), { live: false, fg: agentInFront(200, 201, pt) }), false);
+  assert.equal(agentInFront(999, 201, pt), true);   // 표에 없으면 앞으로 봄(남기는 쪽)
+});
+test('판 거르기: 엔진 목록을 못 읽었거나 그 엔진 창이 목록에 없으면 @bx_id 판을 빼지 않음', () => {
+  const p = pane({ pane: '%188', wid: '@183', bx: 'ew_rw565d8c906d', cmd: 'claude' });
+  assert.equal(ownPaneKeep(p, { live: true, engIds: null }), true);
+  assert.equal(ownPaneKeep(p, { live: true, engIds: new Set(['ew_other']) }), true);
+  assert.equal(ownPaneKeep(p, { live: true, engIds: new Set(['ew_rw565d8c906d']) }), false);
 });

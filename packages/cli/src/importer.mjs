@@ -64,7 +64,7 @@ const ST = { busy: 'working', idle: 'idle', waiting: 'question', shell: 'working
 
 function procTable() {
   const m = new Map();
-  for (const l of run('ps', ['-A', '-o', 'pid=,ppid=,args='], 5000).split('\n')) { const x = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l); if (x) m.set(+x[1], { ppid: +x[2], args: x[3] }); }
+  for (const l of run('ps', ['-A', '-o', 'pid=,ppid=,pgid=,tpgid=,args='], 5000).split('\n')) { const x = /^\s*(\d+)\s+(\d+)\s+(?:(\d+)\s+(-?\d+)\s+)?(.*)$/.exec(l); if (x) m.set(+x[1], { ppid: +x[2], pgid: x[3] ? +x[3] : 0, tpgid: x[4] ? +x[4] : 0, args: x[5] }); }   // 그룹 칸이 없는 출력(예전 꼴 · 시험 가짜 ps)도 받음 — 그때는 앞 그룹을 모름 = 남기는 쪽
   return m;
 }
 const AGENT = a => { const w = a.trim().split(/\s+/), b = s => path.basename(s || '').toLowerCase(); let n = b(w[0]); if (/^(node\d*|bun|deno)$/.test(n)) n = b(w[1]); return n === 'claude' ? 'claude' : n === 'codex' ? 'codex' : /^cursor(-agent)?$/.test(n) ? 'cursor' : n === 'gemini' ? 'gemini' : null; };
@@ -75,8 +75,19 @@ function agentUnder(pid, pt) {
   return null;
 }
 function ownTmux() {
-  const fmt = ['#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{session_name}', '#{window_index}', '#{window_name}'].join('\t');
-  return run('tmux', ['list-panes', '-a', '-F', fmt], 4000).split('\n').filter(Boolean).map(l => { const [pane, pid, cwd, sess, wi, name] = l.split('\t'); return { pane, pid: +pid, cwd, sess, wi, name }; });
+  const fmt = ['#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{session_name}', '#{window_index}', '#{window_name}', '#{window_id}', '#{@bx_id}', '#{pane_current_command}'].join('\t');
+  return run('tmux', ['list-panes', '-a', '-F', fmt], 4000).split('\n').filter(Boolean).map(l => { const [pane, pid, cwd, sess, wi, name, wid, bx, cmd] = l.split('\t'); return { pane, pid: +pid, cwd, sess, wi, name, wid: wid || '', bx: bx || '', cmd: cmd || '' }; });
+}
+export const SHELL_CMD = /^-?(zsh|bash|sh|fish|dash|ksh)$/;
+export function ownPaneKeep(p, { live = false, fg = true, engIds = null } = {}) {
+  if (p.bx && engIds && engIds.has(p.bx)) return false;
+  if (SHELL_CMD.test(p.cmd || '') && !live && !fg) return false;
+  return true;
+}
+export function agentInFront(panePid, agentPid, pt) {
+  const sh = pt.get(panePid), ag = pt.get(agentPid);
+  if (!sh || !ag || !(sh.tpgid > 0) || !(ag.pgid > 0)) return true;
+  return sh.tpgid === ag.pgid;
 }
 const capture = pane => run('tmux', ['capture-pane', '-p', '-t', pane, '-S', '-30'], 3000);
 function paneState(text) {
@@ -115,7 +126,9 @@ export async function collectWindows() {
   const byPane = new Map(live.filter(l => l.tmux).map(l => [`${l.tmux.split(':')[0]}|${l.tmux.split('.').pop()}`, l]));
   const taken = new Set();
   const E = await engine();
-  const engWins = E?.listAll ? await E.listAll().catch(() => []) : [];
+  let engOk = !!E?.listAll;
+  const engWins = E?.listAll ? await E.listAll().catch(() => { engOk = false; return []; }) : [];
+  const engIds = engOk ? new Set(engWins.map(w => w.id)) : null;   // 목록을 못 읽었으면 null — 판을 엔진 창으로 여겨 빼지 않음
   {
     for (const w of engWins) {
       let st = ''; try { st = (await E.run('state', { id: w.id, engine: w.engine }))?.state || ''; } catch {}
@@ -132,6 +145,7 @@ export async function collectWindows() {
   for (const p of ownTmux()) {
     const a = agentUnder(p.pid, pt); if (!a) continue;
     const l = live.find(x => x.pid === a.pid) || byPane.get(`${p.sess}|${p.pane}`);
+    if (!ownPaneKeep(p, { live: !!l, fg: agentInFront(p.pid, a.pid, pt), engIds })) continue;
     if (l && taken.has(l.pid)) continue;
     if (l) taken.add(l.pid);
     const sid = l?.sid || (/--(?:resume|session-id)[ =]([0-9a-f-]{36})/.exec(a.args)?.[1]) || '';
