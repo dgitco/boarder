@@ -184,10 +184,12 @@ export class BoardSnap extends DurableObject<object> {
   pendDd: string[] | null = null;   // 이 글에 실을 data 바뀐 칸들(차례대로, 그때 글로 — 뒤 고침 줄이 같은 판을 고쳐도 섞이지 않게). 하나라도 못 만들면(null) 안 실음 — 화면이 다시 읽음
   flushAt = 0;
   boot = crypto.randomUUID();
-  memo = new Map<string, { stamp: string; at: number; body: string; etag: string; ct: string }>();
+  memo = new Map<string, { stamp: string; at: number; t0: number; body: string; etag: string; ct: string }>();
   memoStamp() { return this.boot + "|" + (this.sent.data ?? "") + "|" + (this.sent.chat ?? ""); }
-  memoGet(key: string) { const stamp = this.memoStamp(), e = this.memo.get(key); return e && e.stamp === stamp && Date.now() - e.at < 30_000 ? { stamp, body: e.body, etag: e.etag, ct: e.ct } : { stamp }; }
-  memoPut(key: string, stamp: string, body: string, etag: string, ct: string) { if (body.length > 3_000_000 || stamp !== this.memoStamp()) return false; if (this.memo.size >= 30) this.memo.clear(); this.memo.set(key, { stamp, at: Date.now(), body, etag, ct }); return true; }
+  memoGet(key: string, min = 0) { const stamp = this.memoStamp(), e = this.memo.get(key);   // min + 0.1초: 서버 시계 어긋남 여유
+    return e && Date.now() - e.at < 30_000 && (e.stamp === stamp || (min > 0 && e.t0 >= min + 100)) ? { stamp, body: e.body, etag: e.etag, ct: e.ct } : { stamp }; }
+  memoPut(key: string, stamp: string, body: string, etag: string, ct: string, t0 = 0) { if (body.length > 3_000_000) return false; const o = this.memo.get(key); if (o && o.t0 > t0) return false;   // 더 늦게 시작한 계산이 이미 있으면 그대로
+    if (this.memo.size >= 30) this.memo.clear(); this.memo.set(key, { stamp, at: Date.now(), t0, body, etag, ct }); return true; }
   sent: Record<string, string> = {};   // 마지막 바뀜 표시(칸마다) — tags() 가 스냅숏 없는 칸에 씀. 열린 화면이 없어도 기억(다른 isolate 의 읽기 열쇠)
   bump(t: Record<string, string>, dd?: unknown, gap = 25) {
     for (const [k, v] of Object.entries(t)) if (typeof v === "string" && v.length <= 200) this.sent[k] = v;
