@@ -21,7 +21,7 @@ function d1() {
     raw: async () => db.prepare(sql).all(...(args as never[])).map(r => Object.values(r as object)),
     run: async () => { const r = db.prepare(sql).run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes) } }; },
   });
-  return { db, D1: { prepare: (sql: string) => stmt(sql), batch: async (ss: any[]) => Promise.all(ss.map(s => s.all())) } as unknown as D1Database };
+  return { db, D1: { prepare: (sql: string) => stmt(sql), batch: async (ss: any[]) => { db.exec("BEGIN"); try { const o = []; for (const s of ss) o.push(await s.all()); db.exec("COMMIT"); return o; } catch (e) { db.exec("ROLLBACK"); throw e; } } } as unknown as D1Database };
 }
 // 가짜 R2: put · get · head · list(prefix · include) · delete(하나 · 여럿)
 function r2() {
@@ -177,6 +177,17 @@ test("올린 창(통화 · 캔버스 미팅): 꼴이 맞는 win · wid 만 표�
   assert.equal(await MC.ownerWin(s.env as never, B, r.id), null);
   const r2 = await (await s.put(TOK.A, { "index.html": PAGE }, { win: "bad\nwin %1", wid: "%15" })).json() as { id: string };
   assert.deepEqual(await MC.ownerWin(s.env as never, A, r2.id), { win: "", wid: "" });
+});
+
+test("캔버스 댓글 같은 rid 로 다시 보내도 한 번만 저장(다시 보내기 · 화면이 같은 rid 를 씀), 다른 rid 는 따로", async () => {
+  const s = await setup();
+  const a = await (await s.put(TOK.A, { "index.html": PAGE })).json() as any;
+  const post = (text: string, rid: string) => MC.artnote(s.env as never, A, { art: a.id, target: "t", page: "", text }, rid);
+  const r1 = await post("같은 글", "rid1abcdefgh"), r2 = await post("같은 글", "rid1abcdefgh"), r3 = await post("같은 글", "rid2abcdefgh");
+  assert.equal(r1[0], 200); assert.equal(r2[0], 200);
+  const n = (s.db.prepare("SELECT COUNT(*) AS n FROM member_artnote WHERE owner = ? AND art = ? AND deleted_at IS NULL").get(A, a.id) as any).n;
+  assert.equal(n, 2);   // rid1 두 번 = 1, rid2 = 1
+  assert.equal(r3[0], 200);
 });
 
 test("지우기: 내 캔버스만 — 남의 · 없는 id 404, 토큰 없음 401, 모든 판 파일 · 표지 지움, 댓글 숨김, 남의 것 그대로", async () => {

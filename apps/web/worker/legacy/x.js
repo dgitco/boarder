@@ -10,7 +10,7 @@
     loadTh: () => typeof loadTh === 'function' ? loadTh : undefined, loadCh: () => typeof loadCh === 'function' ? loadCh : undefined, chatPost: () => typeof chatPost === 'function' ? chatPost : undefined,
     upOne: () => typeof upOne === 'function' ? upOne : undefined, ARTS: () => typeof ARTS !== 'undefined' ? ARTS : undefined, openArt: () => typeof openArt === 'function' ? openArt : undefined, attCards: () => typeof attCards === 'function' ? attCards : undefined, attOut: () => typeof attOut === 'function' ? attOut : undefined, inputBox: () => typeof inputBox === 'function' ? inputBox : undefined, attChips: () => typeof attChips === 'function' ? attChips : undefined,
     addFiles: () => typeof addFiles === 'function' ? addFiles : undefined, filePick: () => typeof filePick !== 'undefined' ? filePick : undefined, enterSends: () => typeof enterSends === 'function' ? enterSends : undefined,
-    boardGrow: () => typeof grow === 'function' ? grow : undefined, withLnk: () => typeof withLnk === 'function' ? withLnk : undefined, dropAtt: () => typeof dropAtt === 'function' ? dropAtt : undefined};
+    boardGrow: () => typeof grow === 'function' ? grow : undefined, withLnk: () => typeof withLnk === 'function' ? withLnk : undefined, dropAtt: () => typeof dropAtt === 'function' ? dropAtt : undefined, failSave: () => typeof failSave === 'function' ? failSave : undefined};
   const G = n => { try { return L[n]?.(); } catch { return undefined; } };
   const E = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
   const chs = () => (G('CH') || ['primary']).filter(k => !/^[ingq]:/.test(k));
@@ -120,8 +120,8 @@
     const bd = body(m, o.brief), part = q ? (o.part ? nn(o.part) : o.feed ? nn('1/2') : '') : '';
     const goto = q && o.feed ? `<button type="button" class="xgo" data-xopen="${E(m.thread || m.ts)}" data-k="${E(k)}">${MSG}<span>${o.more ? `<b>투표</b>에서 고르기 · ${E(o.more)}` : '<b>2/2 투표</b>에서 고르기 · 눌러서 열기'}</span></button>` : '';
     const sz = o.reply || o.ans ? 28 : 42;
-    return `<article class="xp${m.pendingX ? ' xpend' : ''}${o.joined ? ' j' : ''}${o.reply ? ' xr' : ''}${o.more2 ? ' xr2' : ''}${o.main ? ' xm' : ''}${o.ans ? ' xa' : ''}${o.ask ? ' ask' : ''}" data-ts="${E(m.ts)}" data-k="${E(k)}" data-root="${E(o.root || m.ts)}">${o.joined ? '<i class="xl"></i>' : ''}${o.reply ? '<i class="xcv"></i>' : ''}`
-      + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${embeds(m, bd)}${goto}${o.pollHere ? '' : ''}${m.pendingX ? '' : acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
+    return `<article class="xp${m.pendingX ? (m.failX ? ' xfail' : ' xpend') : ''}${o.joined ? ' j' : ''}${o.reply ? ' xr' : ''}${o.more2 ? ' xr2' : ''}${o.main ? ' xm' : ''}${o.ans ? ' xa' : ''}${o.ask ? ' ask' : ''}" data-ts="${E(m.ts)}" data-k="${E(k)}" data-root="${E(o.root || m.ts)}">${o.joined ? '<i class="xl"></i>' : ''}${o.reply ? '<i class="xcv"></i>' : ''}`
+      + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${embeds(m, bd)}${goto}${o.pollHere ? '' : ''}${m.pendingX ? (m.failX ? `<div class="xfl"><span>보내지 못했어요</span><button type="button" data-xretry="${E(m.ts)}">다시 보내기</button><button type="button" data-xdrop="${E(m.ts)}">지우기</button></div>` : '') : acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
   }
   function unit(x){
     if (x.deck) return `<div class="xu ask xdeck" data-root="${E(x.dm.ts)}" data-k="${E(x.k)}">${post(x.k, x.dm, {feed: true, ask: true, turn: true, root: x.m.ts, sts: x.sts})}</div>`;   // ✓ 는 덱 글만 내림(스레드 칸 그대로), 글을 누르면 그 스레드
@@ -331,6 +331,8 @@
       return void send({channel: k, thread: rt, ts, label: v.dataset.xvote}, 't' + rt).then(r => {
         if (r === 'ok' && !G('picked')?.[ts]){ if (X.tab === 'thread') drawThread(); return say('고른 것이 닿았을 수 있어요. 스레드에서 확인해 주세요'); }   // 보드 maybe() 는 CS.fail 없이 고른 표시만 지움
         if (r !== 'ok'){ try { delete G('picked')[ts]; } catch {} if (X.tab === 'thread') drawThread(); say('고른 것을 보내지 못했어요. 다시 눌러 주세요'); } }); }
+    const rt2 = q('[data-xretry]'); if (rt2){ const l = [...X.pend.values()].flat().find(y => y.ts === rt2.dataset.xretry); return void l?.retry?.(); }
+    const dr = q('[data-xdrop]'); if (dr){ const l = [...X.pend.values()].flat().find(y => y.ts === dr.dataset.xdrop); return void l?.drop?.(); }
     const dn = q('[data-xdone]'); if (dn){ const u = dn.closest('.xu'); const k = dn.dataset.k, rt = u?.dataset.root || dn.closest('.xp')?.dataset.root || dn.dataset.xdone;
       if (X.tab === 'thread'){ readOne(k, rt); return say('완료로 내렸어요'); }
       return done(k, rt); }
@@ -362,28 +364,41 @@
     const pendOut = () => { const l = (X.pend.get(pk) || []).filter(y => y !== q); if (l.length) X.pend.set(pk, l); else X.pend.delete(pk); };
     X.pend.set(pk, [...(X.pend.get(pk) || []), q]);
     if (isTh){ X.stickTo = Date.now() + 8000; drawThread(); root.querySelector('#xth')?.blur(); const v = V('thread'); requestAnimationFrame(() => { v.scrollTop = v.scrollHeight; }); } else sched();
-    const tick = setInterval(() => { if (isTh) loadThr(th.k, th.ts); else try { Promise.resolve(G('loadCh')(ch)).then(sched, () => {}); } catch {} }, 3000);   // 판에 닿는 대로 진짜 글로
-    const finish = r => { clearInterval(tick); if (r !== 'ok') pendOut(); else setTimeout(() => { pendOut(); sched(); }, 60000); sched(); };
+    let tick = null;
+    const startTick = () => { clearInterval(tick); tick = setInterval(() => { if (isTh) loadThr(th.k, th.ts); else try { Promise.resolve(G('loadCh')(ch)).then(sched, () => {}); } catch {} }, 3000); };
+    const finish = r => { clearInterval(tick); if (r === 'fail') q.failX = true; else if (r !== 'ok') pendOut(); else setTimeout(() => { pendOut(); sched(); }, 60000); sched(); };
+    // 지우기 = 보드의 못 보냄 표(CS.fail · CS.pend, 이 기기 저장)도 같이 — 안 지우면 보드 화면에 빨간 글이 남음
+    q.pk = pk; q.drop = () => { if (q.fkey){ const C = cs(); delete C.fail?.[q.fkey]; delete C.pend?.[q.fkey]; try { G('failSave')?.(); } catch {} q.fkey = null; } pendOut(); sched(); };
+    const sendIt = async () => {
+      q.failX = false; startTick(); sched();
+      const f = q.fkey && (cs().fail?.[q.fkey] || q.fsnap);
+      const r = await send(body, isTh ? 't' + th.ts : 'new:' + ch, f ? {key: q.fkey, f} : null);
+      q.fkey = r === 'fail' || r === 'maybe' ? send.key : null; q.fsnap = q.fkey ? cs().fail?.[q.fkey] : null;   // 보드 표가 지워져도(다른 길) 같은 rid 로
+      finish(r);
+      if (isTh){
+        if (r === 'maybe') return say('답글이 올라갔을 수 있어요. 스레드에서 확인해 주세요');
+        if (r === 'fail') return say('답글을 보내지 못했어요. 글 아래 「다시 보내기」를 눌러 주세요');
+        await loadThr(th.k, th.ts); if (X.th?.ts === th.ts) drawThread();
+        return; }
+      if (r === 'ok'){ say(`# ${NAMES()[ch] || ch}에 올렸어요`); try { await G('loadCh')(ch); } catch {} return sched(); }
+      if (r === 'maybe') return say(`# ${NAMES()[ch] || ch}에 올라갔을 수 있어요. 피드에서 확인해 주세요`);
+      say('올리지 못했어요. 글 아래 「다시 보내기」를 눌러 주세요');
+    };
+    q.retry = sendIt;
+    startTick();
     if (att.length){ const vm = att.find(a => a.vn)?.vn || null, ids = [];
-      try { for (const a of att){ const fid = await G('upOne')(a); ids.push(fid); if (a.stt && a.vn === vm) body.stt = fid; } } catch { finish('fail'); putBack(); return say('일시적인 오류가 발생했어요'); }
+      try { for (const a of att){ const fid = await G('upOne')(a); ids.push(fid); if (a.stt && a.vn === vm) body.stt = fid; } } catch { clearInterval(tick); pendOut(); sched(); putBack(); return say('일시적인 오류가 발생했어요'); }   // 올리기 전 실패(첨부)는 글 · 첨부를 칸에 되살림
       body.files = ids; if (vm) body.vnl = vm; }
-    const r = await send(body, isTh ? 't' + th.ts : 'new:' + ch);
-    finish(r);
-    if (isTh){
-      if (r === 'maybe') return say('답글이 올라갔을 수 있어요. 스레드에서 확인해 주세요');
-      if (r === 'fail') return say(putBack() ? '답글을 보내지 못했어요. 글은 칸에 다시 넣어 뒀어요' : '답글을 보내지 못했어요. 다시 써 주세요');
-      await loadThr(th.k, th.ts); if (X.th?.ts === th.ts) drawThread();
-      return; }
-    if (r === 'ok'){ say(`# ${NAMES()[ch] || ch}에 올렸어요`); try { await G('loadCh')(ch); } catch {} return sched(); }
-    if (r === 'maybe') return say(`# ${NAMES()[ch] || ch}에 올라갔을 수 있어요. 피드에서 확인해 주세요`);
-    putBack(); say('올리지 못했어요. 글은 칸에 다시 넣어 뒀어요');
+    return sendIt();
   }
   // 보내기: chatPost 는 실패해도 던지지 않고 CS.fail 에 남김 — 그 표시가 놓이는 보드 채팅은 /x 에서 가려져 있어 여기서 알려 줌
-  async function send(body, base){
+  async function send(body, base, again){   // again = {key, f}: 첫 실패의 표로 같은 rid 다시 보내기(보드 failAct resend 와 같음)
     const failed = () => Object.keys(cs().fail || {}).filter(x => x.startsWith(base + ':'));
+    send.key = null;
+    if (again) delete cs().fail[again.key];   // 보드와 같게: 표를 먼저 지우고 chatPost 가 옛 말풍선도 지움
     const before = new Set(failed());
-    try { await G('chatPost')(body, base); } catch { return 'fail'; }
-    const nw = failed().filter(x => !before.has(x));
+    try { await (again ? G('chatPost')(again.f.body, again.f.base, again.f.rid, again.key, false, again.f.at) : G('chatPost')(body, base)); } catch { return 'fail'; }
+    const nw = failed().filter(x => !before.has(x)); send.key = nw[0] || null;
     // maybe = 서버가 받았는지 모름(보드가 다시 보내기를 막는 경우) — 글을 되살리면 두 번 올라감
     return !nw.length ? 'ok' : nw.some(x => cs().fail[x]?.maybe) ? 'maybe' : 'fail';
   }

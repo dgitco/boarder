@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "fdb1801c470a";
+window.HB_VER = "61c47f98ba44";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -4282,15 +4282,32 @@ async function todoPull(node2, force) {
   todoPaint(node2);
 }
 async function todoPost(node2, body) {
-  try {
-    const r = await fetch("api/todos", { method: "POST", headers: { "content-type": "application/json", "x-hb": "1" }, body: JSON.stringify(body) });
-    const j = await r.json().catch(() => null);
-    if (!r.ok) return toast(ERR, 3600, true, { where: "todo-post", status: r.status, err: String(j?.error || "").slice(0, 120) });
+  const was = TD[node2] ? JSON.parse(JSON.stringify(TD[node2])) : null, ed = { edit: TDS.edit, draft: TDS.draft, del: TDS.del };
+  const apply = () => {
+    const d = TD[node2];
+    if (!d) return;
+    const t = d.todos.find((x) => x.id === body.id);
+    if (body.op === "remove") d.todos = d.todos.filter((x) => x.id !== body.id);
+    else if (t) {
+      if (body.op === "done") t.state = "done";
+      else for (const k of ["prio", "title", "state"]) if (body[k] !== void 0) t[k] = body[k];
+    }
+    d.open = d.todos.filter((x) => x.state !== "done").length;
+    d.done = d.todos.length - d.open;
     Object.assign(TDS, { edit: null, draft: null, del: false });
-  } catch (e) {
-    toast(ERR, 3600, true);
-  }
-  await todoPull(node2, true);
+    todoPaint(node2);
+  };
+  const ok = await optDo({
+    key: "todo:" + node2 + ":" + (body.id || ""),
+    apply,
+    send: () => optPost("api/todos", body),
+    undo: () => {
+      if (was) TD[node2] = was;
+      Object.assign(TDS, ed);
+      todoPaint(node2);
+    }
+  });
+  if (ok !== false) await todoPull(node2, true);
 }
 document.addEventListener("input", (e) => {
   if (e.target.id === "tdtitle") TDS.draft = e.target.value;
@@ -5773,21 +5790,30 @@ const ownerName = (o) => o && byPane[o] ? nameOf(byPane[o]) : /^%\d+$/.test(o ||
 const topicById = (id) => CS.T.topics.find((t) => t.id === id);
 const ETC = {};
 const GETMETA = /* @__PURE__ */ new WeakMap();
-async function getJSON(u, again) {
-  const c = again ? null : ETC[u], r = await fetch(u, { cache: "no-store", headers: c ? { "If-None-Match": c.tag } : {} });
+async function getJSON(u, again, ms) {
+  const c = again ? null : ETC[u], ac = ms && window.AbortController ? new AbortController() : null, tm = ac && setTimeout(() => ac.abort(), ms);
+  let r;
+  try {
+    r = await fetch(u, { cache: "no-store", headers: c ? { "If-None-Match": c.tag } : {}, ...ac ? { signal: ac.signal } : {} });
+  } catch (e) {
+    clearTimeout(tm);
+    throw ac?.signal.aborted ? Object.assign(new Error("시간 초과"), { timeout: true }) : e;
+  }
   const meta = () => ({ status: r.status, rid: r.hbRid || r.headers.get("x-request-id") || "" });
   if (r.status === 304) {
     if (c) {
       GETMETA.set(c.j, { path: "/" + u.split("?")[0], status: 304, rid: r.hbRid || r.headers.get("x-request-id") || "" });
       return c.j;
     }
-    if (!again) return getJSON(u, true);
+    if (!again) return getJSON(u, true, ms);
     throw Object.assign(new Error("빈 응답 304"), meta());
   }
   let t;
   try {
     t = await r.text();
+    clearTimeout(tm);
   } catch (e) {
+    clearTimeout(tm);
     throw Object.assign(new Error("몸통 못 읽음 · " + (e?.message || e)), meta());
   }
   let j = null;
@@ -5798,7 +5824,7 @@ async function getJSON(u, again) {
   if (!j) {
     if (!again) {
       await sleep(800);
-      return getJSON(u, true);
+      return getJSON(u, true, ms);
     }
     throw Object.assign(new Error(r.ok ? "빈 응답" : "서버 " + r.status), meta());
   }
@@ -6171,7 +6197,16 @@ async function loadTh(k, ts) {
     return;
   }
   try {
-    const j = await getJSON(`api/chat/${k}/${ts}`);
+    let j;
+    for (let i = 0; ; i++) {
+      try {
+        j = await getJSON(`api/chat/${k}/${ts}`, false, 12e3);
+        break;
+      } catch (e) {
+        if (i >= 2 || e.status === 404 || e.status === 403) throw e;
+        await sleep(700 * (i + 1));
+      }
+    }
     rxFix(j);
     CS.thr[ts] = j;
     if (j.home && CS.th?.ts === ts && CS.at === k && !isNodeCh(k)) homeGo(j.home, k, ts);
@@ -7520,7 +7555,7 @@ function thHTML() {
   const fnew = rest.length && !(root && isRead({ ts, latest: rest.at(-1)?.ts })) ? window.HBInbox?.firstNew?.(ts, rest) : null;
   const thName = tt2 ? tt2.title : on && on !== AREA_NAME[k] ? on : "";
   return `<aside class="cth" aria-label="스레드"><div class="thgrip" data-thgrip role="separator" aria-orientation="vertical" tabindex="0" aria-label="스레드 너비" title="끌어서 너비 바꾸기 · 두 번 누르면 기본"></div><div class="chd"><span class="t">스레드</span>${thName ? `<span class="d">${esc(thName)}</span>` : ""}${huddle({ ch: k, th: CS.th.ts })}${LIVE ? `<button class="thsave" data-msave="${CS.th.ts}" aria-pressed="${sv}" aria-label="${sv ? "스레드 저장 풀기" : "스레드 저장"}" title="${sv ? "저장 풀기" : "스레드 저장"}">${sv ? ICON.saved : ICON.save}</button>` : ""}<button class="xbtn" data-cclose aria-label="닫기">${ICON.x}</button></div>
-    ${fwrap("cthfeed", "", `${root ? `<div class="croot">${msgHTML(root, k, true)}</div>` : t.loading ? LOADING : t.err ? readErr("th:" + ts) : emptyHTML({ ic: "search", t: "없는 스레드예요", p: "지워졌거나 주소가 바뀌었어요.", sk: "", sm: true })}${rest.length ? `<div class="cnt">답글 ${rest.length}개</div>` : ""}${rest.map((m) => (m.ts === fnew ? '<div class="thnew" role="separator" aria-label="여기부터 새 답"><span>새 답</span></div>' : "") + msgHTML(m, k, true)).join("")}${t.err ? readErr(t.err) : ""}${pendFor("t" + ts)}`)}
+    ${fwrap("cthfeed", "", `${root ? `<div class="croot">${msgHTML(root, k, true)}</div>` : t.loading ? LOADING : t.err ? window.HB_NET ? "" : `<div class="empty loading" role="status"><span style="display:inline-flex;align-items:center;gap:6px">스레드를 불러오지 못했어요${RETRY}</span></div>` : emptyHTML({ ic: "search", t: "없는 스레드예요", p: "지워졌거나 주소가 바뀌었어요.", sk: "", sm: true })}${rest.length ? `<div class="cnt">답글 ${rest.length}개</div>` : ""}${rest.map((m) => (m.ts === fnew ? '<div class="thnew" role="separator" aria-label="여기부터 새 답"><span>새 답</span></div>' : "") + msgHTML(m, k, true)).join("")}${root && t.err ? readErr(t.err) : ""}${pendFor("t" + ts)}`)}
     ${comp("cth", "스레드에 답하기", `Enter 보내기 · ${owner ? esc(ownerName(owner)) + " 입력으로" : esc(BOTN) + " 입력으로"} 들어가요 · Slack 스레드에도`)}</aside>`;
 }
 const THW = "hb-thw";
@@ -7590,25 +7625,29 @@ const fwrap = (id, cls, inner) => `<div class="fwrap"><div class="cfeed bottom $
 const feedKey = (id) => id === "cthfeed" ? "t:" + CS.th?.ts : "chan:" + CS.at;
 const atBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 40;
 const itemTs = (el) => [...el.querySelectorAll(":scope > .msg[data-mts], :scope > .croot > .msg[data-mts], :scope > .tcard[data-at]")].map((x) => +(x.dataset.mts || x.dataset.at));
+const mineTsOf = (el) => [...el.querySelectorAll(":scope > .msg.me[data-mts], :scope > .croot > .msg.me[data-mts]")].map((x) => +x.dataset.mts);
 function feedMark(el) {
   if (!el) return;
   const btn = el.parentElement.querySelector(":scope > .tobot"), ts = itemTs(el);
   if (!btn || !ts.length) return;
+  const mine = mineTsOf(el), lm = mine.length ? Math.max(...mine) : 0, others = ts.filter((t) => !mine.includes(t));
   const s = CS.seen[feedKey(el.id)] ||= { from: null, div: null }, top = Math.max(...ts);
+  const newer = (base) => others.some((t) => t > Math.max(base, lm));
   if (atBottom(el)) {
-    if (s.from != null && ts.some((t) => t > s.from)) s.div = s.from;
+    if (s.from != null && newer(s.from)) s.div = s.from;
     s.from = null;
   } else if (s.from == null) {
     s.from = top;
-    if (s.div != null && !ts.some((t) => t > s.div)) s.div = null;
+    if (s.div != null && !newer(s.div)) s.div = null;
   }
-  const n = s.from == null ? 0 : ts.filter((t) => t > s.from).length;
+  const n = s.from == null ? 0 : others.filter((t) => t > Math.max(s.from, lm)).length;
   btn.hidden = el.scrollHeight - el.scrollTop - el.clientHeight < 200 && !n;
   btn.querySelector("b").textContent = n ? n > 99 ? "99+" : n : "";
-  newSep(el, n ? s.from : s.div);
+  newSep(el, n ? s.from : s.div, lm);
 }
-function newSep(el, after) {
-  const first = after == null ? null : [...el.querySelectorAll(":scope > .msg[data-mts], :scope > .croot > .msg[data-mts]")].find((m) => +m.dataset.mts > after);
+function newSep(el, after, lm = 0) {
+  const base = after == null ? null : Math.max(after, lm);
+  const first = base == null ? null : [...el.querySelectorAll(":scope > .msg:not(.me)[data-mts], :scope > .croot > .msg:not(.me)[data-mts]")].find((m) => +m.dataset.mts > base);
   const at = first && (first.parentElement === el ? first : first.parentElement), cur2 = el.querySelector(":scope > .newsep");
   if (!at) {
     cur2?.remove();
