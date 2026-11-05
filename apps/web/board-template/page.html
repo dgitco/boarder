@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "4cc3f44f0633";
+window.HB_VER = "2c9029cdb69f";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -11135,7 +11135,9 @@ setInterval(() => {
   const cname = (ch) => {
     const n = String(ch || "").replace(/^n:/, "");
     const fd = typeof D === "object" && D?.front_door;
-    return fd?.name && String(ch || "").startsWith("n:") && ((fd.pairs || []).some((p) => p?.name === n) || (fd.aliases || []).includes(n)) ? fd.name : n;
+    if (fd?.name && String(ch || "").startsWith("n:") && ((fd.pairs || []).some((p) => p?.name === n) || (fd.aliases || []).includes(n))) return fd.name;
+    if (n === "primary" && window.HB_MEMBER) return fd?.name || window.HB_MEMBER?.bot || "메인 봇";
+    return n;
   };
   const S = { unread: [], drafts: [], saved: [], turn: [], doneOn: false, ok: false, err: false, busy: null, again: false };
   let saved = /* @__PURE__ */ new Set();

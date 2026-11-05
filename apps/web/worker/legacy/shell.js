@@ -947,7 +947,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       if (this.closed || this.ws) return;
       clearTimeout(this.t.re);
       let ws; try { ws = this.ws = new WebSocket(wsUrl()); } catch (e) { this.ws = null; return this.retry(); }
-      ws.onopen = () => { if (this.ws !== ws) return; note('open'); if (this.lostAt) { window.BX_UI?.('reconnect', now() - this.lostAt); this.lostAt = 0; } this.wsUp = true; this.openAt = now(); this.okAt = now(); clearTimeout(this.t.poll); this.catchUp(); this.up(); this.ping(); };
+      ws.onopen = () => { if (this.ws !== ws) return; note('open'); if (this.lostAt) { window.BX_UI?.('reconnect', now() - this.lostAt); this.lostAt = 0; } this.wsUp = true; this.openAt = now(); this.okAt = now(); clearTimeout(this.t.poll);
+        clearTimeout(this.t.cu); const late = this.opened ? Math.random() * 8000 : 0; this.opened = true;
+        if (late) this.t.cu = setTimeout(() => { if (!this.closed) this.catchUp(); }, late); else this.catchUp();
+        this.up(); this.ping(); };
       ws.onmessage = e => { if (this.ws !== ws) return;
         if (e.data === 'pong'){ this.pongAt = now(); this.okAt = now(); return; }
         let j; try { j = JSON.parse(e.data); } catch (x) { return; }
