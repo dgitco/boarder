@@ -598,10 +598,11 @@ test("메일별 미리 보기: 하네스 기기 쓰기(로그인 메일 없음)�
   await ledger.setFlag(t.D1, "shadow_unified", true); await ledger.f7On(t.D1, "__reset__");
   const S0 = Math.floor(T / 1000), up = () => t.req("POST", "/api/device/owner-state", { v: 1, at: S0, panes: {}, topics: {}, leads: { primary: "%15", leads: {}, windows: {} }, agents: [], parked: [], archived: [], promises: [], snoozed: [], ch_keys: {}, attn: null }, { authorization: `Bearer ${HT}` });
   t.reset(); const r0 = await up(); assert.equal(r0.status, 200, r0.text);
-  assert.ok(!t.bumps.includes(U), "다 끄면 회원 칸에 안 감: " + t.bumps.join(","));
+  assert.deepEqual(t.bumps, [], "다 끄면 어느 칸에도 안 감(주인 칸 chat 도 아님): " + t.bumps.join(","));
   await t.flag("owner_unified:" + OWNER2, true); t.reset();   // canon 이 아닌 주인 메일 하나만 켬
   const r1 = await up(); assert.equal(r1.status, 200, r1.text);
   assert.ok(t.bumps.includes(U), "켠 주인 칸에 알림: " + t.bumps.join(","));
+  assert.ok(t.marks.some(m => m[0] === U && "data" in m[1]), "켠 주인 칸에 data(그 화면 /api/data 가 올린 값으로 계산)");
 });
 
 test("켬: 장부 바뀜 알림이 켠 주인 칸(live:<canon>)에는 chat 과 data 를 같이(그 화면 /api/data 가 장부 사본으로 계산) — 주인 칸은 chat 만 · 끄면 주인 칸만", async () => {
