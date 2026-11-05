@@ -78,6 +78,7 @@ import * as ownerRead from "./owner-read";
 import * as OS from "./owner-state";
 import * as ownerJobs from "./owner-jobs";
 import * as memberBoard from "./member-board";
+import * as ownerShadow from "./owner-shadow";
 import * as memberVoice from "./member-voice";
 import { boardHead, HEAD_RE, withHead } from "./board-head";
 import * as memberInbox from "./member-inbox";
@@ -2131,6 +2132,17 @@ function filesShadow(c: Context<{ Bindings: Env }>, path: string, headers: Recor
 }
 const fromR2 = (out: Headers) => out.set("x-boarder-src", "r2");   // 확인용(완료 기준: 응답 머리로 R2 에서 온 것)
 
+function shadowUnified(c: Context<{ Bindings: Env }>, body: string, who: string) {
+  if (!ownerShadow.due()) return;
+  c.executionCtx.waitUntil((async () => {
+    if (!(await ledger.f7On(c.env.DB, "shadow_unified"))) return;
+    const me = W.canon(c.env); if (!me) return;
+    const t0 = Date.now(), d1 = await memberBoard.data(c.env.DB, me, null, await memberBoard.load(c.env.DB, me, true)), ms = Date.now() - t0;
+    const d = ownerShadow.windowsDiff(JSON.parse(body), d1);
+    if (d.at.length) capture(c.env, c.executionCtx, "unify_shadow_diff", who, { ...d, at: d.at.join(","), ms_d1: ms });
+    else if (Math.random() < 0.1) capture(c.env, c.executionCtx, "unify_shadow_ok", who, { n_snap: d.n_snap, n_d1: d.n_d1, ms_d1: ms });   // 차이 0 이 이어지는지(10% 표본)
+  })().catch(e => capture(c.env, c.executionCtx, "unify_shadow_diff", who, { at: "error " + String((e as Error)?.name || "") })));   // 오류 글은 안 실음
+}
 // 스냅숏이 마지막으로 「맞음」을 받은 뒤 지난 ms
 const snapAge = (x: { at: number; checked?: number }) => Date.now() - Math.max(x.at, x.checked || 0);
 async function ledgerAges(env: Env) {
@@ -2484,6 +2496,7 @@ app.all("*", async c => {
     const ts = Date.now(), sn = await snap(c.env).get(sk); seg(c.req.raw, "snap", Date.now() - ts);
     hit(c.req.raw, "snap", !!sn && snapAge(sn) < 15_000);   // 「새 스냅숏」 비율은 예전 뜻 그대로 잼(낡아도 답은 스냅숏)
     if (sn) {
+      if (sk === "data") shadowUnified(c, sn.body, s.user.email);   // 그림자 대조(스위치 shadow_unified) — 답은 그대로 스냅숏
       const h = { etag: sn.etag, "cache-control": "private, no-cache", "x-content-type-options": "nosniff", "x-snap-age": String(snapAge(sn)) };
       if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === sn.etag) return new Response(null, { status: 304, headers: h });
       return new Response(sn.body, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });

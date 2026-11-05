@@ -152,22 +152,23 @@ export async function loadShared(db: D1Database, me: string, ctx?: Ctx | null): 
   return loadRead(db, me, ctx);
 }
 export function loadForget(me: string) { const m = me.toLowerCase(); for (const k of [...readShare.keys()]) if (k === m || k.startsWith(m + "#")) readShare.delete(k); }
-export async function load(db: D1Database, me: string) {
-  await closeStaleConnect(db, me);
+export async function load(db: D1Database, me: string, readOnly = false) {   // readOnly = 쓰기 없이 읽기만(그림자 대조 — 주인 줄을 안 건드림)
+  if (!readOnly) await closeStaleConnect(db, me);
   const tkP = tokenRows(db, me);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
-  const [nd, mi, it, lg, cd, dr, ew, ns, pw, mb, cx, rvd] = await db.batch([
+  const [nd, mi, it, lg, cd, dr, ew, ns, pw, mb, cx, rvd, hw] = await db.batch([
     db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ? OR COALESCE(NULLIF(pinned_name, ''), name) IN (${FRONT_NAMES})) ORDER BY updated_at DESC`).bind(me, Date.now() - 24 * 3600_000, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at > ?").bind(me, me, Date.now() - 24 * 3600_000),
     db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT ${LOG_MAX}`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
     db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
     db.prepare("SELECT rowid AS n, id, name, brief, at FROM (SELECT rowid, id, name, brief, created_at AS at FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 30)").bind(me),
-    db.prepare("SELECT id, kind, name, state, state_at, note, created_at, closed_at FROM engine_window WHERE owner = ? AND (state NOT IN ('closed','failed','gone') OR state_at > ?) ORDER BY created_at DESC LIMIT 60").bind(me, Date.now() - 12 * 3600_000),
+    db.prepare("SELECT id, kind, name, state, state_at, note, created_at, closed_at FROM engine_window WHERE owner = ? AND kind != 'harness' AND (state NOT IN ('closed','failed','gone') OR state_at > ?) ORDER BY created_at DESC LIMIT 60").bind(me, Date.now() - 12 * 3600_000),
     db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
     db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me),
     db.prepare("SELECT owner, seed, hue, photo FROM member_bot WHERE owner IN (?, ?)").bind(me, meKey(me)),
     db.prepare("SELECT id, win, kind, question, at, answered_at FROM board_card WHERE owner = ? AND state = 'closed' ORDER BY at DESC LIMIT 50").bind(me),
     REVOKED(db, me),
+    ...(readOnly ? [db.prepare("SELECT id, name, state, state_at, note, handle, created_at FROM engine_window WHERE owner = ? AND kind = 'harness' AND state NOT IN ('closed','gone') ORDER BY id LIMIT 300").bind(me)] : []),
   ]);
   const tk = { results: await tkP };
   const items = new Map(withRv(it.results as R[], rvd.results as { id: string }[]).map(r => [String(r.key), r]));
@@ -243,7 +244,7 @@ export async function load(db: D1Database, me: string) {
   const seatIds = new Set(seatRole.keys()), parents = parentsOf((ns.results[0] as R | undefined)?.data);
   // 에이전트 화면(에이전트끼리 접기가 걸리는 채널): 자리표 부서 노드 · 맨 위(top)로 둔 노드 · 엔진 역할 창이 묶인 노드. 업무 · 작업자 노드는 아님
   const agentScreen = (n: Node) => seatIds.has(n.id) || parents[n.id] === TOP || roleWins.has(n.name) || [...n.wins].some(w => roleWins.has(w));
-  return { agentsFold: prefs.agents_fold, agentScreen, tidy, seatIds, seatRole, seatAll, order: orderFromData((ns.results[0] as R | undefined)?.data), keysOf: (win: string) => keysOfWin.get(win) || [], winsOf, resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes, roleWins,
+  return { agentsFold: prefs.agents_fold, agentScreen, tidy, seatIds, seatRole, seatAll, order: orderFromData((ns.results[0] as R | undefined)?.data), keysOf: (win: string) => keysOfWin.get(win) || [], winsOf, resolveNode, front, frontDoor: fd, taskChannels: tcOn, roleNames, defaultNode, primaryWin, nodes: shown, byId, primary, isPrimWin, mains, taskDots: prefs.task_dots, agentUnit: /"unit":"agent"/.test(String((ns.results[0] as R | undefined)?.data || "")), pri: (json<{ pri?: Record<string, { pri?: string }> }>((ns.results[0] as R | undefined)?.data, {}).pri || {}) as Record<string, { pri?: string }>, nodeOfWin, logs: lg.results as R[], cards: cd.results as R[], closedCards: cx.results as R[], drafts: dr.results as R[], mainWin, engineNodes, roleWins, harness: (hw?.results || []) as R[],
     parents, faces: facesOf((ns.results[0] as R | undefined)?.data), botFace: faceRow((mb.results as R[]).find(r => r.owner === me)), meFace: faceRow((mb.results as R[]).find(r => r.owner === meKey(me))) };
 }
 
@@ -295,6 +296,8 @@ export function paneNow<T extends Record<string, any>>(rows: T[], nowMin: number
   const real = rows.find(r => r.kind !== "status"), blocked = real && (KIND_KO[real.kind] || real.kind) === "막힘" ? real : null;
   return { last: blocked || rows[0] || null, blocked, watch: !blocked && rows[0]?.kind === "status" && nowMin - Number(rows[0].at) < 86_400_000 ? rows[0] : null };
 }
+export const HSTATE_KO: Record<string, string> = { busy: "일하는 중", starting: "일하는 중", idle: "쉼", waiting: "Owner 대기", background: "뒤 작업 중" };
+export const harnessPane = (id: string) => { const m = /^ew_pane(\d{1,7})$/.exec(id); return m ? `%${m[1]}` : null; };
 const PSTATE: Record<string, string> = { working: "일하는 중", question: "질문" };
 export async function data(db: D1Database, me: string, bot: { name?: string } | null, pre?: Awaited<ReturnType<typeof load>> | null) {
   const L = pre || await load(db, me), now = Date.now(), nowMin = Math.floor(now / 60_000) * 60_000, ago = (ms: number) => Math.max(0, Math.round((nowMin - ms) / 60_000));
@@ -347,6 +350,14 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
     if (w.state === "parked") parked.push({ id: "c" + p.slice(1), name: w.name, area: "primary", msg: w.note || "주차", owner: false, ago: ago(w.state_at || w.created_at), stale: null, wait: "주차", topics: [], pri: priOf(L.pri, String(w.name)), pane: p, short: "주차", watch: "" });
     else if (["closed", "failed", "gone"].includes(w.state)) closed.push({ pane: p, win: w.name, ago: ago(w.closed_at || w.state_at || w.created_at), msg: w.note || "", area: "primary" });
     else { panes.push({ ...pane({ pane: p, win: w.name, kind: "lead", state: STATE[w.state] || "쉼", rows }), rolewin: true }); nodeOfPane.set(p, String(w.id)); }
+  }
+  for (const w of L.harness) {
+    const p = harnessPane(String(w.id)); if (!p) continue;
+    const m = json<R>(w.handle, {}), win = String(m.win || w.name || p), rows = logsOf(null, [win, String(w.name || "")]);
+    if (w.state === "parked") { parked.push({ id: "c" + p.slice(1), name: String(w.name || win), area: String(m.area || "primary"), msg: w.note || "주차", owner: false, ago: ago(w.state_at || w.created_at), stale: null, wait: "주차", topics: [], pri: priOf(L.pri, String(w.name || "")), pane: p, short: "주차", watch: "", harness: true }); continue; }
+    const kind = m.kind === "primary" ? "primary" : m.kind === "arealead" ? "arealead" : m.role === "리드" ? "lead" : "helper";
+    panes.push({ ...pane({ pane: p, win, kind, state: HSTATE_KO[String(w.state)] || "쉼", cwd: String(m.cwd || ""), rows }), role: String(m.role || "리드"), area: String(m.area || "primary"), harness: true });
+    nodeOfPane.set(p, String(w.id));
   }
   for (const p of panes) { const f = L.faces[nodeOfPane.get(p.pane) || ""]; if (f) p.avatar = f; }
   const areas: R[] = [{ key: "primary", name: "Primary", lead: PRIMARY, avatar: botFace }];
