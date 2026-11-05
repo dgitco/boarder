@@ -41,7 +41,7 @@
   // ── 상태
   const DK = 'bx-x-done', ld = () => { try { const o = JSON.parse(localStorage.getItem(DK) || '{}'), cut = Date.now() - 14 * 864e5; return new Map(Object.entries(o).filter(([, t]) => t > cut)); } catch { return new Map(); } };
   const FLK = 'bx-x-fl', flLoad = () => { try { const v = localStorage.getItem(FLK); return v === 'ask' || v === 'info' ? v : 'all'; } catch { return 'all'; } };
-  const X = {fl: flLoad(), tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map(), pend: new Map(), kids: new Map()};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
+  const X = {fl: flLoad(), tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map(), pend: new Map(), kids: new Map(), ready: false, page: 10, shown: null, shownFl: '', paintAt: 0};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
   const keepDone = () => { try { localStorage.setItem(DK, JSON.stringify(Object.fromEntries(X.done))); } catch {} };
   const root = document.createElement('div'); root.id = 'bxx'; document.body.append(root);
   root.innerHTML = `<div class="xv" data-v="home"></div><div class="xv" data-v="thread" hidden></div><div class="xv" data-v="save" hidden></div><div class="xv" data-v="me" hidden></div>
@@ -166,12 +166,48 @@
     if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd"><button type="button" class="xdrb" data-xdr aria-label="메뉴">${DR2}</button><button type="button" class="xpri" data-xpri></button><button type="button" class="xfnd" data-xfind aria-label="찾기">${FND}</button></header>${composer()}<div class="xfl" role="tablist" aria-label="거르개"></div><div class="xfeed"></div>`;
     { const p = v.querySelector('.xpri'), h = priHead(), s = JSON.stringify(h); if (p && p.dataset.s !== s){ p.dataset.s = s; p.innerHTML = `<span class="xpa">${h.face}</span>`; p.setAttribute('aria-label', `${h.name} 와 대화`); } }
     const sl = v.querySelector('.xsel'); if (sl) sl.textContent = `${NAMES()[X.sel] || X.sel} ▾`;
-    const st = v.scrollTop;
+    if (!X.ready){ const f = v.querySelector('.xfeed'); if (!f.querySelector('.xspin')) f.innerHTML = SPIN; return; }
+    const st = v.scrollTop, an = anchorOf(v);
     const nAsk = all.filter(y => y.ask).length; v.querySelector('.xfl').innerHTML = [['all', '전체'], ['ask', `결정${nAsk ? ` ${nAsk}` : ''}`], ['info', '정보']].map(([k, l]) => `<button type="button" role="tab" aria-selected="${X.fl === k}" data-xfl="${k}">${l}</button>`).join('');
+    const pg = pageOf(it), more = pg.length < it.length;
     { const fd = v.querySelector('.xfeed'), back = keepThumb(fd);
-      fd.innerHTML = it.map(unit).join('') || `<p class="xempty">${X.fl === 'ask' ? '지금 고를 것이 없어요' : '글이 없어요'}</p>`; back(); }
-    v.scrollTop = st; watchSeen();
-    for (const x of it.slice(0, 30)){ const t = thr(x.m.ts), l = t && t[t.length - 1]; if (x.m.replies && (!t || (x.m.latest && l && +x.m.latest > +l.ts))) loadThr(x.k, x.m.ts); }   // 한 번 읽은 스레드도 새 답이 왔으면 다시(안 그러면 피드 댓글이 옛 글에 멈춤)
+      fd.innerHTML = pg.length ? pg.map(unit).join('') + (more ? `<div class="xmore">${SPIN}</div>` : '') : `<p class="xempty">${X.fl === 'ask' ? '지금 고를 것이 없어요' : '글이 없어요'}</p>`; back(); }
+    v.scrollTop = st; anchorTo(v, an); watchSeen(); watchMore(v, more);
+    const sh = new Set(pg), next = it.filter(x => !sh.has(x)).slice(0, 10);   // 다음 10칸 댓글은 미리 받아 둠(그리기 · 읽음은 안 함)
+    for (const x of [...pg, ...next]){ const t = thr(x.m.ts), l = t && t[t.length - 1]; if (x.m.replies && (!t || (x.m.latest && l && +x.m.latest > +l.ts))) loadThr(x.k, x.m.ts); }   // 한 번 읽은 스레드도 새 답이 왔으면 다시(안 그러면 피드 댓글이 옛 글에 멈춤)
+  }
+  const SPIN = '<div class="xspin" role="status" aria-label="불러오는 중"><i></i></div>';
+  const keyOf = x => x.deck ? 'd:' + x.dm.ts : x.m.ts;
+  function pageOf(it){
+    const by = new Map(it.map(x => [keyOf(x), x]));
+    if (!X.shown || X.shownFl !== X.fl){ X.shownFl = X.fl; X.shown = it.slice(0, X.page).map(keyOf); }
+    else {
+      const r = X.restore; X.restore = null; const rk = r && by.has(r.k) && !X.shown.includes(r.k) ? r.k : null;   // 되돌린 칸은 그 자리로(맨 위로 안 감)
+      const ks = new Set(X.shown), was = X.wasAsk || new Map(), top = [], late = [];
+      for (const x of it){ const k = keyOf(x), newAsk = x.ask && was.get(k) !== true; if (k === rk) continue;
+        if (ks.has(k)){ if (newAsk && was.has(k)) top.push(k); continue; }
+        if (x.at * 1000 > X.paintAt || x.deck || newAsk) top.push(k); else late.push(k); }
+      const tp = new Set(top), keep = X.shown.filter(k => by.has(k) && !tp.has(k));
+      X.shown = [...top, ...keep];
+      if (rk) X.shown.splice(Math.min(r.i, X.shown.length), 0, rk);
+      for (const k of late){ if (X.shown.length >= X.page + top.length) break; if (!X.shown.includes(k)) X.shown.push(k); }
+    }
+    X.wasAsk = new Map(it.map(x => [keyOf(x), !!x.ask]));
+    return X.shown.map(k => by.get(k)).filter(Boolean);
+  }
+  const anchorOf = v => { const top = v.getBoundingClientRect().top; for (const u of v.querySelectorAll('.xfeed > .xu')){ const r = u.getBoundingClientRect(); if (r.bottom > top + 1) return {root: u.dataset.root, off: r.top - top}; } return null; };
+  const anchorTo = (v, a) => { if (!a || !v.scrollTop) return; const u = [...v.querySelectorAll('.xfeed > .xu')].find(y => y.dataset.root === a.root); if (u) v.scrollTop += u.getBoundingClientRect().top - v.getBoundingClientRect().top - a.off; };   // 위에 새 칸이 들어와도 보던 글이 그 자리
+  let mio = null;
+  function watchMore(v, more){   // 끝에서 5번째 칸이 보이면 다음 10칸
+    mio?.disconnect(); if (!more || !window.IntersectionObserver) return;
+    const us = v.querySelectorAll('.xfeed > .xu'), t = us[Math.max(0, us.length - 5)]; if (!t) return;
+    mio = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)){ mio.disconnect(); X.page = X.shown.length + 10; drawHome(true); } });
+    mio.observe(t);
+  }
+  async function warm(){
+    const jobs = [...wantRoots()].map(([t, {k}]) => [k, t]); for (const x of items().slice(0, 12)) if (x.m.replies && !thr(x.m.ts)) jobs.push([x.k, x.m.ts]);
+    let i = 0; const one = async () => { while (i < jobs.length){ const [k, t] = jobs[i++]; await loadThr(k, t); } };
+    await Promise.race([Promise.all(Array.from({length: 8}, one)), new Promise(r => setTimeout(r, 3500))]);
   }
   const xgrow = t => { try { G('boardGrow')(t); } catch {} };   // 보드 grow(칸 높이 · has · ↑) — 이 안에 같은 이름을 두면 L.boardGrow 가 자기 자신을 읽음
   const pending = new Set();
@@ -248,8 +284,9 @@
 
   // ── 완료(✓, 되돌리기) · 저장(책갈피 단추, 다시 누르면 풀기)
   function done(k, rootTs){
-    const was = X.done.get(rootTs); X.done.set(rootTs, Date.now()); keepDone(); readOne(k, rootTs, true); drawHome(true);
-    note('완료로 내렸어요', () => { X.done.delete(rootTs); if (was) X.done.set(rootTs, was); keepDone(); drawHome(true); });
+    const was = X.done.get(rootTs), sk = (X.shown || []).find(y => y === rootTs || y === 'd:' + rootTs), si = sk ? X.shown.indexOf(sk) : -1;
+    X.done.set(rootTs, Date.now()); keepDone(); readOne(k, rootTs, true); drawHome(true);
+    note('완료로 내렸어요', () => { X.done.delete(rootTs); if (was) X.done.set(rootTs, was); keepDone(); if (sk) X.restore = {k: sk, i: si}; drawHome(true); });   // 되돌리면 그 자리로
   }
   const redraw = () => { if (X.tab === 'home') drawHome(true); else if (X.tab === 'thread') drawThread(); else if (X.tab === 'save') drawSave(); else if (X.tab === 'me') drawMe(); };
   function save(k, rootTs){
@@ -280,7 +317,7 @@
       if (k === 'dm') return void (location.href = '/es');
       return show(k); }
     if (q('[data-xtab-fab]')) return compose();
-    { const fl = q('[data-xfl]'); if (fl){ X.fl = fl.dataset.xfl; try { localStorage.setItem(FLK, X.fl); } catch {} V('home').scrollTop = 0; return drawHome(true); } }
+    { const fl = q('[data-xfl]'); if (fl){ X.fl = fl.dataset.xfl; X.page = 10; try { localStorage.setItem(FLK, X.fl); } catch {} V('home').scrollTop = 0; return drawHome(true); } }
     { const xa2 = q('[data-xart]'), al = t.closest('a[href]'), am = al && /\/(?:canvas|art)\/(hb[1-9A-HJ-NP-Za-km-z]{22})/.exec(al.getAttribute('href') || ''), id = xa2?.dataset.xart || am?.[1];
       if (id){ e.preventDefault(); e.stopPropagation(); return openCanvas(id); } }
     if (q('[data-xfind]')) return void document.querySelector('.bx-sb [data-go="find"], .bx-dr [data-go="find"]')?.click();
@@ -363,6 +400,7 @@
   async function refresh(){
     await Promise.all(chs().map(k => G('loadCh')(k).catch?.(() => {}))).catch(() => {});
     try { await window.HBInbox?.load?.(); } catch {}
+    if (!X.ready){ await warm(); X.ready = true; X.paintAt = Date.now(); if (X.tab === 'home') return void drawHome(true); }
     if (X.tab === 'home') drawHome(); else if (X.tab === 'thread') drawThread(); else if (X.tab === 'save') drawSave();
     for (const b of root.querySelectorAll('.xt')) b.innerHTML = ji(b.dataset.xtab, b.classList.contains('on')) + badge(b.dataset.xtab);
   }

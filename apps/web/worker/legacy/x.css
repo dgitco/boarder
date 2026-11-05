@@ -150,3 +150,5 @@ html.xnodes:has(#ans:not([hidden])) #bxx .xglass,html.xnodes:has(#mview:not([hid
   html.bx-x .bx-sb [data-sbcol],html.bx-x .bx-exp{display:none}
 }
 #bxx a.atm,#bxx a.atm:visited{color:var(--xname)}#bxx a.atm .atmt b{color:var(--xname)}
+
+#bxx .xspin{display:grid;place-items:center;padding:56px 0}#bxx .xmore .xspin{padding:22px 0}#bxx .xspin i{width:22px;height:22px;border-radius:50%;border:2px solid var(--xline);border-top-color:var(--xmut);animation:xsp .8s linear infinite}@keyframes xsp{to{transform:rotate(360deg)}}   /* 피드 첫 로딩 · 다음 쪽(스피너만) */
