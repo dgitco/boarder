@@ -373,7 +373,7 @@ app.post("/api/relay/after/done", async c => {
 });
 app.get("/api/relay/owner-state", async c => {
   if (!relayOk(c)) return c.json({ error: "no" }, 403);
-  const r = await OS.get(c.env.DB, c.req.query("k") || ""); return r ? c.json({ ...r, on: await ledger.f7On(c.env.DB, "write_state") }) : c.json({ error: "없음" }, 404);   // on: 끈 뒤엔 after-hook 이 파일을 안 덮음(실행기가 정본)
+  const r = await OS.get(c.env.DB, c.req.query("k") || ""); return r ? c.json({ ...r, on: true }) : c.json({ error: "없음" }, 404);   // on: 끈 뒤엔 after-hook 이 파일을 안 덮음(실행기가 정본)
 });
 app.put("/api/relay/owner-state", async c => {   // seed: 이미 있으면 안 덮음(force=1 이면 덮음)
   if (!relayOk(c)) return c.json({ error: "no" }, 403);
@@ -919,7 +919,7 @@ app.get("/api/me/nodeset", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   if (isOwner(c.env, s.user.email)) {
     const r = await toBoard(c, "GET", "/api/nodeset");
-    if (r.status !== 200 || chOf(c) !== "owner" || !(await ledger.f7On(c.env.DB, "write_state"))) return r;
+    if (r.status !== 200 || chOf(c) !== "owner") return r;
     const v = await OS.nodeSettings(c.env.DB).catch(() => null); if (!v) return r;
     const j = await r.json().catch(() => null) as Record<string, unknown> | null; if (!j) return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503);
     return c.json({ ...j, values: v }, 200, { "cache-control": "no-store" });
@@ -964,11 +964,11 @@ app.post("/api/me/nodeset", async c => {
   }
   if (!b.values || typeof b.values !== "object") return c.json({ ok: false, error: "값" }, 400);
   if (isOwner(c.env, s.user.email)) {
-    if (chOf(c) === "owner" && await ledger.f7On(c.env.DB, "write_state")) {   // D1 이 정본 — 못 쓰면 실행기 말고 503(실행기는 파일에 써서 D1 과 갈라짐)
+    if (chOf(c) === "owner") {
       const r = await OS.nodeSet(c.env.DB, { values: b.values }).catch(() => null);
       return r ? c.json(r[1], r[0] as 200) : c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" });
     }
-    return toBoard(c, "POST", "/api/nodeset", { values: b.values });
+    return toBoard(c, "POST", "/api/nodeset", { values: b.values });   // 시험 통로(bx-ch=test)만 — 별도 서버 파일
   }
   const me = s.user.email.toLowerCase(), patch = nodeVals(b.values, {});
   const row = await c.env.DB.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(owner) DO UPDATE SET data = json_patch(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, excluded.data), updated_at = excluded.updated_at RETURNING data")
@@ -1099,7 +1099,7 @@ devSettings.mountDeviceSettings(app as never, {
   mails: (env, email) => ownerMails(env as never, email),
   ownerNodeValues: {
     read: async env => (await OS.nodeSettings(env.DB)) as Record<string, number> | null,
-    save: async (env, raw) => { if (!(await ledger.f7On(env.DB, "write_state"))) return null; const r = await OS.nodeSet(env.DB, { values: raw as never }); return r && r[0] === 200 ? (r[1] as { values: Record<string, number> }).values : null; },
+    save: async (env, raw) => { const r = await OS.nodeSet(env.DB, { values: raw as never }); return r && r[0] === 200 ? (r[1] as { values: Record<string, number> }).values : null; },
   },
   ownWindow: (db, me, t) => ownWindow(db, me, t),
   regroup: (env, me) => regroup(env as never, me),
@@ -2082,7 +2082,7 @@ async function ownMisc(c: Context<{ Bindings: Env }>, url: URL): Promise<Respons
     if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === e.etag) return new Response(null, { status: 304, headers: { etag: e.etag } });
     return new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag, "x-f7": "snap" } });
   }
-  if (p === "/api/drafts" && await ledger.f7On(c.env.DB, "write_state")) { const d = await OS.get(c.env.DB, "drafts").catch(() => null); if (d) return j(d.v); }
+  if (p === "/api/drafts") { const d = await OS.get(c.env.DB, "drafts").catch(() => null); if (d) return j(d.v); }
   if (p === "/api/drafts" && cookieOf(c, "bx_w")) return null;   // 방금 쓴 사람은 다리로(cfg 는 5초쯤 늦음)
   const cf = await snap(c.env).get("cfg"); if (!fresh2(cf)) return null;
   const v = JSON.parse(cf!.body) as { push_key?: string; drafts?: unknown };
@@ -2412,7 +2412,7 @@ app.all("*", async c => {
     }
   }
   if (c.req.method === "GET" && chOf(c) === "owner") { const m = await ownMisc(c, url).catch(() => null); if (m) return m; }
-  if (c.req.method === "POST" && chOf(c) === "owner" && (url.pathname === "/api/draft" || url.pathname === "/api/nodepri") && await ledger.f7On(c.env.DB, "write_state")) {
+  if (c.req.method === "POST" && chOf(c) === "owner" && (url.pathname === "/api/draft" || url.pathname === "/api/nodepri")) {
     if (c.req.header("x-hb") !== "1") return c.json({ ok: false, error: "forbidden" }, 403);   // 다른 사이트 폼 막기(보드와 같은 문)
     const raw = new Uint8Array(await c.req.arrayBuffer());
     let b: Record<string, unknown> | null = null;
@@ -2442,7 +2442,7 @@ app.all("*", async c => {
   const flag = (n: string) => rd?.kind === "inbox" ? ledger.f7Peek(c.env.DB, n, peekWait(c)) : ledger.f7On(c.env.DB, n);
   const shadowRd = !!rd && await flag("shadow_" + rd.group);
   if (rd && !cookieOf(c, "bx_w") && await flag("read_" + rd.group) && await ledgerFresh(c.env)) {
-    const st = rd.kind === "inbox" && await flag("write_state");
+    const st = rd.kind === "inbox";
     const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;
     const res = await ownerRead.respond(rdb, () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st);
     if (res) return res;

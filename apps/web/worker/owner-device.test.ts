@@ -163,10 +163,9 @@ test("주인 메일이 둘 이상이면 화면 설정 줄(ui · features · side
   const g = await s.get(DEVW); assert.equal(g.j.values.ui.theme, "dark");
 });
 
-test("주인 노드 수치: 스위치(write_state) 켜짐 + seed 뒤 owner_state 에 씀(화면 길과 같은 OS.nodeSet), seed 전은 409", async () => {
+test("주인 노드 수치: seed 뒤 owner_state 에 씀(화면 길과 같은 OS.nodeSet), seed 전은 409", async () => {
   const s = await setup(); await upgrade(s);
-  s.db.prepare("INSERT INTO f7_flag(name, on_at, note) VALUES ('write_state', ?, 'test')").run(Date.now());   // (스위치 켜짐 판정은 10초 캐시라 꺼짐은 따로 못 봄 — 꺼짐 · seed 전은 같은 null 거절 길)
-  const before = await s.set("node_values", { move_h: 5 }, DEVW); assert.equal(before.status, 409, "seed 전"); assert.match(before.j.error, /write_state|서버 파일/);
+  const before = await s.set("node_values", { move_h: 5 }, DEVW); assert.equal(before.status, 409, "seed 전"); assert.match(before.j.error, /owner_state/);
   s.db.prepare("INSERT INTO owner_state(k, v, at, ver, ord) VALUES ('node_settings', ?, ?, 0, 0)").run(JSON.stringify({ check_min: 30, split_at: 3, move_h: 24, rename_h: 6, archive_h: 6 }), Date.now());
   const r = await s.set("node_values", { move_h: 5, archive_h: 9999 }, DEVW); assert.equal(r.status, 200, r.text);
   assert.equal(r.j.after.move_h, 5); assert.equal(r.j.after.archive_h, 168, "범위로 자름"); assert.equal(r.j.before.move_h, 24);

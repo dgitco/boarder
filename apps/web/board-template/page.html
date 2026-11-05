@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "57375127dfab";
+window.HB_VER = "cce3ef8b9b20";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1205,7 +1205,7 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
 .msg.sending .mbody{opacity:.85}
 .msg.sending .pst{font-size:11.5px;color:var(--muted)}
 
-.msg.sending.bad .mbody{opacity:1}
+.msg.sending.bad .mbody,.msg.sending.sent .mbody{opacity:1}
 .msg.sending.bad .fbar{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;margin-top:4px;font-size:12.5px;line-height:18px;color:var(--danger)}
 .fbar .fstat{display:inline-flex;align-items:center;gap:4px;height:26px;margin-left:-6px;padding:0 6px;border:0;border-radius:6px;background:none;color:var(--danger);font:inherit;font-weight:600;cursor:pointer}
 @media (hover:hover){.fbar .fstat:hover,.fbar .fstat[aria-expanded="true"]{background:var(--hover)}}
@@ -4844,7 +4844,7 @@ for (const t of ["pointerdown", "keydown", "wheel", "touchstart", "input"]) docu
 setInterval(() => {
   if (LIVE && newVer && !document.hidden && Date.now() - lastInput > 12e4 && reloadAuto()) reloadKeep();
 }, 3e4);
-const busyNow = () => sending || !!window.HBV?.memo || !!window.HBV?.call || Object.keys(CS.pend).some((k) => /spin/.test(CS.pend[k])) || Object.values(CS.mark).some((x) => x.st === "spin");
+const busyNow = () => sending || !!window.HBV?.memo || !!window.HBV?.call || Object.keys(CS.pend).some((k) => /spin| sent"/.test(CS.pend[k])) || Object.values(CS.mark).some((x) => x.st === "spin");
 const pageSc = () => {
   const w = document.querySelector(".wrap");
   return w && /auto|scroll/.test(getComputedStyle(w).overflowY) ? w : document.scrollingElement;
@@ -7968,7 +7968,7 @@ const markOf = (ts) => {
 };
 const mineHead = (mark, at) => `${avatar(ME_NAME, initials(ME_NAME))}<div class="mbody" style="min-width:0"><div class="mh"><b>${esc(ME_NAME)}</b><span class="tm">${when((at || Date.now()) / 1e3)}</span>${mark}</div>`;
 const pimHTML = (pim) => pim?.length ? `<div class="mfiles mmedia${pim.length > 1 ? " grid" : ""}">${pim.map((x) => `<img src="${x.url}" width="${x.w}" height="${x.h}" alt="${esc(x.name)}" data-media data-kind="i" data-src="${x.url}" data-name="${esc(x.name)}">`).join("")}</div>` : "";
-const mineHTML = (text, nfiles, st, key, vnl, pim, o = {}) => vnl ? `<div class="msg me sending${st === "bad" ? " bad" : ""}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${vnHTML(vnl, true)}${text ? `<div class="bd vtr">${md(text.replace(/^\s*🎙\s*/, ""), false)}</div>` : ""}${pimHTML(pim)}${nfiles - 1 - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - 1 - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>` : `<div class="msg me sending${st === "bad" ? " bad" : ""}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${text ? `<div class="bd">${md(text, false)}</div>` : ""}${pimHTML(pim)}${nfiles - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>`;
+const mineHTML = (text, nfiles, st, key, vnl, pim, o = {}) => vnl ? `<div class="msg me sending${st === "bad" ? " bad" : st ? "" : " sent"}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${vnHTML(vnl, true)}${text ? `<div class="bd vtr">${md(text.replace(/^\s*🎙\s*/, ""), false)}</div>` : ""}${pimHTML(pim)}${nfiles - 1 - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - 1 - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>` : `<div class="msg me sending${st === "bad" ? " bad" : st ? "" : " sent"}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${text ? `<div class="bd">${md(text, false)}</div>` : ""}${pimHTML(pim)}${nfiles - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>`;
 const FAIL_WHY = { net: "", srv: "", unk: "받았는지 확인하지 못했어요", unk2: "올라갔을 수 있어요 — 새로고침으로 확인해 주세요", slow: "", big: "글이나 첨부가 너무 커요", node: "노드를 다시 열지 못했어요", maybe: "올라갔을 수 있어요 · 채널에 보이면 지워 주세요" };
 const failWhy = (f) => FAIL_WHY[f?.why] || (/[가-힣]/.test(f?.why || "") ? String(f.why).slice(0, 80) : "");
 const failId = (k) => "fp-" + String(k).replace(/[^\w-]/g, "_");
@@ -8186,6 +8186,8 @@ async function sessSend(ta, text) {
     delete CS.pmeta[key];
     return viewChat(true);
   }
+  CS.pend[key] = mineHTML(text, 0, "");
+  viewChat(true);
   CS.sessBusy = k;
   try {
     for (let i = 0; i < 90 && CS.pend[key]; i++) {
@@ -8342,6 +8344,10 @@ async function chatPost(body, base, rid0, oldKey, again, at0) {
   if (body.react) {
     delete CS.pend[key];
     return chatLoad();
+  }
+  if (!body.label && CS.pend[key]) {
+    CS.pend[key] = mine("");
+    viewChat(true);
   }
   if (body.label) unmark();
   const msgOf = (ts) => [...CS.thr[body.thread || ts]?.messages || [], ...CS.ch[body.channel]?.messages || [], ...isNodeCh(CS.at) ? CS.ch[CS.at]?.messages || [] : []].find((m) => m.ts === ts);

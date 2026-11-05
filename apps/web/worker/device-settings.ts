@@ -179,7 +179,7 @@ async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, c
     if (bad.length) return { error: `모르는 칸: ${bad.join(", ")}`, status: 400 };
     if (h.isOwner(env, me)) {   // 주인: 정본 owner_state(화면 길과 같은 OS.nodeSet). 스위치가 꺼졌거나 seed 전이면 서버 파일이 정본이라 거절
       const v = await h.ownerNodeValues.save(env, o);
-      return v ? { after: v } : { error: "주인 노드 수치의 정본이 아직 서버 파일이에요(write_state 꺼짐 또는 seed 전) — 보드 화면에서 해요", status: 409 };
+      return v ? { after: v } : { error: "주인 노드 수치의 정본(owner_state)이 아직 준비 전이에요(seed 전)", status: 409 };
     }
     return { after: await h.nodeValues.save(env, me, o) };
   }
