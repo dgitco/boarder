@@ -90,7 +90,7 @@ export async function regroup(env: Env, owner: string) {
     env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT name FROM role WHERE owner = ? UNION SELECT name FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed','gone')").bind(owner, owner),
     env.DB.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(owner),   // 보더 메인 봇이 떠 있나(있으면 들여온 primary 는 노드)
-    env.DB.prepare("SELECT id, name, pinned_name, task, counts, archived_at FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(owner),
+    env.DB.prepare("SELECT id, name, pinned_name, task, counts, archived_at FROM mnode WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(owner),
     REVOKED(env.DB, owner),
   ]);
   const wn = { results: await wnP };
@@ -170,7 +170,7 @@ async function seatState(DB: D1Database, me: string, seats: ReturnType<typeof se
   if (!seats.length) return [];
   const [it, tk, mp, rvd] = await DB.batch([
     DB.prepare("SELECT key, kind, win, session, engine, gone_at, state, state_at, seen_at, device_id FROM imp_item WHERE owner = ? AND kind IN ('window','session')").bind(me),
-    DB.prepare("SELECT id, name, pinned_name, archived_at, counts FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(me),
+    DB.prepare("SELECT id, name, pinned_name, archived_at, counts FROM mnode WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(me),
     DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(me),
     REVOKED(DB, me),
   ]);
@@ -438,7 +438,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     await DB.batch([
       ...[...new Set(keys)].map(k => DB.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?, 'pin') ON CONFLICT(owner, item) DO UPDATE SET node = excluded.node, how = 'pin'").bind(me, k, n.id)),
       DB.prepare("UPDATE mnode SET counts = json_set(CASE WHEN json_valid(counts) THEN counts ELSE '{}' END, '$.main', ?), updated_at = ? WHERE owner = ? AND id = ?").bind(w.key, now(), me, n.id),
-      DB.prepare("UPDATE mnode SET counts = json_remove(counts, '$.main') WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\' AND id != ? AND json_valid(counts) AND json_extract(counts, '$.main') = ?").bind(me, n.id, w.key),   // 옮겨 온 창이 주 창이던 다른 업무 노드
+      DB.prepare("UPDATE mnode SET counts = json_remove(counts, '$.main') WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\' AND id != ? AND json_valid(counts) AND json_extract(counts, '$.main') = ?").bind(me, n.id, w.key),   // 옮겨 온 창이 주 창이던 다른 업무 노드
     ]);
     await regroup(env(c), me);   // 창이 떠난 옛 노드를 다시 묶음(보드 옮기기와 같음)
     return c.json({ ok: true, node: n.id, items: [...new Set(keys)] });

@@ -188,3 +188,21 @@ test("접기 대상: task_channels 켠 사람의 부서장 자리 노드(tk_<부
   assert.equal(foldScreen({ ...L, agentsFold: false } as never, node("tk_tech")), false);
   assert.equal(foldScreen({ ...L, agentScreen: () => false } as never, node("tk_tech")), false);
 });
+
+test("채널 = 태스크를 켠 사람의 부서장 자리 노드(tk_<부서>)도 접힌 글 하나 — 태스크 두 겹으로 안 잡힘", async () => {
+  const { db, D1 } = mkDb(), TK = "tk_tech";
+  db.prepare("INSERT INTO mnode(owner,id,name,area,state,why,counts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").run(OWNER, TK, "기술 부서장", "", "working", "", JSON.stringify({ main: "window:lead:1" }), T, T);
+  db.prepare("INSERT INTO imp_item(owner,key,device_id,kind,engine,title,state,win,session,seen_at,handle) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(OWNER, "window:lead:1", "demo", "window", "herdr-own", "기술장", "working", "lead:1", "sess-tk", T, JSON.stringify({ engine: "herdr-own", pane: "lead:1" }));
+  db.prepare("INSERT INTO mnode_item(owner,item,node,how) VALUES(?,?,?,'pin')").run(OWNER, "window:lead:1", TK);
+  db.prepare("INSERT INTO node_setting(owner,data,updated_at) VALUES(?,?,?)").run(OWNER, JSON.stringify({ roles: [{ name: "기술 부서장", win: "demo:lead:1", node: TK }] }), T);
+  const log = (win: string, kind: string, text: string, dt: number) => db.prepare("INSERT INTO board_log(owner,win,kind,text,thread,at) VALUES(?,?,?,?,?,?)").run(OWNER, win, kind, text, null, T + dt);
+  log("lead:1", "reply", "합성 작업자 결과 받음", 1);
+  log("lead:1", "status", "합성 상태 줄", 2);
+  log("기술 부서장", "me", "합성 기술장에게 물음", 3);
+  log("lead:1", "reply", "합성 기술장 답", 4);
+  await savePrefs(D1, OWNER, prefsPatch({ task_channels: true, agents_fold: true })!);
+  const n = await read(D1, "/api/nodechat?w=" + encodeURIComponent("기술 부서장")), texts = n.messages.map((m: any) => m.text);
+  assert.ok(n.messages.some((m: any) => m.fold?.agents === 2), "맨 위 접힌 글 「에이전트끼리 2」");
+  assert.ok(!texts.includes("합성 작업자 결과 받음") && !texts.includes("합성 상태 줄"));
+  assert.ok(texts.includes("합성 기술장에게 물음") && texts.includes("합성 기술장 답"));
+});

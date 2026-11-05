@@ -14,7 +14,7 @@ export function mountTasks(host: Hono<any>, who: Who, paneOf: (id: string) => st
     const me = await who(c); if (!me) return c.json({ ok: false, error: "로그인" }, 401);
     const DB = c.env.DB, since = Date.now() - CLOSED_DAYS * 86400_000;
     const [rows, set] = await Promise.all([
-      DB.prepare("SELECT id, name, pinned_name, task, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\' AND (archived_at IS NULL OR archived_at > ?)").bind(me, since).all<{ id: string; name: string; pinned_name: string | null; task: string | null; counts: string | null; updated_at: number; archived_at: number | null }>(),
+      DB.prepare("SELECT id, name, pinned_name, task, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\' AND (archived_at IS NULL OR archived_at > ?)").bind(me, since).all<{ id: string; name: string; pinned_name: string | null; task: string | null; counts: string | null; updated_at: number; archived_at: number | null }>(),
       DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me).first<{ data: string }>(),
     ]);
     const data = json<{ parent?: Record<string, string>; taskview?: unknown } | null>(set?.data, {}) ?? {};   // 저장값이 null 이어도 500 이 나지 않게
@@ -32,7 +32,7 @@ export function mountTasks(host: Hono<any>, who: Who, paneOf: (id: string) => st
   // 메뉴 줄 판단용(보드를 열 때마다 부름) — 있는지만
   app.get("/api/me/tasks/has", async c => {
     const me = await who(c); if (!me) return c.json({ ok: false, error: "로그인" }, 401);
-    const r = await c.env.DB.prepare("SELECT 1 FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\' AND archived_at IS NULL LIMIT 1").bind(me).first();
+    const r = await c.env.DB.prepare("SELECT 1 FROM mnode WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\' AND archived_at IS NULL LIMIT 1").bind(me).first();
     return c.json({ ok: true, has: !!r }, 200, { "cache-control": "no-store" });
   });
   // 내 보기 저장 — 다른 설정 칸은 그대로 두고 taskview 만. 저장값이 객체가 아니면 새로 시작(그 값으로는 어차피 못 읽음)

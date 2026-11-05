@@ -34,14 +34,14 @@ export async function ownTask(db: D1Database, me: string, raw: unknown) {
   if (repo) {
     if (!/^\d{1,8}$/.test(key)) return null;
     const home = (await readPrefs(db, me)).task_repo;
-    const rows = (await db.prepare("SELECT id, name, json_extract(task, '$.issue') issue FROM mnode WHERE owner = ?1 AND id LIKE 'tk\\_%' ESCAPE '\\' AND json_valid(task) AND (json_extract(task, '$.issue') = ?2 OR json_extract(task, '$.issue') LIKE '%/%#' || ?3) ORDER BY archived_at IS NOT NULL, updated_at DESC").bind(me, "#" + key, key).all<{ id: string; name: string; issue: string }>()).results;
+    const rows = (await db.prepare("SELECT id, name, json_extract(task, '$.issue') issue FROM mnode WHERE owner = ?1 AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\' AND json_valid(task) AND (json_extract(task, '$.issue') = ?2 OR json_extract(task, '$.issue') LIKE '%/%#' || ?3) ORDER BY archived_at IS NOT NULL, updated_at DESC").bind(me, "#" + key, key).all<{ id: string; name: string; issue: string }>()).results;
     const hit = rows.find(r => taskIssueFor(home, String(r.issue)).toLowerCase() === `${repo}#${key}`);
     return hit ? { key: hit.id.slice(3), id: hit.id, name: hit.name } : null;
   }
   const byKey = await db.prepare("SELECT id, name FROM mnode WHERE owner = ? AND id = ?").bind(me, "tk_" + key).first<{ id: string; name: string }>();
   if (byKey) return { key, id: byKey.id, name: byKey.name };
   if (!/^\d{1,8}$/.test(key)) return null;
-  const byIssue = await db.prepare("SELECT id, name FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\' AND json_valid(task) AND (json_extract(task, '$.issue') = ?2 OR json_extract(task, '$.issue') LIKE '%/%#' || ?3) ORDER BY archived_at IS NOT NULL, updated_at DESC LIMIT 1").bind(me, "#" + key, key).first<{ id: string; name: string }>();
+  const byIssue = await db.prepare("SELECT id, name FROM mnode WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\' AND json_valid(task) AND (json_extract(task, '$.issue') = ?2 OR json_extract(task, '$.issue') LIKE '%/%#' || ?3) ORDER BY archived_at IS NOT NULL, updated_at DESC LIMIT 1").bind(me, "#" + key, key).first<{ id: string; name: string }>();
   return byIssue ? { key: byIssue.id.slice(3), id: byIssue.id, name: byIssue.name } : null;
 }
 

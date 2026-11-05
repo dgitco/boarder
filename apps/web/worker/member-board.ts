@@ -315,7 +315,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const parked: R[] = [], closed: R[] = [];
   // 업무 노드 값(mnode.task, 0054) — 따로 읽음: 칸이 아직 없는 D1 이면 빈 표(load 의 한 batch 에 넣으면 보드 전체가 깨짐)
   const TASK_ST = new Set(["working", "blocked", "waiting", "done", "cancelled"]);
-  const tasks = new Map(((await db.prepare("SELECT id, task FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\' AND task IS NOT NULL").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results)
+  const tasks = new Map(((await db.prepare("SELECT id, task FROM mnode WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\' AND task IS NOT NULL").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results)
     .map(r => [String(r.id), json<R>(r.task, {})] as [string, R]).filter(([, t]) => TASK_ST.has(String(t.state))));
   const hasKid = new Set(L.nodes.map(n => L.parents[n.id]).filter(Boolean));   // 보이는 노드의 상위만(닫힘 · 보관된 하위만 있으면 담당 없음 그대로)
   const cardNodes = new Set(L.tidy ? L.cards.filter(c => c.state === "open").map(c => L.nodeOfWin(c.win)?.id).filter(Boolean) : []);
@@ -666,7 +666,7 @@ function agentsFold(n: Node, conv: R[], older: Older, { logs, replied, roots, aw
 }
 // 노드 채팅의 태스크 두 겹: 맞춰 넣은 뒤 표를 읽어 agents 층 보드 줄은 접은 글로 빼고, 표에만 있는 human 줄은 글로 더함
 async function taskLayers(db: D1Database, me: string, L: Loaded, n: Node, my: string, mainName: string) {
-  if (!L.taskChannels || !n.id.startsWith("tk_")) return null;
+  if (!L.taskChannels || !n.id.startsWith("tk_") || (L.agentsFold && L.seatIds.has(n.id))) return null;
   await syncTaskConvo(db, me, n.id, L).catch(e => console.error("태스크 대화 맞추기", e));
   const { rows, older } = await convoOf(db, me, n.id.slice(3)), conv = convoView(rows); if (!conv.length) return null;
   const th = await threadsOf(db, me, L, n), fold = agentsFold(n, conv, older, th, my, mainName), agents = conv.filter(r => r.layer === "agents").length;
