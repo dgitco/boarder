@@ -1,3 +1,4 @@
+import { isAdmin } from "./who";
 import { boardHead, stripHead } from "./board-head";
 import { DurableObject } from "cloudflare:workers";
 import { bumpMember } from "./live";
@@ -14,7 +15,7 @@ export const MODEL = "claude-opus-5-5";
 export const RULES = { wake_min: 30, park_min: 30, close_min: 15, one_goal: true, default_roles: false };
 const LIVE = ["opening", "starting", "busy", "idle", "waiting", "background"];
 /** 봉투 스위치 이름의 사람(주인 메일들 → '' = envelope:owner) — 엔진 DO 는 기기 주인 메일을 들고 있음 */
-export const flagOwner = (env: { ALLOW_EMAILS?: string }, owner: string) => String(env.ALLOW_EMAILS || "").split(",").map(s => s.trim().toLowerCase()).includes(owner.trim().toLowerCase()) ? "" : owner;
+export const flagOwner = (env: { ALLOW_EMAILS?: string }, owner: string) => isAdmin(env, owner) ? "" : owner;
 const hhmm = (at: number) => new Date(at).toISOString().slice(11, 16) + " UTC";
 export const rid = (p: string) => p + [...crypto.getRandomValues(new Uint8Array(12))].map(b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
 export const engineOf = (env: EngEnv, device: string) => env.ENGINE.get(env.ENGINE.idFromName(`dev:${device}`));

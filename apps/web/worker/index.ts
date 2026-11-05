@@ -8,6 +8,7 @@ import * as devSettings from "./device-settings";
 import { onboarding } from "./member-onboarding";
 import { legal } from "./legal";
 import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
+import * as W from "./who";
 import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, type Bot } from "./install";
 import { BUNDLE_KEYS } from "./harness-bundles";
 import { readPrefs, prefsOf, prefsPatch, savePrefs, PREF_DEF } from "./node-prefs";
@@ -167,9 +168,10 @@ async function signedIn(c: Context<{ Bindings: Env }>): Promise<Sess | null> {
 }
 
 type Renew = { th: string; email: string; done?: string | null };   // 미리 갈기(signedIn → 타이밍 미들웨어)
-const REC = new WeakMap<Request, { seg: Record<string, number>; who?: string; dev?: string; cookies: string[]; renew?: Renew; hit?: Record<string, number>; quiet?: boolean }>();
+const REC = new WeakMap<Request, { seg: Record<string, number>; via?: string; who?: string; dev?: string; cookies: string[]; renew?: Renew; hit?: Record<string, number>; quiet?: boolean }>();
 const hit = (req: Request, name: string, yes: boolean) => { const r = REC.get(req); if (r) (r.hit ||= {})[`cache_${name}`] = yes ? 1 : 0; };   // 캐시 맞음 1 · 빗나감 0 — PostHog boarder_request
-function seg(req: Request, name: string, ms: number) { const r = REC.get(req); if (r) r.seg[name] = (r.seg[name] || 0) + Math.max(0, ms); }
+const BRIDGE_SEG = new Set(["bridge", "hop", "relay", "board", "tool"]);
+function seg(req: Request, name: string, ms: number) { const r = REC.get(req); if (r) { r.seg[name] = (r.seg[name] || 0) + Math.max(0, ms); if (BRIDGE_SEG.has(name)) r.via = "bridge"; } }
 function who(req: Request, id: string) { const r = REC.get(req); if (r) r.who = id; }
 function quiet(req: Request) { const r = REC.get(req); if (r) r.quiet = true; }
 const QUIET_MCP = new Set(["boarder_search", "boarder_describe", "boarder_execute"]);
@@ -212,7 +214,7 @@ app.use("*", async (c, next) => {
   capture(c.env, c.executionCtx, "boarder_request", rec.who || "anon", {
     path: np, method: c.req.method, status: c.res.status, total_ms: total, sample, ...(rid ? { rid } : {}),
     ...Object.fromEntries(Object.entries(rec.seg).map(([k, v]) => [`${k}_ms`, v])), ...meterProps(meter), ...(rec as { hit?: Record<string, number> }).hit,
-    colo: (c.req.raw as any).cf?.colo, entry: (c.req.header("cf-ray") || "").split("-")[1], country: (c.req.raw as any).cf?.country, $current_url: undefined,
+    via: (rec as { via?: string }).via || "worker", colo: (c.req.raw as any).cf?.colo, entry: (c.req.header("cf-ray") || "").split("-")[1], country: (c.req.raw as any).cf?.country, $current_url: undefined,
   });
 });
 app.use("*", async (c, next) => {
@@ -656,7 +658,7 @@ async function cliDeviceOrOwnerWatch(c: Context<{ Bindings: Env }>) {
   const w = await deviceOf(c, { watch: true }); return w && w.scope === "watch" && isOwner(c.env, w.owner) ? w : null;
 }
 // 설정 · 커넥터 · 비밀이 쓰는 줄 열쇠: 주인 = "" , 회원 = 메일(커넥터 who() 와 같음). 기기 목록은 주인 메일 넷 모두
-const cliKey = (env: Env, email: string) => isOwner(env, email) ? "" : email.toLowerCase();
+const cliKey = (env: Env, email: string) => W.dataKey(env, email);
 type CliManifest = { version: string; sha256: string };
 const cliManifest = async (env: Env) => (await (await env.RESULTS.get("cli/manifest.json"))?.json<CliManifest>().catch(() => null)) ?? null;
 const installScript = async (c: Context<{ Bindings: Env }>, src: string, type: string) => {
@@ -824,7 +826,7 @@ app.post("/api/device/voice", async c => {
   try { const [st, o] = await memberVoice.deviceOp(c.env as never, me, b, { primary }, mainName); return c.json(o, st as 200); }
   catch (e) { console.error("통화 기기 op", e); return c.json({ ok: false, text: "일시적인 오류가 발생했어요" }, 503); }
 });
-const todoOwner = (env: Env, email: string) => isOwner(env, email) ? env.ALLOW_EMAILS.split(",")[0].trim().toLowerCase() : email.trim().toLowerCase();
+const todoOwner = (env: Env, email: string) => W.canonKey(env, email);
 const todoBump = (c: Context<{ Bindings: Env }>, who: string) => { quiet(c.req.raw); c.executionCtx.waitUntil(live.bump(c.env, who, { todo: "~" + Date.now() })); };
 async function todoReply(c: Context<{ Bindings: Env }>, email: string, b: unknown, device: boolean) {
   const me = todoOwner(c.env, email), write = !!b && typeof b === "object" && (b as { op?: unknown }).op !== "list";
@@ -1133,7 +1135,7 @@ mountSecrets(app as never, {
 });
 const memberBot = (env: Env, me: string) => env.DB.prepare("SELECT seed, hue, name, photo, icon, fav FROM member_bot WHERE owner = ?").bind(me).first<Bot>();
 const BLOB_ID = /^[0-9a-f]{32}$/;
-const botKey = (env: Env, email: string) => isOwner(env, email) ? "@owner" : email.toLowerCase();
+const botKey = (env: Env, email: string) => W.botKey(env, email);
 app.get("/api/me/bot", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   return c.json({ bot: await memberBot(c.env, botKey(c.env, s.user.email)) }, 200, { "cache-control": "no-store" });
@@ -2492,7 +2494,7 @@ app.all("*", async c => {
     }).catch(e => capture(c.env, c.executionCtx, "f7_shadow_diff", s.user.email, { route: rd.kind, group: rd.group, at: "error " + String((e as Error)?.name || "") })));   // 오류 글은 안 실음(JSON 오류는 몸통 조각을 담음)
     if (r.status === 200 && inm && r.headers.etag === inm.replace(/^W\//, "")) { bridgeSeg(c.req.raw, Date.now() - t0, r.headers); return new Response(null, { status: 304, headers: { etag: inm, "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
   }
-  if (!fr) bridgeSeg(c.req.raw, Date.now() - t0, r.headers);
+  if (!fr && !own) bridgeSeg(c.req.raw, Date.now() - t0, r.headers);
   if (!fr && !own && c.req.method === "GET") filesShadow(c, url.pathname + url.search, headers, r, s.user.email);
   const out = new Headers();
   for (const h of PASS_RES) if (r.headers[h]) out.set(h, r.headers[h]);
