@@ -460,9 +460,8 @@ app.get("/api/live", async c => {
     return live.liveOf(c.env, me).fetch(c.req.raw);
   }
   const o = await live.table(c.env, me, async () => {
-    const m = me.toLowerCase(), [d, l] = await Promise.all([memberBoard.data(c.env.DB, m, await memberBot(c.env, m), await memberBoard.loadShared(c.env.DB, m, c.executionCtx)), c.env.DB.prepare("SELECT max(id) n FROM board_log WHERE owner = ?").bind(m).first<{ n: number | null }>()]);
-    const tag = await memberBoard.etag(JSON.stringify(d));
-    return { data: tag, chat: tag + (l?.n ?? 0) };
+    const dt = await live.liveOf(c.env, me).tags().catch(() => null);
+    return { ...(dt?.t.data ? { data: dt.t.data } : {}), chat: dt?.t.chat || "~0" } as { data: string; chat: string };
   });
   if (hosted.liveTags) Object.assign(o.t, await hosted.liveTags(c.env, me).catch(() => ({})));
   return c.json(o, 200, { "cache-control": "no-store" });
