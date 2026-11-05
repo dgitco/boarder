@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "a28ae9ddefdc";
+window.HB_VER = "7d9556f263e3";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -3389,7 +3389,7 @@ function compute() {
   }
   agentFaces();
   STANDP = /* @__PURE__ */ new Set();
-  if (!window.HB_CH) for (const r of Array.isArray(D.roster) ? D.roster : []) {
+  for (const r of Array.isArray(D.roster) ? D.roster : []) {
     if (r?.role !== "agent" || !r.key || panes.some((p) => p.agent === r.key)) continue;
     const pk = (D.parked || []).find((x) => r.win && x.name === r.win);
     if (pk) STANDP.add(pk.id);

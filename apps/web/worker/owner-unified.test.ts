@@ -603,3 +603,15 @@ test("메일별 미리 보기: 하네스 기기 쓰기(로그인 메일 없음)�
   const r1 = await up(); assert.equal(r1.status, 200, r1.text);
   assert.ok(t.bumps.includes(U), "켠 주인 칸에 알림: " + t.bumps.join(","));
 });
+
+test("켬: 장부 바뀜 알림이 켠 주인 칸(live:<canon>)에는 chat 과 data 를 같이(그 화면 /api/data 가 장부 사본으로 계산) — 주인 칸은 chat 만 · 끄면 주인 칸만", async () => {
+  const t = await setup(), U = `live:${OWNER}@apac`;
+  t.reset(); await ledger.f7On(t.D1, "__reset__");
+  await live.bumpLedger(t.env);
+  assert.deepEqual(t.marks.map(m => [m[0], Object.keys(m[1]).sort()]), [[live.OWNER_SNAP, ["chat"]]], "끄면 주인 칸 chat 하나(예전)");
+  await t.flag("owner_unified", true); t.reset();
+  await live.bumpLedger(t.env);
+  const by = Object.fromEntries(t.marks.map(m => [m[0], Object.keys(m[1]).sort()]));
+  assert.deepEqual(by[live.OWNER_SNAP], ["chat"], "주인 칸(스냅숏 길)은 그대로 chat 만");
+  assert.deepEqual(by[U], ["chat", "data"], "켠 주인 칸에는 data 도 — 판 줄 · 결정이 2분 확인까지 안 멈춤");
+});

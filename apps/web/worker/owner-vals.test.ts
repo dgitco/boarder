@@ -360,3 +360,38 @@ test("섞을 때 정리: 장부 결정 hw<id> 와 회원 카드 결정 w<rowid> 
     await s.flag("shadow_unified", false);
   } finally { s.done(); }
 });
+
+test("스냅숏에만 있던 칸: 상시 에이전트 표 · 판 agent/aname · 할 일 분류 · 옛 링크 표가 나오고, 하네스 총괄이 있으면 회원 메인 봇 판(%1)은 빠짐", async () => {
+  const s = await setup();
+  try {
+    await s.flag("shadow_unified", true);
+    const before: any = await s.owner();
+    assert.ok(before.panes.some((p: any) => p.pane === "%1"), "고치기 전 꼴: 회원 메인 봇 판이 총괄과 같이 있음");
+    const H: any = HSTATE();
+    H.roster = [
+      { key: "primary", name: "총괄", role: "primary", area: "primary", parent: "", pane: "%15", win: "", state: "open", last: { kind: "결정", msg: "배포 고르기", at: S0 - 150 } },
+      { key: "dg_x", name: "지어낸 에이전트", role: "agent", area: "dgit", parent: "primary", pane: "%9999", win: "지어낸 일", state: "open", last: null },
+      { key: "nx_y", name: "쉬는 에이전트", role: "agent", area: "company", parent: "primary", pane: null, win: "없는 창", state: "idle", last: null },
+      { key: "no_name" },
+    ];
+    H.relinks = { OldArtifactId01: "NewArtifactId01", "bad id!": "NewArtifactId02" };
+    H.dclass = { "dgit|Q-1": { size: "작업", work: "지어낸 일 이름", ai: true, why: "지어낸 배경" } };
+    H.panes["%41"].up = "%40"; H.panes["%40"].up = "not-a-pane";
+    assert.equal((await s.up(H)).status, 200);
+    const D: any = await s.owner();
+    assert.deepEqual(D.roster.map((r: any) => [r.key, r.state]), [["primary", "open"], ["dg_x", "open"], ["nx_y", "idle"]], "이름 없는 줄은 버림");
+    assert.equal(D.roster[0].last.ago, 2, "마지막 줄은 at → ago(분)");
+    const p40 = D.panes.find((p: any) => p.pane === "%40");
+    assert.deepEqual([p40.agent, p40.aname], ["dg_x", "지어낸 에이전트"], "판 번호가 없으면 창 이름(번호 뗌)으로 — snapshot org_layers 와 같게");
+    assert.ok(!D.panes.some((p: any) => p.agent === "nx_y"), "쉬는 에이전트는 판에 안 붙임");
+    const q1 = D.decisions.find((d: any) => d.id === "Q-1");
+    assert.deepEqual([q1.size, q1.work, q1.ai, q1.why], ["작업", "지어낸 일 이름", true, "지어낸 배경"], "할 일 분류 — 보드가 「작업」을 점선 노드로");
+    assert.equal(D.decisions.find((d: any) => d.id === "hw8").size, undefined, "장부 결정 줄에는 분류 안 붙임");
+    assert.deepEqual(D.todos.map((t: any) => [t.id, t.why, t.ai]), [["Q-1", "지어낸 배경", true]], "할 일 줄에도 배경 · AI 가능");
+    assert.equal(D.panes.find((p: any) => p.pane === "%41").up, "%40", "맡긴 쪽 판(org_layers ②) 그대로");
+    assert.equal(D.panes.find((p: any) => p.pane === "%40").up, undefined, "판 번호 꼴이 아니면 버림");
+    assert.deepEqual(D.relinks, { OldArtifactId01: "NewArtifactId01" }, "꼴이 틀린 id 는 버림");
+    assert.ok(!D.panes.some((p: any) => p.pane === "%1"), "하네스 총괄이 있으면 회원 메인 봇 판은 뺌(보드에 총괄 둘)");
+    assert.equal(D.panes.filter((p: any) => p.kind === "primary").length, 1);
+  } finally { s.done(); }
+});

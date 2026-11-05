@@ -1746,6 +1746,7 @@ app.post("/api/device/owner-state", async c => {
   if (!(await ledger.f7On(c.env.DB, "shadow_unified"))) return c.body(null, 204);
   let body: unknown = null; try { body = JSON.parse(text); } catch { /* 아래 400 */ }
   const r = await ownerVals.ingest(c.env.DB, d.owner, body);
+  if (r) c.executionCtx.waitUntil(live.bumpLedger(c.env));
   return r ? c.json(r, 200, { "cache-control": "no-store" }) : c.json({ error: "꼴이 틀렸어요(v 1)" }, 400);
 });
 

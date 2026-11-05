@@ -9,6 +9,7 @@ const AREAS: [string, string][] = [["primary", "프라이머리"], ["company", "
 const AREA_KO = new Set([...AREAS.map(a => a[0]), "shopco"]);
 const DC_HOLD = "확인 필요(내 차례 그대로)";   // done_check.HOLD 머리(snapshot.py)
 const PANE = /^%\d{1,7}$/;
+const MAIN_PANE = "%1";   // member-board PRIMARY(회원 메인 봇 판)
 const DIGITS_TS = /^[0-9].*\.[0-9]/;   // SQLite GLOB '[0-9]*.[0-9]*'
 const json = <T>(s: unknown, d: T): T => { try { return s ? JSON.parse(String(s)) as T : d; } catch { return d; } };
 const str = (v: unknown, n: number) => Array.from(String(v ?? "")).slice(0, n).join("");
@@ -17,7 +18,7 @@ const bigint = (v: unknown) => Number.isFinite(Number(v)) ? Math.trunc(Number(v)
 const areaKey = (a: string) => a === "shop" || a === "shopco" ? "shop" : a;
 const stripNo = (s: string) => s.replace(/^\d+\s+/, "");
 
-const MAX = { panes: 400, topics: 400, topicEach: 20, parked: 200, archived: 300, snoozed: 500, agents: 50, chKeys: 100, promises: 200, attn: 150_000, all: 450_000 };
+const MAX = { panes: 400, topics: 400, topicEach: 20, parked: 200, archived: 300, snoozed: 500, agents: 50, chKeys: 100, promises: 200, roster: 80, relinks: 1000, dclass: 400, attn: 150_000, all: 450_000 };
 const PANE_KEYS = ["area", "kind", "acct", "dur", "stuck", "branch"] as const;
 function topicList(v: unknown) {
   return (Array.isArray(v) ? v : []).slice(0, MAX.topicEach).filter(isObj).map(x => ({ ch: str(x.ch, 20), ts: str(x.ts, 20), last: bigint(x.last) })).filter(x => /^\d{10}\.\d{6}$/.test(x.ts));
@@ -28,7 +29,7 @@ export function shape(b: unknown): { state: R; promises: R[] | null } | null {
   const panes: R = {}, topics: R = {};
   for (const [p, x] of Object.entries(isObj(b.panes) ? b.panes : {}).slice(0, MAX.panes)) {
     if (!PANE.test(p) || !isObj(x)) continue;
-    panes[p] = { ...Object.fromEntries(PANE_KEYS.map(k => [k, str(x[k], k === "branch" ? 120 : 40)])), wait: Math.max(0, Math.min(999, bigint(x.wait))) };
+    panes[p] = { ...Object.fromEntries(PANE_KEYS.map(k => [k, str(x[k], k === "branch" ? 120 : 40)])), wait: Math.max(0, Math.min(999, bigint(x.wait))), ...(PANE.test(String(x.up || "")) ? { up: String(x.up) } : {}) };
   }
   for (const [p, x] of Object.entries(isObj(b.topics) ? b.topics : {}).slice(0, MAX.topics)) if (PANE.test(p)) topics[p] = topicList(x);
   const L = isObj(b.leads) ? b.leads : {};
@@ -43,7 +44,14 @@ export function shape(b: unknown): { state: R; promises: R[] | null } | null {
   const ch_keys = Object.fromEntries(Object.entries(isObj(b.ch_keys) ? b.ch_keys : {}).filter(([, v]) => typeof v === "string").slice(0, MAX.chKeys).map(([k, v]) => [str(k, 30), str(v, 30)]));
   const attn = b.attn != null && JSON.stringify(b.attn).length <= MAX.attn ? b.attn : null;
   const promises = Array.isArray(b.promises) ? b.promises.filter(isObj).slice(0, MAX.promises).map(x => ({ n: bigint(x.n), due: str(x.due, 40), to: str(x.to, 60), what: str(x.what, 160), watch: str(x.watch, 100), pane: PANE.test(String(x.pane || "")) ? String(x.pane) : "" })).filter(x => x.n > 0 && x.what) : null;
-  const state = { v: 1, at: bigint(b.at), panes, topics, leads, agents, parked, archived, snoozed, ch_keys, attn };
+  const last = (v: unknown) => isObj(v) ? { kind: str(v.kind, 10), msg: str(v.msg, 120), at: bigint(v.at) } : null;
+  const roster = Array.isArray(b.roster) ? b.roster.filter(isObj).slice(0, MAX.roster).map(x => ({ key: str(x.key, 32), name: str(x.name, 60), role: str(x.role, 12), area: str(x.area, 20), parent: str(x.parent, 20),
+    pane: PANE.test(String(x.pane || "")) ? String(x.pane) : null, win: str(x.win, 80), state: ["open", "parked", "idle"].includes(String(x.state)) ? String(x.state) : "idle", last: last(x.last) })).filter(x => x.key && x.name) : null;
+  const ART_ID = /^[\w-]{10,64}$/;
+  const relinks = isObj(b.relinks) ? Object.fromEntries(Object.entries(b.relinks).filter(([k, v]) => ART_ID.test(k) && ART_ID.test(String(v))).slice(0, MAX.relinks)) : null;
+  const dclass = isObj(b.dclass) ? Object.fromEntries(Object.entries(b.dclass).filter(([k, v]) => k.length <= 60 && isObj(v)).slice(0, MAX.dclass)
+    .map(([k, v]) => [k, { size: v.size === "확인" ? "확인" : "작업", work: str(v.work, 80), ai: !!v.ai, why: str(v.why, 60) }])) : null;
+  const state = { v: 1, at: bigint(b.at), panes, topics, leads, agents, parked, archived, snoozed, ch_keys, attn, ...(roster ? { roster } : {}), ...(relinks ? { relinks } : {}), ...(dclass ? { dclass } : {}) };
   if (JSON.stringify(state).length > MAX.all) return null;
   return { state, promises };
 }
@@ -136,6 +144,7 @@ export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.no
     const h = isObj(hs.panes) ? hs.panes[p.pane] : null;
     if (h) for (const k of ["acct", "dur", "stuck", "branch"]) p[k] = String(h[k] || "");
     if (h?.area) p.area = String(h.area);
+    if (h?.up) p.up = String(h.up);   // 맡긴 쪽 판(snapshot org_layers ②) — 보드가 그 밑에 들여 그림
     p.wait = Number(h?.wait || 0);
     const l = V.last.get(p.pane), rec = V.recent.get(p.pane) || [];
     const hd = l ? head(String(l.msg || "")) : [];
@@ -189,7 +198,8 @@ export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.no
   }
   for (const r of V.questions) {
     const ch = [r.recommend, r.choices].filter(Boolean).map(x => clean(x, 90));
-    decisions.push({ id: String(r.qid), src: "queue", pane: "", win: "", area: AREA_KO.has(String(r.area)) ? areaKey(String(r.area)) : null, kind: r.kind || "할 일", title: clean(r.short || r.question, 80),
+    const dc = isObj(hs.dclass) && (r.kind || "할 일") !== "결정" ? hs.dclass[`${r.area}|${r.qid}`] : null;   // 할 일 분류(snapshot classify): 크기 · 일 이름 · AI 가능 · 배경
+    decisions.push({ ...(isObj(dc) ? { size: dc.size, work: dc.work, ai: !!dc.ai, why: dc.why } : {}), id: String(r.qid), src: "queue", pane: "", win: "", area: AREA_KO.has(String(r.area)) ? areaKey(String(r.area)) : null, kind: r.kind || "할 일", title: clean(r.short || r.question, 80),
       srcpane: (/%\d+/.exec(String(r.source || "")) || [""])[0], body: clean(r.question, 600), choices: ch, due: r.due ?? null, source: String(r.source || ""), origin: originOf(`${r.question} ${r.source || ""}`), ago: ago(r.asked_at || r.updated_at || s), wl: true });
   }
   const check = new Map(V.checks.map(r => [String(r.item), String(r.why)]));
@@ -213,10 +223,25 @@ export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.no
     const ba = areaKey(String(r.area)), dd = Date.parse(due), late = Math.round((today - dd) / 86_400_000);
     if (!(late <= 7 && late >= -3) || flagged.has(`${ba}|${r.qid}`) || later.has(String(r.qid))) continue;
     const dq = decisions.find(d => d.src === "queue" && d.id === String(r.qid) && d.area === ba) || {};
-    todos.push({ ts: r.ts, area: ba, qarea: r.area, id: String(r.qid), due, thread: r.thread, why: "", ai: false, origin: dq.origin ?? null, body: dq.body || "", late, title: clean(r.short || r.question, 80), wl: true });
+    todos.push({ ts: r.ts, area: ba, qarea: r.area, id: String(r.qid), due, thread: r.thread, why: dq.why || "", ai: !!dq.ai, origin: dq.origin ?? null, body: dq.body || "", late, title: clean(r.short || r.question, 80), wl: true });
   }
   todos.sort((a, b) => a.due < b.due ? -1 : a.due > b.due ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   out.todos = uniq([...todos, ...(out.todos as R[])], x => String(x.ts));
+  if (Array.isArray(hs.roster)) {
+    out.roster = (hs.roster as R[]).map(r => ({ ...r, last: isObj(r.last) ? { kind: r.last.kind, msg: r.last.msg, ago: ago(r.last.at) } : null }));
+    const ps = out.panes as R[], byPane = new Map(ps.map(p => [String(p.pane), p]));
+    for (const r of hs.roster as R[]) {
+      if (r.role !== "agent" || r.state !== "open") continue;
+      const p = byPane.get(String(r.pane)) || ps.find(x => r.win && stripNo(String(x.win || "")) === r.win);
+      if (p) Object.assign(p, { agent: r.key, aname: r.name });
+    }
+  }
+  if (isObj(hs.relinks)) out.relinks = hs.relinks;
+  const prim = String(leads.primary || "");
+  if (prim && live.has(prim)) {
+    out.panes = (out.panes as R[]).filter(p => !(p.pane === MAIN_PANE && p.kind === "primary" && !p.harness));
+    for (const k of ["decisions", "to_check", "feed", "cards", "cardlist"]) for (const x of (Array.isArray(out[k]) ? out[k] : []) as R[]) if (x?.pane === MAIN_PANE) x.pane = prim;
+  }
   out.harness_state_at = V.hsAt ? Math.floor(V.hsAt / 1000) : 0;
   return out;
 }

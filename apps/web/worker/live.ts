@@ -25,7 +25,12 @@ export const mirrorOwnerSnap = async (env: LEnv, key: string, etag: string) => {
   const k = SNAP_MIRROR[key]; if (!k || !(await unifiedAny(env))) return 0;
   return liveOf(env, canon(env), true).bump({ [k]: etag }).catch(() => 0);
 };
-export const bumpLedger = (env: LEnv) => bump(env, env.ALLOW_EMAILS.split(",")[0].trim(), { chat: "~" + Date.now() });
+export const bumpLedger = async (env: LEnv) => {
+  const e = canon(env), v = "~" + Date.now(), own = liveOf(env, e).bump({ chat: v }).catch(() => 0);
+  if (!(await unifiedAny(env))) return own;
+  const [n] = await Promise.all([own, liveOf(env, e, true).bump({ chat: v, data: v }, undefined, MEMBER_BUMP_GAP).catch(() => 0)]);
+  return n;
+};
 const MEMBER_BUMP_GAP = 5000;
 export const bumpMember = (env: LEnv, email: string) => { const v = "~" + Date.now(); return bump(env, email, { data: v, chat: v }, isOwner(env, email) ? undefined : MEMBER_BUMP_GAP, MEMBER_BUMP_GAP); };
 

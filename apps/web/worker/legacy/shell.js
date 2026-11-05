@@ -236,7 +236,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       + it('agents', IA.bot, '에이전트', '', agOn) + fl('node', aTop === 'node' ? IA.nodeOn : IA.node, '노드') + fl('canvas', I.canvas, '캔버스')
       + (window.BXStatus?.side?.(it, aTop) || '') + pins + '</div>';
     const org = (() => {
-      if (window.HB_CH || DG !== null || typeof windowsOf !== 'function' || typeof subsOf !== 'function' || !(typeof D === 'object' && Array.isArray(D?.roster))) return null;
+      if (DG !== null || typeof windowsOf !== 'function' || typeof subsOf !== 'function' || !(typeof D === 'object' && Array.isArray(D?.roster))) return null;
       const seen = new Set();
       const rowOf = p => { const n = nameOf(p), ak = p.agent && CH.includes(p.agent) ? p.agent : '';   // 등록한 에이전트는 그 채널, 워커는 그 노드 화면
         return it(ak ? 'chan:' + ak : 'node:' + p.pane, p.agent ? blob(n, 20) : I.hash, esc(n), rp.has(p.pane) ? '<i class="ud" aria-label="내 차례"></i>' : '', ak ? chan === ak : pg === p.pane); };
