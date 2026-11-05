@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "40801ead3c75";
+window.HB_VER = "c27d5b688b51";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1318,13 +1318,21 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
   #ans > .ah .who:not(:has(.ibhr)) .hav{display:inline-flex;flex:none;width:28px;height:28px}
   #ans > .ah .who:not(:has(.ibhr)) .hav{align-items:center;justify-content:center;color:var(--soft)}#ans > .ah .who:not(:has(.ibhr)) .hav .bl,#ans > .ah .who:not(:has(.ibhr)) .hav .bl svg,#ans > .ah .who:not(:has(.ibhr)) .hav .bl img{width:28px;height:28px;border-radius:50%}
   #ans > .ah .who:not(:has(.ibhr)) .n{min-width:0}
-  #ans > .ah .hcall,#ans > .ah .hmore > summary,.cth > .chd [data-cclose]{width:44px;height:44px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line);box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi);color:var(--ink)}
+  #ans > .ah .hmore > summary,.cth > .chd [data-cclose]{width:44px;height:44px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line);box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi);color:var(--ink)}
   .cth > .chd [data-cclose]{margin-left:0!important}
   html.bx.bx-chat body .bx-chatmenu.bx-chatmenu{width:44px;height:44px;box-sizing:border-box;border-radius:50%;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line);box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi)}   
-  #ans > .ah .hcall svg,#ans > .ah .hmore > summary svg{width:18px;height:18px}
+  #ans > .ah .hmore > summary svg,html.bx.bx-chat body .bx-chatmenu.bx-chatmenu svg{width:20px;height:20px}   
+  
+  html.bx.bx-chat body .bx-chatmenu.bx-chatmenu{margin-left:6px}   
+  #ans > .ah{position:relative}#ans > .ah .who:not(:has(.ibhr)){position:absolute;left:50%;transform:translateX(-50%);margin:0}#ans > .ah .hmore{margin-left:auto}   
+  #ans > .ah:not(:has(.ibhr))::before{content:"";flex:none;width:0;height:44px}   
   #ans > .ah{gap:10px}
   .cth > .chd .t{display:inline-flex;align-items:center;height:44px;box-sizing:border-box;padding:0 18px;border-radius:22px;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line);box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi)}
   .cth > .chd{height:60px;gap:10px}
+  
+  .cth > .chd{position:relative;padding:0 16px}html.bx #ans .cth > .chd [data-cclose].xbtn{margin-left:0!important}   
+  .cth > .chd .t{position:absolute;left:50%;transform:translateX(-50%)}.cth > .chd .d,.cth > .chd .huddle,.cth > .chd [data-vcall]{display:none}
+  .cth > .chd .thsave{margin-left:auto;width:44px;height:44px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line)}
   :is(html,html.bx) body #ans .mchat2 .ccomp:not(.flow) .box.box{background:var(--gl-bg)!important;-webkit-backdrop-filter:blur(24px) saturate(180%)!important;backdrop-filter:blur(24px) saturate(180%)!important;border:1px solid var(--gl-line)!important;box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi)!important;border-radius:28px}
 }
 
@@ -1444,6 +1452,7 @@ textarea.tkon::selection{background:color-mix(in srgb,var(--accent) 26%,transpar
 .msg .bd a.mention:hover,a.mention:hover{text-decoration:none;background:color-mix(in srgb,var(--accent) 16%,var(--accent-soft))}
 .ah .hmore{position:relative;flex:none}.ah .hmore > summary{list-style:none;cursor:pointer;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--soft)}.ah .hmore > summary:hover,.ah .hmore[open] > summary{color:var(--ink);background:var(--sunk)}.ah .hmore > summary::-webkit-details-marker{display:none}   
 .hren{display:flex;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line)}.hren input{flex:1;min-width:0;height:34px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px}.hren button{height:34px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:none;color:var(--ink);font:inherit;font-size:13px;cursor:pointer}.hren button[type=submit]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.hmenu .hmcall svg{width:16px;height:16px;flex:none}.ah .hmenu:has(> .hmcall) > button:not(.hmcall){padding-left:34px}   
 .ah .hcall{flex:none;width:30px;height:30px;border:0;background:none;border-radius:8px;display:grid;place-items:center;color:var(--soft);cursor:pointer}.ah .hcall:hover{color:var(--ink);background:var(--sunk)}
 .ah .hmenu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:150px;padding:4px;border-radius:12px;background:var(--surface);box-shadow:0 0 0 1px var(--line),0 8px 24px rgba(0,0,0,.18)}
 .ah .hmenu button{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 10px;border:0;border-radius:8px;background:none;color:var(--ink);font:inherit;font-size:13.5px;cursor:pointer;text-align:left}
@@ -4326,7 +4335,7 @@ function renderNow() {
   const hav = tab === "chat" && !isIbCh(cur.chan) && !isXCh(cur.chan) && !isGptCh(cur.chan) && !isSessCh(cur.chan) ? `<span class="hav" aria-hidden="true">${isNodeCh(cur.chan) ? nodeIc(p, 28) : blobP(p, 28, ttl)}</span>` : "";
   const head = `${cur.back ? `<button class="aback${cur.fromPage ? " npb" : ""}" data-alist aria-label="${cur.fromPage ? "노드로" : TURN + " 목록으로"}">${cur.fromPage ? "‹ 노드" : "‹ 목록"}</button>` : ""}${tabs}<div class="who">${hav}<div class="n">${esc(ttl)}${isIbCh(cur.chan) || isXCh(cur.chan) || isGptCh(cur.chan) ? "" : waitChip(p)}</div>${tab === "chat" && isIbCh(cur.chan) ? window.HBInbox?.feedHead?.(cur.chan) || "" : ""}</div>`;
   ans.innerHTML = `<div class="ah">${head}
-      ${LIVE && tab === "chat" && !p.parked && !isIbCh(cur.chan) ? `${vcallBtn(p.pane, nameOf(p)).replace('class="vcall"', 'class="vcall hcall"')}${hmenuItems(p) ? `<details class="hmore"><summary aria-label="더 보기" title="더 보기"><svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.75" cy="10" r="1.4" fill="currentColor"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/><circle cx="15.25" cy="10" r="1.4" fill="currentColor"/></svg></summary><div class="hmenu" role="menu">${hmenuItems(p)}</div></details>` : ""}` : ""}<button class="xbtn" id="x" aria-label="닫기">${ICON.x}</button></div>
+      ${LIVE && tab === "chat" && !p.parked && !isIbCh(cur.chan) ? `<details class="hmore"><summary aria-label="더 보기" title="더 보기"><svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.75" cy="10" r="1.4" fill="currentColor"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/><circle cx="15.25" cy="10" r="1.4" fill="currentColor"/></svg></summary><div class="hmenu" role="menu"><button type="button" role="menuitem" class="hmcall" data-vcall="${p.pane}" aria-label="${esc(jo(nameOf(p), "와/과"))} 전화">${ICON.phone}<span>전화</span></button>${hmenuItems(p)}</div></details>` : ""}<button class="xbtn" id="x" aria-label="닫기">${ICON.x}</button></div>
     ${tab === "chat" && isNodeCh(cur.chan) ? nodeBox(p) + `<div class="nthr" data-nthr hidden></div>` + (setTimeout(nthrFill, 0), "") + todoBox(cur.chan.slice(2)) : ""}
     ${body}`;
   tfDir = "";
