@@ -71,6 +71,7 @@ import { mountSlackConnector } from "./slack-connector";
 import { mountSecrets, onCardAnswered as secretCardAnswered } from "./secrets";
 import * as ledger from "./ledger";
 import * as ownerWrite from "./owner-write";
+import * as ownerChat from "./owner-chat";
 import * as ledgerWrite from "./ledger-write";
 import SCHEMA from "./ledger-schema";
 import * as files from "./files";
@@ -2596,15 +2597,30 @@ app.all("*", async c => {
     if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));
   }
   // 파일 붙은 글: 회원과 같이 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 다리로(창이 링크로 받아 감)
-  let sent: Uint8Array | undefined;
-  if (c.req.method === "POST" && url.pathname === "/api/chat" && (c.req.header("content-type") || "").includes("json")) {
+  let sent: Uint8Array | undefined, ours: string[] = [];   // ours = 아래에서 Worker 가 붙인 첨부 줄(비밀 판정에서 뺌)
+  if (c.req.method === "POST" && url.pathname === "/api/chat") {
     sent = new Uint8Array(await c.req.arrayBuffer()); let b: Record<string, unknown> | null = null;
     try { b = JSON.parse(new TextDecoder().decode(sent)); } catch {}
     if (b && typeof b === "object" && Array.isArray(b.files) && b.files.length && !b.delete && !b.react && b.edit === undefined) {
       const f = await memberFiles.fileLines(c.env, s.user.email.toLowerCase(), c.env.PUBLIC_URL || url.origin, b.files as unknown[]);
       if (!f.lines.length) return c.json({ ok: false, error: "파일을 찾지 못했어요" }, 400);
-      b.text = [String(b.text || "").trim(), ...f.lines].filter(Boolean).join("\n"); delete b.files;
+      b.text = [String(b.text || "").trim(), ...f.lines].filter(Boolean).join("\n"); delete b.files; ours = f.lines;
       sent = new TextEncoder().encode(JSON.stringify(b));
+    }
+    if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
+    if (b && typeof b === "object" && !Array.isArray(b) && "_pre" in b) { delete b._pre; sent = new TextEncoder().encode(JSON.stringify(b)); }
+    if (b && typeof b === "object" && !Array.isArray(b) && chOf(c) === "owner" && c.req.header("x-hb") === "1" && await ledger.f7On(c.env.DB, ownerChat.FLAG)) {
+      const cfg = await ownerRead.cfgOf(() => snap(c.env).get("cfg")).catch(() => null);
+      const p = cfg ? ownerChat.plain(b, Object.keys(cfg.channels || {}), ours) : null;
+      let w: ownerChat.Wrote | null = null;
+      if (p) {
+        try { w = await ownerChat.write(c.env.DB, p); }
+        catch (e) { if (!(e instanceof ownerChat.Fallback)) return queue.retrySafe(c); }   // rid 와 한 batch — 다시 보내도 한 번
+      }
+      if (p && w) {
+        c.executionCtx.waitUntil(live.bumpLedger(c.env));
+        return c.json({ ok: true, rid: p.rid, state: "ok", posted: w.mid, root: w.root, channel: p.chan, ...(w.again ? { already: true } : {}) }, 200, { "cache-control": "no-store", "x-f7": "chat-d1" });
+      }
     }
   }
   const sk = c.req.method === "GET" && !url.search && chOf(c) === "owner" ? ({ "/api/data": "data", "/api/topics": "topics", "/api/chats": "chats" } as Record<string, string>)[url.pathname] : undefined;
