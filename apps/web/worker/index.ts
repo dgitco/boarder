@@ -519,7 +519,7 @@ const liveGet = async (c: Context<{ Bindings: Env }>) => {
   }
   const o = await live.table(c.env, me, async () => {
     const dt = await live.liveOf(c.env, me, um).tags().catch(() => null);
-    return { ...(dt?.t || {}), chat: dt?.t.chat || "~0" } as { data: string; chat: string };
+    return (um ? { ...(dt?.t || {}), chat: dt?.t.chat || "~0" } : { ...(dt?.t.data ? { data: dt.t.data } : {}), chat: dt?.t.chat || "~0" }) as { data: string; chat: string };
   }, um);
   if (hosted.liveTags) Object.assign(o.t, await hosted.liveTags(c.env, me).catch(() => ({})));
   return c.json(o, 200, { "cache-control": "no-store" });

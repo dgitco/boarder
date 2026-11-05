@@ -567,3 +567,11 @@ test("켬: 릴레이가 주제 · 지난 판 · cfg 스냅숏을 바꿔 올리�
   const lv = await t.req("GET", "/api/live", undefined, h);
   assert.equal(lv.j?.t?.todo, "t-" + U, "폴링 표에 DO 칸 전부(할 일 등): " + lv.text);
 });
+
+test("꺼진 회원 폴링 표는 예전 그대로 data · chat 만 — DO 칸에 todo 가 있어도 안 실음(꺼짐이면 아무것도 안 바뀜)", async () => {
+  const t = await setup();
+  await ledger.setFlag(t.D1, "read_live", true); await ledger.f7On(t.D1, "__reset__");
+  const lv = await t.req("GET", "/api/live", undefined, await t.human(MEMBER));
+  assert.equal(lv.status, 200, lv.text);
+  assert.deepEqual(Object.keys(lv.j?.t || {}).filter(k => k === "data" || k === "todo" || k === "chat").sort(), ["chat", "data"], "회원 표: " + lv.text);
+});
