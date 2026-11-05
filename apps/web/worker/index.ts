@@ -2358,7 +2358,7 @@ app.all("*", async c => {
         if (sl) return sl;
         const r = await memberBoard.get(c.env.DB, me, await memberBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"),
           async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name, c.executionCtx,
-          () => live.liveOf(c.env, me).tags().then(x => JSON.stringify(x.t)));   // 주제 답 나눠 쓰기 열쇠(화면 알림 표시, member-board /api/topics)   // 내 글 · 답 이름 = 회원 이름(HB_MEMBER.name 과 같게 — 세션엔 메일만 있어 user 표에서)
+          () => live.liveOf(c.env, me).tags().then(x => JSON.stringify([(x as { boot?: string }).boot ?? "", x.t.data ?? "", x.t.chat ?? ""])));
         if (r) return r;
       }
       if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {   // 몸통이 파일 · 녹음(JSON 아님) — 회원 쓰기와 같은 문

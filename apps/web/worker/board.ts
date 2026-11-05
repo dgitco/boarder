@@ -169,7 +169,8 @@ export class BoardSnap extends DurableObject<object> {
   async tags() {
     const t: Record<string, string> = {};
     for (const k of Object.keys(LIVE_KEY)) { const r = this.row(k); if (r) t[LIVE_KEY[k]] = r.etag; }
-    return { t, age: this.dataAge() };
+    for (const [k, v] of Object.entries(this.sent)) if (!(k in t)) t[k] = v;
+    return { t, age: this.dataAge(), boot: this.boot };
   }
 
   async fetch(req: Request) {
@@ -182,7 +183,10 @@ export class BoardSnap extends DurableObject<object> {
   pend: Record<string, string> | null = null;
   pendDd: string[] | null = null;   // 이 글에 실을 data 바뀐 칸들(차례대로, 그때 글로 — 뒤 고침 줄이 같은 판을 고쳐도 섞이지 않게). 하나라도 못 만들면(null) 안 실음 — 화면이 다시 읽음
   flushAt = 0;
+  boot = crypto.randomUUID();
+  sent: Record<string, string> = {};   // 마지막 바뀜 표시(칸마다) — tags() 가 스냅숏 없는 칸에 씀. 열린 화면이 없어도 기억(다른 isolate 의 읽기 열쇠)
   bump(t: Record<string, string>, dd?: unknown, gap = 25) {
+    for (const [k, v] of Object.entries(t)) if (typeof v === "string" && v.length <= 200) this.sent[k] = v;
     if (!this.ctx.getWebSockets("live").length) return 0;
     const first = !this.pend; this.pend = { ...(this.pend || {}), ...t };
     if (first) this.pendDd = [];

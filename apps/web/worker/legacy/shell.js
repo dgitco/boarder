@@ -936,7 +936,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       if (now() - offAt < 300000) { setTimeout(() => this.fatal(), 0); return; }
       this.connect();
       this.t.first = setTimeout(() => { if (!this.wsUp) this.poll(true); }, 3000);
-      this.t.check = setInterval(() => { if (this.readyState === 1) this.get().catch(() => {}).finally(() => { if (!this.closed) this.catchUp(); }); }, CHECK);
+      this.nCheck = 0;
+      this.t.check = setInterval(() => { if (this.readyState !== 1) return; const full = ++this.nCheck % 4 === 0;
+        this.get().catch(() => {}).finally(() => { if (this.closed) return; if (full) return this.catchUp();
+          const sv = String(this.srv.data || ''); if (sv && !sv.startsWith('~') && typeof dataTag === 'string' && dataTag && tagOf(sv) !== tagOf(dataTag)) this.send(true); }); }, CHECK);
       // 주인 data 스냅숏이 낡음(서버가 준 나이 + 지난 시간 > 25초 — board-snap 멈춤): 20초마다 data 를 새 값으로 → 보드가 다시 읽고 Worker 는 낡은 스냅숏 대신 다리로
       this.t.stale = setInterval(() => { if (this.snapAt && now() - this.snapAt > STALE) { const v = '~s' + Math.floor(now() / 20000); if (this.srv.data !== v) { note('stale', Math.round((now() - this.snapAt) / 1000)); this.srv.data = v; this.send(true); } } }, 5000);
     }
