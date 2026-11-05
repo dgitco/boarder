@@ -6,7 +6,8 @@ import { AuthError, forget, listTools, rpc, type Remote, type RemoteTool } from 
 import { exposedName, SEP } from "./naming";
 import { API_PRESETS, GoogleTokenError, googleApp, googleToken, githubApp, githubAppToken, runApi, slackApp, slackToken, toolsFor, type ApiSpec } from "./apis";
 import { accountFromText, whoamiFor } from "./identity";
-import { ownerIn } from "../who";
+import { canon, isOwnerKey, ownerIn, readKeys } from "../who";
+import { f7On } from "../ledger";
 
 export type Env = { DB: D1Database; CONNECTOR_KEY?: string; [k: string]: unknown };
 export type Row = {
@@ -230,13 +231,33 @@ async function apiTools(env: Env, row: Row): Promise<RemoteTool[]> {
   return t;
 }
 
-/** 에이전트에게 보이는 커넥터 도구 하나 */
-export type CTool = { name: string; conn: Row; remote: RemoteTool; readOnly: boolean };
+export type CTool = { name: string; conn: Row; remote: RemoteTool; readOnly: boolean; from?: string };
+
+/** 공유분에서 늘 빼는 도구: 원격이 destructiveHint 를 단 것 · 이름에 바꾸는 말이 든 것(readOnlyHint 를 잘못 단 서버도 막음) */
+export const SHARED_WRITE = /create|update|delete|send|post|write|remove/i;
+export const sharedSafe = (t: RemoteTool) => t.annotations?.readOnlyHint === true && (t.annotations as { destructiveHint?: boolean } | undefined)?.destructiveHint !== true && !SHARED_WRITE.test(t.name);
+export const SHARED_PER_MIN = 30;
+export const callerKey = (env: Env, owner: string) => isOwnerKey(env as never, owner) ? canon(env as never) : String(owner || "").toLowerCase();
+export async function sharedAudit(env: Env, caller: string, win: string, t: { conn: Row; remote: RemoteTool; from?: string }): Promise<number> {
+  const at = Date.now(), who = callerKey(env, caller);
+  const n = (await env.DB.prepare("SELECT count(*) n FROM connection_share_log WHERE caller = ? AND at > ?").bind(who, at - 60_000).first<{ n: number }>())?.n ?? 0;
+  const over = n >= SHARED_PER_MIN;
+  const r = await env.DB.prepare("INSERT INTO connection_share_log(at, caller, win, from_email, conn, tool, ok) VALUES (?,?,?,?,?,?,?)").bind(at, who, String(win || "").slice(0, 120), t.from || "", t.conn.id, t.remote.name, over ? 0 : null).run();
+  if (over) throw new Error(`공유받은 연결은 1분에 ${SHARED_PER_MIN}번까지 — 잠시 뒤에 다시`);
+  return Number(r.meta.last_row_id);
+}
+export const sharedDone = (env: Env, id: number, ok: boolean) => env.DB.prepare("UPDATE connection_share_log SET ok = ? WHERE id = ?").bind(ok ? 1 : 0, id).run().catch(() => {});
+
+export async function sharedTo(env: Env, owner: string): Promise<(Row & { from_email: string })[]> {
+  return [];
+}
 
 /** 이 주인의 연결된 도구 전부(이름 = <service>[__<label>]__<tool>). 끊긴 연결은 빠짐. 이름이 겹치면 뒤 것에 hash */
 const ERROR_BACKOFF_MS = 5 * 60_000;
 export async function catalog(env: Env, owner: string, wait: (p: Promise<unknown>) => void): Promise<Map<string, CTool>> {
-  const rows = (await list(env, owner)).sort((a, b) => a.id < b.id ? -1 : 1), out = new Map<string, CTool>();
+  const own = (await list(env, owner)).sort((a, b) => a.id < b.id ? -1 : 1), out = new Map<string, CTool>();
+  const shared = (await sharedTo(env, owner).catch(() => [])).map(r => ({ ...r, read_only: 1, label: slug(`${r.from_email.split("@")[0]}${r.label ? "-" + r.label : ""}`) || "shared" }));
+  const rows: (Row & { from_email?: string })[] = [...own, ...shared];
   const lists = await Promise.all(rows.map(async (row): Promise<RemoteTool[]> => {
     if (row.status === "expired") return [];
     const stale = !row.tools_at || Date.now() - row.tools_at >= TOOLS_TTL;
@@ -250,9 +271,10 @@ export async function catalog(env: Env, owner: string, wait: (p: Promise<unknown
       if (off.has(t.name)) continue;
       const readOnly = t.annotations?.readOnlyHint === true;
       if (row.read_only && !readOnly) continue;
+      if (row.from_email && !sharedSafe(t)) continue;   // 공유받은 연결은 늘 읽기 도구만 — 지우기 표시 · 바꾸는 말이 든 이름도 뺌
       let name = exposedName(prefixOf(row), t.name);
       for (let n = 2; out.has(name); n++) name = exposedName(prefixOf(row), `${t.name}_${n}`);
-      out.set(name, { name, conn: row, remote: t, readOnly });
+      out.set(name, { name, conn: row, remote: t, readOnly, ...(row.from_email ? { from: row.from_email } : {}) });
     }
   });
   return out;
@@ -275,6 +297,7 @@ export async function probeAccount(env: Env, row: Row): Promise<string | null> {
 /** 끊기: 줄을 지움(원격 폐기는 routes 가 먼저 시도) */
 export async function remove(env: Env, owner: string, id: string) {
   const w = oin(env, owner), r = await env.DB.prepare(`DELETE FROM connection WHERE ${w.sql} AND id = ?`).bind(...w.args, id).run();
+  if (r.meta.changes) await env.DB.prepare("DELETE FROM connection_share WHERE conn = ?").bind(id).run().catch(() => {});
   forget(id);
   return (r.meta.changes || 0) > 0;
 }

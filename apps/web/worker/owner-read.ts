@@ -209,7 +209,9 @@ function cardMarks(msgs: R[], rows: R[]) {
   }
 }
 
-// ── 채널 · 스레드(chat.Chat.channel · thread, 대화 DB 원천) ──
+const D1_COMPOUND = 5;
+const unionAll = (ts: string[]): string => ts.length <= D1_COMPOUND ? ts.join(" UNION ALL ")
+  : unionAll(Array.from({ length: Math.ceil(ts.length / D1_COMPOUND) }, (_, i) => `SELECT * FROM (${ts.slice(i * D1_COMPOUND, (i + 1) * D1_COMPOUND).join(" UNION ALL ")})`));
 async function channel(db: D1Database, cfg: Cfg, key: string, before: string | undefined, now: number, owners: string[] = []): Promise<Out> {
   const rep = cfg.rep || REP, bf = new Set(cfg.board_files || []), own = cfg.owners || {};
   const cur = before ? " AND m.at < coalesce((SELECT at FROM wl_talk_msg WHERE id = ? OR slack_ts = ? LIMIT 1), CAST(? AS REAL))" : "", bv = before ? [before, before, before] : [];
@@ -217,7 +219,7 @@ async function channel(db: D1Database, cfg: Cfg, key: string, before: string | u
   const keys = key === MAIN ? CHANNELS.filter(k => has(cfg.channels, k)) : [key];
   const parts = keys.flatMap(k => keys.length === 1 || k === "primary" ? [[k, ""]] : [[k, " AND m.who = 'owner' AND m.at >= (SELECT t FROM cut)"], [k, " AND m.at < (SELECT t FROM cut)"]]);
   const q = keys.length === 1 ? one() : `WITH cut(t) AS (SELECT coalesce((SELECT min(at) / 1000.0 FROM user_pref WHERE owner IN ${IN} AND k = 'mainmerge_at'), 1e300)) `
-    + `SELECT * FROM (${parts.map(([, w]) => `SELECT * FROM (${one(w)})`).join(" UNION ALL ")}) ORDER BY _at DESC LIMIT ?`;
+    + `SELECT * FROM (${unionAll(parts.map(([, w]) => `SELECT * FROM (${one(w)})`))}) ORDER BY _at DESC LIMIT ?`;
   const rows = (await db.prepare(q).bind(...(keys.length === 1 ? [] : [JSON.stringify(owners.map(x => x.toLowerCase()))]), ...parts.flatMap(([k]) => [k, cfg.channels[k], ...bv, PAGE + 1]), ...(keys.length === 1 ? [] : [PAGE + 1])).all<R>()).results;
   const chOf = new Map(rows.map(r => [String(r.slack_ts || r.id), String(r._k)]));
   const page = rows.slice(0, PAGE), more = rows.length > PAGE;
@@ -659,7 +661,7 @@ async function etagOf(b: string) { return '"' + [...new Uint8Array(await crypto.
 // state = 모아 보기 초안을 D1 owner_state 에서(write_state) — 같은 batch 에서 읽음
 export async function respond(db: D1Database, get: () => Promise<{ body: string; etag: string } | null>, rt: Route, inm?: string, state = false, owners: string[] = []) {
   let o: Out | null;
-  try { o = await build(db, await cfgOf(get), rt, undefined, true, state, owners); } catch { return null; }
+  try { o = await build(db, await cfgOf(get), rt, undefined, true, state, owners); } catch (e) { console.error("owner-read D1 오류 → 다리", JSON.stringify({ kind: rt.kind, a: rt.a ?? "", err: String(e).slice(0, 160) })); return null; }
   if (!o) return null;
   const b = JSON.stringify(o.body), h: Record<string, string> = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "d1" };
   if (o.status === 200) { const { read_at: _v, ...same } = o.body as R; h.etag = await etagOf(JSON.stringify(same)); if (inm && inm.replace(/^W\//, "") === h.etag) return new Response(null, { status: 304, headers: { etag: h.etag, "cache-control": "no-store", "x-f7": "d1" } }); }

@@ -67,7 +67,7 @@ test("Worker: /m/… 는 보드 화면 경로 · 스위치 ui:mainmerge 는 0/1 
 });
 
 function d1Of() {
-  const db = new DatabaseSync(":memory:");
+  const db = new DatabaseSync(":memory:", { limits: { compoundSelect: 5 } });
   for (const f of readdirSync(new URL("../migrations/", import.meta.url)).filter(f => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
   const n = { round: 0, sql: [] as string[], args: [] as unknown[][] };
   const stmt = (sql: string, args: unknown[] = []) => ({

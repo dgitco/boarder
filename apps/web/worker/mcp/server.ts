@@ -45,7 +45,7 @@ async function execute(ctx: Ctx, args: any, write: boolean) {
     if (recheck && write && (isConnectorTool(name) || !onlyReads(name)) && ctx.alive && !(await ctx.alive())) throw new Error(REVOKED_MSG);
     if (isConnectorTool(name)) {
       if (!ctx.conn) throw new Error(`없는 도구: ${name}`);
-      return shape(name, await withConnectHint(ctx, name, () => runTool(ctx.conn!.env, ctx.conn!, ctx.conn!.scope, name, a, write)), true);   // 가림 · 긴 글 자르기는 inbox 도구와 같게
+      return shape(name, await withConnectHint(ctx, name, () => runTool(ctx.conn!.env, ctx.conn!, ctx.conn!.scope, name, a, write, ctx.agent)), true);   // 가림 · 긴 글 자르기는 inbox 도구와 같게
     }
     if (!write && !onlyReads(name)) throw new Error(`${name} 은 바꾸는 도구 — ${EXECUTE_WRITE} 로`);
     return run(ctx, name, a);

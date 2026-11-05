@@ -186,6 +186,27 @@ export function loadRead(db: D1Database, me: string, ctx?: Ctx | null, ver?: num
     return start();
   }, readOpts.wait);
 }
+export function treeCut<N extends { id: string; pane: string; name: string }>(nodes: N[], nodeOfItem: Map<string, string>, primKeys: Set<string>, fd: ReturnType<typeof prefsOf>["front_door"], nsData: unknown): N[] {
+  const onlyPrim = (id: string) => { let p = 0, o = 0; for (const [k, v] of nodeOfItem) if (v === id) primKeys.has(k) ? p++ : o++; return p > 0 && o === 0; };
+  const closedIds = new Set(json<{ closed?: string[] }>(nsData, {}).closed || []);
+  return (primKeys.size ? nodes.filter(n => !onlyPrim(n.id)) : nodes).filter(n => !closedIds.has(n.id) && !frontDoorNode(fd, n));
+}
+export async function treeNodes(db: D1Database, me: string): Promise<{ id: string; area: string }[]> {
+  const [nd, mi, wi, ns, em, rvd] = await db.batch([
+    db.prepare("SELECT id, name, pinned_name, area FROM mnode WHERE owner = ? AND archived_at IS NULL").bind(me),
+    db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
+    db.prepare("SELECT key, kind, engine, title, state, state_at, seen_at, win, session, device_id, gone_at, handle FROM imp_item WHERE owner = ? AND kind = 'window' AND gone_at IS NULL").bind(me),
+    db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
+    db.prepare("SELECT 1 x FROM engine_window WHERE owner = ? AND kind = 'main' AND state NOT IN ('closed','failed','gone') LIMIT 1").bind(me),
+    REVOKED(db, me),
+  ]);
+  const data = (ns.results[0] as R | undefined)?.data, prefs = prefsOf(data);
+  const pp = primaryPick(withRv(wi.results as R[], rvd.results as { id: string }[]).filter(i => !i.rv) as unknown as Item[], prefs.primary_item, em.results.length > 0);
+  const primary = pp.primary as unknown as R | null;
+  const primKeys = new Set<string>(primary ? [String(primary.key), ...(primary.session ? [String(primary.session)] : [])] : []);
+  const nodes = (nd.results as R[]).map(n => ({ id: String(n.id), pane: paneOfId(String(n.id)), name: String(n.pinned_name || n.name || "노드"), area: String(n.area || "").trim() }));
+  return treeCut(nodes, new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)])), primKeys, prefs.front_door, data).map(n => ({ id: n.id, area: n.area }));
+}
 export async function loadShared(db: D1Database, me: string, ctx?: Ctx | null): ReturnType<typeof load> {
   return loadRead(db, me, ctx);
 }
@@ -275,10 +296,7 @@ export async function load(db: D1Database, me: string, readOnly = false) {   // 
   }
   // 앞단으로 고른 노드(설정 front_door)는 Primary 의 별칭 — 트리 · 채널에는 따로 안 그림
   const frontNodes = nodes.filter(n => frontDoorNode(fd, n));
-  const onlyPrim = (id: string) => { let p = 0, o = 0; for (const [k, v] of nodeOfItem) if (v === id) primKeys.has(k) ? p++ : o++; return p > 0 && o === 0; };
-  const closedIds = new Set(json<{ closed?: string[] }>((ns.results[0] as R | undefined)?.data, {}).closed || []);
-  const shown = (primary ? nodes.filter(n => !onlyPrim(n.id)) : nodes).filter(n => !closedIds.has(n.id) && !frontNodes.includes(n));
-  // 업무 노드의 옛 채널 별칭(채널 = 태스크를 켠 사람만 생김 — importer/routes.ts)
+  const shown = treeCut(nodes, nodeOfItem, primKeys, fd, (ns.results[0] as R | undefined)?.data);
   const aliasNode = (name: string, id = "") => nodes.find(n => !n.archived_at && n.id.startsWith("tk_") && n.aliases?.some(a => id ? a.id === id : a.name === name || paneOfId(a.id) === name || a.id === name));
   const resolveNode = (name: string, id = "") => aliasNode(name, id) || (id ? shown.find(n => n.id === id) : undefined) || shown.find(n => n.name === name || n.pane === name);
   const mains = new Map((nd.results as R[]).map(n => [String(n.id), json<{ main?: string }>(n.counts, {}).main || ""]));

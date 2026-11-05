@@ -153,7 +153,7 @@ test("#메인 합쳐 보기(/api/chat/main): 다섯 채널 뿌리 글을 시간�
   assert.deepEqual(OR.route("/api/chat/main"), { group: "chat", kind: "channel", a: "main", b: undefined });
   assert.deepEqual(OR.route("/api/chat/main?before=1703390102.000100"), { group: "chat", kind: "channel", a: "main", b: "1703390102.000100" });
   assert.equal(OR.route("/api/chat/main/1703390102.000100"), null, "스레드는 그 글의 진짜 채널 길로");
-  const db = new DatabaseSync(":memory:");
+  const db = new DatabaseSync(":memory:", { limits: { compoundSelect: 5 } });
   for (const f of readdirSync(new URL("../migrations/", import.meta.url)).filter(f => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
   const cfg: OR.Cfg = { channels: { primary: "C2", company: "C3", dgit: "C1", personal: "C4", shop: "C5", harness: "C9" } };
   for (const [k, sc] of Object.entries(cfg.channels)) db.prepare("INSERT INTO wl_talk_chan(id, name, slack_channel) VALUES (?, ?, ?)").run(k, k, sc);
