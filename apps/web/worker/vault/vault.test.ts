@@ -226,3 +226,23 @@ test("e2e 지킬 것: adoptE2e 가 그 사람 envelope:<owner> 를 같은 batch 
   await assert.rejects(V.sealField(env, "e@x.co", REF, "글"), V.VaultE2eError);
   assert.equal(await V.sealField(env, "other@x.co", REF, "글"), "글", "다른 사람은 그대로");
 });
+
+
+
+test("범위 vault: 허용한 열쇠 · 채널 왕복, 사람 · 다른 열쇠는 평문/null/몸통도 거절", async () => {
+  const { env } = setup(), owner = "o:grp_a", owners = [owner, "x:chan"], vault = V.scopedVault(env, owners);
+  owners.push("o:Other");
+  for (const who of [owner, "x:chan"]) {
+    const s = await vault.sealField(who, REF, "범위 글");
+    assert.equal(await vault.openField(who, REF, s), "범위 글");
+    const b = await vault.sealBlob(who, "f", "범위 파일") as Uint8Array;
+    assert.equal(new TextDecoder().decode(await vault.openBlob(who, "f", b)), "범위 파일");
+  }
+  for (const who of ["", "person@example.com", "o:Other", "x:other"]) {
+    const scope = (e: any) => e instanceof V.VaultError && e.code === "scope";
+    await assert.rejects(vault.sealField(who, REF, null), scope);
+    await assert.rejects(vault.openField(who, REF, "평문"), scope);
+    await assert.rejects(vault.sealBlob(who, "f", "파일"), scope);
+    await assert.rejects(vault.openBlob(who, "f", new Uint8Array()), scope);
+  }
+});

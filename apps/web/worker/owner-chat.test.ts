@@ -187,6 +187,14 @@ test("전달 상자 스레드(source node-move)는 원글로 바뀌어야 해 �
   assert.equal((db.prepare("SELECT count(*) n FROM wl_talk_msg WHERE who = 'owner'").get() as any).n, 0);
 });
 
+test("실행기가 60초 넘게 안 당겼으면 예전 길(할 일 줄 10분 기준보다 짧게 — 다시 넣기와 두 번 넣기 막기)", async () => {
+  const { db, calls, post } = setup();
+  db.prepare("UPDATE owner_job_beat SET at = ? WHERE id = 1").run(Date.now() - 61_000);
+  await post({ rid: "rid-beat60-01", channel: "dgit", text: "글" });
+  assert.equal(chatCalls(calls).length, 1);
+  assert.equal((db.prepare("SELECT count(*) n FROM wl_talk_msg").get() as any).n, 0);
+});
+
 test("스위치 꺼짐 · 시험 통로는 예전 길", async () => {
   const off = setup(["write_exec", "write_ledger"]);
   await off.post({ rid: "rid-off-00001", channel: "dgit", text: "글" });

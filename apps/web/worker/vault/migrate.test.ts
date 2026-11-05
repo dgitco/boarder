@@ -380,3 +380,4 @@ test("등록한 D1 표(genPk · whoSql): 빈 pk 칸은 봉할 때 채움 · 사�
   assert.deepEqual((await M.back(s.env, "mig_note")).failed, []);
   assert.deepEqual((s.db.prepare("SELECT body FROM mig_note ORDER BY id").all() as any[]).map(x => x.body), ["방 글 하나", V.escapeField("v2.1." + "A".repeat(40)), "다른 방 글"]);
 });
+

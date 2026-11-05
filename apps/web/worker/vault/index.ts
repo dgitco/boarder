@@ -1,4 +1,5 @@
 import { isAdmin } from "../who";
+import { sealBlob, openBlob } from "./blob";
 export { sealBlob, openBlob, sealedSize, BLOB_CHUNK, blobInfo, openBlobRange, type BlobInfo } from "./blob";
 
 export type VaultEnv = {
@@ -10,7 +11,7 @@ export type VaultEnv = {
 export type FieldRef = { tbl: string; pk: string | number; col: string };
 
 export class VaultError extends Error {
-  constructor(msg: string, readonly code: "no_kek" | "no_dek" | "bad_cipher" | "e2e" | "bad_ref" = "bad_cipher") { super(msg); this.name = "VaultError"; }
+  constructor(msg: string, readonly code: "no_kek" | "no_dek" | "bad_cipher" | "e2e" | "bad_ref" | "scope" = "bad_cipher") { super(msg); this.name = "VaultError"; }
 }
 /** 이 사람은 종단간 모드 — 서버는 열지도 봉하지도 않음(화면이 계정 키로) */
 export class VaultE2eError extends VaultError {
@@ -71,8 +72,7 @@ export function _resetVaultCache() { deks.clear(); cur.clear(); keks.clear(); fl
 const put = <K, V>(m: Map<K, V>, k: K, v: V) => { if (m.size >= MAX) m.delete(m.keys().next().value as K); m.set(k, v); };   // 넣은 차례로 오래된 것부터 버림
 
 export function forgetFlags() { flags.clear(); }
-/** 사람별 스위치 이름 — 주인('')은 「owner」, 회원은 소문자 메일 */
-export const envelopeFlag = (owner: string) => "envelope:" + (owner.trim().toLowerCase() || "owner");
+export const envelopeFlag = (owner: string) => "envelope:" + (owner.startsWith("o:") ? owner : owner.trim().toLowerCase() || "owner");
 async function flagOn(env: VaultEnv, name: string) {
   const now = Date.now(), f = flags.get(name);
   if (f && f.db === env.DB && now - f.at < FLAG_TTL) return f.on;
@@ -230,4 +230,25 @@ export async function adoptE2e(env: VaultEnv, owner: string, wrapped: string): P
   ]);
   cur.delete(owner); flags.delete(envelopeFlag(owner));
   return v;
+}
+
+export function scopedVault(env: VaultEnv, owners: readonly string[]) {
+  const allowed = new Set(owners); // 부른 쪽 배열이 바뀌어도 이 객체의 범위는 늘지 않음
+  const check = (owner: string) => {
+    if (!allowed.has(owner)) throw new VaultError("허용한 범위 밖의 키예요", "scope");
+  };
+  return {
+    async sealField<T extends string | null | undefined>(owner: string, ref: FieldRef, value: T) {
+      check(owner); return sealField(env, owner, ref, value);
+    },
+    async openField<T extends string | null | undefined>(owner: string, ref: FieldRef, value: T) {
+      check(owner); return openField(env, owner, ref, value);
+    },
+    async sealBlob<D extends ArrayBuffer | ArrayBufferView | string>(owner: string, key: string, data: D, chunk?: number) {
+      check(owner); return sealBlob(env, owner, key, data, chunk);
+    },
+    async openBlob(owner: string, key: string, data: ArrayBuffer | ArrayBufferView) {
+      check(owner); return openBlob(env, owner, key, data);
+    },
+  };
 }

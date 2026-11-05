@@ -1,8 +1,9 @@
 import { redact } from "./session/redact";
 import { ridDup, ridRow } from "./queue";
-import { BEAT_MAX, okeyOf } from "./owner-jobs";
+import { okeyOf } from "./owner-jobs";
 
 export const FLAG = "write_chat_d1";
+export const BEAT_FRESH = 60_000;
 const RID = /^[\w-]{6,64}$/;   // queue.ts RID 와 같음
 export const AUTHOR = "Owner (보드)";   // chat.py BOARD_NAME — owner-read 가 이 이름으로 「보드 글」을 가름
 const MAX = 4000;
@@ -79,7 +80,7 @@ export async function write(db: D1Database, p: Plain, now = Date.now()): Promise
     const m = r ? /\.p\.(\d{10}\.\d{6})\.(\d{10}\.\d{6})$/.exec(r.rid) : null;
     return m ? { mid: m[1], root: m[2], again: true } : null;
   };
-  if (!(await db.prepare("SELECT 1 FROM owner_job_beat WHERE id = 1 AND at > ?").bind(now - BEAT_MAX).first())) return null;   // 판에 넣을 쪽이 없음 — 예전 길
+  if (!(await db.prepare("SELECT 1 FROM owner_job_beat WHERE id = 1 AND at > ?").bind(now - BEAT_FRESH).first())) return null;   // 판에 넣을 쪽이 없음 — 예전 길
   // 스레드 값이 Slack ts 로 왔어도 우리 id 로(talk.resolve) · 전달 상자 글(source node-move)이면 원글로 바뀌어야 함 → 예전 길
   let thread: string | null = null;
   if (p.thread) {

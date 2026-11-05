@@ -1885,12 +1885,8 @@ app.post("/api/admin/test-session", async c => {
   const sign = async (v: string) => encodeURIComponent(`${v}.${btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(v)))))}`);
   return c.json({ cookies: [{ name: ctx.authCookies.sessionToken.name, value: await sign(sess.token) }, { name: ctx.authCookies.dontRememberToken.name, value: await sign("true") }], expires: sess.expiresAt }, 200, { "cache-control": "no-store" });
 });
-// 감독 규칙 분(시험 계정에서 짧게 — 기본 30 · 30 · 15)
-// 봉투 옮기기(worker/vault/migrate.ts) — 관리 토큰만. GET ?scope=&owner= = plan(쓰지 않음) · POST { action: run | back, scope, owner?, page?, dryRun? }
-// owner = 그 DEK 주인만('' = 주인, 소문자 메일, x:<이름>) — 없으면 모두. 스위치는 그 owner 의 것(envelopeOn(env, owner), owner 없으면 모두 스위치):
-// run 은 켜져 있을 때만(꺼진 채면 옮긴 뒤 새 쓰기가 봉해지지 않음), back 은 꺼져 있을 때만(켜진 채면 새 쓰기가 곧 다시 봉함). dryRun 은 늘 됨
 const vscope = (s: unknown) => vmig.scopes().includes(String(s)) ? String(s) as vmig.Scope : null;   // 등록한 scope 만(공개 판엔 호스팅 전용 표가 없음)
-const vowner = (o: unknown) => typeof o === "string" ? (o.startsWith("x:") ? o : o.trim().toLowerCase()) : undefined;
+const vowner = (o: unknown) => typeof o === "string" ? (o.startsWith("x:") || o.startsWith("o:") ? o : o.trim().toLowerCase()) : undefined;
 app.get("/api/admin/vault", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const scope = vscope(c.req.query("scope")); if (!scope) return c.json({ error: `scope = ${vmig.scopes().join(" · ")}` }, 400);
@@ -1914,11 +1910,11 @@ app.post("/api/admin/vault", async c => {
 app.post("/api/admin/f7-flag", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ name?: string; on?: boolean; note?: string }>().catch(() => ({} as { name?: string; on?: boolean; note?: string }));
-  if (/^(envelope|owner_unified):/i.test(b.name || "")) b.name = b.name!.toLowerCase();
+  if (/^(envelope|owner_unified):/i.test(b.name || "") && !/^envelope:o:/.test(b.name || "")) b.name = b.name!.toLowerCase();
   if (/^owner_unified:/.test(b.name || "") && !isOwner(c.env, b.name!.slice("owner_unified:".length))) return c.json({ error: "owner_unified:<메일> 은 주인 메일(ALLOW_EMAILS)만" }, 400);
   if (b.on && /^owner_unified(:|$)/.test(b.name || "") && !(await c.env.DB.prepare("SELECT 1 FROM f7_flag WHERE name = 'owner_unified_prep' AND on_at IS NOT NULL").first().catch(() => null))) return c.json({ error: "owner_unified_prep 을 먼저 켜고 옮기기(run)를 돌려요" }, 409);
   if (!/^(read|write|shadow|member)_[a-z][a-z_]{1,24}$/.test(b.name || "") && !/^owner_(device|key_canon|unified_prep|unified)$/.test(b.name || "") && !/^owner_unified:[^@\s:,]{1,64}@[^@\s:,]{1,190}$/.test(b.name || "")
-    && !/^envelope(:owner|:[^@\s:,]{1,64}@[^@\s:,]{1,190})?$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음> · owner_device · owner_key_canon · owner_unified_prep · owner_unified · owner_unified:<주인 메일> · envelope · envelope:<메일 | owner>" }, 400);
+    && !/^envelope:o:[A-Za-z0-9_-]{1,40}$/.test(b.name || "") && !/^envelope(:owner|:[^@\s:,]{1,64}@[^@\s:,]{1,190})?$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음> · owner_device · owner_key_canon · owner_unified_prep · owner_unified · owner_unified:<주인 메일> · envelope · envelope:<메일 | owner | o:<id>>" }, 400);
   // e2e 판이 있는 사람의 envelope:<owner> 는 못 끔(vault adoptE2e 의 지킬 것 — 끄면 그 사람 쓰기가 봉해지지 않음)
   if (!b.on && /^envelope:/.test(b.name!)) {
     const who = b.name === "envelope:owner" ? "" : b.name!.slice("envelope:".length);
