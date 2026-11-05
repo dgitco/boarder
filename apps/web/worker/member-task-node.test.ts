@@ -43,7 +43,7 @@ test("업무 노드 판에 task(상태 다섯 · 상태 한 줄 · 이슈 · 칩
 test("task 칸(0054)이 아직 없는 D1 이어도 보드는 예전처럼 그려짐", async () => {
   const { db, d1 } = fakeD1();
   node(db, "n_w", "보통 노드", "working", null);
-  db.exec("ALTER TABLE mnode DROP COLUMN task");
+  db.exec("DROP TRIGGER IF EXISTS owner_ver_mnode_update"); db.exec("ALTER TABLE mnode DROP COLUMN task");
   const d = await data(d1, A, null) as any;
   assert.ok(d.panes.some((x: any) => x.win === "보통 노드"));
 });

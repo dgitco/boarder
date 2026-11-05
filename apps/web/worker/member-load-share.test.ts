@@ -67,19 +67,10 @@ test("지난 항목: 코드가 보내는 질의가 아직 있음 + 하루 안 �
   assert.match(plan, /imp_item_owner/); assert.doesNotMatch(plan, /SCAN imp_item(?! USING)/);   // 색인 범위로만(표 통째 훑기 없음)
 });
 
-test("/api/topics: 같은 사람 · 같은 화면 알림 표시면 같은 답(load 한 번), 표시가 바뀌면 · 쓰기 뒤 · 15초 뒤 · 다른 사람 · 표시 못 읽으면 새로", async () => {
-  const { D1, count } = d1(), real = Date.now, url = new URL("https://x.test/api/topics"), none = async () => null;
-  let tag = "~1";
-  try {
-    let t = real(); Date.now = () => t;
-    const call = async (who: string, tv: any = async () => tag) => { const r = await get(D1, who, { name: "봇" }, url, none, undefined, null, CTX, tv); return r?.status; };
-    assert.equal(await call(ME), 200); const n1 = count();
-    t += 5_000; assert.equal(await call(ME), 200); assert.equal(count(), n1);   // 같은 표시 · 15초 안 — 다시 안 읽음
-    tag = "~2"; t += 500; await call(ME); const n2 = count(); assert.ok(n2 > n1);
-    loadForget("SHARE@example.com"); t += 500; await call(ME); const n3 = count(); assert.ok(n3 > n2);   // 쓰기 뒤 새로
-    t += 15_001; await call(ME); const n4 = count(); assert.ok(n4 > n3);   // 15초 뒤 새로
-    t += 500; await call("other@example.com"); const n5 = count(); assert.ok(n5 > n4);   // 다른 사람은 따로
-    t += 500; await call(ME, async () => { throw new Error("DO"); }); const n6 = count(); assert.ok(n6 > n5);   // 표시를 못 읽으면 나눠 쓰지 않음
-    t += 500; await call(ME, null); assert.ok(count() > n6);   // (0.5초씩: 아래 0.4초 읽기 나눠 쓰기를 넘김)
-  } finally { Date.now = real; loadForget(ME); loadForget("other@example.com"); }
+test("/api/topics: Cache API가 없으면 0.4초 안 같은 요청은 load 를 나눠 씀(loadRead)", async () => {
+  const { D1, count } = d1(), url = new URL("https://x.test/api/topics"), none = async () => null;
+  const call = () => get(D1, ME, { name: "봇" }, url, none, undefined, null, CTX, async () => "~1");
+  assert.equal((await call())?.status, 200); const n = count();
+  assert.equal((await call())?.status, 200); assert.equal(count(), n);
+  loadForget(ME);
 });

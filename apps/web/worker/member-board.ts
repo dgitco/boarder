@@ -138,17 +138,17 @@ const LOG_MAX = 600;
 const FRONT_NAMES = "SELECT json_extract(p.value, '$.name') FROM node_setting s, json_each(CASE WHEN json_valid(s.data) THEN CASE WHEN json_type(s.data, '$.front_door.pairs') = 'array' THEN json_extract(s.data, '$.front_door.pairs') END END) p WHERE s.owner = ?";
 type Ctx = { waitUntil(p: Promise<unknown>): void };
 const READ_TTL = 400, readShare = new Map<string, { at: number; p: ReturnType<typeof load> }>();
-export function loadRead(db: D1Database, me: string, ctx?: Ctx | null): ReturnType<typeof load> {
+// ver(owner_ver 번호)를 주면 같은 번호를 읽은 뒤 시작한 읽기끼리만 나눔 — 그 판은 그 번호보다 새것이라 번호 열쇠로 Cache API 에 넣어도 낡지 않음
+export function loadRead(db: D1Database, me: string, ctx?: Ctx | null, ver?: number): ReturnType<typeof load> {
   if (!ctx) return load(db, me);
-  const now = Date.now(), hit = readShare.get(me);
+  const k = ver === undefined ? me : `${me}#${ver}`, now = Date.now(), hit = readShare.get(k);
   if (hit && now - hit.at < READ_TTL) return hit.p;
   if (readShare.size > 500) readShare.clear();
-  const p = load(db, me); readShare.set(me, { at: now, p });
-  ctx.waitUntil(p.catch(() => { if (readShare.get(me)?.p === p) readShare.delete(me); }));   // 실패는 나눠 주지 않음(다음 요청이 새로)
+  const p = load(db, me); readShare.set(k, { at: now, p });
+  ctx.waitUntil(p.catch(() => { if (readShare.get(k)?.p === p) readShare.delete(k); }));   // 실패는 나눠 주지 않음(다음 요청이 새로)
   return p;
 }
-const TOPICS_TTL = 15_000, TOPICS_MAX = 100, topicsShare = new Map<string, { at: number; ver: string; v: unknown }>();
-export function loadForget(me: string) { const k = me.toLowerCase(); readShare.delete(k); for (const t of [...topicsShare.keys()]) if (t.startsWith(k + "\n")) topicsShare.delete(t); }
+export function loadForget(me: string) { const m = me.toLowerCase(); for (const k of [...readShare.keys()]) if (k === m || k.startsWith(m + "#")) readShare.delete(k); }
 export async function load(db: D1Database, me: string) {
   await closeStaleConnect(db, me);
   const tkP = tokenRows(db, me);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
@@ -862,13 +862,44 @@ export async function etag(b: string) { return '"m' + [...new Uint8Array(await c
 const ETAG_PATHS = /^\/api\/(chat\/|nodechat$|topics$|inbox$)/;
 export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null, tv?: (() => Promise<string | null>) | null): Promise<Response | null> {
   inm = inm?.replace(/^W\//, "");
-  const r = await getInner(db, me, bot, url, emoji, inm, who, ctx, tv);
-  if (!r || r.status !== 200 || r.headers.has("etag") || !ETAG_PATHS.test(url.pathname) || !(r.headers.get("content-type") || "").startsWith("application/json")) return r;
-  const txt = await r.text(), t = await etag(txt.replace(/"read_at":\d+,?/g, ""));
+  const boardPath = url.pathname === "/api/data" || url.pathname === "/api/topics";
+  const cache = boardPath && typeof caches !== "undefined" ? (caches as unknown as { default?: Cache }).default : null;
+  let ver: { v: number } | null = null;
+  if (cache) {
+    try { ver = await db.prepare("SELECT v FROM owner_ver WHERE owner = ?").bind(me).first<{ v: number }>(); } catch { /* 이주 전 · 읽기 실패는 캐시 없이 계산 */ }
+  }
+  const key = ver && Number.isSafeInteger(ver.v) && ver.v >= 0
+    ? new Request(`https://cache.internal/mb/${encodeURIComponent(me)}/${encodeURIComponent(bot?.name || "")}/${url.pathname.slice(1)}/v${ver.v}`) : null;
+  const now = Date.now();
+  if (cache && key) {
+    const hit = await cache.match(key).catch(() => undefined);
+    const at = Number(hit?.headers.get("x-boarder-cached-at"));
+    if (hit && at > 0 && now >= at && now - at < 30_000) {
+      const h = new Headers(hit.headers); h.delete("x-boarder-cached-at"); h.set("cache-control", "no-store");
+      if (inm === h.get("etag")) {
+        if (url.pathname === "/api/data") h.delete("content-type");
+        return new Response(null, { status: 304, headers: h });
+      }
+      return new Response(hit.body, { headers: h });
+    }
+  }
+  // 304도 완전한 200 몸통을 저장할 수 있게 조건부 응답은 계산 뒤에 적용함.
+  const r = await getInner(db, me, bot, url, emoji, boardPath ? undefined : inm, who, ctx, tv, key ? ver!.v : undefined);   // 번호 열쇠로 저장할 답은 같은 번호를 읽은 뒤의 판으로만(loadRead ver)
+  if (!r || r.status !== 200) return r;
+  if (!boardPath && (r.headers.has("etag") || !ETAG_PATHS.test(url.pathname) || !(r.headers.get("content-type") || "").startsWith("application/json"))) return r;
+  const txt = await r.text(), t = r.headers.get("etag") || await etag(txt.replace(/"read_at":\d+,?/g, ""));
   const h = new Headers(r.headers); h.set("etag", t);
-  return inm === t ? new Response(null, { status: 304, headers: h }) : new Response(txt, { status: 200, headers: h });
+  if (cache && key && ctx) {
+    const stored = new Headers(h); stored.set("cache-control", "public, max-age=30"); stored.set("x-boarder-cached-at", String(now));
+    ctx.waitUntil(cache.put(key, new Response(txt, { headers: stored })).catch(() => {}));
+  }
+  if (inm === t) {
+    if (url.pathname === "/api/data") h.delete("content-type");
+    return new Response(null, { status: 304, headers: h });
+  }
+  return new Response(txt, { headers: h });
 }
-async function getInner(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null, tv?: (() => Promise<string | null>) | null): Promise<Response | null> {
+async function getInner(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null, tv?: (() => Promise<string | null>) | null, ver?: number): Promise<Response | null> {
   // 내 이름(who): 글 이름이 나가는 채팅 길에서만 읽음 — 함수면 그때 한 번(index.ts 는 user 표를 읽는 함수로 넘김, /api/data 폴링엔 안 읽음)
   // 앞단 설정(front_door)은 채팅 · 노드 채팅 · 세션 길에서만 읽음(작은 읽기 하나 — /api/data 는 load 가 읽음)
   //   같은 한 줄에서 에이전트끼리 접기(agents_fold)도 봄 — 끈 사람은 접은 글 길에서 load 를 더 부르지 않음(읽기 수 main 과 같음)
@@ -877,15 +908,11 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
   const p = url.pathname, mainName = fd?.name || bot?.name || "Primary", my = myName(me, typeof who === "function" ? (/^\/api\/(chat\/|nodechat$|sesslog$)/.test(p) ? await who().catch(() => null) : null) : who);
   const j = (o: unknown, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" } });
   if (p === "/api/data") {   // 보드처럼 ETag — 안 바뀌면 빈 304(20초 폴링)
-    const b = JSON.stringify(await data(db, me, bot, await loadRead(db, me, ctx))), t = await etag(b), h = { etag: t, "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" };
+    const b = JSON.stringify(await data(db, me, bot, await loadRead(db, me, ctx, ver))), t = await etag(b), h = { etag: t, "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" };
     return inm === t ? new Response(null, { status: 304, headers: h }) : new Response(b, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
   }
   if (p === "/api/topics") {
-    const k = me.toLowerCase() + "\n" + (bot?.name || ""), now = Date.now(), ver = tv ? await tv().catch(() => null) : null, hit = ver ? topicsShare.get(k) : undefined;
-    if (hit && hit.ver === ver && now - hit.at < TOPICS_TTL) return j(hit.v);
-    const v = await topics(db, me, bot, await loadRead(db, me, ctx));
-    if (ver) { if (topicsShare.size >= TOPICS_MAX) topicsShare.clear(); topicsShare.set(k, { at: now, ver, v }); }
-    return j(v);
+    return j(await topics(db, me, bot, await loadRead(db, me, ctx, ver)));
   }   // 노드 주제 칩 · 찾기 「노드」(member-views.ts — 주인 topics.py 꼴)
   if (p === "/api/history") return j(await history(db, me, url.searchParams.get("since")));   // 타임라인 지난 판(주인 history.py 꼴)
   if (p === "/api/inbox") return j({ unread: [], drafts: [], saved: [], saved_ids: [] });

@@ -158,7 +158,7 @@ test("권한: 토큰 없으면 401 · 회원 화면은 같은 사이트일 때�
 test("task 칸(0054)이 아직 없는 D1 이어도 노드 목록은 예전처럼 — 코드가 마이그레이션보다 먼저 나간 경우", async () => {
   const { db, D1 } = d1(), call = app(D1);
   db.prepare("INSERT INTO mnode(owner, id, name, area, state, why, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)").run(A, "n_keep", "팀장", "ledger", "idle", "", T, T);
-  db.exec("ALTER TABLE mnode DROP COLUMN task");
+  db.exec("DROP TRIGGER IF EXISTS owner_ver_mnode_update"); db.exec("ALTER TABLE mnode DROP COLUMN task");
   const r = await call("GET", "/api/me/nodes/list");
   assert.equal(r.status, 200, await r.clone().text());
   assert.deepEqual((await r.json() as any).nodes.map((n: any) => [n.id, "task" in n]), [["n_keep", false]]);
