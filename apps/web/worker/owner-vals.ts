@@ -3,6 +3,8 @@ import { clean } from "./owner-read";
 type R = Record<string, any>;
 export const HS_KEY = "harness_state";
 export const PROM_WID = "hp:";
+export const SYNC_DONE = "promises.md 에서 닫힘";   // 이 길이 닫은 표시(파일에서 빠짐) — 창이 닫은 것과 가름
+export const fileNo = (wid: unknown) => { const m = /^hp:(\d{1,9})$/.exec(String(wid ?? "")); return m ? Number(m[1]) : null; };
 const AREAS: [string, string][] = [["primary", "프라이머리"], ["company", "회사"], ["personal", "퍼스널"], ["dgit", "DGit"], ["shop", "가게"]];
 const AREA_KO = new Set([...AREAS.map(a => a[0]), "shopco"]);
 const DC_HOLD = "확인 필요(내 차례 그대로)";   // done_check.HOLD 머리(snapshot.py)
@@ -48,19 +50,25 @@ export function shape(b: unknown): { state: R; promises: R[] | null } | null {
 export async function ingest(db: D1Database, owner: string, body: unknown, now = Date.now()) {
   const s = shape(body); if (!s) return null;
   const stmts: D1PreparedStatement[] = [db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(owner, HS_KEY, JSON.stringify(s.state), now)];
-  let opened = 0, changed = 0, closed = 0;
+  let opened = 0, changed = 0, closed = 0, reopened = 0, held = 0;
   if (s.promises) {
-    const have = new Map(((await db.prepare("SELECT id, wid, win, who, what, check_by, due FROM member_promise WHERE owner = ? AND wid LIKE 'hp:%' AND state = 'open'").bind(owner).all<R>()).results).map(r => [String(r.wid), r]));
+    const have = new Map<string, R>();
+    for (const r of (await db.prepare("SELECT id, wid, win, who, what, check_by, due, state, done FROM member_promise WHERE owner = ? AND wid LIKE 'hp:%' ORDER BY id").bind(owner).all<R>()).results) have.set(String(r.wid), r);
     const seen = new Set<string>();
     for (const p of s.promises) {
       const wid = PROM_WID + p.n, win = p.pane || "%15", h = have.get(wid); seen.add(wid);
+      const same = h && h.win === win && h.who === p.to && h.what === p.what && h.check_by === p.watch && h.due === p.due;
       if (!h) { stmts.push(db.prepare("INSERT INTO member_promise(owner, win, wid, who, what, check_by, due, at) VALUES (?,?,?,?,?,?,?,?)").bind(owner, win, wid, p.to, p.what, p.watch, p.due, now)); opened++; }
-      else if (h.win !== win || h.who !== p.to || h.what !== p.what || h.check_by !== p.watch || h.due !== p.due) { stmts.push(db.prepare("UPDATE member_promise SET win = ?, who = ?, what = ?, check_by = ?, due = ? WHERE id = ? AND owner = ?").bind(win, p.to, p.what, p.watch, p.due, h.id, owner)); changed++; }
+      else if (h.state !== "open") {
+        if (h.done !== SYNC_DONE) { held++; continue; }   // 창이 닫음(지킴 · 안 함) — 그대로
+        stmts.push(db.prepare("UPDATE member_promise SET state = 'open', done = NULL, done_at = NULL, win = ?, who = ?, what = ?, check_by = ?, due = ? WHERE id = ? AND owner = ?").bind(win, p.to, p.what, p.watch, p.due, h.id, owner)); reopened++;
+      }
+      else if (!same) { stmts.push(db.prepare("UPDATE member_promise SET win = ?, who = ?, what = ?, check_by = ?, due = ? WHERE id = ? AND owner = ?").bind(win, p.to, p.what, p.watch, p.due, h.id, owner)); changed++; }
     }
-    for (const [wid, h] of have) if (!seen.has(wid)) { stmts.push(db.prepare("UPDATE member_promise SET state = 'kept', done = ?, done_at = ? WHERE id = ? AND owner = ? AND state = 'open'").bind("promises.md 에서 닫힘", now, h.id, owner)); closed++; }
+    for (const [wid, h] of have) if (!seen.has(wid) && h.state === "open") { stmts.push(db.prepare("UPDATE member_promise SET state = 'kept', done = ?, done_at = ? WHERE id = ? AND owner = ? AND state = 'open'").bind(SYNC_DONE, now, h.id, owner)); closed++; }
   }
   for (let i = 0; i < stmts.length; i += 50) await db.batch(stmts.slice(i, i + 50));
-  return { ok: true, panes: Object.keys(s.state.panes).length, parked: s.state.parked.length, promises: s.promises ? { opened, changed, closed } : null };
+  return { ok: true, panes: Object.keys(s.state.panes).length, parked: s.state.parked.length, promises: s.promises ? { opened, changed, closed, reopened, held } : null };
 }
 
 // ── (가) D1 사본 읽기 ──
@@ -113,7 +121,10 @@ export function dueOf(r: R, now: number) {   // worklog_db.due_of: due 칸 먼�
   return t.getUTCMonth() === M - 1 && t.getUTCDate() === D ? t.toISOString().slice(0, 10) : null;
 }
 const areaOfCwd = (cwd: string) => { for (const [k, a] of [["/work/infra", "primary"], ["/company", "company"], ["/shopco", "shop"], ["/personal", "personal"], ["/dgit", "dgit"]]) if (cwd.includes(k)) return a; return "primary"; };
-const head = (msg: string) => Array.from(msg.split(/\s[—:-]\s|[:(]/)[0]);   // snapshot.shorten 앞 절(모델 요약이 없을 때와 같은 꼴)
+const head = (msg: string) => Array.from(msg.split(/\s[—:-]\s|[:(]/)[0]);
+export const HW = "hw";
+const hwRef = (ref: unknown) => { const m = /^w(:?)(\d{1,12})$/.exec(String(ref ?? "")); return m ? `${HW}${m[1]}${m[2]}` : ref; };
+function uniq<T extends R>(xs: T[], key: (x: T) => string) { const seen = new Set<string>(); return xs.filter(x => { const k = key(x); if (seen.has(k)) return false; seen.add(k); return true; }); }
 const priOf = (m: Record<string, { pri?: string }>, name: string) => { const n = stripNo(String(name || "")).trim(); return String(m[n]?.pri || ""); };
 
 export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.now()) {
@@ -154,7 +165,7 @@ export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.no
   }
   out.agents = Array.isArray(hs.agents) ? hs.agents : [];
   const feed = V.feed.map(r => ({ id: Number(r.id), ago: ago(r.at), pane: String(r.pane), win: clean(r.win, 30), kind: String(r.kind), msg: clean(r.msg, 160), wl: true }));
-  out.feed = [...feed, ...(out.feed as R[])].sort((a, b) => a.ago - b.ago).slice(0, 40);
+  out.feed = uniq([...feed, ...(out.feed as R[])], x => `${x.wl ? "l" : "m"}:${x.id}`).sort((a, b) => a.ago - b.ago || Number(!!b.wl) - Number(!!a.wl) || Number(b.id) - Number(a.id)).slice(0, 40);
   for (const r of V.closed) {
     if (live.has(String(r.pane))) continue;
     const w = String(r.win || "").replace(/^%\d+\(|\)$/g, ""), name = stripNo(w);
@@ -174,7 +185,7 @@ export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.no
   const decisions: R[] = [];
   for (const r of V.decRen.filter(r => r.kind === "결정" && r.handled == null).sort((a, b) => Number(b.id) - Number(a.id))) {
     const [q, ch] = splitChoice(String(r.msg || ""));
-    decisions.push({ id: `w${r.id}`, src: "wlog", pane: String(r.pane), win: String(r.win || ""), area: areaOfPane.get(String(r.pane)) || "primary", title: q, body: clean(r.msg, 600), choices: ch, ago: ago(r.at), kind: "결정", wl: true });
+    decisions.push({ id: `${HW}${r.id}`, src: "wlog", pane: String(r.pane), win: String(r.win || ""), area: areaOfPane.get(String(r.pane)) || "primary", title: q, body: clean(r.msg, 600), choices: ch, ago: ago(r.at), kind: "결정", wl: true });
   }
   for (const r of V.questions) {
     const ch = [r.recommend, r.choices].filter(Boolean).map(x => clean(x, 90));
@@ -186,13 +197,14 @@ export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.no
   for (const r of V.questions) { const why = check.get(String(r.card_ts || `q:${r.area}:${r.qid}`)); if (why) flagged.set(`${areaKey(String(r.area))}|${r.qid}`, why); }
   const fk = (d: R) => `${d.area}|${d.id}`, open = decisions.filter(d => !later.has(String(d.id)));
   (out.to_check as R[]).push(...open.filter(d => d.src === "queue" && flagged.has(fk(d))).map(d => ({ ...d, why: flagged.get(fk(d)) })));
-  out.decisions = [...(out.decisions as R[]), ...open.filter(d => !(d.src === "queue" && flagged.has(fk(d))))];
+  out.decisions = uniq([...(out.decisions as R[]), ...open.filter(d => !(d.src === "queue" && flagged.has(fk(d))))], d => `${d.src}|${d.area}|${d.id}`);
   const keys: Record<string, string> = isObj(hs.ch_keys) ? hs.ch_keys : {}, vals = new Set(Object.values(keys));
   const chOf = (c: unknown) => keys[String(c || "")] || (vals.has(String(c)) ? String(c) : "primary");
-  out.cards = [...(Array.isArray(out.cards) ? out.cards : []), ...V.cards.filter(r => r.state === "open" && DIGITS_TS.test(String(r.ts)) && r.kind !== "blocker").map(r => ({ ts: r.ts, thread: r.thread || r.ts, channel: chOf(r.channel), kind: r.kind, area: r.area, title: String(r.title || ""), wl: true }))];
-  out.bthreads = [...(out.bthreads as R[]), ...V.cards.filter(r => r.kind === "blocker").map(r => ({ ref: r.ref, ch: chOf(r.channel), ts: r.ts }))];
-  out.cardlist = [...(out.cardlist as R[]), ...V.cards.filter(r => r.kind !== "blocker").map(r => ({ ts: r.ts, ref: r.ref, thread: r.thread || (/^\d/.test(String(r.ts)) ? r.ts : null), channel: chOf(r.channel), kind: r.kind, area: r.area, state: r.state, title: String(r.title || ""), at: r.posted_at, wl: true }))].sort((a, b) => Number(a.at || 0) - Number(b.at || 0));
+  out.cards = uniq([...V.cards.filter(r => r.state === "open" && DIGITS_TS.test(String(r.ts)) && r.kind !== "blocker").map(r => ({ ts: r.ts, thread: r.thread || r.ts, channel: chOf(r.channel), kind: r.kind, area: r.area, title: String(r.title || ""), wl: true })), ...(Array.isArray(out.cards) ? out.cards : [])], x => String(x.ts));
+  out.bthreads = uniq([...V.cards.filter(r => r.kind === "blocker").map(r => ({ ref: hwRef(r.ref), ch: chOf(r.channel), ts: r.ts })), ...(out.bthreads as R[])], x => String(x.ts));
+  out.cardlist = uniq([...V.cards.filter(r => r.kind !== "blocker").map(r => ({ ts: r.ts, ref: hwRef(r.ref), thread: r.thread || (/^\d/.test(String(r.ts)) ? r.ts : null), channel: chOf(r.channel), kind: r.kind, area: r.area, state: r.state, title: String(r.title || ""), at: r.posted_at, wl: true })), ...(out.cardlist as R[])], x => String(x.ts)).sort((a, b) => Number(a.at || 0) - Number(b.at || 0) || (String(a.ts) < String(b.ts) ? -1 : String(a.ts) > String(b.ts) ? 1 : 0));
   out.cardsdone = [...V.done.map(r => ({ ts: r.ts, thread: r.thread || r.ts, channel: chOf(r.channel), kind: r.kind, area: r.area, state: r.state, title: String(r.title || ""), at: r.closed_at || r.posted_at, wl: true })), ...(out.cardsdone as R[])];
+  out.cardsdone = uniq(out.cardsdone as R[], x => String(x.ts)).sort((a, b) => Number(b.at || 0) - Number(a.at || 0)).slice(0, 50);
   if (hs.attn != null) out.attn = hs.attn;
   // 할 일(카드 kind todo ⋈ 열린 큐 질문): 기한 3일 안(지난 것은 7일까지) · 확인 필요 · 「나중에」는 뺌
   const today = Date.parse(kstDay(now)), todos: R[] = [];
@@ -204,7 +216,7 @@ export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.no
     todos.push({ ts: r.ts, area: ba, qarea: r.area, id: String(r.qid), due, thread: r.thread, why: "", ai: false, origin: dq.origin ?? null, body: dq.body || "", late, title: clean(r.short || r.question, 80), wl: true });
   }
   todos.sort((a, b) => a.due < b.due ? -1 : a.due > b.due ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-  out.todos = [...todos, ...(out.todos as R[])];
+  out.todos = uniq([...todos, ...(out.todos as R[])], x => String(x.ts));
   out.harness_state_at = V.hsAt ? Math.floor(V.hsAt / 1000) : 0;
   return out;
 }

@@ -109,9 +109,9 @@ export async function upload(c: C, me: string) {
   return c.json({ ok: true, id, name, size: buf.byteLength, mime: type });
 }
 /** GET /api/file/:id — 올린 사람만(남의 것은 없는 것과 같게 404). ?dl = 내려받기 */
-export async function fileGet(c: C, me: string, id: string, dl: boolean) {
+export async function fileGet(c: C, me: string | readonly string[], id: string, dl: boolean) {   // me = 올린 사람 하나, 또는 같은 사람의 메일 여럿(owner_unified 로 회원 길에 든 주인 — 메일 넷)
   if (!FID.test(id)) return c.json({ error: "없는 파일" }, 404);
-  return cachedServe(c, id, dl, owner => owner === me, () => c.json({ error: "없는 파일" }, 404));
+  return cachedServe(c, id, dl, owner => typeof me === "string" ? owner === me : me.includes(owner), () => c.json({ error: "없는 파일" }, 404));
 }
 export async function signedGet(c: C, id: string) {
   if (!(await linkOk(c.env.BETTER_AUTH_SECRET, id, c.req.query("e") || "", c.req.query("t") || ""))) return c.text("link expired or invalid\n", 403);

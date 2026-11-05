@@ -114,14 +114,17 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
         return { promise_id: Number(r?.id), shown: "on the person's board under promises" };
       }
       case "promise_done": {
-        const r = await db.prepare("UPDATE member_promise SET state = ?, done = ?, done_at = ? WHERE id = ? AND owner = ? AND state = 'open'").bind(a.state, a.done, Date.now(), a.promise_id, owner).run();
+        const hp = typeof a.promise_id === "string" ? a.promise_id : null;
+        const r = await db.prepare(`UPDATE member_promise SET state = ?, done = ?, done_at = ? WHERE ${hp ? "wid" : "id"} = ? AND owner = ? AND state = 'open'`).bind(a.state, a.done, Date.now(), hp ?? a.promise_id, owner).run();
         if (!r.meta.changes) throw new Error("없는 약속 — 이 사람 보드의 열린 약속 id 만");
         return { ok: true };
       }
       case "promise_list": {
-        const rs = (await db.prepare(`SELECT id, win, who, what, check_by, due, state, done, at FROM member_promise WHERE owner = ?${a.all ? "" : " AND state = 'open'"} ORDER BY at DESC LIMIT 50`).bind(owner).all<Record<string, any>>()).results;
+        const q = (hp: boolean) => db.prepare(`SELECT id, wid, win, who, what, check_by, due, state, done, at FROM member_promise WHERE owner = ?${a.all ? "" : " AND state = 'open'"} AND ${hp ? "" : "NOT "}COALESCE(wid, '') LIKE 'hp:%' ORDER BY at DESC LIMIT 50`).bind(owner);
+        const [mine, hps] = await db.batch<Record<string, any>>([q(false), q(true)]);
+        const rs = [...mine.results, ...hps.results];
         const now = Date.now();
-        return { promises: rs.map(p => ({ promise_id: p.id, who: p.who, what: p.what, check: p.check_by, due: p.due, state: p.state, overdue: p.state === "open" && overdue(p.due, now), win: p.win, ...(p.done ? { done: p.done } : {}) })) };
+        return { promises: rs.map(p => ({ promise_id: /^hp:\d+$/.test(String(p.wid || "")) ? String(p.wid) : p.id, who: p.who, what: p.what, check: p.check_by, due: p.due, state: p.state, overdue: p.state === "open" && overdue(p.due, now), win: p.win, ...(p.done ? { done: p.done } : {}) })) };
       }
     }
     throw new Error(`없는 도구: ${name}`);

@@ -153,13 +153,28 @@ export async function loadShared(db: D1Database, me: string, ctx?: Ctx | null): 
   return loadRead(db, me, ctx);
 }
 export function loadForget(me: string) { const m = me.toLowerCase(); for (const k of [...readShare.keys()]) if (k === m || k.startsWith(m + "#")) readShare.delete(k); }
+const GONE_TTL = 60_000, GONE_FRESH = 120_000, goneMemo = new Map<string, { at: number; p: Promise<R[]> }>();
+const IMP_COLS = "key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle";
+export function goneForget(me: string) { goneMemo.delete(me.toLowerCase()); }   // 시험용: 사라진 시각을 되돌려 적은 뒤 맡김 비우기(운영은 60초 · 2분 새 읽기로 빈틈 없음)
+function goneRows(db: D1Database, me: string): Promise<R[]> {
+  const k = me.toLowerCase(), now = Date.now(), m = goneMemo.get(k);
+  if (m && now - m.at < GONE_TTL) return m.p;
+  for (const [kk, v] of goneMemo) if (now - v.at >= GONE_TTL) goneMemo.delete(kk);
+  if (goneMemo.size > 500) goneMemo.clear();
+  const p = db.prepare(`SELECT ${IMP_COLS} FROM imp_item WHERE owner = ? AND gone_at > ?`).bind(me, now - 24 * 3600_000).all().then(r => r.results as R[]);
+  goneMemo.set(k, { at: now, p }); p.catch(() => { if (goneMemo.get(k)?.p === p) goneMemo.delete(k); });   // 실패는 맡기지 않음
+  return p;
+}
+let harnessKey = "";
+export const setHarnessKey = (k: string) => { harnessKey = k; };
 export async function load(db: D1Database, me: string, readOnly = false) {   // readOnly = 쓰기 없이 읽기만(그림자 대조 — 주인 줄을 안 건드림)
   if (!readOnly) await closeStaleConnect(db, me);
   const tkP = tokenRows(db, me);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
+  const goneP = goneRows(db, me);
   const [nd, mi, it, lg, cd, dr, ew, ns, pw, mb, cx, rvd, hw] = await db.batch([
     db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ? OR COALESCE(NULLIF(pinned_name, ''), name) IN (${FRONT_NAMES})) ORDER BY updated_at DESC`).bind(me, Date.now() - 24 * 3600_000, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
-    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at > ?").bind(me, me, Date.now() - 24 * 3600_000),
+    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at > ?").bind(me, me, Date.now() - GONE_FRESH),   // 2분 안 사라짐만 — 하루 치는 goneP(60초 맡김)
     db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT ${LOG_MAX}`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
     db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
     db.prepare("SELECT rowid AS n, id, name, brief, at FROM (SELECT rowid, id, name, brief, created_at AS at FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 30)").bind(me),
@@ -169,10 +184,12 @@ export async function load(db: D1Database, me: string, readOnly = false) {   // 
     db.prepare("SELECT owner, seed, hue, photo FROM member_bot WHERE owner IN (?, ?)").bind(me, meKey(me)),
     db.prepare("SELECT id, win, kind, question, at, answered_at FROM board_card WHERE owner = ? AND state = 'closed' ORDER BY at DESC LIMIT 50").bind(me),
     REVOKED(db, me),
-    ...(readOnly ? [db.prepare("SELECT id, name, state, state_at, note, handle, created_at FROM engine_window WHERE owner = ? AND kind = 'harness' AND state NOT IN ('closed','gone') ORDER BY id LIMIT 300").bind(me)] : []),
+    ...(readOnly || (!!harnessKey && me === harnessKey) ? [db.prepare("SELECT id, name, state, state_at, note, handle, created_at FROM engine_window WHERE owner = ? AND kind = 'harness' AND state NOT IN ('closed','gone') ORDER BY id LIMIT 300").bind(me)] : []),
   ]);
   const tk = { results: await tkP };
-  const items = new Map(withRv(it.results as R[], rvd.results as { id: string }[]).map(r => [String(r.key), r]));
+  const fresh = it.results as R[], seenKey = new Set(fresh.map(r => String(r.key)));   // 새로 읽은 줄(아직 있음 · 2분 안 사라짐)이 맡긴 옛 줄을 이김 — 다시 살아난 항목이 닫힌 것으로 안 보이게
+  const allItems = [...fresh, ...(await goneP).filter(r => !seenKey.has(String(r.key)))];
+  const items = new Map(withRv(allItems, rvd.results as { id: string }[]).map(r => [String(r.key), r]));
   const keyOfWin = new Map<string, string>(), keysOfWin = new Map<string, string[]>();
   for (const r of tk.results as R[]) { keyOfWin.set(r.win, r.pane); (keysOfWin.get(r.win) || keysOfWin.set(r.win, []).get(r.win)!).unshift(r.pane); }
   const itemOfWin = new Map<string, string>(); for (const i of items.values()) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(i.win, i.key);

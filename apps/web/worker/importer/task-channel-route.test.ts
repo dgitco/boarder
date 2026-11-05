@@ -41,7 +41,7 @@ function app(D1: D1Database, who: { device?: string | null; member?: string | nu
   return (method: string, path: string, body?: unknown) => a.request(path, { method, headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }, { DB: D1, PUBLIC_URL: "https://example.test" });
 }
 const { post, get, data, tsOf } = await import("../member-board.ts");
-const { paneOfId } = await import("../member-board.ts");
+const { paneOfId, goneForget } = await import("../member-board.ts");
 const ENV = { DB: null as unknown as D1Database, PUBLIC_URL: "https://example.test" };
 const T = Date.now() - 60_000;
 const win = (db: DatabaseSync, who: string, key: string, title: string, session = "", state = "working") =>
@@ -163,6 +163,7 @@ test("리뷰 4: 업무에 붙은 창이 닫히고 7시간 뒤에도 그 창 글�
     await regroup({ ...ENV, DB: f.D1 } as never, A);
     assert.equal(mapOf(f.db, "window:m:1")?.node, "tk_9001", unit);
     f.db.prepare("UPDATE imp_item SET gone_at=?, state='gone', state_at=?, seen_at=? WHERE owner=? AND key='window:m:1'").run(Date.now() - 7 * H, at, at, A);
+    goneForget(A);
     await regroup({ ...ENV, DB: f.D1 } as never, A);
     assert.equal(mapOf(f.db, "window:m:1")?.node, "tk_9001", unit + " 닫힌 뒤에도 연결");
     const j = await nodechat(f.D1, "w=" + encodeURIComponent("통장 연결") + "&id=tk_9001");

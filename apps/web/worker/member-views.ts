@@ -1,4 +1,5 @@
 import { tokenRows } from "./agent-token-cache";
+import { fileNo } from "./owner-vals";
 import { load, data, paneOfId, ME, OWN, inPrim, tsOf, cut, json, CARD_TS, myName, NOT_CHAT } from "./member-board";
 
 type R = Record<string, any>;
@@ -185,9 +186,9 @@ export function overdue(due: string, now: number) {
   return Number.isFinite(t) && t < now;
 }
 export async function promiseRows(db: D1Database, me: string, paneOf: (win: string) => string, now: number) {
-  const rs = (await db.prepare("SELECT id, win, who, what, check_by, due, at FROM member_promise WHERE owner = ? AND state = 'open' ORDER BY at DESC LIMIT 100").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results;
-  const promises = rs.map(r => { const pane = paneOf(String(r.win)); return { n: Number(r.id), due: String(r.due), to: cut(r.who, 60), what: cut(r.what, 160), watch: cut(r.check_by, 100), pane, panes: [pane], short: cut(r.what, 18), title: cut(r.what, 30) }; });
-  const to_check = rs.filter(r => overdue(String(r.due), now)).map(r => ({ id: "p" + r.id, src: "promise", pane: paneOf(String(r.win)), win: String(r.win), area: "primary", title: cut(`${r.who}에게 한 약속 — ${r.what}`, 200),
+  const rs = (await db.prepare("SELECT id, wid, win, who, what, check_by, due, at FROM member_promise WHERE owner = ? AND state = 'open' ORDER BY at DESC LIMIT 100").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results;
+  const promises = rs.map(r => { const pane = paneOf(String(r.win)), f = fileNo(r.wid); return { n: f ?? Number(r.id), ...(f !== null ? { hp: true } : {}), due: String(r.due), to: cut(r.who, 60), what: cut(r.what, 160), watch: cut(r.check_by, 100), pane, panes: [pane], short: cut(r.what, 18), title: cut(r.what, 30) }; });
+  const to_check = rs.filter(r => overdue(String(r.due), now)).map(r => ({ id: fileNo(r.wid) !== null ? "hp" + fileNo(r.wid) : "p" + r.id, src: "promise", pane: paneOf(String(r.win)), win: String(r.win), area: "primary", title: cut(`${r.who}에게 한 약속 — ${r.what}`, 200),
     body: cut(`기한 ${r.due} · 확인 장치: ${r.check_by}`, 600), choices: [], ago: Math.max(0, Math.round((now - Number(r.at)) / 60_000)), kind: "약속", why: `기한(${r.due})이 지났어요 — 지켰는지 확인` }));
   return { promises, to_check };
 }

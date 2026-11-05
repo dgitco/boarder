@@ -67,7 +67,7 @@ export const SCHEMAS = {
   role_list: z.object({}),
   // 약속(회원 보드, 0047 member_promise — 주인 promise add 와 같은 칸): who 누구에게 · what 무엇 · check 확인 장치 · due 기한(YYYY-MM-DD[ HH:MM], 한국 시각이면 지남 판정)
   promise_add: z.object({ who: line(60), what: line(300), check: line(200), due: line(40) }),
-  promise_done: z.object({ promise_id: z.number().int().positive(), done: line(300), state: z.enum(["kept", "dropped"]).default("kept") }),
+  promise_done: z.object({ promise_id: z.union([z.number().int().positive(), z.string().regex(/^hp:\d{1,9}$/)]), done: line(300), state: z.enum(["kept", "dropped"]).default("kept") }),
   promise_list: z.object({ all: z.boolean().default(false) }),
   feedback_send: z.object({ text: z.string().max(4000), kind: z.enum(["bug", "idea", "other"]).default("other") }),
 } as const;
@@ -149,7 +149,7 @@ const CORE_TOOLS: (Tool & { name: ToolName })[] = [
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "promise_done", title: "Close a promise",
     description: "Close a promise you recorded with promise_add, after you reported the result to the person: done says in one line how it was kept. state dropped when it no longer applies.",
-    inputSchema: { type: "object", properties: { promise_id: { type: "number" }, done: { type: "string" }, state: { type: "string", enum: ["kept", "dropped"] } }, required: ["promise_id", "done"] },
+    inputSchema: { type: "object", properties: { promise_id: { type: ["number", "string"], description: "promise_id from promise_list as is (a number, or \"hp:<n>\" for a promises-file promise)" }, done: { type: "string" }, state: { type: "string", enum: ["kept", "dropped"] } }, required: ["promise_id", "done"] },
     annotations: { readOnlyHint: false, destructiveHint: false } },
   { name: "promise_list", title: "List promises",
     description: "Open promises on the person's board (promise_id, who, what, check, due, overdue, win). all=true includes closed ones (last 50).",

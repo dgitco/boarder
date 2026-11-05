@@ -52,19 +52,44 @@ test("loadRead: 0.4초가 지나면 새로 읽음 · 실패한 읽기는 나눠 
   } finally { Date.now = real; loadForget(ME); }
 });
 
-test("지난 항목: 코드가 보내는 질의가 아직 있음 + 하루 안 사라짐만 — 예전 OR 꼴과 같은 줄, 하루 넘게 사라진 것 · 남의 것은 안 섞임", async () => {
-  const { db, D1 } = d1(), now = Date.now();
+test("지난 항목: 코드가 보내는 질의 둘(아직 있음 + 2분 안 · 하루 안 맡김)을 합치면 예전 OR 꼴과 같은 줄, 하루 넘게 사라진 것 · 남의 것은 안 섞임", async () => {
+  const { db, D1 } = d1(), now = Date.now(), P = "past@example.com";   // 앞 시험이 ME 의 하루 치를 맡겨 두었을 수 있어 새 사람
   const add = (owner: string, key: string, gone: number | null) => db.prepare("INSERT INTO imp_item(owner, key, kind, title, seen_at, gone_at) VALUES (?,?,?,?,?,?)").run(owner, key, "window", key, now, gone);
-  add(ME, "live", null); add(ME, "recent", now - 3600_000); add(ME, "old", now - 3 * 86_400_000); add("other@example.com", "theirs", null); add("other@example.com", "theirs2", now - 60_000);
-  let seen: { sql: string; args: unknown[] } | null = null;
-  const spy = { ...D1, prepare: (sql: string) => { const st = (D1 as any).prepare(sql); if (/FROM imp_item WHERE owner/.test(sql) && /handle END handle FROM imp_item/.test(sql)) return { ...st, bind: (...a: unknown[]) => { seen = { sql, args: a }; return st.bind(...a); } }; return st; } } as unknown as D1Database;
-  await load(spy, ME);
-  assert.ok(seen, "load 가 지난 항목 질의를 보냄");
-  const got = (db.prepare(seen!.sql).all(...(seen!.args as never[])) as { key: string }[]).map(r => r.key).sort();
-  const was = (db.prepare("SELECT key FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").all(ME, Number(seen!.args.at(-1))) as { key: string }[]).map(r => r.key).sort();
+  add(P, "live", null); add(P, "recent", now - 3600_000); add(P, "old", now - 3 * 86_400_000); add("other@example.com", "theirs", null); add("other@example.com", "theirs2", now - 60_000);
+  const seen: { sql: string; args: unknown[] }[] = [];
+  const spy = { ...D1, prepare: (sql: string) => { const st = (D1 as any).prepare(sql); if (/handle END handle FROM imp_item/.test(sql)) return { ...st, bind: (...a: unknown[]) => { seen.push({ sql, args: a }); return st.bind(...a); } }; return st; } } as unknown as D1Database;
+  await load(spy, P);
+  assert.equal(seen.length, 2, "load 가 지난 항목 질의 둘을 보냄");
+  const got = [...new Set(seen.flatMap(q => (db.prepare(q.sql).all(...(q.args as never[])) as { key: string }[]).map(r => r.key)))].sort();
+  const was = (db.prepare("SELECT key FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").all(P, now - 86_400_000) as { key: string }[]).map(r => r.key).sort();
   assert.deepEqual(got, ["live", "recent"]); assert.deepEqual(got, was);
-  const plan = (db.prepare("EXPLAIN QUERY PLAN " + seen!.sql).all(...(seen!.args as never[])) as { detail: string }[]).map(r => r.detail).join(" | ");
-  assert.match(plan, /imp_item_owner/); assert.doesNotMatch(plan, /SCAN imp_item(?! USING)/);   // 색인 범위로만(표 통째 훑기 없음)
+  for (const q of seen) {
+    const plan = (db.prepare("EXPLAIN QUERY PLAN " + q.sql).all(...(q.args as never[])) as { detail: string }[]).map(r => r.detail).join(" | ");
+    assert.match(plan, /imp_item_owner/); assert.doesNotMatch(plan, /SCAN imp_item(?! USING)/);   // 색인 범위로만(표 통째 훑기 없음)
+  }
+});
+
+test("지난 항목 맡김: 60초 안 다음 load 는 하루 치를 다시 안 읽음 · 막 닫힌 것(2분 안)은 늘 보임 · 다시 살아난 것은 새 줄이 이김", async () => {
+  const { db, D1 } = d1(), real = Date.now, who = "gonememo@example.com";
+  try {
+    let t = real(); Date.now = () => t;
+    const add = (key: string, gone: number | null) => { db.prepare("INSERT INTO imp_item(owner, key, kind, title, seen_at, gone_at) VALUES (?,?,?,?,?,?)").run(who, key, "window", key, t, gone); db.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?)").run(who, key, "n1", "auto"); };
+    db.prepare("INSERT INTO mnode(owner, id, name, state, why, counts, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)").run(who, "n1", "노드", "working", "", "{}", t, t);
+    const view = (L: any) => { const n = L.byId.get("n1"); return { live: n.windows.map((w: any) => w.key).sort(), gone: n.goneWins || 0 }; };
+    let dayReads = 0;
+    const spy = { ...D1, prepare: (sql: string) => { if (/handle END handle FROM imp_item WHERE owner = \? AND gone_at > \?$/.test(sql) && !/UNION/.test(sql)) dayReads++; return (D1 as any).prepare(sql); } } as unknown as D1Database;
+    const keys = async () => { const L = await load(spy, who) as any; return L; };
+    add("a", null); add("b", t - 3600_000);
+    assert.deepEqual(view(await keys()), { live: ["a"], gone: 1 }); assert.equal(dayReads, 1);
+    t += 10_000; add("c", t - 1000);   // 맡긴 뒤 막 닫힘 — 2분 안이라 새 질의가 잡음
+    db.prepare("UPDATE imp_item SET gone_at = NULL WHERE owner = ? AND key = 'b'").run(who);   // 다시 살아남
+    const seenRows: Record<string, any>[] = [];
+    const spy2 = { ...spy, prepare: (sql: string) => { const st = (spy as any).prepare(sql); if (/UNION ALL/.test(sql) && /FROM imp_item/.test(sql)) return { ...st, bind: (...a: unknown[]) => { const b = st.bind(...a); return { ...b, all: async () => { const r = await b.all(); seenRows.push(...r.results); return r; } }; } }; return st; } } as unknown as D1Database;
+    const L2 = await load(spy2, who); assert.equal(dayReads, 1, "60초 안이면 하루 치는 맡긴 것");
+    assert.deepEqual(view(L2), { live: ["a", "b"], gone: 1 }, "살아난 b 는 창 목록에(맡긴 닫힌 b 를 새 줄이 이김) · 막 닫힌 c 는 닫힌 창 수에");
+    assert.deepEqual(seenRows.map(r => r.key).sort(), ["a", "b", "c"], "새 질의가 아직 있음(a · 살아난 b) + 2분 안(c)");
+    t += 61_000; await load(spy, who); assert.equal(dayReads, 2, "60초 지나면 다시 읽음");
+  } finally { Date.now = real; }
 });
 
 test("/api/topics: Cache API가 없으면 0.4초 안 같은 요청은 load 를 나눠 씀(loadRead)", async () => {

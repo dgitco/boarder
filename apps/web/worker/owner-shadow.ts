@@ -9,7 +9,7 @@ export type Diff = {
   parked_snap: number; parked_d1: number; parked_only_snap: number; parked_only_d1: number;
   d1_other: number;
 } & Vals;
-export const PANE_VALS = ["area", "acct", "dur", "stuck", "branch", "last", "blocked", "recent", "hist", "owner", "wait", "topics", "pri"] as const;
+export const PANE_VALS = ["area", "acct", "stuck", "branch", "last", "blocked", "recent", "hist", "owner", "wait", "topics", "pri"] as const;
 export const PARK_VALS = ["pk_msg", "pk_stale", "pk_wait", "pk_watch", "pk_topics"] as const;
 export const LIST_VALS = ["feed", "closed", "archived", "decisions", "to_check", "promises", "areas", "agents", "cards", "cardlist", "cardsdone", "bthreads", "todos", "renames", "attn"] as const;
 type Vals = Record<(typeof PANE_VALS)[number] | (typeof PARK_VALS)[number] | (typeof LIST_VALS)[number], number> & { hs_age: number };
@@ -58,7 +58,7 @@ export function windowsDiff(snap: R, d1: R): Diff {
 const nv = (x: unknown): string => x === undefined || x === null || x === "" || x === false || x === 0 || (Array.isArray(x) && !x.length) ? "" : typeof x === "string" ? x : JSON.stringify(x);
 const tsList = (xs: unknown) => (Array.isArray(xs) ? xs as R[] : []).map(t => st(t?.ts)).filter(Boolean).sort().join(",");
 const PV: Record<(typeof PANE_VALS)[number], (p: R) => string> = {
-  area: p => st(p.area), acct: p => st(p.acct), dur: p => st(p.dur), stuck: p => st(p.stuck), branch: p => st(p.branch),
+  area: p => st(p.area), acct: p => st(p.acct), stuck: p => st(p.stuck), branch: p => st(p.branch),
   last: p => nv(p.last?.id), blocked: p => nv(p.blocked?.id),
   recent: p => nv((Array.isArray(p.recent) ? p.recent as R[] : []).map(x => [st(x.kind), st(x.msg)])),
   hist: p => nv((Array.isArray(p.hist) ? p.hist as R[] : []).map(x => st(x.k))),
@@ -67,9 +67,9 @@ const PV: Record<(typeof PANE_VALS)[number], (p: R) => string> = {
 const KV: Record<(typeof PARK_VALS)[number], (x: R) => string> = { pk_msg: x => st(x.msg), pk_stale: x => nv(x.stale), pk_wait: x => st(x.wait), pk_watch: x => st(x.watch), pk_topics: x => tsList(x.topics) };
 // 전역 목록 → 열쇠들(두 쪽 차집합 크기의 합을 셈)
 const arr = (x: unknown) => Array.isArray(x) ? x as R[] : [];
-const LK: Record<Exclude<(typeof LIST_VALS)[number], "attn">, (o: R) => string[]> = {
+const LK: Record<Exclude<(typeof LIST_VALS)[number], "attn">, (o: R, d1?: boolean) => string[]> = {
   feed: o => arr(o.feed).map(x => st(x.id)), closed: o => arr(o.closed).map(x => st(x.pane)), archived: o => arr(o.archived).map(x => st(x)),
-  decisions: o => arr(o.decisions).map(x => `${st(x.src)}|${st(x.id)}`),
+  decisions: (o, d1) => arr(o.decisions).map(x => d1 && !x.wl && st(x.src) === "wlog" ? `card|${st(x.id)}` : `${st(x.src)}|${st(x.id).replace(/^hw(?=\d)/, "w")}`),
   to_check: o => arr(o.to_check).filter(x => st(x.src) !== "promise").map(x => `${st(x.src)}|${st(x.id)}`),   // 기한 지난 약속 확인(회원 길에만 있는 기능)은 뺌
   promises: o => arr(o.promises).map(x => `${st(x.what)}|${st(x.due)}`),
   areas: o => arr(o.areas).filter(x => ["primary", "company", "personal", "dgit", "shop"].includes(st(x.key))).map(x => `${st(x.key)}:${st(x.lead)}`),
@@ -85,7 +85,7 @@ function valuesDiff(snap: R, d1: R, S: Map<string, R>, D: Map<string, R>): Vals 
   const pk = (o: R, only: (x: R) => boolean) => new Map((Array.isArray(o?.parked) ? o.parked as R[] : []).filter(only).map(x => [parkName(x), x]));
   const KS = pk(snap, () => true), KD = pk(d1, x => !!x?.harness);
   for (const [n, s] of KS) { const d = KD.get(n); if (!d) continue; for (const f of PARK_VALS) if (KV[f](s) !== KV[f](d)) v[f]++; }
-  for (const f of Object.keys(LK) as (keyof typeof LK)[]) v[f] = symDiff(LK[f](snap || {}), LK[f](d1 || {}));
+  for (const f of Object.keys(LK) as (keyof typeof LK)[]) v[f] = symDiff(LK[f](snap || {}, false), LK[f](d1 || {}, true));
   v.attn = nv(snap?.attn) === nv(d1?.attn) ? 0 : 1;
   const at = Number(d1?.harness_state_at || 0);
   v.hs_age = at ? Math.max(0, Math.round(Date.now() / 1000 - at)) : -1;

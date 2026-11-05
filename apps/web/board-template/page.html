@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "c27d5b688b51";
+window.HB_VER = "8e1b97784c8b";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -3261,7 +3261,11 @@ let panes = [], byPane = {}, parkBy = {}, asks = [], big = [], small = [], byBig
 const todoDone = /* @__PURE__ */ new Map(), todoBusy = /* @__PURE__ */ new Set();
 const madeBth = {};
 let BT = {};
-const bref = (a) => /^Q-/.test(a.id) ? a.area ? a.area + ":" + a.id : "" : /^[wbc]\d+$/.test(a.id) ? a.id[0] + ":" + a.id.slice(1) : "";
+const bref = (a) => {
+  if (/^Q-/.test(a.id)) return a.area ? a.area + ":" + a.id : "";
+  const m = /^(hw|[wbc])(\d+)$/.exec(a.id);
+  return m ? m[1] + ":" + m[2] : "";
+};
 const helperName = (r) => /게이트|gate|review|리뷰|검사|check|test|시험|verify/i.test(r || "") ? "검사 도우미" : /[0-9A-Za-z]/.test(r || "") || !r ? "도우미" : /도우미$/.test(r) ? r : r + " 도우미";
 const nameOf = (p) => p.kind === "primary" ? AREA_NAME.primary : p.kind === "arealead" ? AREA_NAME[p.area] : p.kind === "helper" ? helperName(p.role) : human(p.win.replace(/^\d+\s*/, ""));
 const tidy = (t) => t.replace(/^Owner 할 일(\([^)]*\))?:\s*/, "").replace(/\s*\([^)]*\)/g, "").trim();
@@ -3356,7 +3360,7 @@ function compute() {
     body: ""
   });
   for (const x of D.promises) small.push({
-    id: "p" + x.n,
+    id: (x.hp ? "hp" : "p") + x.n,
     to: byPane[x.pane] ? x.pane : leadPane("primary"),
     title: x.title,
     kind: "약속",
@@ -3445,7 +3449,7 @@ const CARD_AREA = { primary: BOTN, company: "회사", dgit: "DGit", shop: "가�
 const cardArea = (a) => a === "shopco" ? "shop" : CARD_AREA[a] ? a : "primary";
 const bigItem = (w) => ({ id: w.id, to: w.to, q: w.title, why: w.s, body: w.body, area: w.area, ref: w.ref, bth: w.bth, opts: ["창 열어 시작", "처리함", "(나중에)"], labels: { "(나중에)": "내일 아침에 다시" }, big: true });
 function cardItem(c) {
-  const w = (c.ref || c.ts).match(/^w:(\d+)$/), wAsk = w && asks.find((x) => x.id === "w" + w[1]);
+  const w = (c.ref || c.ts).match(/^(h?w):(\d+)$/), wAsk = w && asks.find((x) => x.id === w[1] + w[2]);
   if (/^\d/.test(c.ts)) return slackAsks().find((x) => x.cardTs === c.ts) || wAsk || null;
   if (w) return wAsk || null;
   const m = c.ts.match(/^q:([^:]+):(.+)$/);
@@ -3465,8 +3469,8 @@ function doneHere(c) {
   if (answeredCard.has(c.ts) && Date.now() - answeredCard.get(c.ts) < 6e5 || todoDone.has(c.ts)) return true;
   const m = c.ts.match(/^q:([^:]+):(.+)$/);
   if (m) return answeredHere.has(m[2] + "|" + cardArea(m[1])) || answeredHere.has("w:" + m[2] + "|" + cardArea(m[1]));
-  const w = (c.ref || c.ts).match(/^w:(\d+)$/);
-  return !!w && [...answeredHere.keys()].some((k) => k.startsWith("w" + w[1] + "|"));
+  const w = (c.ref || c.ts).match(/^(h?w):(\d+)$/);
+  return !!w && [...answeredHere.keys()].some((k) => k.startsWith(w[1] + w[2] + "|"));
 }
 function cardRows(state = "open") {
   if (!Array.isArray(D.cardlist)) return null;

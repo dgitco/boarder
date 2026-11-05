@@ -12,6 +12,8 @@ const { Engine } = await import("./engine.ts");
 const MB = await import("./member-board.ts");
 const SH = await import("./owner-shadow.ts");
 const OV = await import("./owner-vals.ts");
+const { localTools } = await import("./local.ts");
+const { run } = await import("./mcp/tools.ts");
 (app as any).onError((e: unknown) => { console.error("시험 500:", e); return new Response("{}", { status: 500 }); });
 
 const MIG = new URL("../migrations/", import.meta.url);
@@ -154,7 +156,7 @@ test("(가)+(나): 장부 · 카드 · 질문 사본과 하네스가 올린 값�
   try {
     await s.flag("shadow_unified", true);
     const r = await s.up(HSTATE());
-    assert.equal(r.status, 200, r.text); assert.deepEqual(r.j.promises, { opened: 1, changed: 0, closed: 0 });
+    assert.equal(r.status, 200, r.text); assert.deepEqual(r.j.promises, { opened: 1, changed: 0, closed: 0, reopened: 0, held: 0 });
     const D: any = await s.owner();
     const p40 = D.panes.find((p: any) => p.pane === "%40");
     assert.equal(p40.area, "dgit"); assert.equal(p40.acct, "c"); assert.equal(p40.dur, "12분"); assert.equal(p40.branch, "feat-x"); assert.equal(p40.wait, 2);
@@ -167,13 +169,14 @@ test("(가)+(나): 장부 · 카드 · 질문 사본과 하네스가 올린 값�
     assert.equal(pk.msg, "지어낸 조건"); assert.equal(pk.watch, "PR 보는 중"); assert.equal(pk.pane, "%77", "주차 판 번호는 하네스 판 그대로");
     assert.deepEqual(D.renames, { "옛 일": "닫힌 일" });
     assert.deepEqual(D.closed.filter((x: any) => x.wl).map((x: any) => [x.pane, x.area]), [["%88", "company"]]);
-    assert.deepEqual(D.decisions.map((d: any) => d.id).sort(), ["Q-1", "w8"]);
-    assert.deepEqual(D.decisions.find((d: any) => d.id === "w8").choices, ["지금", "내일"]);
+    assert.deepEqual(D.decisions.map((d: any) => d.id).sort(), ["Q-1", "hw8"], "장부 결정은 hw<장부 id> — 회원 카드 w<rowid> 와 안 겹침");
+    assert.deepEqual(D.decisions.find((d: any) => d.id === "hw8").choices, ["지금", "내일"]);
     assert.deepEqual(D.to_check.map((d: any) => d.id), ["Q-2"]);
     assert.deepEqual(D.todos.map((t: any) => [t.ts, t.due]), [[TS(300), today]]);
-    assert.deepEqual(D.bthreads, [{ ref: "w5", ch: "dgit", ts: TS(400) }]);
+    assert.deepEqual(D.bthreads, [{ ref: "hw5", ch: "dgit", ts: TS(400) }]);
+    assert.equal(D.cardlist.find((c: any) => c.ts === TS(200)).ref, "hw8", "카드 ref 도 장부 결정 id 머리와 같게");
     assert.deepEqual(D.cards.map((c: any) => [c.ts, c.channel]), [[TS(200), "primary"], [TS(300), "dgit"]]);
-    assert.deepEqual(D.promises.map((x: any) => [x.what, x.pane]), [["지어낸 약속", "%40"]], "약속은 member_promise(hp:3)로 — 판 번호 그대로");
+    assert.deepEqual(D.promises.map((x: any) => [x.n, x.hp, x.what, x.pane]), [[3, true, "지어낸 약속", "%40"]], "약속은 member_promise(hp:3)로 — 번호는 promises.md 번호, 판 번호 그대로");
     assert.deepEqual(D.areas.slice(0, 5).map((a: any) => [a.key, a.lead]), [["primary", "%15"], ["company", "%179"], ["personal", null], ["dgit", null], ["shop", null]]);
     assert.deepEqual(D.agents.map((a: any) => a.key), ["qa"]);
     assert.ok(D.harness_state_at > 0);
@@ -190,7 +193,8 @@ test("대조 항목: 스냅숏과 칸이 다르면 그 칸 이름 · 개수가 �
     assert.equal((await s.up(HSTATE())).status, 200);
     const D: any = await s.owner();
     const cases: [string, (o: any) => void, number][] = [
-      ["area", o => { o.panes[2].area = "company"; }, 1], ["acct", o => { o.panes[2].acct = "d"; }, 1], ["dur", o => { o.panes[3].dur = "9분"; }, 1], ["stuck", o => { o.panes[3].stuck = ""; }, 1], ["branch", o => { o.panes[2].branch = "main"; }, 1],
+      ["area", o => { o.panes[2].area = "company"; }, 1], ["acct", o => { o.panes[2].acct = "d"; }, 1], ["dur", o => { o.panes[3].dur = "9분"; }, 0],
+ ["stuck", o => { o.panes[3].stuck = ""; }, 1], ["branch", o => { o.panes[2].branch = "main"; }, 1],
       ["last", o => { o.panes[0].last.id = 6; }, 1], ["blocked", o => { o.panes[2].blocked = null; }, 1], ["recent", o => { o.panes[2].recent.pop(); }, 1], ["hist", o => { o.panes[3].hist = []; }, 1],
       ["owner", o => { o.panes[2].owner = false; }, 1], ["wait", o => { o.panes[2].wait = 0; }, 1], ["topics", o => { o.panes[2].topics = []; }, 1], ["pri", o => { o.panes[2].pri = "낮음"; }, 1],
       ["pk_msg", o => { o.parked[0].msg = "다른 조건"; }, 1], ["pk_stale", o => { o.parked[0].stale = "다시 열 장치가 없어 저절로 안 열림"; }, 1], ["pk_wait", o => { o.parked[0].wait = "Owner 답 기다리는 중"; }, 1], ["pk_watch", o => { o.parked[0].watch = ""; }, 1],
@@ -201,6 +205,7 @@ test("대조 항목: 스냅숏과 칸이 다르면 그 칸 이름 · 개수가 �
     for (const [k, mut, n] of cases) {
       const snap = SNAP(); mut(snap);
       const d: any = SH.windowsDiff(snap, D);
+      if (n === 0) { assert.deepEqual(d.at, [], `${k} 는 대조 안 함: ${JSON.stringify(d)}`); continue; }
       assert.deepEqual(d.at, [k], `${k}: ${JSON.stringify(d)}`); assert.equal(d[k], n, k);
       assert.ok(!/지어낸|총괄|닫힌 일|동료/.test(JSON.stringify(d)), "글 · 이름 안 실음");
     }
@@ -211,7 +216,7 @@ test("하네스가 값을 안 올렸으면 그 값 칸이 차이로 잡히고 hs
   const s = await setup();
   try {
     const d: any = SH.windowsDiff(SNAP(), await s.owner());
-    for (const k of ["area", "acct", "dur", "wait", "topics", "pk_msg", "pk_watch", "areas", "agents", "archived", "promises"]) assert.ok(d.at.includes(k), `${k}: ${d.at}`);
+    for (const k of ["area", "acct", "wait", "topics", "pk_msg", "pk_watch", "areas", "agents", "archived", "promises"]) assert.ok(d.at.includes(k), `${k}: ${d.at}`);
     for (const k of ["last", "blocked", "recent", "hist", "owner", "pri", "feed", "closed", "decisions", "cards", "cardlist", "bthreads", "renames"]) assert.ok(!d.at.includes(k), `(가) 사본 칸은 기기 값 없이도 같음: ${k}`);
     assert.equal(d.hs_age, -1);
   } finally { s.done(); }
@@ -247,11 +252,11 @@ test("약속 맞추기: promises.md 열린 약속 → member_promise(hp:<번호>
     const rows = () => s.db.prepare("SELECT wid, win, due, state FROM member_promise WHERE owner = ? ORDER BY wid").all(OWNER).map((r: any) => [r.wid, r.win, r.due, r.state]);
     const H = HSTATE();
     H.promises.push({ n: 4, due: "2099-03-03", to: "팀", what: "또 다른 약속", watch: "감시", pane: "" });
-    assert.deepEqual((await s.up(H)).j.promises, { opened: 2, changed: 0, closed: 0 });
+    assert.deepEqual((await s.up(H)).j.promises, { opened: 2, changed: 0, closed: 0, reopened: 0, held: 0 });
     assert.deepEqual(rows(), [["hp:3", "%40", "2099-01-01", "open"], ["hp:4", "%15", "2099-03-03", "open"]]);
-    assert.deepEqual((await s.up(H)).j.promises, { opened: 0, changed: 0, closed: 0 }, "같으면 안 씀");
+    assert.deepEqual((await s.up(H)).j.promises, { opened: 0, changed: 0, closed: 0, reopened: 0, held: 0 }, "같으면 안 씀");
     const H2 = HSTATE(); H2.promises = [{ n: 4, due: "2099-04-04", to: "팀", what: "또 다른 약속", watch: "감시", pane: "%41" }];
-    assert.deepEqual((await s.up(H2)).j.promises, { opened: 0, changed: 1, closed: 1 });
+    assert.deepEqual((await s.up(H2)).j.promises, { opened: 0, changed: 1, closed: 1, reopened: 0, held: 0 });
     assert.deepEqual(rows(), [["hp:3", "%40", "2099-01-01", "kept"], ["hp:4", "%41", "2099-04-04", "open"]]);
     const H3: any = HSTATE(); H3.promises = null;
     assert.equal((await s.up(H3)).j.promises, null);
@@ -298,6 +303,60 @@ test("끝에서 끝: 스위치 켬 + 하네스 값 올림 → 주인 /api/data �
     const ev = s.sent.filter(e => e.event === "unify_shadow_diff");
     assert.equal(ev.length, 1); assert.equal(ev[0].properties.at, "branch,todos"); assert.equal(ev[0].properties.branch, 1); assert.ok(ev[0].properties.hs_age >= 0);
     assert.ok(!JSON.stringify(ev[0]).includes("feat-x") && !JSON.stringify(ev[0]).includes(OWNER));
+    await s.flag("shadow_unified", false);
+  } finally { s.done(); }
+});
+
+test("hp: 약속: 창 도구 promise_list 는 hp:<번호> 로 보이고 promise_done 으로 닫으면 하네스가 1분 뒤 다시 안 엶 · 파일에서 빠졌다 다시 나타난 것만 다시 엶 · 목록 50 은 내 약속 먼저", async () => {
+  const s = await setup();
+  try {
+    await s.flag("shadow_unified", true);
+    const tools = localTools(s.D1, OWNER, "1 총괄", "https://example.test");
+    const ctx = { agent: "t", publicUrl: "https://example.test", view: { visible: () => true, why: () => null, desc: () => "", mask: () => false }, get: async () => ({}), op: async () => ({}), local: tools };
+    const H: any = HSTATE(); H.promises = Array.from({ length: 60 }, (_, i) => ({ n: i + 1, due: "2099-01-01", to: "동료", what: `하네스 약속 ${i + 1}`, watch: "감시", pane: "%40" }));
+    assert.equal((await s.up(H)).j.promises.opened, 60);
+    const mine = await run(ctx as never, "promise_add", { who: "팀", what: "내 약속", check: "결과 글", due: "2099-02-02" }) as any;
+    const L = (await run(ctx as never, "promise_list", {}) as any).promises;
+    assert.equal(L[0].promise_id, mine.promise_id, "창이 적은 약속이 먼저(하네스 약속에 밀려나지 않음)");
+    assert.equal(L.length, 51); assert.ok(L.slice(1).every((p: any) => /^hp:\d+$/.test(p.promise_id)));
+    assert.deepEqual(await run(ctx as never, "promise_done", { promise_id: "hp:5", done: "알려 드림" }), { ok: true });
+    await assert.rejects(run(ctx as never, "promise_done", { promise_id: "hp:5", done: "또" }), /없는 약속/);
+    await assert.rejects(run(ctx as never, "promise_done", { promise_id: "hp:x", done: "꼴 틀림" }), /입력이 맞지 않음/);
+    const again = (await s.up(H)).j.promises;
+    assert.deepEqual(again, { opened: 0, changed: 0, closed: 0, reopened: 0, held: 1 });
+    const st = (wid: string) => s.db.prepare("SELECT state, done FROM member_promise WHERE owner = ? AND wid = ?").all(OWNER, wid).map((r: any) => r.state);
+    assert.deepEqual(st("hp:5"), ["kept"]);
+    // hp:7 이 파일에서 빠짐 → 닫힘(SYNC_DONE) → 다시 나타나면 같은 줄을 다시 엶(줄이 늘지 않음)
+    const H2: any = { ...H, promises: H.promises.filter((p: any) => p.n !== 7) };
+    assert.equal((await s.up(H2)).j.promises.closed, 1);
+    assert.deepEqual((await s.up(H)).j.promises, { opened: 0, changed: 0, closed: 0, reopened: 1, held: 1 });
+    assert.deepEqual(st("hp:7"), ["open"]);
+    // 화면 번호 = 파일 번호, 기한 지남 확인 id 도 hp 머리
+    const D: any = await s.owner();
+    assert.ok(D.promises.some((p: any) => p.n === 7 && p.hp) && D.promises.some((p: any) => p.n === mine.promise_id && !p.hp));
+    await s.flag("shadow_unified", false);
+  } finally { s.done(); }
+});
+
+test("섞을 때 정리: 장부 결정 hw<id> 와 회원 카드 결정 w<rowid> 가 같은 숫자여도 둘 다 · 카드 목록 · 끝난 것은 같은 ts 한 번(장부 줄이 이김) · 피드는 새 것부터", async () => {
+  const s = await setup();
+  try {
+    await s.flag("shadow_unified", true);
+    assert.equal((await s.up(HSTATE())).status, 200);
+    s.db.prepare("INSERT INTO board_card(rowid, id, owner, win, question, choices, state, at) VALUES (?,?,?,?,?,?,?,?)").run(8, "1793000001.000001", OWNER, "1 총괄", "회원 카드 결정", '["가","나"]', "open", Date.now() - 60_000);
+    s.db.prepare("INSERT INTO board_card(id, owner, win, question, choices, state, at, answered_at) VALUES (?,?,?,?,?,?,?,?)").run(TS(500), OWNER, "1 총괄", "겹친 끝난 카드", "[]", "closed", Date.now() - 90_000, Date.now() - 80_000);
+    s.db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(OWNER, "1 총괄", "progress", "회원 길 줄", null, Date.now() - 30_000);
+    const D: any = await s.owner();
+    const ids = D.decisions.map((d: any) => d.id);
+    assert.ok(ids.includes("w8") && ids.includes("hw8"), JSON.stringify(ids));
+    assert.equal(new Set(ids).size, ids.length, "결정 id 겹침 없음");
+    assert.equal(D.cardsdone.filter((c: any) => c.ts === TS(500)).length, 1); assert.equal(D.cardsdone.find((c: any) => c.ts === TS(500)).wl, true, "같은 ts 는 장부 줄");
+    const ts = D.cardlist.map((c: any) => c.ts); assert.equal(new Set(ts).size, ts.length);
+    const at = D.cardlist.map((c: any) => Number(c.at)); assert.deepEqual(at, [...at].sort((a, b) => a - b), "카드 목록은 시각 순");
+    const ago = D.feed.map((f: any) => f.ago); assert.deepEqual(ago, [...ago].sort((a, b) => a - b), "피드는 새 것부터");
+    assert.ok(D.feed.some((f: any) => !f.wl) && D.feed.some((f: any) => f.wl), "회원 길 줄과 장부 줄이 같이");
+    const d: any = SH.windowsDiff(SNAP(), D);
+    assert.equal(d.decisions, 1, "대조: hw8 은 스냅숏 w8 과 같은 열쇠 — 더한 회원 카드 하나만 차이");
     await s.flag("shadow_unified", false);
   } finally { s.done(); }
 });
