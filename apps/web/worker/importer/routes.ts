@@ -82,7 +82,7 @@ const json = <T>(v: string | null | undefined, d: T): T => { try { return v ? JS
 
 type RgRow = Record<string, unknown> & { key: string; gone_at?: number | null; _rid?: number };
 const RG_COLS = "rowid AS _rid, key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, device_id, CASE WHEN kind = 'window' THEN handle END handle";
-const RG_TTL = 60_000, RG_FRESH = 120_000, RG_MAX_ROWS = 30_000, rgMemo = new WeakMap<object, Map<string, { at: number; v: RgRow[] }>>();
+const RG_TTL = 300_000, RG_FRESH = 360_000, RG_MAX_ROWS = 30_000, rgMemo = new WeakMap<object, Map<string, { at: number; v: RgRow[] }>>();
 const rgKey = (db: D1Database) => ((db as unknown as Record<symbol, object>)[RAW]) || db;
 export function rgForget(db: D1Database, owner: string) { rgMemo.get(rgKey(db))?.delete(owner); }
 async function rgGone(db: D1Database, owner: string, t: number): Promise<RgRow[]> {

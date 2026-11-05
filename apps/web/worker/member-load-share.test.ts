@@ -88,7 +88,9 @@ test("지난 항목 맡김: 60초 안 다음 load 는 하루 치를 다시 안 �
     const L2 = await load(spy2, who); assert.equal(dayReads, 1, "60초 안이면 하루 치는 맡긴 것");
     assert.deepEqual(view(L2), { live: ["a", "b"], gone: 1 }, "살아난 b 는 창 목록에(맡긴 닫힌 b 를 새 줄이 이김) · 막 닫힌 c 는 닫힌 창 수에");
     assert.deepEqual(seenRows.map(r => r.key).sort(), ["a", "b", "c"], "새 질의가 아직 있음(a · 살아난 b) + 2분 안(c)");
-    t += 61_000; await load(spy, who); assert.equal(dayReads, 2, "60초 지나면 다시 읽음");
+    t += 120_000; const L3 = await load(spy, who) as any; assert.equal(dayReads, 1, "2분(예전 60초 맡김은 지남)이어도 5분 안이면 맡긴 것");
+    assert.deepEqual(view(L3), { live: ["a", "b"], gone: 1 }, "맡긴 뒤 2분 넘게 전에 닫힌 c 도 닫힌 창 수에 — 새로 읽는 폭(6분)이 맡김(5분)보다 길어 빈틈 없음");
+    t += 181_000; await load(spy, who); assert.equal(dayReads, 2, "5분 지나면 다시 읽음");
   } finally { Date.now = real; }
 });
 

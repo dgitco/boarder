@@ -189,14 +189,14 @@ export async function loadShared(db: D1Database, me: string, ctx?: Ctx | null): 
   return loadRead(db, me, ctx);
 }
 export function loadForget(me: string) { const m = me.toLowerCase(); for (const k of [...readShare.keys()]) if (k === m || k.startsWith(m + "#")) readShare.delete(k); }
-const GONE_TTL = 60_000, GONE_FRESH = 120_000, goneMemo = new Map<string, { at: number; v: R[] }>();
+const GONE_TTL = 300_000, GONE_FRESH = 360_000, GONE_MAX_ROWS = 40_000, goneMemo = new Map<string, { at: number; v: R[] }>();
 const IMP_COLS = "key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle";
 export function goneForget(me: string) { goneMemo.delete(me.toLowerCase()); }
-const ARCH_FRESH = 120_000, archMemo = new Map<string, { at: number; v: R[] }>();
+const ARCH_TTL = 60_000, ARCH_FRESH = 120_000, archMemo = new Map<string, { at: number; v: R[] }>();
 async function archivedRows(db: D1Database, me: string): Promise<R[]> {
   const k = me.toLowerCase(), now = Date.now(), m = archMemo.get(k);
-  if (m && now - m.at < GONE_TTL) return m.v;
-  for (const [kk, v] of archMemo) if (now - v.at >= GONE_TTL) archMemo.delete(kk);
+  if (m && now - m.at < ARCH_TTL) return m.v;
+  for (const [kk, v] of archMemo) if (now - v.at >= ARCH_TTL) archMemo.delete(kk);
   if (archMemo.size > 500) archMemo.clear();
   const v = (await db.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND archived_at > ?").bind(me, now - 24 * 3600_000).all()).results as R[];
   archMemo.set(k, { at: now, v }); return v;   // 실패면 throw — 맡기지 않음
@@ -204,10 +204,12 @@ async function archivedRows(db: D1Database, me: string): Promise<R[]> {
 async function goneRows(db: D1Database, me: string): Promise<R[]> {
   const k = me.toLowerCase(), now = Date.now(), m = goneMemo.get(k);
   if (m && now - m.at < GONE_TTL) return m.v;
-  for (const [kk, v] of goneMemo) if (now - v.at >= GONE_TTL) goneMemo.delete(kk);
+  let rows = 0;
+  for (const [kk, v] of goneMemo) { if (now - v.at >= GONE_TTL || kk === k) goneMemo.delete(kk); else rows += v.v.length; }
   if (goneMemo.size > 500) goneMemo.clear();
   const v = (await db.prepare(`SELECT ${IMP_COLS} FROM imp_item WHERE owner = ? AND gone_at > ?`).bind(me, now - 24 * 3600_000).all()).results as R[];   // 실패면 throw — 맡기지 않음
-  goneMemo.set(k, { at: now, v }); return v;
+  if (rows + v.length <= GONE_MAX_ROWS) goneMemo.set(k, { at: now, v });   // 넘으면 맡기지 않고 그때그때 읽음
+  return v;
 }
 let harnessKey = "";
 export const setHarnessKey = (k: string) => { harnessKey = k; };
@@ -219,7 +221,7 @@ export async function load(db: D1Database, me: string, readOnly = false) {   // 
   const [nd, mi, it, lg, cd, dr, ew, ns, pw, mb, cx, rvd, hw] = await db.batch([
     db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND archived_at IS NULL UNION SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND archived_at > ? UNION SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND pinned_name IN (${FRONT_NAMES}) UNION SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND name IN (${FRONT_NAMES}) AND COALESCE(pinned_name, '') = '' ORDER BY updated_at DESC`).bind(me, me, Date.now() - ARCH_FRESH, me, me, me, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
-    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at > ?").bind(me, me, Date.now() - GONE_FRESH),   // 2분 안 사라짐만 — 하루 치는 goneP(60초 맡김)
+    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at > ?").bind(me, me, Date.now() - GONE_FRESH),   // 6분 안 사라짐만 — 하루 치는 goneP(5분 맡김)
     db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT ${LOG_MAX}`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
     db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
     db.prepare("SELECT rowid AS n, id, name, brief, at FROM (SELECT rowid, id, name, brief, created_at AS at FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 30)").bind(me),
@@ -232,7 +234,7 @@ export async function load(db: D1Database, me: string, readOnly = false) {   // 
     ...(readOnly || (!!harnessKey && me === harnessKey) ? [db.prepare("SELECT id, name, state, state_at, note, handle, created_at FROM engine_window WHERE owner = ? AND kind = 'harness' AND state NOT IN ('closed','gone') ORDER BY id LIMIT 300").bind(me)] : []),
   ]);
   const tk = { results: await tkP };
-  const fresh = it.results as R[], seenKey = new Set(fresh.map(r => String(r.key)));   // 새로 읽은 줄(아직 있음 · 2분 안 사라짐)이 맡긴 옛 줄을 이김 — 다시 살아난 항목이 닫힌 것으로 안 보이게
+  const fresh = it.results as R[], seenKey = new Set(fresh.map(r => String(r.key)));   // 새로 읽은 줄(아직 있음 · 6분 안 사라짐)이 맡긴 옛 줄을 이김 — 다시 살아난 항목이 닫힌 것으로 안 보이게
   const allItems = [...fresh, ...(await goneP).filter(r => !seenKey.has(String(r.key)))];
   const items = new Map(withRv(allItems, rvd.results as { id: string }[]).map(r => [String(r.key), r]));
   const keyOfWin = new Map<string, string>(), keysOfWin = new Map<string, string[]>();
