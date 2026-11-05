@@ -15,6 +15,7 @@ export const SETTINGS_HELP = `Board settings from this machine (show: any member
   boarder bot show | set --name "<name>"                          main bot name (look and pictures stay)
   boarder approve actions | <action> k=v…                         ask a person to approve a risky change by one-use link (they open it and press 계속): connection.disconnect · connection.read-only · connection.label · connection.tools · device.revoke · session-sync.on · bundle.set · rule.set
   boarder connections                                             your connections: id, service, status, read-only, how many tools are off (use the id with approve)
+  boarder avatar show | set [--seed <word>] [--hue 0-359] [--photo <png|jpg|webp file> | --photo-id <id> | --no-photo]   your avatar (only the parts you pass change)
   boarder devices                                                 your machines on this board: name, tools, scope, last seen (revoking stays on the board screen)
   boarder node-values show | set check_min=30 split_at=3 move_h=24 rename_h=6 archive_h=6   node numbers (only the ones you pass change)
   boarder unit show | set goal|agent                              what a channel groups: one goal or one agent
@@ -31,7 +32,7 @@ export const SETTINGS_HELP = `Board settings from this machine (show: any member
   The same permission also lets this machine upload screen scripts: \`boarder view overlay js\` and \`boarder harness wrapper ui on\` need it too.`;
 
 const COMMANDS = { pins: 'pins', 'task-channels': 'task_channels', 'task-repo': 'task_repo', 'front-door': 'front_door', 'primary-window': 'primary_window', bot: 'bot_name',
-  'node-values': 'node_values', unit: 'unit', prefs: 'prefs', 'side-hide': 'side_hide', ui: 'ui', features: 'features', 'session-sync': 'session_sync' };
+  'node-values': 'node_values', unit: 'unit', prefs: 'prefs', 'side-hide': 'side_hide', ui: 'ui', features: 'features', 'session-sync': 'session_sync', avatar: 'avatar' };
 const OBJECT_CMDS = new Set(['node-values', 'prefs', 'ui', 'features']);   // k=v 쌍(또는 --json)으로 받는 칸
 export const COMMAND_KEYS = Object.values(COMMANDS);   // 서버 device-settings.ts KEYS 와 같아야 함(settings.test.mjs 가 대조)
 export const SETTINGS_COMMANDS = ['settings', ...Object.keys(COMMANDS), 'roles', 'window', 'devices', 'connections', 'approve'];
@@ -64,6 +65,7 @@ export function undoOf(cmd, before) {
     const fold = [...new Set([...aliases.filter(a => names.includes(a)), ...names])];
     return `${b} --name ${q(before.name)} ${fold.map(n => `--fold ${q(n)}`).join(' ')}${aliases.some(a => !names.includes(a)) ? ` ${aliases.map(n => `--alias ${q(n)}`).join(' ')}` : ''}`;
   }
+  if (cmd === 'avatar') return before ? `${b} --seed ${q(before.seed)} --hue ${before.hue}${before.photo ? ` --photo-id ${before.photo}` : ' --no-photo'}` : null;
   if (cmd === 'bot') return before ? `${b} --name ${q(before)}` : null;   // 봇이 없던 때는 되돌릴 이름이 없음
   if (cmd === 'unit') return before ? `${b} ${before}` : null;
   if (cmd === 'session-sync') return before ? null : `${b} off`;   // 켜기는 사람 몫이라 되돌림 명령으로 안내하지 않음(서버가 approval_required)
@@ -164,6 +166,25 @@ export async function settingsCommand(cmd, sub, pos, flags) {
     fail(SETTINGS_HELP, 64);
   }
   const key = COMMANDS[cmd]; if (!key) fail(SETTINGS_HELP, 64);
+  if (cmd === 'avatar' && sub === 'set') {   // 사진 파일은 먼저 올려 id 로 바꿈(서버가 PNG · JPEG · WebP 만 받음)
+    const value = {};
+    if (flags.seed !== undefined) value.seed = String(flags.seed);
+    if (flags.hue !== undefined) value.hue = Number(flags.hue);
+    if (flags['photo-id']) value.photo = String(flags['photo-id']);
+    if (flags['no-photo']) value.photo = '';
+    if (flags.photo) {
+      const d = loadDevice(); if (!d?.token) fail('This machine is not set up for Boarder yet — run `boarder setup --yes`.', 3);
+      let bytes; try { bytes = readFileSync(flags.photo); } catch (e) { fail(`could not read the photo (${e.code || 'error'})`); }
+      const r = await fetch(`${server()}/api/device/avatar-image`, { method: 'POST', headers: { authorization: `Bearer ${d.token}`, 'content-type': 'application/octet-stream' }, body: bytes, signal: AbortSignal.timeout(60_000) });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 403 && j.error === 'not_allowed') fail(`not allowed: ${j.hint || 'run `boarder settings allow` and press 「허용」 on your board'}`, 77);
+      if (!r.ok) fail(j.error || `server answered ${r.status}`);
+      value.photo = j.id;
+    }
+    if (!Object.keys(value).length) fail(SETTINGS_HELP, 64);
+    const r = await call('POST', '/api/device/settings', { key, value });
+    return out({ ok: true, key, before: r.before, after: r.after, undo: undoOf(cmd, r.before) });
+  }
   if (sub === 'show') { const j = await call('GET', '/api/device/settings'); return out({ key, value: j.values?.[key] ?? null, allowed: !!j.allowed }); }
   if (sub !== 'set') fail(SETTINGS_HELP, 64);
   const value = valueOf(cmd, pos, flags);

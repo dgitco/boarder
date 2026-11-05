@@ -53,6 +53,7 @@ test('pairsOf: k=v 쌍 · 점 한 단계 · --json — 칸마다 값 꼴이 다�
   assert.match(undoOf('unit', 'goal'), /boarder unit set goal/); assert.equal(undoOf('session-sync', true), null, '켜기는 사람 몫'); assert.equal(undoOf('session-sync', false), 'boarder session-sync set off');
   assert.equal(undoOf('node-values', { move_h: 24, check_min: 30 }), 'boarder node-values set move_h=24 check_min=30'); assert.equal(undoOf('ui', { accent: '#ff8800', font: "Noto 'Sans'" }), `boarder ui set accent='#ff8800' font='Noto '\\''Sans'\\'''`, 'ui 값은 셸 인용');
   assert.equal(undoOf('ui', {}), null, '전 값이 없던 칸은 되돌릴 값 없음');
+  assert.equal(undoOf('avatar', { seed: 'fox', hue: 20, photo: 'a'.repeat(32) }), `boarder avatar set --seed 'fox' --hue 20 --photo-id ${'a'.repeat(32)}`); assert.match(undoOf('avatar', { seed: 'fox', hue: 20 }), /--no-photo/);
   assert.equal(undoOf('features', { taskboard: false }), 'boarder features set taskboard=off'); assert.match(undoOf('prefs', { park_h: 6 }), /prefs set --json -/); assert.match(undoOf('side-hide', []), /--none/);
 });
 

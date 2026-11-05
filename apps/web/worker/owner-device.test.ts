@@ -110,14 +110,14 @@ test("주인만 올림: 회원 세션 · 기기 토큰 · 다른 기기 · 이�
 test("올린 주인 기기: 설정은 주인도 같은 자리에 쓰는 칸만 · 나머지는 409 · 카드 허락 길은 안내", async () => {
   const s = await setup(); await upgrade(s);
   const g = await s.get(DEVW); assert.equal(g.status, 200, g.text); assert.equal(g.j.owner, true); assert.equal(g.j.allowed_wide, true);
-  assert.deepEqual(Object.keys(g.j.values).sort(), ["features", "pins", "session_sync", "side_hide", "ui"]);
+  assert.deepEqual(Object.keys(g.j.values).sort(), ["features", "pins", "session_sync", "side_hide", "ui"], "아바타는 주인 줄(@owner)이 달라 빠짐");
   const ui = await s.set("ui", { theme: "dark" }, DEVW); assert.equal(ui.status, 200, ui.text);
   assert.equal(s.db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'ui:theme'").get(OWNER).v, "dark", "주인 이메일 자리(화면 길과 같음)");
   assert.equal((await s.set("side_hide", ["feed"], DEVW)).status, 200); assert.equal((await s.set("features", { taskboard: true }, DEVW)).status, 200);
   const sy = await s.set("session_sync", false, DEVW); assert.equal(sy.status, 200, sy.text);
   assert.equal(s.db.prepare("SELECT v FROM user_pref WHERE owner = '' AND k = 'session_sync'").get().v, "off", "세션 싱크는 주인 열쇠 \"\"");
   assert.equal((await s.set("session_sync", true, DEVW)).status, 403, "켜기는 사람 몫");
-  for (const k of ["node_values", "unit", "prefs", "task_channels", "bot_name", "front_door"]) assert.equal((await s.set(k, k === "unit" ? "goal" : k === "bot_name" ? "x" : k === "task_channels" ? true : {}, DEVW)).status, 409, k);
+  for (const k of ["node_values", "unit", "prefs", "task_channels", "bot_name", "front_door", "avatar"]) assert.equal((await s.set(k, k === "unit" ? "goal" : k === "bot_name" ? "x" : k === "avatar" ? { hue: 10 } : k === "task_channels" ? true : {}, DEVW)).status, 409, k);
   assert.equal((await s.call("POST", "/api/device/settings/allow", {}, s.dev(DEVW))).status, 409);
   const ns = JSON.parse(s.db.prepare("SELECT data FROM node_setting WHERE owner = ?").get(OWNER).data); assert.deepEqual(Object.keys(ns), ["hide"], "노드 설정 그림자 칸(unit · prefs …)을 안 만들고 사이드 숨김만 (화면 길과 같은 자리)");
   assert.equal((await s.call("GET", "/api/device/devices", undefined, s.dev(DEVW))).j.devices.some((d: any) => d.id === "devW"), true);

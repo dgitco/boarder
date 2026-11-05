@@ -1090,6 +1090,7 @@ devSettings.mountDeviceSettings(app as never, {
   nodeValues: { read: (env, me) => memberNodeVals(env as never, me), save: (env, me, raw) => saveNodeVals(env as never, me, raw) },
   sessionSync: { get: (env, me) => sessions.syncOn(env as never, cliKey(env as never, me)), set: (env, me, on) => sessions.setSync(env as never, cliKey(env as never, me), on) },
   flagsOff: env => (env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF,
+  avatar: { get: (env, me) => memberBoard.myAvatar(env.DB, me), set: (env, me, face) => memberBoard.setMyAvatar(env.DB, me, face), clean: v => memberBoard.cleanFace(v), photoOk: (env, photo) => photoOk(env as never, photo), put: (env, body) => putPhoto(env as never, body) },
   card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허락 — 늘 보냄(커넥터 허용과 같음)
 });
 mountSecrets(app as never, {
@@ -1119,17 +1120,22 @@ app.get("/api/me/bot", async c => {
   return c.json({ bot: await memberBot(c.env, botKey(c.env, s.user.email)) }, 200, { "cache-control": "no-store" });
 });
 // 그림 하나(PNG · JPEG · WebP, 1.5MB 까지) → R2 blobs/<내용 해시 32자>. 머리 바이트로 꼴 확인 — 올린 사람이 꼴을 속여 HTML 등을 못 올리게(받는 쪽도 nosniff · sandbox)
+// 사진 한 장 받아 두기(PNG · JPEG · WebP, 1.5MB 이하): 화면 길(/api/me/bot/image)과 기기 CLI 길(device-settings.ts avatar)이 같이 씀
+async function putPhoto(env: Env, body: Uint8Array<ArrayBuffer>): Promise<{ id: string } | { error: string; status: 400 | 413 }> {
+  if (!body.byteLength || body.byteLength > 1_500_000) return { error: "사진이 너무 커요", status: 413 };
+  const hex = [...body.slice(0, 12)].map(b => b.toString(16).padStart(2, "0")).join("");
+  const type = hex.startsWith("89504e470d0a1a0a") ? "image/png" : hex.startsWith("ffd8ff") ? "image/jpeg" : hex.startsWith("52494646") && hex.slice(16, 24) === "57454250" ? "image/webp" : "";
+  if (!type) return { error: "PNG · JPEG · WebP 사진만 돼요", status: 400 };
+  const id = [...new Uint8Array(await crypto.subtle.digest("SHA-256", body))].slice(0, 16).map(b => b.toString(16).padStart(2, "0")).join("");
+  await env.RESULTS.put(`blobs/${id}`, body, { httpMetadata: { contentType: type } });
+  return { id };
+}
 app.post("/api/me/bot/image", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   if (+(c.req.header("content-length") || 0) > 1_500_000) return c.json({ error: "사진이 너무 커요" }, 413);
-  const body = new Uint8Array(await c.req.arrayBuffer()); if (!body.byteLength || body.byteLength > 1_500_000) return c.json({ error: "사진이 너무 커요" }, 413);
-  const hex = [...body.slice(0, 12)].map(b => b.toString(16).padStart(2, "0")).join("");
-  const type = hex.startsWith("89504e470d0a1a0a") ? "image/png" : hex.startsWith("ffd8ff") ? "image/jpeg" : hex.startsWith("52494646") && hex.slice(16, 24) === "57454250" ? "image/webp" : "";
-  if (!type) return c.json({ error: "PNG · JPEG · WebP 사진만 돼요" }, 400);
-  const id = [...new Uint8Array(await crypto.subtle.digest("SHA-256", body))].slice(0, 16).map(b => b.toString(16).padStart(2, "0")).join("");
-  await c.env.RESULTS.put(`blobs/${id}`, body, { httpMetadata: { contentType: type } });
-  return c.json({ id });
+  const r = await putPhoto(c.env, new Uint8Array(await c.req.arrayBuffer()));
+  return "error" in r ? c.json({ error: r.error }, r.status) : c.json({ id: r.id });
 });
 app.post("/api/me/bot", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);

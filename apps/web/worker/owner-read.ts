@@ -376,7 +376,7 @@ async function fwdMarks(db: D1Database, cfg: Cfg, out: R[]) {
 }
 async function nodeStates(db: D1Database, nodes: string[]) {
   if (!nodes.length) return new Map<string, string>();
-  const rs = await db.batch<R>(nodes.map(n => db.prepare(`SELECT kind, win FROM wl_log WHERE win = ? OR win LIKE ? ORDER BY id DESC LIMIT 50`).bind(n, "% " + n)));
+  const rs = await db.batch<R>(nodes.map(n => db.prepare(`SELECT kind, win FROM wl_log WHERE ltrim(win, '0123456789 ') = ltrim(?, '0123456789 ') ORDER BY id DESC LIMIT 50`).bind(n)));
   return new Map(nodes.map((n, i) => {
     const nre = new RegExp("^(?:\\d+ )?" + n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$"), k = rs[i].results.find(r => nre.test(String(r.win || "")));
     return [n, k ? STATES[String(k.kind)] || "" : ""] as const;

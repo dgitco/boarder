@@ -22,6 +22,8 @@ export type Hooks = {
   nodeValues: { read: (env: Env, me: string) => Promise<Record<string, number>>; save: (env: Env, me: string, raw: unknown) => Promise<Record<string, number>> };
   sessionSync: { get: (env: Env, me: string) => Promise<boolean>; set: (env: Env, me: string, on: boolean) => Promise<unknown> };
   flagsOff?: (env: Env) => string | undefined;
+  avatar: { get: (env: Env, me: string) => Promise<{ seed: string; hue: number; photo?: string } | null>; set: (env: Env, me: string, face: { seed: string; hue: number; photo?: string }) => Promise<unknown>;
+    clean: (v: unknown) => { seed: string; hue: number; photo?: string } | null; photoOk: (env: Env, photo: string) => Promise<boolean>; put: (env: Env, body: Uint8Array<ArrayBuffer>) => Promise<{ id: string } | { error: string; status: 400 | 413 }> };
   isOwner: (env: Env, email: string) => boolean;
   mails: (env: Env, email: string) => string[];   // 이 사람의 기기 owner 메일들(주인은 넷)
 };
@@ -37,9 +39,9 @@ export const MAX_DAY_CARDS = 5;   // 기기마다 하루 다섯(device-card.ts �
 export const LOCK_MS = 24 * 3600_000;   // 거절 뒤 그 기기의 카드를 안 세우는 시간
 const DAY = 24 * 3600_000;
 export const NOT_ALLOWED_HINT = "이 기기는 설정을 바꿀 허락이 없어요 — boarder settings allow 로 보드에 허락 카드를 세우고 사람이 「허용」을 눌러요";
-export const KEYS = ["pins", "task_channels", "task_repo", "front_door", "primary_window", "bot_name", "node_values", "unit", "prefs", "side_hide", "ui", "features", "session_sync"] as const;
+export const KEYS = ["pins", "task_channels", "task_repo", "front_door", "primary_window", "bot_name", "node_values", "unit", "prefs", "side_hide", "ui", "features", "session_sync", "avatar"] as const;
 export type Key = typeof KEYS[number];
-export const LABEL: Record<Key, string> = { pins: "사이드바 고정 캔버스", task_channels: "채널 = 태스크", task_repo: "업무 저장소", front_door: "앞단 접기", primary_window: "기본 창", bot_name: "메인 봇 이름", node_values: "노드 수치(점검 주기 · 나누기 · 이동 · 이름 · 보관)", unit: "채널 묶는 단위", prefs: "노드 설정(주차 · 메인 봇 창 · 규칙 · 묶음 · 트리 정리)", side_hide: "사이드바 숨김 줄", ui: "모양 설정", features: "기능 켜기", session_sync: "세션 싱크" };
+export const LABEL: Record<Key, string> = { pins: "사이드바 고정 캔버스", task_channels: "채널 = 태스크", task_repo: "업무 저장소", front_door: "앞단 접기", primary_window: "기본 창", bot_name: "메인 봇 이름", node_values: "노드 수치(점검 주기 · 나누기 · 이동 · 이름 · 보관)", unit: "채널 묶는 단위", prefs: "노드 설정(주차 · 메인 봇 창 · 규칙 · 묶음 · 트리 정리)", side_hide: "사이드바 숨김 줄", ui: "모양 설정", features: "기능 켜기", session_sync: "세션 싱크", avatar: "내 아바타(모양 · 색 · 사진)" };
 const NOSTORE = { "cache-control": "no-store" };
 const ctl = (s: unknown, n: number) => String(s ?? "").replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim().slice(0, n);
 const cardId = (now: number) => `${Math.floor(now / 1000)}.${String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0")}`;
@@ -88,14 +90,14 @@ export async function onSettingsCardAnswered(env: { DB: D1Database }, me: string
 export const isSettingsCard = async (env: { DB: D1Database }, me: string, id: string) => !!(await env.DB.prepare("SELECT 1 FROM user_pref WHERE owner = ? AND k = ?").bind(me, reqKey(id)).first());
 
 type Values = { pins: Pin[]; task_channels: boolean; task_repo: string; front_door: FrontDoor | null; primary_window: string | null; bot_name: string | null;
-  node_values: Record<string, number>; unit: string | null; prefs: Record<string, unknown>; side_hide: string[]; ui: Record<string, string>; features: Record<string, boolean>; session_sync: boolean };
+  node_values: Record<string, number>; unit: string | null; prefs: Record<string, unknown>; side_hide: string[]; ui: Record<string, string>; features: Record<string, boolean>; session_sync: boolean; avatar: { seed: string; hue: number; photo?: string } | null };
 const valuesFor = async (env: Env, h: Hooks, me: string, owner: string) => {
   const all = await readAll(env, h, me);
   return h.isOwner(env, owner) ? Object.fromEntries(OWNER_KEYS.map(k => [k, all[k]])) : all;
 };
 async function readAll(env: Env, h: Hooks, me: string): Promise<Values> {
   const db = env.DB;
-  const [p, pins, pw, bot, nv, unit, hide, ui, feats, sync] = await Promise.all([
+  const [p, pins, pw, bot, nv, unit, hide, ui, feats, sync, avatar] = await Promise.all([
     readPrefs(db, me), readPins(db, me),
     db.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'primary_win'").bind(me).first<{ v: string }>(),
     db.prepare("SELECT name FROM member_bot WHERE owner = ?").bind(me).first<{ name: string }>(),
@@ -105,12 +107,13 @@ async function readAll(env: Env, h: Hooks, me: string): Promise<Values> {
     db.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(me).all<{ k: string; v: string }>(),
     featsOf(db, me, h.flagsOff?.(env)),
     h.sessionSync.get(env, me),
+    h.avatar.get(env, me),
   ]);
   const uiv: Record<string, string> = {};
   for (const r of ui.results || []) { const k = r.k.slice(3); if (Object.hasOwn(h.uiPref(), k) && h.uiPref()[k](r.v)) uiv[k] = r.v; }
   const { task_channels, task_repo, front_door, ...prefs } = p;   // 이 셋은 위에 따로 있음
   return { pins, task_channels, task_repo, front_door, primary_window: pw?.v || null, bot_name: bot?.name ?? null,
-    node_values: nv, unit: unit?.u === "goal" || unit?.u === "agent" ? unit.u : null, prefs, side_hide: hide, ui: uiv, features: feats, session_sync: sync };
+    node_values: nv, unit: unit?.u === "goal" || unit?.u === "agent" ? unit.u : null, prefs, side_hide: hide, ui: uiv, features: feats, session_sync: sync, avatar };
 }
 const canvasId = (s: string) => { const t = s.trim(), m = /\/(?:art|canvas)\/([A-Za-z0-9_-]{4,64})\/?(?:[?#].*)?$/.exec(t); return m ? m[1] : t; };
 /** 보드 기록에 남길 짧은 값 */
@@ -219,6 +222,14 @@ async function apply(env: Env, h: Hooks, me: string, key: Key, value: unknown, c
     await h.sessionSync.set(env, me, value);
     return { after: value };
   }
+  if (key === "avatar") {   // 모양(seed) · 색(hue) · 사진(photo = 먼저 boarder avatar 가 올린 사진 id). 화면 길(/api/me/avatar)과 같은 검사
+    const o = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+    const f = h.avatar.clean(o ? { ...(cur.avatar || {}), ...o } : null);   // 보낸 칸만 바뀌고 나머지는 지금 값
+    if (!f) return { error: "avatar: { seed: 글(영문·숫자·공백 40자까지), hue: 0–359, photo?: 사진 id } (보낸 칸만 바뀜)", status: 400 };
+    if (!(await h.avatar.photoOk(env, f.photo || ""))) return { error: "그 사진 id 가 없어요 — boarder avatar set --photo <파일> 로 먼저 올려요", status: 400 };
+    await h.avatar.set(env, me, f);
+    return { after: f };
+  }
   // bot_name: 이름만(모양 · 색 · 그림은 화면에서 만든 그대로). 아직 메인 봇을 안 만든 회원은 화면에서 먼저(그림이 있어야 하는 줄)
   if (typeof value !== "string" || value.length > 200) return { error: "이름은 1–20자 글이에요", status: 400 };
   const name = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
@@ -260,6 +271,20 @@ export function mountDeviceSettings(host: Hono<any>, h: Hooks) {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401, NOSTORE);
     const list = await listDevices(c.env.DB, h.mails(c.env, d.owner));
     return c.json({ this: d.id, devices: (list as unknown as Record<string, unknown>[]).map(x => ({ id: x.id, name: x.name, tools: x.tools, scope: x.scope, created_at: x.created_at, last_at: x.last_at, engine_at: x.engine_at ?? null })) }, 200, NOSTORE);
+  });
+  // 아바타 사진 올리기(PNG · JPEG · WebP 1.5MB 이하) → 사진 id. 설정을 바꿔도 되는 기기만(저장소를 아무나 채우지 못하게) · 주인은 아직 화면에서만
+  app.post("/api/device/avatar-image", async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401, NOSTORE);
+    if (h.isOwner(c.env, d.owner)) return c.json({ error: OWNER_NO }, 409, NOSTORE);
+    const me = d.owner.toLowerCase();
+    if (!(await allowedWide(c.env.DB, me, d.id))) return c.json({ error: "not_allowed", hint: NOT_ALLOWED_HINT }, 403, NOSTORE);
+    if (+(c.req.header("content-length") || 0) > 1_500_000) return c.json({ error: "사진이 너무 커요" }, 413, NOSTORE);
+    // content-length 가 없거나 거짓인 큰 본문도 1.5MB 를 넘기는 순간 끊음(다 읽은 뒤 413 이 아니라)
+    const chunks: Uint8Array[] = []; let n = 0; const rd = c.req.raw.body?.getReader();
+    while (rd) { const x = await rd.read(); if (x.done) break; n += x.value.byteLength; if (n > 1_500_000) { await rd.cancel().catch(() => {}); return c.json({ error: "사진이 너무 커요" }, 413, NOSTORE); } chunks.push(x.value); }
+    const all = new Uint8Array(n); let o = 0; for (const ch of chunks) { all.set(ch, o); o += ch.byteLength; }
+    const r = await h.avatar.put(c.env, all);
+    return "error" in r ? c.json({ error: r.error }, r.status, NOSTORE) : c.json({ ok: true, id: r.id }, 200, NOSTORE);
   });
   app.get("/api/device/settings/allow", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);

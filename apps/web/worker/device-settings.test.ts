@@ -238,6 +238,29 @@ test("내 기기 목록(GET /api/device/devices): 허락 없이도 읽힘 · 자
   assert.equal((await s.call("GET", "/api/device/devices")).status, 401);
 });
 
+test("아바타(seed · hue · 사진): 허락 뒤 · 보낸 칸만 바뀜 · 화면 길과 같은 검사 · 사진 올리기는 허락 뒤 + 이미지만", async () => {
+  const s = await setup();
+  const blobs = new Map<string, { t: string }>();
+  s.env.RESULTS = { put: async (k: string, _b: unknown, o: any) => { blobs.set(k, { t: o.httpMetadata.contentType }); }, head: async (k: string) => blobs.has(k) ? { httpMetadata: { contentType: blobs.get(k)!.t } } : null };
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8]);
+  const up = (body: Uint8Array, t = DEV1) => s.call("POST", "/api/device/avatar-image", undefined as never, s.dev(t)).then(() => app.fetch(new Request("https://example.test/api/device/avatar-image", { method: "POST", headers: s.dev(t), body: body as never }), s.env, s.ctx)).then(async r => ({ status: r.status, j: await r.json().catch(() => null) as any }));
+  assert.equal((await s.set("avatar", { hue: 20 })).status, 403, "허락 없이");
+  assert.equal((await up(png)).status, 403);
+  await s.grant();
+  const a = await s.set("avatar", { seed: "fox", hue: 20 }); assert.equal(a.status, 200, a.text); assert.deepEqual(a.j.after, { seed: "fox", hue: 20 });
+  const b = await s.set("avatar", { hue: 300 }); assert.deepEqual(b.j.before, { seed: "fox", hue: 20 }); assert.deepEqual(b.j.after, { seed: "fox", hue: 300 }, "보낸 칸만");
+  for (const bad of [{ hue: 360 }, { hue: 1.5 }, { seed: "<script>" }, { photo: "nothex" }, "x", null]) assert.equal((await s.set("avatar", bad)).status, 400, JSON.stringify(bad));
+  assert.equal((await s.set("avatar", { photo: "a".repeat(32) })).status, 400, "올린 적 없는 사진 id");
+  assert.equal((await up(new Uint8Array([1, 2, 3, 4]))).status, 400, "이미지가 아님");
+  const u = await up(png); assert.equal(u.status, 200); assert.match(u.j.id, /^[0-9a-f]{32}$/);
+  const p = await s.set("avatar", { photo: u.j.id }); assert.equal(p.status, 200, p.text); assert.equal(p.j.after.photo, u.j.id);
+  assert.equal((await s.get()).j.values.avatar.photo, u.j.id);
+  assert.equal((await s.set("avatar", { photo: "" })).j.after.photo, undefined, "사진 지우기");
+  assert.equal((await up(png, DEVW)).status, 401, "주인 감시 기기");
+  const big = await app.fetch(new Request("https://example.test/api/device/avatar-image", { method: "POST", headers: s.dev(DEV1), body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array(1_000_000)); c.enqueue(new Uint8Array(1_000_000)); c.close(); } }), duplex: "half" } as never), s.env, s.ctx);
+  assert.equal(big.status, 413, "content-length 없는 큰 본문도 상한에서 끊김");
+});
+
 test("다른 회원 기기는 내 값을 못 읽고 못 바꿈(자기 값만)", async () => {
   const s = await setup();
   await s.grant(DEV1);
