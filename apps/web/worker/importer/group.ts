@@ -315,15 +315,23 @@ export async function group(input: {
     const byName = new Map<string, string>();
     for (const n of [...input.prevNodes].sort((a, b) => Number(!!a.archived_at) - Number(!!b.archived_at) || a.created_at - b.created_at)) {
       for (const nm of [n.pinned_name, n.name].map(x => String(x || "").trim())) if (nm && !byName.has(nm)) byName.set(nm, n.id); }
-    const cand: { g: string; id: string; s: number; role: number; size: number }[] = [];
+    const cand: { g: string; id: string; s: number; role: number; size: number; n?: number; ratio?: number }[] = [], pinCand: typeof cand = [];
+    const pinnedLive = (id: string) => { const n = prevNodes.get(id); return !!n && !n.archived_at && !!String(n.pinned_name || "").trim(); };
+    const liveNode = (id: string) => { const n = prevNodes.get(id); return !!n && !n.archived_at; };
     for (const [g, keys] of groups) {
       if (!g.startsWith("agent:")) continue;
       const nm = g.slice(6), its = keys.map(k => byKey.get(k)!).filter(Boolean), role = roleChans.has(nm) ? 1 : 0;
-      for (const k of keys) { const id = mainOf.get(k); if (id) cand.push({ g, id, s: 3, role, size: keys.length }); }
-      const byN = byName.get(nm); if (byN) cand.push({ g, id: byN, s: 2, role, size: keys.length });
-      const mw = mainWindow(its, nm, !!role, input.agents || []), pv = mw && prevOf.get(mw); if (pv) cand.push({ g, id: pv, s: 1, role, size: keys.length });
+      const other: string[] = [];
+      for (const k of keys) { const id = mainOf.get(k); if (id) { cand.push({ g, id, s: 3, role, size: keys.length }); other.push(id); } }
+      const byN = byName.get(nm); if (byN) { cand.push({ g, id: byN, s: 2, role, size: keys.length }); other.push(byN); }
+      const mw = mainWindow(its, nm, !!role, input.agents || []), pv = mw && prevOf.get(mw); if (pv) { cand.push({ g, id: pv, s: 1, role, size: keys.length }); other.push(pv); }
+      const held = new Map<string, number>(); for (const k of keys) { const p = prevOf.get(k); if (p && pinnedLive(p)) held.set(p, (held.get(p) || 0) + 1); }
+      if (other.some(id => liveNode(id) && !held.has(id))) continue;   // 다른 근거로 이을 보관 안 된 다른 노드가 있으면 이름 고정 근거는 안 씀
+      for (const [id, n] of held) pinCand.push({ g, id, s: 4, role, size: keys.length, n, ratio: n / keys.length });
     }
-    cand.sort((a, b) => b.s - a.s || b.role - a.role || b.size - a.size || (a.g < b.g ? -1 : a.g > b.g ? 1 : a.id < b.id ? -1 : 1));
+    const mainClaim = new Map<string, Set<string>>(); for (const c of cand) if (c.s === 3) (mainClaim.get(c.id) || mainClaim.set(c.id, new Set()).get(c.id)!).add(c.g);
+    for (const c of pinCand) if (!mainClaim.has(c.id) || mainClaim.get(c.id)!.has(c.g)) cand.push(c);
+    cand.sort((a, b) => b.s - a.s || (b.n || 0) - (a.n || 0) || (b.ratio || 0) - (a.ratio || 0) || b.role - a.role || (a.s === 4 ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : b.size - a.size) || (a.g < b.g ? -1 : a.g > b.g ? 1 : a.id < b.id ? -1 : 1));
     const taken = new Set<string>();
     for (const c of cand) if (!(tc && c.id.startsWith("tk_") && !taskNodes.has(c.id)) && !owned.has(c.g) && !taken.has(c.id)) { owned.set(c.g, c.id); taken.add(c.id); }
   }

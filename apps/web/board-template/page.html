@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "aa96ba5d8164";
+window.HB_VER = "fc18605a1adb";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -29,7 +29,8 @@ window.HB_DTAG = "__BX_DTAG__";
     if (!p[0]) return "";
     if (p.length === 1) {
       const k = Object.keys(ONE).find((k2) => ONE[k2] === "/" + p[0]);
-      if (k) return "#" + k + (p[0] === "settings" ? qs : "");
+      const m = new URLSearchParams(search || "").get("msg") || "";
+      if (k) return "#" + k + (p[0] === "settings" ? qs : p[0] === "unread" && /^\d{10}\.\d{6}$/.test(m) ? "?msg=" + m : "");
     }
     if (p[0] === "nodes" && p[1]) return "#node/" + p.slice(1).join("/") + (t && /^\d{10}\.\d{6}$/.test(t) ? "/" + t : "");
     if (p[0] === "canvas" && p[1]) return "#art/" + p[1];
@@ -77,6 +78,7 @@ window.HB_DTAG = "__BX_DTAG__";
   const keep = () => {
     const q = new URLSearchParams(location.search);
     q.delete("thread");
+    q.delete("msg");
     const s = q.toString();
     return s ? "?" + s : "";
   };
@@ -1958,8 +1960,15 @@ p.mdi{padding-left:1em;text-indent:-1em}
 .inbr.ibdn{opacity:.55}.inbr.ibdn .ud,.inbr.ibdn .un{display:none}
 
 
-html.hb-unkeep .inbr.ibdn{opacity:1}   
+html.hb-unkeep .inbr.ibdn{opacity:1}
 html.hb-unkeep .ibi{position:relative}
+
+.ibfeed > .ibrdh{margin-top:18px;border-top:1px solid var(--line)}
+.ibfeed > .ibrdl{box-sizing:border-box;width:calc(100% - 32px);max-width:calc(var(--col) - 32px);margin:4px auto 16px}
+.ibrdl .inbr .ih b{font-weight:500}
+
+.ibi.ibgo,.inbr.ibgo{box-shadow:0 0 0 2px var(--accent);transition:box-shadow .6s}
+@media (max-width:640px){.ibfeed > .ibrdl{width:calc(100% - 20px)}}
 .ibun{flex:none;align-self:center;margin-left:8px;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:3px 10px;font:inherit;font-size:12px;line-height:1.4;cursor:pointer;white-space:nowrap}
 html.hb-unkeep .inbr:first-child:has(> .ibun) .rtools{right:132px}   
 .ibi > .ibun{position:absolute;top:8px;right:12px;z-index:2;margin:0}
@@ -11086,7 +11095,7 @@ const keepCur = (() => {
     return false;
   }
 })();
-const coverAt = /^#(chat\/|art\/|node\/|w\/|inbox$|unread$|saved$|drafts$|settings(\/|$|\?))/.test(String(window.HB_HASH0 || "")) || !!linkAt || chatHash || keepCur || !!new URLSearchParams(location.search).get("open");
+const coverAt = /^#(chat\/|art\/|node\/|w\/|inbox$|unread(\?msg=\d{10}\.\d{6})?$|saved$|drafts$|settings(\/|$|\?))/.test(String(window.HB_HASH0 || "")) || !!linkAt || chatHash || keepCur || !!new URLSearchParams(location.search).get("open");
 show(start, coverAt, true);
 headPills();
 if (chatHash) openChan("primary");
@@ -11335,6 +11344,38 @@ setInterval(() => {
     const cs = cardSet();
     for (const x of keepGet()) if (keep(x.chan) && notCard(cs)(x) && !S.unread.some((y) => (y.thread || y.ts) === (x.thread || x.ts))) S.unread.push({ ...x, kept: true });
   };
+  const RDK = "hb-ib-read:" + (window.HB_MEMBER?.email || "owner"), RD_MAX = 100;
+  const today = () => {
+    const d = /* @__PURE__ */ new Date();
+    return d.getFullYear() * 1e4 + (d.getMonth() + 1) * 100 + d.getDate();
+  };
+  const dayOf = (ms) => {
+    const d = /* @__PURE__ */ new Date(+ms || 0);
+    return d.getFullYear() * 1e4 + (d.getMonth() + 1) * 100 + d.getDate();
+  };
+  const rdGet = () => {
+    try {
+      const a = JSON.parse(lsGet(RDK, "[]")), t = today();
+      return Array.isArray(a) ? a.filter((x) => keepOk(x) && dayOf(x.read_at) === t) : [];
+    } catch (e) {
+      return [];
+    }
+  };
+  const rdAdd = (xs) => {
+    if (!keepOn() || !xs.length) return;
+    const now = Date.now(), ths = new Set(xs.map(thOf));
+    const add = xs.filter((x) => x && tsOk(x.ts) && x.cstate === void 0).map((x) => {
+      const y = { ...x, read_at: now };
+      delete y.kept;
+      delete y.kept_at;
+      return y;
+    });
+    lsSet(RDK, JSON.stringify([...rdGet().filter((z) => !ths.has(thOf(z))), ...add].slice(-RD_MAX)));
+  };
+  const rdDrop = (th) => {
+    const a = rdGet(), b = a.filter((z) => thOf(z) !== th);
+    if (b.length !== a.length) lsSet(RDK, JSON.stringify(b));
+  };
   function load() {
     if (S.busy) {
       S.again = true;
@@ -11396,6 +11437,7 @@ setInterval(() => {
   };
   function read(items, all) {
     keepDrop(all ? (x) => keep(x.chan) : (x) => items.some((y) => thOf(y) === thOf(x)));
+    rdAdd(all ? S.unread.filter((x) => keep(x.chan)) : items);
     const ids = new Set(items.map((x) => x.ts)), key = "ibread:" + (all ? "*" : [...ids].join()), pick = all ? () => true : (x) => ids.has(x.ts);
     let g;
     return optDo({
@@ -11414,6 +11456,7 @@ setInterval(() => {
   function readLocal(root) {
     const pick = (x) => (x.thread || x.ts) === root || x.ts === root, key = "ibseen:" + root;
     keepDrop(pick);
+    rdAdd(S.unread.filter(pick));
     const fu = FD.unread, mk = keepOn() && fu && fu.cur === cur && fu.keys.has(root) && !fu.done.has(root);
     if (mk) fu.done.add(root);
     if (!S.unread.some(pick)) return () => {
@@ -11723,6 +11766,15 @@ setInterval(() => {
   })();
   const expanded = (f) => (f.k === "unread" || f.k === "turn") && VIEW[f.k] === "open";
   let BOTH = false;
+  const bothPref = () => keepOn() && lsGet("hb-ib-both", "0") === "1";
+  const bothSave = (on2) => {
+    if (!keepOn() || bothPref() === on2) return;
+    lsSet("hb-ib-both", on2 ? "1" : "0");
+    try {
+      window.bxUiSave?.("ibboth", on2 ? "1" : "0");
+    } catch (e) {
+    }
+  };
   const unRank = (x) => {
     try {
       return priRank((byPane[x.pane] || parkBy[x.pane] || {}).pri);
@@ -11754,7 +11806,10 @@ setInterval(() => {
     for (const ev of ["wheel", "touchstart", "keydown"]) document.addEventListener(ev, (e) => {
       if (e.target?.closest?.("#cfeed")) {
         const f = FD[fk(CS.at)];
-        if (f) f.restore = null;
+        if (f) {
+          f.restore = null;
+          if (f.goto?.found) f.goto = null;
+        }
       }
     }, { capture: true, passive: true });
   }
@@ -11780,6 +11835,42 @@ setInterval(() => {
     if (k === "turn") S.doneOn = false;
     return FD[k] = { k, cur, only, t0: Date.now(), items: [], keys: /* @__PURE__ */ new Map(), done: /* @__PURE__ */ new Set(), open: /* @__PURE__ */ new Set(), fold: /* @__PURE__ */ new Set(), long: /* @__PURE__ */ new Set(), lopen: /* @__PURE__ */ new Set() };
   }
+  let GO = null;
+  const focusOf = () => {
+    try {
+      if (!keepOn() || !(typeof chatOn === "function" && chatOn()) || CS.at !== "i:unread") return "";
+      const f = FD.unread;
+      return f && f.cur === cur && tsOk(f.focus) ? f.focus : "";
+    } catch (e) {
+      return "";
+    }
+  };
+  const setFocus = (f, id) => {
+    if (!keepOn() || f.k !== "unread" || !tsOk(id) || f.focus === id) return;
+    f.focus = id;
+    try {
+      window.BXRecord?.();
+    } catch (e) {
+    }
+  };
+  function focusTo(id) {
+    if (!keepOn() || !tsOk(id)) return;
+    GO = { id, at: Date.now() };
+    const f = FD.unread;
+    if (f && f.cur === cur) {
+      goTake(f);
+      redraw();
+    }
+  }
+  const goTake = (f) => {
+    if (!GO || f.k !== "unread") return;
+    if (Date.now() - GO.at < 1e4) {
+      f.goto = { ...GO };
+      f.focus = GO.id;
+      f.restore = null;
+    }
+    GO = null;
+  };
   function fsync(f) {
     if (f.k === "turn") {
       S.turn = turnItems();
@@ -11921,7 +12012,7 @@ setInterval(() => {
     const by = f.k === "saved" || f.k === "turn" ? (x) => +x.saved_at || +x.at || 0 : (x) => +x.at || 0;
     const xs = f.k === "turn" && !S.doneOn || f.k === "unread" ? algo(f.items) : [...f.items].sort((a, b) => by(b) - by(a));
     return `<div class="inbl ibrows">${xs.map((x) => {
-      const i = f.items.indexOf(x), h0 = row(f.k, x, i), h = f.done.has(idOf(f.k, x)) ? h0.replace('<div class="inbr', '<div class="inbr ibdn').replace(/<\/div>$/, () => ubOf(f, x) + "</div>") : h0;
+      const i = f.items.indexOf(x), h0 = keepOn() && f.k === "unread" ? row(f.k, x, i).replace('data-irow="', `data-ibid="${esc(idOf(f.k, x))}" data-irow="`) : row(f.k, x, i), h = f.done.has(idOf(f.k, x)) ? h0.replace('<div class="inbr', '<div class="inbr ibdn').replace(/<\/div>$/, () => ubOf(f, x) + "</div>") : h0;
       const hv = HOVROW === idOf(f.k, x) ? h.replace('<div class="inbr', '<div class="inbr hov') : h;
       return f.sel === idOf(f.k, x) ? hv.replace('<div class="inbr', '<div aria-current="true" class="inbr on') : hv;
     }).join("")}</div>`;
@@ -11980,7 +12071,7 @@ setInterval(() => {
   function feedHTML(ch) {
     const f = fstate(ch);
     if (!f.items.length) fsync(f);
-    if (!expanded(f)) return `<div class="cmain ibmain">${fwrapIb(!S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : f.items.length ? rowsHTML(f) : emptyOf(f.k === "turn" && S.doneOn ? "turnDone" : f.k === "unread" && BOTH ? "both" : f.k))}</div>`;
+    if (!expanded(f)) return `<div class="cmain ibmain">${fwrapIb((!S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : f.items.length ? rowsHTML(f) : emptyOf(f.k === "turn" && S.doneOn ? "turnDone" : f.k === "unread" && BOTH ? "both" : f.k)) + rdHTML(f))}</div>`;
     const gs = groups(f), sh = f.shown || /* @__PURE__ */ new Set(), more = gs.some(([c, xs]) => !f.fold.has(c) && xs.some((x) => !sh.has(idOf(f.k, x))));
     const body = !S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : !gs.length ? emptyOf(f.k === "unread" && BOTH ? "both" : f.k) : gs.map(([c, all]) => {
       const vis = all.filter((x) => sh.has(idOf(f.k, x)));
@@ -11992,7 +12083,23 @@ setInterval(() => {
       if (!c) return vis.map((x) => itemHTML(f, x)).join("");
       return `<div class="ibgh${left || f.k !== "unread" ? "" : " done"}" data-at="g:${esc(c)}"><button class="ibft" data-ibfold="${esc(c)}" aria-expanded="${!fold}">${CHEV}<b>${esc(gname(c))}</b></button><span class="ibgn">${f.k === "unread" && !left ? "" : n + (f.k === "unread" ? "개 메시지" : "개")}</span>${act}</div>` + (fold ? "" : vis.map((x) => itemHTML(f, x)).join(""));
     }).join("") + (S.ok && more ? `<div class="ibnext" data-ibnext>${LOADING}</div>` : "");
-    return `<div class="cmain ibmain">${fwrapIb(body)}</div>`;
+    return `<div class="cmain ibmain">${fwrapIb(body + (more ? "" : rdHTML(f)))}</div>`;
+  }
+  const RDOK = "hb-ib-rdopen", rdOpen = () => lsGet(RDOK, "0") === "1", rdOpenSet = (on2) => lsSet(RDOK, on2 ? "1" : "0");
+  const rdItems = (f) => {
+    const live = /* @__PURE__ */ new Set([...f.items.map(thOf), ...S.unread.map(thOf)]);
+    return rdGet().filter((x) => keep(x.chan) && !live.has(thOf(x))).sort((a, b) => (+b.read_at || 0) - (+a.read_at || 0));
+  };
+  function rdHTML(f) {
+    if (f.k !== "unread" || !keepOn() || !S.ok) return "";
+    const xs = rdItems(f);
+    if (!xs.length) return "";
+    const open = rdOpen();
+    const rows = !open ? "" : `<div class="inbl ibrows ibrdl">${xs.map((x) => {
+      const id = thOf(x), who = x.who === "owner" ? "Owner" : x.author || "비서", title = x.thread ? x.root : x.text, line = x.thread ? `${who} · ${x.text}` : who;
+      return `<div class="inbr ibrd${f.focus === id ? " on" : ""}" data-ibrdid="${esc(id)}" tabindex="0">${rowAv(x, who)}<div class="ib"><div class="ih"><span class="ich">#${esc(cname(x.chan))}</span><b>${tx(title || "")}</b><span class="itm">${when(x.at)}</span></div><div class="ix">${tx(line)}</div></div>${unBtn(id)}</div>`;
+    }).join("")}</div>`;
+    return `<div class="ibgh ibrdh" data-at="g:읽음"><button class="ibft" data-ibrdsec aria-expanded="${open}">${CHEV}<b>읽음</b></button><span class="ibgn">오늘 ${xs.length}개</span></div>${rows}`;
   }
   const fwrapIb = (inner) => `<div class="fwrap"><div class="cfeed ibfeed" id="cfeed">${inner}</div><button class="tobot" data-tobot="cfeed" aria-label="맨 아래로" title="맨 아래로" hidden>${ICON.down}<b></b></button></div>`;
   function feedHead(ch) {
@@ -12021,6 +12128,8 @@ setInterval(() => {
   function feedAfter(fe) {
     const f = FD[fk(CS.at)];
     if (!f) return;
+    if (GO && f.k === "unread" && f.cur === cur) goTake(f);
+    if (f.goto && goStep(f, fe)) return;
     if (f.restore && typeof feedRestore === "function") {
       if (Date.now() - f.restoreAt < 3e3) feedRestore(fe, f.restore);
       else f.restore = null;
@@ -12081,6 +12190,64 @@ setInterval(() => {
     }
     if (grew) redraw();
   }
+  function goStep(f, fe) {
+    const g = f.goto, now = Date.now();
+    if (now - g.at > 1e4 || g.found && now - g.found > 3e3) {
+      f.goto = null;
+      return false;
+    }
+    if (!S.ok) return false;
+    if (f.keys.has(g.id)) {
+      const x = f.keys.get(g.id);
+      if (f.fold.has(x.chan)) {
+        f.fold.delete(x.chan);
+        redraw();
+        return true;
+      }
+      if (expanded(f)) {
+        const sh = f.shown || (f.shown = /* @__PURE__ */ new Set());
+        if (!sh.has(g.id)) {
+          const ord = order(f), i = ord.findIndex((y) => idOf(f.k, y) === g.id);
+          if (i >= 0) {
+            for (const y of ord.slice(0, i + 1)) {
+              sh.add(idOf(f.k, y));
+              want(y.chan, thOf(y), true);
+            }
+            redraw();
+            return true;
+          }
+        }
+      }
+    } else if (rdGet().some((z) => thOf(z) === g.id)) {
+      if (!rdOpen()) {
+        rdOpenSet(true);
+        redraw();
+        return true;
+      }
+      if (expanded(f)) {
+        const sh = f.shown || (f.shown = /* @__PURE__ */ new Set()), rest = order(f).filter((y) => !sh.has(idOf(f.k, y)));
+        if (rest.length) {
+          for (const y of rest) {
+            sh.add(idOf(f.k, y));
+            want(y.chan, thOf(y), true);
+          }
+          redraw();
+          return true;
+        }
+      }
+    }
+    const el = fe.querySelector(`[data-ibid="${CSS.escape(g.id)}"], [data-ibrdid="${CSS.escape(g.id)}"]`);
+    if (el) {
+      if (!g.found) {
+        g.found = now;
+        el.classList.add("ibgo");
+        setTimeout(() => el.isConnected && el.classList.remove("ibgo"), 1600);
+      }
+      const d = el.getBoundingClientRect().top - fe.getBoundingClientRect().top - 8;
+      if (Math.abs(d) > 4) fe.scrollTop += d;
+    }
+    return false;
+  }
   function markDone(f, ids) {
     const xs = ids.map((i) => f.keys.get(i)).filter((x) => x && x.cstate === void 0 && !f.done.has(idOf(f.k, x)));
     if (!xs.length) return;
@@ -12097,9 +12264,16 @@ setInterval(() => {
     redraw();
   }
   function unread(f, id) {
-    const x = f.keys.get(id);
+    const x = f.keys.get(id) || rdGet().find((z) => thOf(z) === id);
     if (!x || !keepOn()) return;
     f.done.delete(id);
+    rdDrop(thOf(x));
+    if (!f.keys.has(id)) {
+      const y2 = { ...x };
+      delete y2.read_at;
+      f.keys.set(id, y2);
+      f.items.push(y2);
+    }
     const y = { ...x, kept_at: Date.now() };
     delete y.kept;
     keepPut([...keepGet().filter((z) => (z.thread || z.ts) !== (x.thread || x.ts)), y]);
@@ -12234,6 +12408,23 @@ setInterval(() => {
       unread(f, unb.dataset.ibun);
       return viewChat(true);
     }
+    if (f.k === "unread" && keepOn()) {
+      const pk = t.closest("#cfeed .ibi[data-ibid], #cfeed .inbr[data-ibid], #cfeed .inbr[data-ibrdid]");
+      if (pk) setFocus(f, pk.dataset.ibid || pk.dataset.ibrdid);
+      if (t.closest("[data-ibrdsec]")) {
+        e.stopPropagation();
+        e.preventDefault();
+        rdOpenSet(!rdOpen());
+        return viewChat(true);
+      }
+      const rr = t.closest("#cfeed .inbr[data-ibrdid]");
+      if (rr) {
+        e.stopPropagation();
+        e.preventDefault();
+        const x = rdGet().find((z) => thOf(z) === rr.dataset.ibrdid);
+        return x && openItem(x);
+      }
+    }
     const stop = () => {
       e.stopPropagation();
       e.preventDefault();
@@ -12290,6 +12481,7 @@ setInterval(() => {
       stop();
       const v = mgb.dataset.ibmg;
       BOTH = v === "both";
+      if (v !== "turn") bothSave(BOTH);
       S.doneOn = false;
       if (fk(CS.at) !== (v === "turn" ? "turn" : "unread")) return openFeed(v);
       f.items = [];
@@ -12482,7 +12674,7 @@ setInterval(() => {
     const p = panes.find((x) => x.kind !== "helper" && isMain(x) && mainKey(x) === "primary") || byPane[leadPane("primary")];
     if (!p) return toast(ERR);
     if (current !== "tree" && current !== "timeline") show("tree", true);
-    BOTH = k === "both";
+    BOTH = k === "both" || k === "unread" && bothPref();
     openAns({ p: p.pane, tab: "chat", chan: "i:" + (k === "saved" || k === "drafts" || k === "turn" ? k : "unread") });
   }
   const on = (fn) => {
@@ -12634,7 +12826,9 @@ setInterval(() => {
     openFeed,
     keepApply,
     isBoth: () => BOTH,
-    chanOf: (th) => FQ.ch.get(th)
+    chanOf: (th) => FQ.ch.get(th),
+    focusOf,
+    focusTo
   };
   keepSync();
   load();

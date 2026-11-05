@@ -40,7 +40,7 @@
   }
   applyAccent();
   if (!window.HB_BLOB) document.addEventListener('DOMContentLoaded', applyAccent);
-  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '1'], ['unreadkeep', 'hb-unreadkeep', '0'], ['canvasback', 'hb-canvasback', '0'], ['sbw', 'hb-sbw', '0']];
+  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '1'], ['unreadkeep', 'hb-unreadkeep', '0'], ['canvasback', 'hb-canvasback', '0'], ['sbw', 'hb-sbw', '0'], ['ibboth', 'hb-ib-both', '0']];
   const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
   const uiSave = (k, v) => fetch('api/me/ui', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({k, v})}).catch(() => {});
   window.bxUiSave = uiSave;   // 보드 위 테마 단추(board.html)도 같은 길

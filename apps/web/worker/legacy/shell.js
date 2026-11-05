@@ -35,6 +35,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     listv: '<svg class="lu" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   };
   const IBK = ['unread', 'saved', 'drafts'], IBN = {unread: '읽지 않음', saved: '저장', drafts: '초안'};
+  const ibKey = h => String(h || '').slice(1).replace(/^unread\?msg=\d{10}\.\d{6}$/, 'unread');   // #unread?msg=<글>(읽지 않음의 그 글 주소)도 모아 보기 열쇠로
   const S = {ib: null, chat: null, last: 'primary', ret: null};
   let ibM = null;
   const logo = '<span class="lgslot"></span>';
@@ -546,7 +547,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (!ans.hidden && cur){
       if (cur.tab === 'chat' && cur.chan && cur.chan.startsWith('n:')) return '#node/' + encodeURIComponent(nodeKey(cur.p)) + (CS.th?.ts && CS.th.k === cur.chan ? '/' + CS.th.ts : '');
       if (cur.tab === 'chat' && cur.chan === 'i:turn') return '#inbox';
-      if (cur.tab === 'chat' && /^i:(unread|saved|drafts)$/.test(cur.chan || '')) return '#' + cur.chan.slice(2);
+      if (cur.tab === 'chat' && /^i:(unread|saved|drafts)$/.test(cur.chan || '')){ const m = cur.chan === 'i:unread' && window.HBInbox?.focusOf?.(); return '#' + cur.chan.slice(2) + (m ? '?msg=' + m : ''); }
       if (cur.tab === 'chat' && cur.chan) return '#chat/' + cur.chan + (CS.th?.ts && CS.th.k === cur.chan ? '/' + CS.th.ts : '');
       if (cur.w) return '#w/' + encodeURIComponent(cur.w);
       if (cur.p) return '#node/' + encodeURIComponent(nodeKey(cur.p));
@@ -563,11 +564,13 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       // 닫으며 다른 화면을 연 경우에는 그 화면을 유지한다. 설정을 끄면 예전 닫기 동작을 쓴다.
       if (canvasBackOn() && /^#art\//.test(HBR.hash()) && history.state?.bx && HBR.same(history.state.from, b) && ans.hidden && !S.ib && current === S.artView){ backing = setTimeout(() => { backing = 0; recLater(); }, 1500); return history.back(); } }
     const h = want(); if (HBR.same(h, HBR.hash())) return;
+    if (/^#unread(\?|$)/.test(h) && /^#unread(\?|$)/.test(HBR.hash())) return history.replaceState(history.state, '', h);   // 읽지 않음 안에서 글만 바꿈 = 그 자리를 고침(글마다 뒤로 가기 칸이 쌓이지 않게)
     if (/^#t=/.test(HBR.hash()) || !HBR.hash()) return history.replaceState(history.state, '', h);   // 보드 글 링크(#t=…)로 연 것은 그 자리를 바꿈
     if (history.state?.bx && history.state.from === h){ backing = setTimeout(() => { backing = 0; recLater(); }, 1500); return history.back(); }
     history.pushState({bx: 1, from: HBR.hash()}, '', h);
   }
   const recLater = () => { if (!recQ) recQ = requestAnimationFrame(record); };
+  window.BXRecord = recLater;   // 읽지 않음에서 글을 고르면(inbox.js setFocus) 주소를 다시 — 화면이 안 바뀌는 누름이라 감시(MutationObserver)가 못 봄
   new MutationObserver(recLater).observe(ans, {attributes: true, childList: true, subtree: true});
   new MutationObserver(recLater).observe(document.body, {childList: true});
   const art0 = window.openArt;
@@ -595,7 +598,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (backing){ clearTimeout(backing); backing = 0; }
     if (history.state?.bxRoot) history.replaceState(null, '', '#tree');   // 뒤로 가서 딥링크 밑 첫 화면 칸에 닿음 = 트리(사용자가 간 곳)
     if (HBR.hash() === '#chat') history.replaceState(history.state, '', '#chat/primary');
-    const h = HBR.hash(), [k, a, b] = h.slice(1).split('/').map(x => decodeURIComponent(x || ''));
+    const h = HBR.hash(), qi = h.indexOf('?'), hq = new URLSearchParams(qi >= 0 ? h.slice(qi + 1) : ''), [k, a, b] = (qi >= 0 ? h.slice(0, qi) : h).slice(1).split('/').map(x => decodeURIComponent(x || ''));   // #unread?msg=<글> — 물음표 뒤는 열쇠가 아님(설정 주소는 위에서 돌아감)
     const gen = ++G;
     let moved = false;   // 글 링크를 서버가 알려 준 자리로 옮겼으면 끝에서 주소를 링크로 되돌리지 않음
     applying++;
@@ -622,7 +625,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
         else if (got && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash()) && !(cur?.page && cur.p === pa)){ ibClose(); openAns({p: pa, page: true}); }
         if (got && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())) await nodeTh(b, gen); }
       else if (k === 'w'){ if (cur?.w !== a){ ibClose(); openAns({w: a}); } }
-      else if (FEED(k)){ S.ret = null; if (ibChat() !== k){ const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail(); else if (ready && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ ibClose(); window.HBInbox.openFeed(k); } } }
+      else if (FEED(k)){ S.ret = null; if (ibChat() !== k){ const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail(); else if (ready && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ ibClose(); window.HBInbox.openFeed(k); } }
+        if (k === 'unread' && gen === G && hq.get('msg')) window.HBInbox?.focusTo?.(hq.get('msg')); }   // 그 글로(뒤로 · 앞으로 · 새로 고침 · 복사한 주소)
       else if (IBK.includes(k)){ S.ret = null; if (!ans.hidden) closeAns(); ibOpen(k, true); }
       else if (views[k]){ S.ret = null; if (!ans.hidden) closeAns(); if (S.ib){ ibClose(); } if (current !== k) show(k); }
       sync();
@@ -839,12 +843,12 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   if (!ans.hidden && cur && cur.tab === 'chat' && cur.chan){ S.chat = S.last = cur.chan; wasOpen = true; }
   place(); sync();
   const h0 = String(window.HB_HASH0 || '');
-  if (on() && (ROUTE.test(h0) || IBK.includes(h0.slice(1)))){
+  if (on() && (ROUTE.test(h0) || IBK.includes(ibKey(h0)))){
     history.replaceState(history.state, '', h0); apply();
     const nav = performance.getEntriesByType?.('navigation')[0]?.type;
     if (!EMBED && nav === 'navigate' && !history.state?.bx){
       const guard = () => { removeEventListener('pointerup', guard, true); removeEventListener('keydown', guard, true);
-        if (history.state?.bx || !ROUTE.test(HBR.hash()) && !IBK.includes(HBR.hash().slice(1))) return;
+        if (history.state?.bx || !ROUTE.test(HBR.hash()) && !IBK.includes(ibKey(HBR.hash()))) return;
         const here = HBR.hash(); history.replaceState({bxRoot: 1}, '', here); history.pushState({bx: 1, from: '#tree'}, '', here); };
       addEventListener('pointerup', guard, true); addEventListener('keydown', guard, true);
     }
