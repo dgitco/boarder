@@ -332,6 +332,11 @@ html.bx-embed #scrim{display:none!important}
 html.bx-embed #ans .ah{display:none!important}
 html.bx .cth > .chd{border-bottom:0}
 html.bx .cth > .chd .d,html.bx .cth > .chd .thsave,html.bx .cth > .chd [data-vcall],html.bx .cth > .chd .huddle{display:none}
+@media (hover:none) and (max-width:640px){
+  html.bx .cth > .chd .thsave{display:grid;box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi);color:var(--ink)}
+  html.bx .cth > .chd .thsave[aria-pressed="true"]{color:var(--accent)}
+  html.bx .cth > .chd .thsave svg{width:20px;height:20px}   /* 왼쪽 ‹ · 채팅 ⋯ 와 같은 20px */
+}
 @media (min-width:861px){html.bx #ans .cth > .chd [data-cclose],html.bx .cth > .chd [data-cclose]{margin-left:auto!important}}
 html.bx .bx-dock-h{border-bottom:0!important}
 html.bx .bx-dock-h .s{display:none}

@@ -11,7 +11,7 @@ register("data:text/javascript," + encodeURIComponent(`export async function res
   return n(s, c);
 }`));
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
-const { mountImport, regroup } = await import("./routes.ts");
+const { mountImport, regroup, rgForget, mergeGone } = await import("./routes.ts");
 const { Hono } = await import("hono");
 
 const MIG = new URL("../../migrations/", import.meta.url);
@@ -23,6 +23,7 @@ function d1() {
     bind: (...a: unknown[]) => stmt(sql, a),
     all: async () => ({ results: db.prepare(sql).all(...(args as never[])) }),
     first: async () => db.prepare(sql).get(...(args as never[])) ?? null,
+    raw: async () => db.prepare(sql).all(...(args as never[])).map(r => Object.values(r as object)),   // 재기 감싸개(perf.ts meterStmt)가 감쌀 수 있게
     run: async () => { const r = db.prepare(sql).run(...(args as never[])); return { success: true, meta: { changes: Number(r.changes) } }; },
   });
   const batch = async (ss: any[]) => {
@@ -164,6 +165,7 @@ test("리뷰 4: 업무에 붙은 창이 닫히고 7시간 뒤에도 그 창 글�
     assert.equal(mapOf(f.db, "window:m:1")?.node, "tk_9001", unit);
     f.db.prepare("UPDATE imp_item SET gone_at=?, state='gone', state_at=?, seen_at=? WHERE owner=? AND key='window:m:1'").run(Date.now() - 7 * H, at, at, A);
     goneForget(A);
+    rgForget(f.D1, A);   // 다시 묶기의 사라진 항목 맡김(60초)도 비움
     await regroup({ ...ENV, DB: f.D1 } as never, A);
     assert.equal(mapOf(f.db, "window:m:1")?.node, "tk_9001", unit + " 닫힌 뒤에도 연결");
     const j = await nodechat(f.D1, "w=" + encodeURIComponent("통장 연결") + "&id=tk_9001");
@@ -186,4 +188,43 @@ test("리뷰 8: 닫은 노드가 같은 이름의 산 노드를 가리지 않음
   const texts = (await nodechat(f.D1, "w=" + encodeURIComponent("같은이름"))).messages.map((m: any) => m.text);
   assert.ok(texts.includes("산 노드 글"), JSON.stringify(texts));
   assert.ok(!texts.includes("닫은 노드 글"), JSON.stringify(texts));
+});
+
+test("다시 묶기의 사라진 항목 맡김: 60초 안 두 번 묶으면 사라진 항목 질의 한 번 · 막 사라진 것은 새 질의가 잡음 · 합친 줄은 옛 질의와 같은 줄 · 같은 순서", async () => {
+  const f = d1(); let goneReads = 0, fresh: any[] = [];
+  const spy = { ...f.D1, prepare: (sql: string) => {
+    const st = (f.D1 as any).prepare(sql);
+    if (/FROM imp_item WHERE owner = \? AND gone_at IS NOT NULL$/.test(sql)) goneReads++;
+    return st; } } as unknown as D1Database;
+  const T = Date.now(), ins = (key: string, gone: number | null) => f.db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, cwd, repo, state, state_at, win, session, seen_at, gone_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(A, key, "dev1", "window", "tmux", key, "/x", "", gone ? "gone" : "working", T, key, "", T, gone);
+  ins("window:a", null); ins("window:old", T - 3 * H); ins("window:old2", T - 3 * H); ins("window:mid", T - H); ins("window:b", null);
+  rgForget(spy, A);
+  await regroup({ ...ENV, DB: spy } as never, A); assert.equal(goneReads, 1);
+  f.db.prepare("UPDATE imp_item SET gone_at = ?, state = 'gone' WHERE owner = ? AND key = 'window:b'").run(Date.now(), A);   // 막 사라짐(운영처럼 지금 시각)
+  f.db.prepare("UPDATE imp_item SET gone_at = NULL, state = 'working' WHERE owner = ? AND key = 'window:mid'").run(A);   // 다시 살아남
+  await regroup({ ...ENV, DB: spy } as never, A); assert.equal(goneReads, 1, "60초 안이면 사라진 항목은 맡긴 것");
+  // 합친 줄 = 옛 질의(owner 하나) 그대로: 줄 · 순서 · 칸
+  const OLD = "SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, device_id, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ?";
+  const COLS = "rowid AS _rid, key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, device_id, CASE WHEN kind = 'window' THEN handle END handle";
+  const now = Date.now();
+  const staleGone = f.db.prepare(`SELECT ${COLS} FROM imp_item WHERE owner = ? AND gone_at IS NOT NULL AND key != 'window:b'`).all(A).map(r => ({ ...r }));   // 첫 묶기 때 맡긴 판(그때 mid 는 사라져 있었음)
+  staleGone.push({ ...(f.db.prepare(`SELECT ${COLS} FROM imp_item WHERE owner = ? AND key = 'window:old'`).get(A) as any), key: "window:mid", gone_at: T - H, state: "gone" });
+  fresh = f.db.prepare(`SELECT ${COLS} FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT ${COLS} FROM imp_item WHERE owner = ? AND gone_at > ?`).all(A, A, now - 120_000).map(r => ({ ...r }));
+  const merged = mergeGone(fresh as never, staleGone as never).map(r => [r.key, r.gone_at, r.state]);
+  const was = (f.db.prepare(OLD).all(A) as any[]).map(r => [r.key, r.gone_at, r.state]);
+  assert.deepEqual(merged, was, "다시 살아난 mid 는 새 줄(살아 있음)이 이기고, 막 사라진 b 는 새 질의가 잡고, 순서는 아직 있음 → 사라진 시각 → rowid");
+});
+
+test("다시 묶기 맡김은 운영처럼 요청마다 env 를 재기 감싸개(meterEnv)로 감싸도 맞음 — 열쇠는 원래 DB(리뷰: 감싸개를 열쇠로 하면 매번 빗나감) · rgForget 도 감싸개로 비움", async () => {
+  const { meterEnv, newMeter } = await import("../perf.ts");
+  const f = d1(); let goneReads = 0;
+  const raw = { ...f.D1, prepare: (sql: string) => { if (/AND gone_at IS NOT NULL$/.test(sql)) goneReads++; return (f.D1 as any).prepare(sql); } } as unknown as D1Database;
+  f.db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, state, seen_at, gone_at) VALUES (?,?,?,?,?,?,?,?,?)").run(A, "window:x", "dev1", "window", "tmux", "x", "gone", Date.now(), Date.now() - H);
+  const base = { ...ENV, DB: raw };
+  for (let i = 0; i < 3; i++) await regroup(meterEnv(base as never, newMeter()) as never, A);   // index.ts 미들웨어처럼 요청마다 감쌈
+  assert.equal(goneReads, 1, "세 요청에 사라진 항목 질의 한 번");
+  rgForget(meterEnv(base as never, newMeter()).DB, A);
+  await regroup(meterEnv(base as never, newMeter()) as never, A);
+  assert.equal(goneReads, 2, "감싸개로 비워도 원래 DB 의 맡김이 비워짐");
 });

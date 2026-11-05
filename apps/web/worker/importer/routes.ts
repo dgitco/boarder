@@ -1,4 +1,4 @@
-import { tokenRows } from "../agent-token-cache";
+import { tokenRows, RAW } from "../agent-token-cache";
 import { taskIssueFor } from "./task-repo";
 import { REVOKED, withRv } from "./revoked";
 import { cleanPins, readPins, savePins } from "../side-order";
@@ -80,11 +80,35 @@ const NODES_FRESHED = new Map<string, number>();   // GET /api/me/nodes 의 읽�
 const rid = () => crypto.randomUUID().replace(/-/g, "").slice(0, 20);
 const json = <T>(v: string | null | undefined, d: T): T => { try { return v ? JSON.parse(v) as T : d; } catch { return d; } };
 
+type RgRow = Record<string, unknown> & { key: string; gone_at?: number | null; _rid?: number };
+const RG_COLS = "rowid AS _rid, key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, device_id, CASE WHEN kind = 'window' THEN handle END handle";
+const RG_TTL = 60_000, RG_FRESH = 120_000, RG_MAX_ROWS = 30_000, rgMemo = new WeakMap<object, Map<string, { at: number; v: RgRow[] }>>();
+const rgKey = (db: D1Database) => ((db as unknown as Record<symbol, object>)[RAW]) || db;
+export function rgForget(db: D1Database, owner: string) { rgMemo.get(rgKey(db))?.delete(owner); }
+async function rgGone(db: D1Database, owner: string, t: number): Promise<RgRow[]> {
+  const key = rgKey(db);
+  let m = rgMemo.get(key); if (!m) { m = new Map(); rgMemo.set(key, m); }
+  const h = m.get(owner);
+  if (h && t - h.at < RG_TTL && t >= h.at) return h.v;
+  let rows = 0;
+  for (const [k, v] of m) { if (t - v.at >= RG_TTL || k === owner) m.delete(k); else rows += v.v.length; }
+  const v = ((await db.prepare(`SELECT ${RG_COLS} FROM imp_item WHERE owner = ? AND gone_at IS NOT NULL`).bind(owner).all()).results || []) as RgRow[];   // 실패면 throw — 맡기지 않음
+  if (rows + v.length <= RG_MAX_ROWS) m.set(owner, { at: t, v });
+  return v;
+}
+// 예전 질의(owner 하나, imp_item_owner 색인)와 같은 순서: 아직 있음 먼저, 그다음 사라진 시각 순, 같으면 rowid 순. _rid 는 떼고 내줌
+export function mergeGone(fresh: RgRow[], gone: RgRow[]): RgRow[] {
+  const seen = new Set(fresh.map(r => r.key)), all = [...fresh, ...gone.filter(r => !seen.has(r.key))];
+  all.sort((a, b) => (a.gone_at == null ? 0 : 1) - (b.gone_at == null ? 0 : 1) || Number(a.gone_at ?? 0) - Number(b.gone_at ?? 0) || Number(a._rid) - Number(b._rid));
+  return all.map(({ _rid, ...r }) => r as RgRow);
+}
+
 export async function regroup(env: Env, owner: string) {
   const t = now();
   const wnP = tokenRows(env.DB, owner);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
+  const goneP = rgGone(env.DB, owner, t); goneP.catch(() => {});   // 실패는 아래 await 가 던짐 — batch 가 먼저 실패해도 처리 안 된 거부로 남지 않게
   const [it, lg, cd, mp, nd, ns, rl, em, tk, rvd] = await env.DB.batch([
-    env.DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, device_id, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ?").bind(owner),
+    env.DB.prepare(`SELECT ${RG_COLS} FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT ${RG_COLS} FROM imp_item WHERE owner = ? AND gone_at > ?`).bind(owner, owner, t - RG_FRESH),
     env.DB.prepare(`SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) AND kind != 'me' ${notChat("board_log")} ORDER BY at DESC LIMIT 400`).bind(owner),
     env.DB.prepare(`SELECT id, win, state, question, at FROM board_card WHERE owner = ? ${notChat("board_card")} ORDER BY at DESC LIMIT 200`).bind(owner),
     env.DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(owner),
@@ -96,6 +120,7 @@ export async function regroup(env: Env, owner: string) {
     REVOKED(env.DB, owner),
   ]);
   const wn = { results: await wnP };
+  it.results = mergeGone(it.results as RgRow[], await goneP);
   const items = withRv(it.results as (Item & { refs: string })[], rvd.results as { id: string }[]).map(r => ({ ...r, refs: json<string[]>(r.refs as unknown as string, []) }));
   const winNames = Object.fromEntries((wn.results as { pane: string; win: string }[]).map(r => [r.pane, r.win]));
   const keyOf = paneOf(wn.results as { pane: string; win: string }[]);
@@ -652,6 +677,7 @@ export function mountImport(app: Hono<{ Bindings: Env }>, h: Hooks) {
     if (a.item && cmd.verb === "move") await DB.prepare("UPDATE imp_item SET state = 'gone', gone_at = ?, state_at = ? WHERE owner = ? AND key = ?").bind(t, t, d.owner, a.item).run();
     else if (a.item && ni) await DB.prepare(`UPDATE imp_item SET state = COALESCE(?, state), state_at = ?, handle = COALESCE(?, handle)${cmd.verb === "reopen" ? ", gone_at = NULL" : ""} WHERE owner = ? AND key = ?`)
       .bind(ni.state ?? null, t, ni.handle ? JSON.stringify(ni.handle) : null, d.owner, a.item).run();
+    if (a.item) rgForget(DB, d.owner);
     if (cmd.verb === "move" && ni?.key) await DB.prepare(
       "INSERT INTO imp_item(owner, key, device_id, kind, engine, title, cwd, session, win, state, state_at, seen_at) VALUES (?,?,?, 'window', 'tmux', ?, ?, ?, ?, 'working', ?, ?) ON CONFLICT(owner, key) DO NOTHING")
       .bind(d.owner, String(ni.key).slice(0, 200), d.id, String(ni.title || a.title || "").slice(0, 140), String(ni.cwd || "").slice(0, 300), String(ni.session || "").slice(0, 200), String(ni.win || "").slice(0, 120), t, t).run();

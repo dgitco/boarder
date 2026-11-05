@@ -76,8 +76,8 @@ test("빈 목록(--stop) · MCP · 역할을 같이 보낸 것은 건너뛰지 �
 const { fresh, dataGate, freshOpts, freshForget } = await import("../member-board.ts");
 test("fresh: 겹쳐 부르면 묶기 한 번 · 묶은 뒤 30초 안 읽기는 바로 안 묶고 남은 시간 뒤 한 번(조용해져도) · 대조만 한 읽기는 안 막음 · freshForget 은 풂", async () => {
   const { db, D1 } = d1(), post = app(D1);
-  let groups = 0;   // regroup 횟수 = 그 imp_item 통째 읽기 질의 수
-  const spy = { ...D1, prepare: (sql: string) => { if (/^SELECT key, kind, engine, title, cwd, repo, /.test(sql)) groups++; return (D1 as any).prepare(sql); } } as unknown as D1Database;
+  let groups = 0;   // regroup 횟수 = 그 imp_item 읽기(아직 있음 + 2분 안 사라짐) 질의 수
+  const spy = { ...D1, prepare: (sql: string) => { if (/^SELECT rowid AS _rid, key, kind, engine, title, cwd, repo, .* UNION ALL /s.test(sql)) groups++; return (D1 as any).prepare(sql); } } as unknown as D1Database;
   const env = { DB: spy, PUBLIC_URL: "https://example.test" };
   const real = { ...freshOpts }; let later: Promise<unknown>[] = [];
   const ctx = { waitUntil: (p: Promise<unknown>) => { later.push(p); } };

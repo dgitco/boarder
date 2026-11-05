@@ -12,7 +12,7 @@ register("data:text/javascript," + encodeURIComponent(`export async function res
   return n(s, c);
 }`));
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
-const { mountImport, regroup } = await import("./importer/routes.ts");
+const { mountImport, regroup, rgForget } = await import("./importer/routes.ts");
 const { Hono } = await import("hono");
 
 const MIG = new URL("../migrations/", import.meta.url);
@@ -48,7 +48,7 @@ const win = (db: DatabaseSync, w: string, title: string, session = "", at = NOW)
   db.prepare("INSERT INTO imp_item(owner, key, device_id, kind, engine, title, cwd, repo, state, state_at, win, session, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").run(A, "window:" + w, "dev1", "window", "herdr-own", title, "/x/app", "example-org/app", "working", at, w, session, at);
 const gone = (db: DatabaseSync, w: string, at = NOW) => db.prepare("UPDATE imp_item SET gone_at = ?, state = 'gone' WHERE owner = ? AND key = ?").run(at, A, "window:" + w);
 const log = (db: DatabaseSync, w: string, text: string, at = NOW) => db.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").run(A, w, "progress", text, at);
-const rg = (D1: D1Database) => regroup({ ...ENV, DB: D1 } as never, A);
+const rg = (D1: D1Database) => { rgForget(D1, A); return regroup({ ...ENV, DB: D1 } as never, A); };   // 이 파일은 사라진 시각을 되돌려 적음(gone(…, NOW - 2 * H)) — 다시 묶기의 사라진 항목 맡김(60초)을 비우고 묶음
 
 async function seed(tc = true) {
   const f = d1(), call = app(f.D1);
