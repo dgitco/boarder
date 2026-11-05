@@ -648,3 +648,17 @@ test("태스크 창이 옆 노드 글 스레드에 쓴 답: 옆 스레드에만(
   for (let i = 0; i < 598; i++) log(db, A, "lap1:other4", "다른 일 " + i, NOW - 5 * H + i);
   await see();
 });
+
+test("regroup 반환 shown: 업무 노드 맨 앞 창(counts.main)만 바뀌어도 0 보다 큼 — 자리표 없이 업무 고리만", async () => {
+  const { db, D1, call } = await seed();
+  win(db, A, "lap1:ew_desk6386", "#6386 은행 거래 정리 담당", "session:claude:d");
+  await regroup({ DB: D1, PUBLIC_URL: "https://example.test" } as never, A);
+  assert.equal((await call("POST", "/api/device/tasks/attach", { node: "tk_6386", item: "window:lap1:ew_desk6386" })).status, 200);
+  await regroup({ DB: D1, PUBLIC_URL: "https://example.test" } as never, A);
+  const main = () => (JSON.parse((db.prepare("SELECT counts FROM mnode WHERE owner = ? AND id = 'tk_6386'").get(A) as { counts: string }).counts || "{}") as { main?: string }).main;
+  assert.equal(main(), "window:lap1:ew_desk6386");
+  db.prepare("UPDATE mnode SET counts = json_set(counts, '$.main', 'window:lap1:없는창') WHERE owner = ? AND id = 'tk_6386'").run(A);
+  const r = await regroup({ DB: D1, PUBLIC_URL: "https://example.test" } as never, A) as any;
+  assert.equal(main(), "window:lap1:ew_desk6386", "맨 앞 창을 바로잡음");
+  assert.ok(r.shown > 0, `업무 노드 맨 앞 창 바뀜은 화면에 보임(${r.shown})`);
+});

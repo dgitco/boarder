@@ -132,7 +132,7 @@ async function freshRun(env: FreshEnv, me: string, notify: boolean) {
   FRESHING.set(me, Date.now());
   try {
     const n = await fresh0(env, me);
-    if (n !== false) { FRESHED.set(me, Date.now()); if (FRESHED.size > 2000) FRESHED.clear(); if (notify && n > 0) await freshOpts.bump(env, me); }   // 실제로 묶었을 때만 30초를 검 · 알림은 노드가 바뀐 때만   // 실제로 묶었을 때만 30초를 검(대조만 한 읽기는 안 막음) · 알림까지 waitUntil 이 붙잡음
+    if (n !== false) { FRESHED.set(me, Date.now()); if (FRESHED.size > 2000) FRESHED.clear(); if (notify && n > 0) await freshOpts.bump(env, me); }   // 실제로 묶었을 때만 30초를 검 · 알림은 화면에 보이는 것이 바뀐 때만   // 실제로 묶었을 때만 30초를 검(대조만 한 읽기는 안 막음) · 알림까지 waitUntil 이 붙잡음
   } finally { FRESHING.delete(me); }
 }
 export function freshForget(me: string) { FRESHED.delete(me); }
@@ -147,7 +147,7 @@ async function fresh0(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
     env.DB.prepare("SELECT MAX(x) at FROM (SELECT MAX(at) x FROM board_log WHERE owner = ? UNION ALL SELECT MAX(COALESCE(answered_at, at)) FROM board_card WHERE owner = ?)").bind(me, me),
   ]);
   const a = (la.results[0] as { at: number | null })?.at || 0, w = (lw.results[0] as { at: number | null })?.at || 0;
-  if (w > a || (a && Date.now() - a > 10 * 60_000)) return (await regroup(env as never, me) as { changed?: number }).changed ?? 1;   // 묶음: 바뀐 줄 수
+  if (w > a || (a && Date.now() - a > 10 * 60_000)) return (await regroup(env as never, me) as { shown?: number }).shown ?? 1;
   return false;
 }
 
@@ -633,6 +633,13 @@ function withThread(m: R, said: R[], my = ME) {
   const last = said.at(-1)!;
   return { ...m, replies: said.length, latest: tsOf(Number(last.at), Number(last.id)), rnames: [...new Set(said.map(r => r.kind === "me" ? my : String(r.win)))] };
 }
+// Primary 스레드 글 꼴 — GET /api/chat/primary/<ts> 와 피드 묶음(feedThreads)이 같은 함수로 만듦(두 길의 글이 갈라지지 않게)
+//   카드 스레드: 카드 글 + 에이전트가 그 스레드에 쓴 줄(said, 시각 순) + 내 답(카드 answer). 내 Primary 글 스레드: 뿌리 + 'p:<ts>' 답
+function cardThreadMsgs(card: R, said: R[], my: string, ts: string) {
+  const replies = [...said.map(r => ({ at: Number(r.at), m: { ...msg(r, my, String(r.win)), thread: ts } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card, my) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch: "primary" }));
+  return [{ ...cardMsg(card, said, my), ch: "primary" } as R, ...replies as R[]];
+}
+const primaryThreadMsgs = (pr: R, said: R[], mainName: string, my: string, ts: string): R[] => [withPrimaryThread(msg(pr, my, mainName), said, mainName, my), ...said.map(r => ({ ...msg(r, my, mainName), thread: ts }))];
 const cardBy = (db: D1Database, me: string, ts: string) => db.prepare("SELECT rowid AS n, id, win, kind, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>();
 
 // 들여온 대화 한 줄 → 노드 채팅 글. 세션 = 그 사람이 처음 물은 한 줄(들여오기가 보낸 것만 — 대화 내용은 안 옴), 스레드 · 이슈 = 제목.
@@ -858,6 +865,51 @@ async function primaryRows(db: D1Database, me: string, before?: string, pre?: Aw
     .bind(me, ...(wins.length ? [JSON.stringify(wins)] : []), ...(m ? [sec, sec + 1000, Number(m[2])] : [])).all<R>()).results;
 }
 
+export const FEED_MAX = 50;
+const FEED_ROWS = 10_000;   // 답 줄 상한(넘으면 묶음 대신 화면이 스레드마다 GET) — 스레드마다 상한은 GET 과 같게 아래서 자름
+export const FEED_REPLIES_SQL = "SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at + 0, id LIMIT " + (FEED_ROWS + 1);
+// 뿌리: ts(초.줄 id 뒤 여섯 자리)마다 (owner, at) 1초 범위 + id % 1000000 — nodeRoot · primaryRoot 와 같은 찾기(ts 로는 줄 id 를 다 못 앎). 카드는 id 그대로.
+//   순서 고정: ts 목록이 바깥(CROSS JOIN) — 안 그러면 그 사람 Primary 줄 전부를 바깥으로 훑음. 카드는 +owner 로 (owner …) 색인 대신 id 기본 열쇠로
+//   이름: 앞단 설정(node_setting — 메인 봇 이름 · 접기) · 메인 봇 이름(member_bot) · 내 이름(user) — GET 이 따로 읽는 세 줄을 같은 질의에
+export const FEED_ROOTS_SQL = [
+  "SELECT 'log' AS src, j.value AS ts, b.id AS id, b.win AS win, b.kind AS kind, b.text AS text, b.thread AS thread, b.at AS at, NULL AS n, NULL AS question, NULL AS choices, NULL AS body, NULL AS state, NULL AS answer, NULL AS answered_at FROM json_each(?2) j CROSS JOIN board_log b ON b.owner = ?1 AND b.thread = 'primary' AND b.at >= CAST(substr(j.value, 1, 10) AS INTEGER) * 1000 AND b.at < CAST(substr(j.value, 1, 10) AS INTEGER) * 1000 + 1000 AND b.id % 1000000 = CAST(substr(j.value, 12) AS INTEGER)",
+  "SELECT 'card', c.id, NULL, c.win, c.kind, NULL, NULL, c.at, c.rowid, c.question, c.choices, c.body, c.state, c.answer, c.answered_at FROM board_card c WHERE c.id IN (SELECT value FROM json_each(?2)) AND +c.owner = ?1",
+  "SELECT 'set', NULL, NULL, NULL, NULL, data, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM node_setting WHERE owner = ?1",
+  "SELECT 'bot', NULL, NULL, NULL, NULL, name, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM member_bot WHERE owner = ?1",
+  "SELECT 'who', NULL, NULL, NULL, NULL, name, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM \"user\" WHERE email = ?3",   // 내 이름(GET 의 who — index.ts 가 user 표에서 읽는 것과 같은 줄)
+].join(" UNION ALL ");
+export async function feedThreads(db: D1Database, me: string, body: unknown, opt: { email?: string; who?: string | null } = {}): Promise<[number, R]> {   // email = 로그인 메일(user 표 열쇠, 없으면 me) · who = 내 이름을 이미 알면(없으면 user 표)
+  const items = body && typeof body === "object" && !Array.isArray(body) ? (body as R).items : null;
+  if (!Array.isArray(items)) return [400, { error: "items 가 없어요" }];
+  if (items.length > FEED_MAX) return [400, { error: `한 번에 ${FEED_MAX}개까지예요` }];
+  const want: string[] = [];
+  for (const it of items) {
+    if (!it || typeof it !== "object" || Array.isArray(it) || typeof it.k !== "string" || !it.k || it.k.length > 210 || typeof it.ts !== "string" || !CARD_TS.test(it.ts)) return [400, { error: "items 꼴이 틀려요" }];
+    if (it.k === "primary" && !FOLD_TS.test(it.ts) && !AGENTS_TS.test(it.ts) && !PEER_TS.test(it.ts) && !want.includes(it.ts)) want.push(it.ts);
+  }
+  const threads: Record<string, R> = {};
+  if (!want.length) return [200, { threads }];
+  const [rp, rr] = await db.batch([
+    db.prepare(FEED_REPLIES_SQL).bind(me, JSON.stringify(want.flatMap(t => [t, primaryThread(t)]))),
+    db.prepare(FEED_ROOTS_SQL).bind(me, JSON.stringify(want), opt.email ?? me),
+  ]);
+  const reps = rp.results as R[], roots = rr.results as R[];
+  if (reps.length > FEED_ROWS) return [200, { threads }];
+  const by = new Map<string, R[]>(); for (const r of reps) { const k = String(r.thread); (by.get(k) || by.set(k, []).get(k)!).push(r); }
+  const nsd = roots.find(r => r.src === "set")?.text ?? null, fd = frontDoorFromData(nsd), foldOn = !!fd && prefsOf(nsd).agents_fold;
+  const mainName = fd?.name || String(roots.find(r => r.src === "bot")?.text || "") || "Primary", my = myName(me, opt.who !== undefined ? opt.who : roots.find(r => r.src === "who")?.text);
+  const card = new Map(roots.filter(r => r.src === "card").map(r => [String(r.ts), { ...r, id: r.ts }]));
+  const logs = new Map<string, R[]>(); for (const r of roots.filter(r => r.src === "log").sort((a, b) => Number(a.id) - Number(b.id))) (logs.get(String(r.ts)) || logs.set(String(r.ts), []).get(String(r.ts))!).push(r);
+  const put = (ts: string, [root, ...rest]: R[]) => { threads[ts] = { root, last: rest.slice(-2), replies: Number(root.replies) || 0, latest: root.latest ?? null }; };
+  for (const ts of want) {
+    const c = card.get(ts);
+    if (c) { if (!foldOn) put(ts, cardThreadMsgs(c, (by.get(ts) || []).slice(0, 200), my, ts)); continue; }   // GET 카드 길: 답 줄 200 까지
+    const ls = logs.get(ts); if (!ls) continue;
+    const pr = ls.find(r => r.win === ME);   // 내 Primary 글(primaryRoot) = 'p:<ts>' 스레드 답, 2000 까지(primaryReplies 와 같음)
+    put(ts, pr ? primaryThreadMsgs(pr, (by.get(primaryThread(ts)) || []).slice(0, 2000), mainName, my, ts) : [msg(ls[0], my, mainName)]);   // 봇 · 보더 Primary 글은 GET 처럼 그 글 하나(답 없음)
+  }
+  return [200, { threads }];
+}
 export async function paneRows(db: D1Database, me: string, pane: string) {
   return rowsOfPane(await load(db, me), pane).slice(0, 60).reverse().map(r => ({ id: r.id, at: Number(r.at) / 1000, kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 400) }));
 }
@@ -1039,10 +1091,10 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
       const card = await cardBy(db, me, m[2]);
       if (card) {
         const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, m[2]).all<R>()).results;
-        const replies = [...said.map(r => ({ at: Number(r.at), m: { ...msg(r, my, String(r.win)), thread: m![2] } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card, my) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch: "primary" }));
+        const [root, ...replies] = cardThreadMsgs(card, said, my, m[2]);
         const cL = foldOn ? pL || await loadShared(db, me, ctx) : null;   // 접기를 켠 사람만 판을 읽음(끈 사람은 main 처럼 load 없음)
         const cn = cL?.front && cL.agentsFold && cL.isPrimWin(String(card.win)) ? { name: mainName } : {};
-        return j({ channel: "primary", root: m[2], owner: null, messages: await withReacts(db, me, [{ ...cardMsg(card, said, my), ch: "primary", ...cn }, ...replies]) });
+        return j({ channel: "primary", root: m[2], owner: null, messages: await withReacts(db, me, [{ ...root, ...cn }, ...replies]) });
       }
       const L = fd ? pL || await loadShared(db, me, ctx) : null;
       for (const n of L?.front?.nodes || []) {
@@ -1052,7 +1104,7 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
       const pr = await primaryRoot(db, me, m[2]);
       if (pr) {
         const said = (await primaryReplies(db, me, [m[2]])).get(m[2]) || [];
-        return j({ channel: "primary", root: m[2], owner: null, messages: await splitMarks(db, me, [withPrimaryThread(msg(pr, my, mainName), said, mainName, my), ...said.map(r => ({ ...msg(r, my, mainName), thread: m![2] }))], my) });   // 나눈 글이면 갈래 칩
+        return j({ channel: "primary", root: m[2], owner: null, messages: await splitMarks(db, me, primaryThreadMsgs(pr, said, mainName, my, m[2]), my) });   // 나눈 글이면 갈래 칩
       }
       const rows = await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary' AND id % 1000000 = ? AND at >= ? AND at < ?").bind(me, Number(m[2].split(".")[1]), Number(m[2].split(".")[0]) * 1000, Number(m[2].split(".")[0]) * 1000 + 1000).all<R>();
       return j({ channel: "primary", root: m[2], owner: null, messages: rows.results.map(r => msg(r, my, mainName)) });

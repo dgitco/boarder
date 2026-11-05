@@ -91,14 +91,15 @@ test("fresh: 겹쳐 부르면 묶기 한 번 · 묶은 뒤 30초 안 읽기는 �
     await Promise.all(Array.from({ length: 8 }, () => fresh(env as never, MEMBER, ctx)));
     assert.equal(groups, 1, "여덟 번 불러도 묶기 한 번");
     assert.equal(later.length, 0, "막 묶었으니 미룰 것 없음");
-    stale();
+    db.prepare("UPDATE imp_audit SET at = 0 WHERE owner = ?").run(MEMBER);
+    db.prepare("INSERT INTO board_log(owner, win, kind, text, at) VALUES (?,?,?,?,?)").run(MEMBER, "laptop:tmux:1", "blocked", "막힘: 기다림", Date.now() - 5);   // 노드 상태가 바뀌는 줄(막힘)
     groups = 0; await fresh(env as never, MEMBER, ctx);
     assert.equal(groups, 0, "묶은 뒤 30초 안 읽기는 바로 안 묶음(D1 1위 regroup)");
     assert.equal(later.length, 1, "대신 남은 시간 뒤 한 번을 걸어 둠");
     await fresh(env as never, MEMBER, ctx); assert.equal(later.length, 1, "미룬 것은 사람마다 하나");
     await Promise.all(later); later = [];
     assert.equal(groups, 1, "그 뒤 아무 읽기가 없어도 묶음(막힌 뒤 조용해진 계정)");
-    assert.equal(bumps, 1, "미룬 묶기 뒤 화면에 알림 한 번");
+    assert.equal(bumps, 1, "미룬 묶기가 노드 상태(막힘)를 바꿨으니 화면에 알림 한 번");
     db.prepare("UPDATE imp_audit SET at = 0 WHERE owner = ?").run(MEMBER);   // 낡음 표시만(노드는 그대로)
     await fresh(env as never, MEMBER, ctx); await Promise.all(later); later = [];
     assert.equal(bumps, 1, "미룬 묶기가 바꾼 것이 없으면 알리지 않음(알림마다 탭이 다시 읽음)");

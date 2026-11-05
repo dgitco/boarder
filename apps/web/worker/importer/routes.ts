@@ -133,14 +133,18 @@ export async function regroup(env: Env, owner: string) {
   const keep = new Set(r.nodes.map(n => n.id));
   const was = new Map((mp.results as { item: string; node: string; how: string }[]).map(m => [m.item, m]));
   const st: D1PreparedStatement[] = [];
-  for (const m of r.map) { const o = was.get(m.item); if (!o || o.node !== m.node || o.how !== m.how) st.push(env.DB.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?) ON CONFLICT(owner, item) DO UPDATE SET node = excluded.node, how = excluded.how").bind(owner, m.item, m.node, m.how)); }
+  let shown = 0;   // 화면에 보이는 것(묶음 줄 · 이름 · 상태 · 이유 · 보관)이 바뀐 수 — 시각 · 개수만 바뀐 것은 뺌(읽을 때 미룬 묶기의 화면 알림 기준)
+  for (const m of r.map) { const o = was.get(m.item); if (!o || o.node !== m.node || o.how !== m.how) shown++, st.push(env.DB.prepare("INSERT INTO mnode_item(owner, item, node, how) VALUES (?,?,?,?) ON CONFLICT(owner, item) DO UPDATE SET node = excluded.node, how = excluded.how").bind(owner, m.item, m.node, m.how)); }
   const now_ = new Set(r.map.map(m => m.item)), gone = [...was.keys()].filter(k => !now_.has(k));
+  shown += gone.length;
   for (let i = 0; i < gone.length; i += 80) st.push(env.DB.prepare(`DELETE FROM mnode_item WHERE owner = ? AND item IN (${gone.slice(i, i + 80).map(() => "?").join(",")})`).bind(owner, ...gone.slice(i, i + 80)));
   const old = new Map((nd.results as { id: string; name: string; area: string; state: string; why: string; counts: string; updated_at: number; archived_at: number | null }[]).map(n => [n.id, n]));
   for (const n of r.nodes) {
     if (n.id.startsWith("sl_") || n.id.startsWith("tk_")) continue;   // 사람이 Slack · 업무 노드로 옮겨 넣은 것(pin)이 있어도 그 노드 줄은 slack-import · /api/device/tasks 것
     const o = old.get(n.id), counts = JSON.stringify(n.counts), arch = n.archived ? (o?.archived_at || (set.unit ? Math.min(t, n.updated_at || t) : t)) : null;   // 고른 사람은 보관 시각 = 마지막 움직임 — 옛 세션 수십 개가 「끝난 노드」 목록에 하루 동안 쌓이지 않게
     if (o && o.name === n.name && o.area === n.area && o.state === n.state && o.why === n.why && o.counts === counts && o.updated_at === n.updated_at && (o.archived_at ?? null) === arch) continue;
+    const seen = (c: unknown) => { const x = (typeof c === "string" ? json<Record<string, unknown>>(c, {}) : (c || {})) as Record<string, unknown>; return JSON.stringify([x.main ?? null, x.aliases ?? null, x.past ?? null]); };
+    if (!o || o.name !== n.name || o.area !== n.area || o.state !== n.state || o.why !== n.why || (o.archived_at ?? null) !== arch || seen(o.counts) !== seen(n.counts)) shown++;
     st.push(env.DB.prepare(
       "INSERT INTO mnode(owner, id, name, area, state, why, counts, created_at, updated_at, archived_at) VALUES (?,?,?,?,?,?,?,?,?,?) " +
       "ON CONFLICT(owner, id) DO UPDATE SET name = excluded.name, area = excluded.area, state = excluded.state, why = excluded.why, counts = excluded.counts, updated_at = excluded.updated_at, archived_at = excluded.archived_at")
@@ -159,14 +163,14 @@ export async function regroup(env: Env, owner: string) {
     if (!live.some(i => i.key === counts.main)) { if (live[0]) counts.main = live.find(i => i.key === n.counts.main)?.key || live[0].key; else delete counts.main; }
     if (aliases.size) counts.aliases = [...aliases.values()]; else delete counts.aliases;
     const next = JSON.stringify(counts);
-    if (next !== row.counts) st.push(env.DB.prepare("UPDATE mnode SET counts = ? WHERE owner = ? AND id = ?").bind(next, owner, n.id));
+    if (next !== row.counts) shown++, st.push(env.DB.prepare("UPDATE mnode SET counts = ? WHERE owner = ? AND id = ?").bind(next, owner, n.id));   // 이 쓰기는 main · aliases 가 바뀔 때만 — 화면에 보임
   }
   // 다 빠진 노드는 보관(지우지 않음 — 이름 · 기록이 남게)
-  for (const o of old.values()) if (!keep.has(o.id) && !o.archived_at) st.push(env.DB.prepare("UPDATE mnode SET archived_at = ?, state = 'done' WHERE owner = ? AND id = ?").bind(set.unit ? Math.min(t, o.updated_at || t) : t, owner, o.id));
+  for (const o of old.values()) if (!keep.has(o.id) && !o.archived_at) shown++, st.push(env.DB.prepare("UPDATE mnode SET archived_at = ?, state = 'done' WHERE owner = ? AND id = ?").bind(set.unit ? Math.min(t, o.updated_at || t) : t, owner, o.id));
   st.push(env.DB.prepare("INSERT INTO imp_audit(owner, at, data) VALUES (?,?,?)").bind(owner, t, JSON.stringify(r.audit)));
   st.push(env.DB.prepare("DELETE FROM imp_audit WHERE owner = ? AND at < ?").bind(owner, t - 48 * 3600_000));
   for (let i = 0; i < st.length; i += 90) await env.DB.batch(st.slice(i, i + 90));   // D1 batch 한 번에 너무 많지 않게
-  return Object.assign(r, { changed: st.length - 2 + seatWrites });
+  return Object.assign(r, { changed: st.length - 2 + seatWrites, shown: shown + seatWrites });
 }
 
 /** 자리마다 지금 판정(묶기 뒤 값으로 — 이미 붙었으면 「붙음」) */

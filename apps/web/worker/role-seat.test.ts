@@ -318,3 +318,26 @@ test("regroup 반환 changed: 자리표만 바뀌어도 0 보다 큼 · 아무�
   assert.deepEqual(mapOf(db, "window:host1:ew_tech01"), { node: "tk_dept_tech", how: "pin" });
   assert.ok(r.changed > 0, `자리표 쓰기도 바뀐 수에(${r.changed})`);
 });
+
+test("regroup 반환 shown: 시각만 바뀐 묶기는 0(화면 알림 안 함) · 상태가 바뀌면 0 보다 큼", async () => {
+  const { db, D1 } = await seed();
+  await regroup({ ...ENV, DB: D1 } as never, A);
+  const id = (db.prepare("SELECT id FROM mnode WHERE owner = ? AND archived_at IS NULL AND id NOT LIKE 'tk\\_%' ESCAPE '\\' LIMIT 1").get(A) as { id: string }).id;
+  db.prepare("UPDATE mnode SET updated_at = updated_at - 1000 WHERE owner = ? AND id = ?").run(A, id);   // 마지막 움직임 시각만 어긋남
+  const r1 = await regroup({ ...ENV, DB: D1 } as never, A) as any;
+  assert.ok(r1.changed > 0, "시각은 다시 씀"); assert.equal(r1.shown, 0, "보이는 것은 그대로 — 알림 안 함");
+  db.prepare("UPDATE mnode SET state = 'parked' WHERE owner = ? AND id = ?").run(A, id);   // 보이는 상태가 어긋남
+  const r2 = await regroup({ ...ENV, DB: D1 } as never, A) as any;
+  assert.ok(r2.shown > 0, "상태가 바뀌면 알림");
+});
+
+test("regroup 반환 shown: 업무 노드의 맨 앞 창(counts.main)만 바뀌어도 0 보다 큼", async () => {
+  const { db, D1, call } = await seed();
+  await call("POST", "/api/device/roles", { roles: SEATS1 });
+  await regroup({ ...ENV, DB: D1 } as never, A);
+  assert.equal(((await regroup({ ...ENV, DB: D1 } as never, A)) as any).shown, 0, "그대로면 0");
+  db.prepare("UPDATE mnode SET counts = json_set(counts, '$.main', 'window:host1:없는창') WHERE owner = ? AND id = 'tk_dept_tech'").run(A);   // 맨 앞 창만 어긋남
+  const r = await regroup({ ...ENV, DB: D1 } as never, A) as any;
+  assert.equal(mainOf(db, "tk_dept_tech").main, "window:host1:ew_tech01", "맨 앞 창을 바로잡음");
+  assert.ok(r.shown > 0, `맨 앞 창 바뀜은 화면에 보임(${r.shown})`);
+});

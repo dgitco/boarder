@@ -2611,6 +2611,14 @@ app.all("*", async c => {
           : url.pathname === "/api/voice/rtc/note" ? await memberVoice.note(c.env as never, me, b) : await memberVoice.end(c.env.DB, me, b);
         return c.json(o, st as 200);
       }
+      if (c.req.method === "POST" && url.pathname === "/api/feed/threads") {   // 피드 묶음(읽기만 — 바뀜 알림을 안 냄): 스레드 50개를 질의 2개로(member-board feedThreads)
+        quiet(c.req.raw);
+        if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
+        if (ownU) return c.json({ threads: {} }, 200, { "cache-control": "no-store" });
+        const b = await c.req.json<unknown>().catch(() => null);
+        try { const [st, o] = await memberBoard.feedThreads(c.env.DB, me, b, { email: s.user.email }); return c.json(o, st as 200, { "cache-control": "no-store" }); }
+        catch { return queue.retrySafe(c); }   // 읽기만이라 다시 보내도 됨
+      }
       if (c.req.method === "POST") {
         const r = await memberPost(c, me, url);
         if (ownU && r.status < 500) {   // 켠 주인이 회원 길로 쓴 rid 표지 — 그 rid 의 답(주인 길)이 회원 판정으로(다리에 묻지 않게). 5xx 는 모름이라 안 남김

@@ -521,3 +521,18 @@ test("켬: 회원 길로 쓴 세션 글(/api/chat/new)의 rid 답은 회원 판�
   await t.req("GET", "/api/answer/rid-secret-7", undefined, h);
   assert.deepEqual(t.bridge, ["/api/answer/rid-secret-7"], "다리로 간 글은 다리 판정");
 });
+
+test("피드 묶음 길(POST /api/feed/threads): 켠 주인은 빈 답(스레드마다 GET 으로) · 회원은 묶음 · 같은 사이트가 아니면 403", async () => {
+  const t = await setup(), h = await t.human(OWNER), m = await t.human(MEMBER);
+  await t.ownerWrites(); await t.flag("owner_unified", true); t.reset();
+  const ts = "1790000000.000001", key = W.canon({ ALLOW_EMAILS: OWNER } as never) || OWNER;
+  for (const own of [key, OWNER]) t.db.prepare("INSERT OR IGNORE INTO board_card(id, owner, win, question, choices, recommend, body, state, at) VALUES (?,?,?,?,?,?,?,?,?)").run(ts, own, "lap:herdr:p2", "회원 표의 카드", "[]", "", "", "open", Date.now());   // 켠 주인 열쇠의 회원 표 줄 — 가드가 없으면 이것이 새어 나옴
+  const body = { items: [{ k: "primary", ts }] };
+  const o = await t.req("POST", "/api/feed/threads", body, h);
+  assert.equal(o.status, 200, o.text); assert.deepEqual(o.j, { threads: {} }, "켠 주인은 회원 표를 안 읽고 빈 답");
+  const r = await t.req("POST", "/api/feed/threads", body, m);
+  assert.equal(r.status, 200, r.text); assert.ok(r.j && typeof r.j.threads === "object", "회원은 묶음 답");
+  const cross = await t.req("POST", "/api/feed/threads", body, { ...m, "sec-fetch-site": "cross-site" });
+  assert.equal(cross.status, 403, "같은 사이트가 아니면 403");
+  assert.deepEqual(t.bridge, [], "다리 호출 없음");
+});

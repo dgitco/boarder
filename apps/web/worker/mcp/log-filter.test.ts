@@ -310,3 +310,102 @@ test("구분 기호 뒤 따옴표 안이 빈칸으로 시작해도 가림 · 이
   }
   for (const t of [`["pass` + `word", "token"]`, `fields("pass` + `word")`, `{"type": "pass` + `word"}`]) assert.equal(masked(t).text, t, t);
 });
+
+test("이름=값 사슬 — 앞 일치가 다음 이름을 삼키지 않고 마지막 값까지 가림", () => {
+  const v1 = "Xk9m" + "Q2vL8pZ", v2 = "8492" + "0173aa";
+  for (const [t, v] of [[`TOKEN = OLD_TOKEN = ${v1}`, v1], [`DB_PASSWORD = ADMIN_PASSWORD = ${v2}`, v2], [`API_KEY: PROD_API_KEY: ${v1}`, v1], [`SECRET=OLD_SECRET="${v1}"`, v1]] as const) {
+    const f = masked(t); assert.ok(!f.text.includes(v), t); assert.ok(f.redacted >= 1, t);
+  }
+  const f = masked(`API_KEY: ${"Ab" + "cd1234ef"} PROD_API_KEY: ${v1}`); assert.ok(!f.text.includes(v1) && !f.text.includes("Abcd1234ef")); assert.equal(f.redacted, 2);
+});
+
+test("예외 이름은 낱말 단위 — 조각(MIN · COUNT · MODE · RATE · TTL)이 든 비밀 이름 값은 가림", () => {
+  const num = "8492" + "0173", dash = "abcd-efgh" + "-ijkl-mnop", d3 = "1234-5678" + "-9012";
+  const masks = [
+    `ADMIN_PASSWORD=${num}`, `adminPassword=${num}`, `ACCOUNT_PASSWORD=${num}`, `SERVICE_ACCOUNT_TOKEN=${dash}`, `MODEL_API_KEY=${d3}`,
+    `GENERATED_SECRET=${num}`, `SETTLEMENT_TOKEN=${num}`, `KEY_COUNT_SECRET=${num}`, `TOKEN_TTL_DB_PASSWORD=${num}`, `ADMIN_PASSWORD: "${num}"`, `PASSWORD_HINT=${num}`,
+  ];
+  for (const t of masks) { const f = masked(t); assert.ok(!f.text.includes(num) && !f.text.includes(dash) && !f.text.includes(d3), t); assert.equal(f.redacted, 1, t); }
+  assert.equal(rejected([`ADMIN_PASSWORD=${num}`, `ACCOUNT_SECRET=${num}`, `SERVICE_ACCOUNT_TOKEN=${dash}`].join("\n")), "env");
+  const keep = ["PASSWORD_COUNT=12345678", "API_KEY_VERSION=20261105", "SECRET_TTL=36000000", "token_count=12345678", "tokenCount=12345678", "PASSWORD_MIN_LENGTH=12345678", "\"max_tokens\": \"4096\"", "PASSWORD_HINT=1234"];
+  for (const t of keep) assert.equal(masked(t).text, t, t);
+  assert.equal(masked(["TOKEN_COUNT=12345678", "TOKEN_TTL=36000000", "API_KEY_VERSION=20261105"].join("\n")).redacted, 0, "개수 이름 세 줄은 거절 아님");
+});
+
+test("무작위 사슬 — 비밀 이름 뒤 진짜 값(구성상 비밀)은 사슬 · 구분 기호 · 따옴표가 어떻든 남지 않음", () => {
+  let seed = 7109; const r = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648, pick = <T,>(a: T[]) => a[Math.floor(r() * a.length)];
+  const AL = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789", rnd = (n: number) => Array.from({ length: n }, () => AL[Math.floor(r() * AL.length)]).join("");
+  const names = ["TOKEN", "OLD_TOKEN", "DB_PASSWORD", "ADMIN_PASSWORD", "adminPassword", "API_KEY", "PROD_API_KEY", "SECRET", "db_secret", "SERVICE_ACCOUNT_TOKEN", "MODEL_API_KEY", "KEY_COUNT_SECRET"];
+  const seps = ["=", " = ", ": ", ":=", " => ", "=\"", "='"];
+  for (let i = 0; i < 3000; i++) {
+    const secrets: string[] = [], parts: string[] = [];
+    for (let k = 1 + Math.floor(r() * 4); k > 0; k--) {
+      if (r() < 0.4) { parts.push(pick(names) + pick(seps) + pick(names.filter(n => /^[A-Z_]+$/.test(n)))); continue; }   // 사슬 고리(이름만 적은 값)
+      const v = rnd(10 + Math.floor(r() * 8)); secrets.push(v);
+      const sep = pick(seps), q = sep.endsWith("\"") ? "\"" : sep.endsWith("'") ? "'" : "";
+      parts.push(pick(names) + sep + v + q);
+    }
+    const t = parts.join(pick([" ", "\n", " · "])), f = filterText(t);
+    if ("reject" in f) continue;   // .env 통째 거절은 저장 0
+    for (const v of secrets) assert.ok(!f.text.includes(v), t);
+  }
+});
+
+test(":= 꼴 — 개수 이름은 통과 · 비밀 이름 값은 가림", () => {
+  assert.equal(masked("HMAC_VERSION:=59605378").text, "HMAC_VERSION:=59605378");
+  const v = "8492" + "0173aa"; const f = masked(`ADMIN_PASSWORD:=${v}`); assert.ok(!f.text.includes(v)); assert.equal(f.redacted, 1);
+});
+
+const jj = (...p: string[]) => p.join("");
+test("TOKEN(S) 하나뿐 예외는 바로 앞 낱말이 토큰 개수 낱말일 때만", () => {
+  const num = jj("8492", "0173"), hy = jj("abcd", "-efgh", "-ijkl");
+  for (const [t, v] of [[`RATE_LIMIT_BYPASS_TOKEN=${num}`, num], [`LIMIT_OVERRIDE_TOKEN=${hy}`, hy], [`TTL_TOKEN=${num}`, num]] as [string, string][]) {
+    const f = masked(t); assert.ok(!f.text.includes(v), t.slice(0, 14)); assert.equal(f.redacted, 1, t.slice(0, 14));
+  }
+  for (const t of [`max_tokens=${num}`, `NUM_TOKENS=${num}`, `input_tokens: ${num}`, `TOKEN_COUNT=${num}`, `"max_tokens": "4096"`]) assert.equal(masked(t).text, t, t);
+});
+
+test("원문 짝 재검사는 그 이름 바로 뒤 한 자리만 — 같은 낱말이 글 다른 곳에 있어도 그대로", () => {
+  for (const [t, want] of [[`SECRET: "release" · release 노트 배포`, `SECRET: [가림] · release 노트 배포`], [`pass` + `word = "main" · main 브랜치 머지`, `pass` + `word = [가림] · main 브랜치 머지`]]) {
+    const f = masked(t); assert.equal(f.text, want, t); assert.equal(f.redacted, 1, t);
+  }
+});
+
+test("구분 기호 뒤 = · > 가 더 붙은 값도 가림(값 속 다른 꼴이 먼저 가려져도) · := 개수 이름은 통과", () => {
+  const hp = jj("Hunter2", "Pass99"), sk = jj("sk-", "abcdefghijklmnopqrstuv"), PW = jj("DB_", "PASS", "WORD"), rrn = jj("900101", "-1234567");
+  for (const t of [`url?pass${"word"}==${hp}&api_key=${sk}`, `${PW}==${hp}/${sk}`, `${PW}==${hp}:${rrn}`, `pass${"word"}=>=${hp}&key=${sk}`, `adminPass${"word"}==${sk}」${hp}`]) {
+    const f = masked(t); assert.ok(!f.text.includes(hp) && !f.text.includes(sk), t.slice(0, 16));
+  }
+  for (const t of ["HMAC_VERSION:=59605378", "TOKEN_COUNT := 12345678", "A:=B"]) assert.equal(masked(t).text, t, t);
+});
+
+test("닫는 따옴표가 빠진 값이 다음 이름을 먹지 않음 — 뒤 값도 가림", () => {
+  const x = jj("Xk9mQ2", "vL8pZ");
+  for (const t of [`TOKEN": "${x} pass${"word"}": "${x}`, `adminPass${"word"}": "${x} adminPass${"word"}": "${x}`, `pass${"word"}": "${x}&DB_PASS${"WORD"}": "${x}`]) {
+    const f = filterText(t); assert.ok("reject" in f || !f.text.includes(x), t.slice(0, 16));
+  }
+});
+
+test("따옴표 값 뒤에 : · = 가 와도 안 끝이 비밀 이름이 아니면 값으로 가림 · 닫는 따옴표 빠진 값은 다음 이름을 안 먹음", () => {
+  const ph = jj("open ses", "ame 42"), x = jj("Xk9mQ2", "vL8pZ"), y = jj("q7Rt", "Zx2mWp");
+  for (const t of [`비밀번호 "${ph}": 오늘부터`, `pass` + `word "${ph}"=정답`, `{"pass` + `word": "${ph}":1}`]) { const f = filterText(t); assert.ok("reject" in f || (!f.text.includes("sesame") && !f.text.includes(ph)), t.slice(0, 14)); }
+  for (const t of [`TOKEN": "${x}&TOKEN": "${y}`, `TOKEN": "${x} pass` + `word": "${y}`]) { const f = filterText(t); assert.ok("reject" in f || (!f.text.includes(x) && !f.text.includes(y)), t.slice(0, 14)); }
+});
+
+test("토큰 개수 예외: 새 낱말(INPUT · PROMPT …)은 복수 TOKENS 만, 값은 숫자뿐만", () => {
+  const num = jj("8492", "0173"), hy = jj("ABCD-12", "34-EFGH-5678");
+  for (const [t, v] of [[`INPUT_TOKEN=${hy}`, hy], [`PROMPT_TOKEN=${num}`, num], [`OUTPUT_TOKEN="${hy}"`, hy], [`TOTAL_TOKEN=${num}`, num], [`max_tokens=${hy}`, hy]] as [string, string][]) {
+    const f = masked(t); assert.ok(!f.text.includes(v), t.slice(0, 14));
+  }
+  for (const t of [`input_tokens=${num}`, `max_tokens=${num}`, `MAX_TOKEN=${num}`, `output_tokens: ${num}`]) assert.equal(masked(t).text, t, t);
+});
+
+test("구분 기호 둘레 빈칸 · 줄바꿈 16자 · 이름 앞 80자까지 가림", () => {
+  const x = jj("Xk9mQ2", "vL8pZ");
+  for (const t of [`api_` + `key=     ${x}`, `pass` + `word:\n    ${x}`, `TOKEN\t\t\t\t\t= ${x}`, jj("CLOUDFLARE_", "X".repeat(45), "_API_TOKEN=", x)]) { const f = masked(t); assert.ok(!f.text.includes(x), t.slice(0, 14)); }
+});
+
+test("원문 짝 재검사는 원문의 사이 글자(「 is 」) 그대로 자리를 찾음", () => {
+  const v = jj("a b ", "c1x9");
+  const f = filterText(`API_TOKEN is "${v}"`); assert.ok("reject" in f || !f.text.includes(v));
+});
