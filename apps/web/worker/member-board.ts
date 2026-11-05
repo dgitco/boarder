@@ -111,10 +111,10 @@ export async function nodeFaceList(db: D1Database, me: string, bot: { name?: str
 }
 
 const FRESHING = new Map<string, number>();
-export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
-  const t0 = Date.now(); if (t0 - (FRESHING.get(me) || 0) < 10_000) return;
+export async function fresh(env: { DB: D1Database; PUBLIC_URL: string }, me: string): Promise<boolean> {
+  const t0 = Date.now(); if (t0 - (FRESHING.get(me) || 0) < 10_000) return false;
   FRESHING.set(me, t0);
-  try { await fresh0(env, me); } finally { FRESHING.delete(me); }
+  try { return await fresh0(env, me); } finally { FRESHING.delete(me); }
 }
 const DATA_GATE = new Map<string, { at: number; n: number }>(), DATA_MAX = 60;
 export function dataGate(me: string, now = Date.now()) {
@@ -127,7 +127,8 @@ async function fresh0(env: { DB: D1Database; PUBLIC_URL: string }, me: string) {
     env.DB.prepare("SELECT MAX(x) at FROM (SELECT MAX(at) x FROM board_log WHERE owner = ? UNION ALL SELECT MAX(COALESCE(answered_at, at)) FROM board_card WHERE owner = ?)").bind(me, me),
   ]);
   const a = (la.results[0] as { at: number | null })?.at || 0, w = (lw.results[0] as { at: number | null })?.at || 0;
-  if (w > a || (a && Date.now() - a > 10 * 60_000)) await regroup(env as never, me);
+  if (w > a || (a && Date.now() - a > 10 * 60_000)) { await regroup(env as never, me); return true; }
+  return false;
 }
 
 const closeStaleConnect = (db: D1Database, me: string) => db.prepare("UPDATE board_card SET state = 'closed', done = '만료' WHERE owner = ? AND state = 'open' AND kind LIKE 'connect:%' AND at < ?").bind(me, Date.now() - CONNECT_TTL).run().catch(() => {});   // 10분 지난 「연결하기」 카드(connect-card.ts)
