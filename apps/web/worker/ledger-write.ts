@@ -1,7 +1,7 @@
 import SPEC from "./ledger-schema";
 import { f7All, f7AllPeek } from "./ledger";
 
-const DIRECT: Record<string, string[]> = { write_art: ["art_note", "art_folder"] };
+const DIRECT: Record<string, string[]> = { write_art: ["art_note", "art_folder", "art_pref"] };
 async function direct(db: D1Database, wait?: (p: Promise<unknown>) => void) {
   const out = new Set<string>();
   for (const f of await (wait ? f7AllPeek(db, wait) : f7All(db))) {

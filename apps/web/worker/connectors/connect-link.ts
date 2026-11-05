@@ -10,6 +10,7 @@ export type Hooks = {
   device: (c: C) => Promise<Dev | null>;
   human: (c: C) => Promise<string | null>;   // 로그인한 사람의 메일(소문자). 토큰 머리가 붙은 요청은 null
   sameSite: (c: C) => boolean;
+  key: (env: Env, email: string) => string;   // 줄 열쇠: 주인 "" · 회원 메일(커넥터 who() 와 같음) — 링크 · 연결 줄 모두 이 열쇠로 이음
 };
 export const TTL = 10 * 60_000;
 export const MAX_OPEN = 5;
@@ -38,7 +39,7 @@ export function mountConnectLink(host: Hono<any>, h: Hooks) {
       const known = own(API_PRESETS, service) || own(PRESETS, service);
       return c.json({ error: known ? `${titleOf(service)} 은 키로 넣는 서비스예요 — boarder connect ${service} --key-file <파일> 로 보내고 사람은 보드 카드에서 「허용」만 눌러요` : "모르는 서비스예요" }, known ? 422 : 400, NOSTORE);
     }
-    const me = d.owner.toLowerCase(), now = Date.now();
+    const me = h.key(c.env, d.owner), now = Date.now();
     if (reconnect) {
       const row = await c.env.DB.prepare("SELECT service FROM connection WHERE owner = ? AND id = ?").bind(me, reconnect).first<{ service: string }>();
       if (!row || row.service !== service) return c.json({ error: "reconnect: 내 연결이 아니거나 서비스가 달라요" }, 400, NOSTORE);
@@ -56,7 +57,7 @@ export function mountConnectLink(host: Hono<any>, h: Hooks) {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401, NOSTORE);
     const id = c.req.param("id");
     if (!/^[0-9a-f]{16}$/.test(id)) return c.json({ error: "id" }, 400, NOSTORE);
-    const me = d.owner.toLowerCase();
+    const me = h.key(c.env, d.owner);
     const r = await c.env.DB.prepare("SELECT service, label, created_at, expires_at, used_at FROM connect_link WHERE substr(hash, 1, 16) = ? AND owner = ? AND device_id = ?").bind(id, me, d.id).first<{ service: string; label: string; created_at: number; expires_at: number; used_at: number | null }>();
     if (!r) return c.json({ error: "없는 링크" }, 404, NOSTORE);
     const conn = r.used_at ? await c.env.DB.prepare("SELECT 1 FROM connection WHERE owner = ? AND service = ? AND label = ? AND updated_at >= ? AND status = 'ok'").bind(me, r.service, r.label, r.used_at).first() : null;   // 「계속」 누른 뒤에 갱신된 연결만(옛 연결의 토큰 갱신을 완료로 오판하지 않음)
@@ -69,7 +70,7 @@ export function mountConnectLink(host: Hono<any>, h: Hooks) {
     if (!TOKEN.test(token)) return page("<h2>링크가 맞지 않아요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 404);
     const me = await h.human(c);
     if (!me) return page(`<h2>먼저 로그인해요</h2><p class=sub>보더에 로그인한 브라우저에서 이 링크를 다시 열어요.</p><p><a href="${esc(c.env.PUBLIC_URL)}">보더 열기</a></p>`, 401);
-    const r = await c.env.DB.prepare("SELECT device_name, service, label, used_at, expires_at FROM connect_link WHERE hash = ? AND owner = ?").bind(await sha(token), me).first<{ device_name: string; service: string; label: string; used_at: number | null; expires_at: number }>();
+    const r = await c.env.DB.prepare("SELECT device_name, service, label, used_at, expires_at FROM connect_link WHERE hash = ? AND owner = ?").bind(await sha(token), h.key(c.env, me)).first<{ device_name: string; service: string; label: string; used_at: number | null; expires_at: number }>();
     if (!r) return page("<h2>링크가 맞지 않아요</h2><p class=sub>이 계정으로 만든 링크가 아니에요. 링크를 만든 계정으로 로그인했는지 봐요.</p>", 404);
     if (r.used_at || r.expires_at < Date.now()) return page("<h2>이미 쓰였거나 만료된 링크예요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 410);
     return page(`<h2>${esc(titleOf(r.service))} 연결</h2><p>기기 「${esc(r.device_name)}」 이 ${esc(titleOf(r.service))}${r.label ? ` (${esc(r.label)})` : ""} 연결을 요청했어요. 내가 시킨 일이 아니면 닫아요.</p><p><button id=go>계속</button></p><p id=msg class=sub></p>
@@ -93,7 +94,7 @@ b.onclick=async()=>{b.disabled=true;msg.textContent='연결 화면으로 가는 
     const b = Object(await c.req.json().catch(() => ({}))) as { token?: unknown };
     const token = String(b.token ?? ""); if (!TOKEN.test(token)) return c.json({ error: "링크가 맞지 않아요" }, 404, NOSTORE);
     const now = Date.now();
-    const u = await c.env.DB.prepare("UPDATE connect_link SET used_at = NULL WHERE hash = ? AND owner = ? AND used_at IS NOT NULL AND used_at > ? AND expires_at > ?").bind(await sha(token), me, now - 2 * 60_000, now).run();
+    const u = await c.env.DB.prepare("UPDATE connect_link SET used_at = NULL WHERE hash = ? AND owner = ? AND used_at IS NOT NULL AND used_at > ? AND expires_at > ?").bind(await sha(token), h.key(c.env, me), now - 2 * 60_000, now).run();
     return c.json({ ok: !!u.meta.changes }, 200, NOSTORE);
   });
 
@@ -104,7 +105,7 @@ b.onclick=async()=>{b.disabled=true;msg.textContent='연결 화면으로 가는 
     const b = Object(await c.req.json().catch(() => ({}))) as { token?: unknown };
     const token = String(b.token ?? ""); if (!TOKEN.test(token)) return c.json({ error: "링크가 맞지 않아요" }, 404, NOSTORE);
     const hash = await sha(token), now = Date.now();
-    const u = await c.env.DB.prepare("UPDATE connect_link SET used_at = ? WHERE hash = ? AND owner = ? AND used_at IS NULL AND expires_at > ? RETURNING service, label, reconnect").bind(now, hash, me, now).first<{ service: string; label: string; reconnect: string | null }>();
+    const u = await c.env.DB.prepare("UPDATE connect_link SET used_at = ? WHERE hash = ? AND owner = ? AND used_at IS NULL AND expires_at > ? RETURNING service, label, reconnect").bind(now, hash, h.key(c.env, me), now).first<{ service: string; label: string; reconnect: string | null }>();
     if (!u) return c.json({ error: "이미 쓰였거나 만료됐거나 이 계정 링크가 아니에요" }, 410, NOSTORE);
     return c.json({ ok: true, service: u.service, label: u.label, reconnect: u.reconnect }, 200, NOSTORE);
   });

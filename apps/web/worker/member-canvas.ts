@@ -70,13 +70,14 @@ async function dropVer(env: Env, mk: string, id: string, ver: string) {
 const autoFolder = (m: Meta) => m.acct || "캔버스";
 export async function list(env: Env, email: string) {
   const me = email.toLowerCase();
-  const [rows, fr, nr] = await Promise.all([all(env, await keyOf(email)),
+  const [rows, fr, nr, pr] = await Promise.all([all(env, await keyOf(email)),
     env.DB.prepare("SELECT art, folder FROM member_artfolder WHERE owner = ?").bind(me).all<{ art: string; folder: string }>(),
-    env.DB.prepare("SELECT art, count(*) AS n FROM member_artnote WHERE owner = ? AND deleted_at IS NULL GROUP BY art").bind(me).all<{ art: string; n: number }>()]);
-  const mv = new Map(fr.results.map(r => [r.art, r.folder])), cnt = new Map(nr.results.map(r => [r.art, Number(r.n)]));
-  const out: Record<string, { kind: "page" | "canvas"; title: string; at: string; acct: string; folder: string; moved: boolean; notes: number }> = {};
+    env.DB.prepare("SELECT art, count(*) AS n FROM member_artnote WHERE owner = ? AND deleted_at IS NULL GROUP BY art").bind(me).all<{ art: string; n: number }>(),
+    env.DB.prepare("SELECT art, pin, thumb FROM member_artpref WHERE owner = ?").bind(me).all<{ art: string; pin: number; thumb: string }>()]);
+  const mv = new Map(fr.results.map(r => [r.art, r.folder])), cnt = new Map(nr.results.map(r => [r.art, Number(r.n)])), pref = new Map(pr.results.map(r => [r.art, r]));
+  const out: Record<string, { kind: "page" | "canvas"; title: string; at: string; acct: string; folder: string; moved: boolean; notes: number; pin: boolean; thumb: string }> = {};
   for (const { id, m } of rows.sort((a, b) => Number(b.m.at) - Number(a.m.at)))
-    out[id] = { kind: m.kind === "canvas" ? "canvas" : "page", title: m.title || id, at: m.at, acct: m.acct || "", folder: mv.get(id) || autoFolder(m), moved: mv.has(id), notes: cnt.get(id) || 0 };
+    out[id] = { kind: m.kind === "canvas" ? "canvas" : "page", title: m.title || id, at: m.at, acct: m.acct || "", folder: mv.get(id) || autoFolder(m), moved: mv.has(id), notes: cnt.get(id) || 0, pin: !!pref.get(id)?.pin, thumb: pref.get(id)?.thumb || "" };
   return out;
 }
 
@@ -93,6 +94,10 @@ const te2 = new TextEncoder(), td = new TextDecoder();
 export async function file(env: Env, mk: string, id: string, rel: string, range?: string): Promise<Got | null> {
   if (!ID.test(id)) return null;
   const m = await metaOf(env, mk, id); if (!m) return null;
+  if (rel === THUMB) {   // 목록 · 글 속 미리보기 그림(서버가 찍어 둠). 없으면 아래로 — 올린 파일 이름이 같으면 그것
+    const o = await env.RESULTS.get(thumbKey(mk, id));
+    if (o) return { body: o.body, ct: "image/jpeg", html: false, extra: { "cache-control": "private, max-age=300" } };
+  }
   if (m.kind === "canvas") {
     if (!rel) {
       const o = await env.RESULTS.get("art/_sys/artcanvas.html"); if (!o) return null;
@@ -179,6 +184,29 @@ export async function artfolder(env: Env, email: string, body: { art?: unknown; 
   return [200, { ok: true, folder: folder || autoFolder(m) }];
 }
 
+const prefSet = (db: D1Database, me: string, art: string, col: "pin" | "thumb", v: number | string) =>
+  db.prepare(`INSERT INTO member_artpref(owner, art, ${col}, at) VALUES (?, ?, ?, ?) ON CONFLICT(owner, art) DO UPDATE SET ${col} = excluded.${col}, at = excluded.at`).bind(me, art, v, nowS());
+/** POST /api/artstar {art, on} → [상태, {ok, pin}] — 목록 고정 별(주인 owner-write.ts artstar 와 같은 답) */
+export async function artstar(env: Env, email: string, body: { art?: unknown; on?: unknown }, rid = ""): Promise<[number, object]> {
+  const me = email.toLowerCase(), art = String(body.art || "");
+  if (!(await mine(env, me, art))) return NOART;
+  const on = body.on === true || body.on === 1 || body.on === "1" || body.on === "true";
+  await ridBatch(env.DB, rid, [prefSet(env.DB, me, art, "pin", on ? 1 : 0)]);
+  return [200, { ok: true, pin: on }];
+}
+export async function artthumb(env: Env, email: string, body: { art?: unknown; board?: unknown }, rid = ""): Promise<[number, object]> {
+  const me = email.toLowerCase(), art = String(body.art || "");
+  const m = await mine(env, me, art); if (!m || m.kind !== "canvas") return [404, { ok: false, error: "없는 캔버스" }];
+  const board = String(body.board || "").slice(0, 200);
+  if (board) {
+    let boards: string[] = [];
+    try { const o = await env.RESULTS.get(fileKey(await keyOf(me), art, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); const b = o ? (JSON.parse(await o.text()) as { boards?: unknown }).boards : null; if (b && typeof b === "object") boards = Object.keys(b); } catch {}
+    if (!boards.includes(board)) return [400, { ok: false, error: "그 캔버스에 없는 판이에요" }];
+  }
+  await ridBatch(env.DB, rid, [prefSet(env.DB, me, art, "thumb", board)]);
+  return [200, { ok: true, thumb: board }];
+}
+
 /** /art/<id>/<나머지> 를 칸으로: 인코딩된 「/」 「\」 · . · .. 는 거절(null). 끝 「/」 는 남김(index.html) */
 export function parseArt(pathname: string): { id: string; rel: string; bare: boolean } | null {
   const m = /^\/art\/([A-Za-z0-9]{16,40})(\/.*)?$/.exec(pathname); if (!m) return null;
@@ -187,6 +215,54 @@ export function parseArt(pathname: string): { id: string; rel: string; bare: boo
   let rel: string; try { rel = decodeURIComponent(m[2].slice(1)); } catch { return null; }
   if (rel && !okPath(rel.endsWith("/") ? rel.slice(0, -1) : rel)) return null;
   return { id: m[1], rel, bare: false };
+}
+
+export const THUMB = "_thumb.jpg";
+const thumbKey = (mk: string, id: string) => `mart/${mk}/${id}/${THUMB}`;
+const THUMB_MAX = 400_000;
+export type ThumbJob = { art: string; mk: string; board: string; w: number; h: number; ver: string; pref: string; bxt: string };
+export function thumbStale(have: { ver?: string; pref?: string } | null, m: { ver: string }, pref: string) {
+  return !have || have.ver !== m.ver || (have.pref ?? "") !== pref;
+}
+/** 찍을 판: 지정(pref)이 canvas.json boards 에 있으면 그것, 아니면 order 맨 앞 → boards 맨 앞(canvas_thumb.pick 과 같은 차례) */
+export function pickBoard(cj: { boards?: Record<string, { w?: number; h?: number }>; order?: unknown[]; thumb?: unknown }, pref: string) {
+  const boards = cj.boards && typeof cj.boards === "object" ? cj.boards : {};
+  for (const n of [pref, cj.thumb, ...(Array.isArray(cj.order) ? cj.order : []), ...Object.keys(boards)]) {
+    if (typeof n === "string" && n in boards && !n.includes("/") && n.endsWith(".html")) return { board: n, w: Number(boards[n]?.w) || 1520, h: Number(boards[n]?.h) || 950 };
+  }
+  return null;
+}
+export async function thumbJobs(env: Env & { BETTER_AUTH_SECRET: string }, limit = 8, skip: Set<string> = new Set()): Promise<ThumbJob[]> {
+  const out: ThumbJob[] = [];
+  const mem = await env.DB.prepare("SELECT email FROM invite ORDER BY email").all<{ email: string }>();
+  for (const { email } of mem.results) {
+    if (out.length >= limit) break;
+    const me = email.toLowerCase(), mk = await keyOf(me);
+    const pr = await env.DB.prepare("SELECT art, thumb FROM member_artpref WHERE owner = ?").bind(me).all<{ art: string; thumb: string }>();
+    const pref = new Map(pr.results.map(r => [r.art, r.thumb]));
+    for (const { id, m } of (await all(env, mk)).filter(x => x.m.kind === "canvas").sort((a, b) => Number(b.m.at) - Number(a.m.at))) {
+      if (out.length >= limit) break;
+      if (skip.has(id)) continue;
+      const h = await env.RESULTS.head(thumbKey(mk, id));
+      const want = pref.get(id) || "";
+      if (!thumbStale(h?.customMetadata as { ver?: string; pref?: string } | null ?? null, m, want)) continue;
+      let cj: Parameters<typeof pickBoard>[0] = {};
+      try { const o = await env.RESULTS.get(fileKey(mk, id, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); if (o) cj = JSON.parse(await o.text()); } catch {}
+      const pk = pickBoard(cj, want); if (!pk) continue;
+      out.push({ art: id, mk, ...pk, ver: m.ver, pref: want, bxt: await token(env.BETTER_AUTH_SECRET, mk, id, Date.now() + 15 * 60_000) });
+    }
+  }
+  return out;
+}
+/** PUT /api/admin/mthumb/<mk>/<id>?ver=&pref= — 찍은 JPEG 저장. 표지가 없으면 404, 그 사이 새 판을 올렸으면(ver 다름) 409(버림 — 다음 일감에서 다시) */
+export async function putThumb(env: Env, mk: string, id: string, body: ArrayBuffer, ver: string, pref: string): Promise<[number, object]> {
+  if (!/^[0-9a-f]{32}$/.test(mk) || !ID.test(id)) return [404, { error: "없는 캔버스" }];
+  const m = await metaOf(env, mk, id); if (!m || m.kind !== "canvas") return [404, { error: "없는 캔버스" }];
+  if (m.ver !== ver) return [409, { error: "그 사이 새 판을 올렸어요" }];
+  const b = new Uint8Array(body);
+  if (b.length < 2000 || b.length > THUMB_MAX || b[0] !== 0xff || b[1] !== 0xd8) return [400, { error: "JPEG 가 아니에요" }];
+  await env.RESULTS.put(thumbKey(mk, id), b, { httpMetadata: { contentType: "image/jpeg" }, customMetadata: { ver, pref: pref.slice(0, 200) } });
+  return [200, { ok: true }];
 }
 
 async function sign(secret: string, msg: string) {
@@ -219,6 +295,7 @@ export async function remove(env: Env, email: string, id: string): Promise<[numb
   await env.DB.batch([
     env.DB.prepare("UPDATE member_artnote SET deleted_at = ? WHERE owner = ? AND art = ? AND deleted_at IS NULL").bind(nowS(), me, id),
     env.DB.prepare("DELETE FROM member_artfolder WHERE owner = ? AND art = ?").bind(me, id),
+    env.DB.prepare("DELETE FROM member_artpref WHERE owner = ? AND art = ?").bind(me, id),
   ]);
   return [200, { ok: true, id, files: n }];
 }

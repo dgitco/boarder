@@ -54,7 +54,7 @@ async function setup() {
   await R.put("art/_sys/artcanvas.html", SHELL);
   await R.put("art/_sys/index.json", JSON.stringify({ v: 1, at: 1, arts: {}, blobs: {}, shim: btoa(SHIM) }));
   const env = { DB: D1, RESULTS: R, SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) }, ASSETS: { fetch: async () => new Response("<html>로그인 화면</html>", { headers: { "content-type": "text/html" } }) },
-    BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+    BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test", ADMIN_TOKEN: "admin-test-not-real" };
   const ctx = { waitUntil(p: Promise<unknown>) { waits.push(p); }, passThroughOnException() {} };
   const go = (path: string, init: RequestInit = {}) => app.fetch(new Request("https://example.test" + path, init), env, ctx);
   const put = (tok: string, files: Record<string, string>, o: { id?: string; title?: string } = {}) => {
@@ -129,7 +129,7 @@ test("같은 rid 로 다시 보낸 댓글은 한 번만", async () => {
 test("폴더 옮기기: 주인 꼴 {ok, folder} — 칸 다듬기 · 목록 folder · moved, 빈 값이면 자동 분류로", async () => {
   const s = await setup();
   const a = await (await s.put(TOK.A, { "index.html": PAGE })).json() as any;
-  assert.deepEqual((await s.getj(A, "/api/arts")).j[a.id], { kind: "page", title: "가상 페이지", at: (await s.getj(A, "/api/arts")).j[a.id].at, acct: "", folder: "캔버스", moved: false, notes: 0 });
+  assert.deepEqual((await s.getj(A, "/api/arts")).j[a.id], { kind: "page", title: "가상 페이지", at: (await s.getj(A, "/api/arts")).j[a.id].at, acct: "", folder: "캔버스", moved: false, notes: 0, pin: false, thumb: "" });
   let r = await s.post(A, "/api/artfolder", { art: a.id, folder: "  가상   영역 / 리포트 //" });
   assert.deepEqual(r, { status: 200, j: { ok: true, folder: "가상 영역/리포트" } });
   let it = (await s.getj(A, "/api/arts")).j[a.id];
@@ -190,4 +190,100 @@ test("Design 캔버스: 루트 canvas.json 도 · 같은 id 새 판에서 page �
   assert.equal((await s.view(A, `/art/${id}/`)).status, 404);
   // index.html · canvas.json 둘 다 없으면 여전히 400
   assert.equal((await s.put(TOK.A, { "page.html": PAGE })).status, 400);
+});
+
+test("목록 고정 별 · 썸네일 판: 내 캔버스만, 판 이름 검사, 지울 때 같이 지움", async () => {
+  const s = await setup();
+  const cv = await (await s.put(TOK.A, { "project/canvas.json": JSON.stringify(CANVAS), "project/Overview.dc.html": BOARD })).json() as any;
+  const row = async () => (await s.getj(A, "/api/arts")).j[cv.id];
+  assert.deepEqual([(await row()).pin, (await row()).thumb], [false, ""]);
+  let r = await s.post(A, "/api/artstar", { art: cv.id, on: true });
+  assert.deepEqual([r.status, r.j.ok, r.j.pin], [200, true, true]);
+  assert.equal((await row()).pin, true);
+  r = await s.post(A, "/api/artthumb", { art: cv.id, board: "Overview.dc.html" });
+  assert.deepEqual([r.status, r.j], [200, { ok: true, thumb: "Overview.dc.html" }]);
+  assert.deepEqual([(await row()).pin, (await row()).thumb], [true, "Overview.dc.html"]);   // 한 칸을 바꿔도 다른 칸은 그대로
+  assert.equal((await s.post(A, "/api/artthumb", { art: cv.id, board: "Nope.dc.html" })).status, 400);
+  assert.equal((await row()).thumb, "Overview.dc.html");
+  r = await s.post(A, "/api/artthumb", { art: cv.id, board: "" });   // 첫 판으로 되돌림
+  assert.deepEqual([r.status, r.j.thumb], [200, ""]);
+  assert.equal((await s.post(A, "/api/artstar", { art: cv.id, on: false })).j.pin, false);
+  assert.equal((await s.post(A, "/api/artstar", { art: cv.id, on: "false" })).j.pin, false);   // 문자열 "false" 는 켜짐이 아님
+  assert.equal((await s.post(A, "/api/artstar", { art: cv.id, on: "true" })).j.pin, true);
+  assert.equal((await s.post(A, "/api/artstar", { art: cv.id })).j.pin, false);
+  // 남(B): 둘 다 404, 아무것도 안 씀
+  assert.equal((await s.post(B, "/api/artstar", { art: cv.id, on: true })).status, 404);
+  assert.equal((await s.post(B, "/api/artthumb", { art: cv.id, board: "Overview.dc.html" })).status, 404);
+  assert.equal((s.db.prepare("SELECT count(*) AS n FROM member_artpref WHERE owner = ?").get(B) as any).n, 0);
+  // 페이지 아티팩트는 썸네일 판이 없음(404), 별은 가능
+  const pg = await (await s.put(TOK.A, { "index.html": PAGE })).json() as any;
+  assert.equal((await s.post(A, "/api/artthumb", { art: pg.id, board: "x.html" })).status, 404);
+  assert.equal((await s.post(A, "/api/artstar", { art: pg.id, on: true })).j.pin, true);
+  // 지우면 그 줄도 지움
+  assert.equal((await s.go(`/api/me/canvas/${cv.id}`, { method: "DELETE", headers: { authorization: `Bearer ${TOK.A}` } })).status, 200);
+  assert.equal((s.db.prepare("SELECT count(*) AS n FROM member_artpref WHERE art = ?").get(cv.id) as any).n, 0);
+});
+
+const ADM = { authorization: "Bearer admin-test-not-real" };
+const JPG = new Uint8Array([0xff, 0xd8, ...new Array(3000).fill(7), 0xff, 0xd9]);
+const CV2 = { ...CANVAS, boards: { "Overview.dc.html": { w: 800, h: 600 }, "Second.dc.html": { w: 1000, h: 700 } }, order: ["Overview.dc.html", "Second.dc.html"] };
+const jobs = async (s: any) => (await (await s.go("/api/admin/mthumb/jobs?limit=20", { headers: ADM })).json() as any).jobs as any[];
+const putThumb = (s: any, j: any, ver = j.ver, pref = j.pref) => s.go(`/api/admin/mthumb/${j.mk}/${j.art}?ver=${ver}&pref=${encodeURIComponent(pref)}`, { method: "PUT", headers: { ...ADM, "content-type": "image/jpeg" }, body: JPG });
+
+test("회원 썸네일 일감: 관리자 토큰만 · 없음 → 찍으면 빠짐 · 판 버전 바뀜 · 지정 판 바뀜 · 회원마다 따로", async () => {
+  const s = await setup();
+  assert.equal((await s.go("/api/admin/mthumb/jobs")).status, 403);
+  assert.equal((await s.go("/api/admin/mthumb/jobs", { headers: { authorization: "Bearer nope" } })).status, 403);
+  const a = await (await s.put(TOK.A, { "project/canvas.json": JSON.stringify(CV2), "project/Overview.dc.html": BOARD, "project/Second.dc.html": BOARD })).json() as any;
+  const b = await (await s.put(TOK.B, { "project/canvas.json": JSON.stringify(CV2), "project/Overview.dc.html": BOARD })).json() as any;
+  await s.put(TOK.A, { "index.html": PAGE });   // 페이지는 일감 아님
+  let js = await jobs(s);
+  assert.deepEqual(js.map(j => j.art).sort(), [a.id, b.id].sort());   // 없음 → 둘 다
+  const ja = js.find(j => j.art === a.id);
+  assert.deepEqual([ja.board, ja.w, ja.h, ja.pref], ["Overview.dc.html", 800, 600, ""]);   // 지정 없으면 order 맨 앞
+  assert.match(ja.bxt, /^m\.[0-9a-f]{32}\.\d{13}\.[0-9a-f]{32}$/);
+  assert.equal(await MC.tokenOk(SECRET, a.id, ja.bxt), ja.mk);
+  assert.equal(await MC.tokenOk(SECRET, b.id, ja.bxt), null);
+  assert.equal((await putThumb(s, ja)).status, 200);
+  js = await jobs(s); assert.deepEqual(js.map(j => j.art), [b.id]);
+  assert.equal((await s.post(A, "/api/artthumb", { art: a.id, board: "Second.dc.html" })).status, 200);
+  js = await jobs(s); const ja2 = js.find(j => j.art === a.id);
+  assert.deepEqual([ja2.board, ja2.w, ja2.pref], ["Second.dc.html", 1000, "Second.dc.html"]);
+  assert.equal((await putThumb(s, ja2)).status, 200);
+  assert.deepEqual((await jobs(s)).map(j => j.art), [b.id]);
+  // 첫 판으로 되돌림(지정 해제)도 낡음
+  await s.post(A, "/api/artthumb", { art: a.id, board: "" });
+  assert.equal((await jobs(s)).find(j => j.art === a.id)!.board, "Overview.dc.html");
+  const old = (await jobs(s)).find(j => j.art === a.id)!;
+  assert.equal((await s.put(TOK.A, { "project/canvas.json": JSON.stringify(CV2), "project/Overview.dc.html": BOARD + " " }, { id: a.id })).status, 200);
+  assert.equal((await putThumb(s, old)).status, 409);
+  const nw = (await jobs(s)).find(j => j.art === a.id)!; assert.notEqual(nw.ver, old.ver);
+  assert.equal((await putThumb(s, nw)).status, 200);
+  assert.equal((await jobs(s)).some(j => j.art === a.id), false);
+  await s.post(A, "/api/artthumb", { art: a.id, board: "Second.dc.html" });
+  assert.equal((await (await s.go("/api/admin/mthumb/jobs?limit=1", { headers: ADM })).json() as any).jobs.length, 1);
+  const first = (await (await s.go("/api/admin/mthumb/jobs?limit=1", { headers: ADM })).json() as any).jobs[0].art;
+  const next = (await (await s.go(`/api/admin/mthumb/jobs?limit=1&skip=${first},bad!`, { headers: ADM })).json() as any).jobs;
+  assert.equal(next.length, 1); assert.notEqual(next[0].art, first);
+  assert.deepEqual((await (await s.go(`/api/admin/mthumb/jobs?limit=5&skip=${[a.id, b.id].join(",")}`, { headers: ADM })).json() as any).jobs, []);
+});
+
+test("회원 썸네일 올리기 · 서빙: JPEG 만 · 내 캔버스만 읽힘 · 지우면 같이 지워짐", async () => {
+  const s = await setup();
+  const a = await (await s.put(TOK.A, { "project/canvas.json": JSON.stringify(CV2), "project/Overview.dc.html": BOARD })).json() as any;
+  const j = (await jobs(s))[0];
+  assert.equal((await s.go(`/art/${a.id}/_thumb.jpg`, { headers: { cookie: await cookie(A) } })).status, 404);   // 아직 없음
+  assert.equal((await s.go(`/api/admin/mthumb/${j.mk}/${a.id}?ver=${j.ver}&pref=`, { method: "PUT", headers: ADM, body: new Uint8Array(3000).fill(65) })).status, 400);   // JPEG 아님
+  assert.equal((await s.go(`/api/admin/mthumb/${j.mk}/${a.id}?ver=${j.ver}&pref=`, { method: "PUT", body: JPG })).status, 403);
+  assert.equal((await putThumb(s, { ...j, art: "Nope0000000000000000001" })).status, 404);
+  assert.equal((await putThumb(s, j)).status, 200);
+  const r = await s.go(`/art/${a.id}/_thumb.jpg`, { headers: { cookie: await cookie(A) } });
+  assert.deepEqual([r.status, r.headers.get("content-type")], [200, "image/jpeg"]);
+  assert.equal((await r.arrayBuffer()).byteLength, JPG.length);
+  assert.equal((await s.go(`/art/${a.id}/_thumb.jpg`, { headers: { cookie: await cookie(B) } })).status, 404);   // 남은 못 읽음
+  assert.notEqual((await s.go(`/art/${a.id}/_thumb.jpg`)).headers.get("content-type"), "image/jpeg");        // 로그인 · 표 없이는 그림이 안 나감(로그인 화면)
+  assert.equal((await s.go(`/art/${a.id}/_thumb.jpg?bxt=${j.bxt}`)).status, 200);
+  assert.equal((await s.go(`/api/admin/mthumb/jobs`, { headers: ADM })).status, 200);
+  await s.go(`/api/me/canvas/${a.id}`, { method: "DELETE", headers: { authorization: `Bearer ${TOK.A}` } });
+  assert.deepEqual([...s.m.keys()].filter(k => k.includes("_thumb.jpg")), []);
 });

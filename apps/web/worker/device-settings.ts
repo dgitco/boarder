@@ -22,7 +22,11 @@ export type Hooks = {
   nodeValues: { read: (env: Env, me: string) => Promise<Record<string, number>>; save: (env: Env, me: string, raw: unknown) => Promise<Record<string, number>> };
   sessionSync: { get: (env: Env, me: string) => Promise<boolean>; set: (env: Env, me: string, on: boolean) => Promise<unknown> };
   flagsOff?: (env: Env) => string | undefined;
+  isOwner: (env: Env, email: string) => boolean;
+  mails: (env: Env, email: string) => string[];   // 이 사람의 기기 owner 메일들(주인은 넷)
 };
+export const OWNER_KEYS = ["pins", "side_hide", "ui", "features", "session_sync"] as const;
+const OWNER_NO = "주인 보드의 이 칸은 서버 파일이 정본이라 아직 이 명령으로 못 바꿔요 — 보드 화면에서 해요";
 export const TOUCHY_BUNDLES = ["phone-alert", "external-send", "account-autoswitch"] as const;
 export const TOUCHY_RULES = ["outside", "ask"] as const;   // 바깥 발송 · 사람에게 묻기 규칙 — 끄면 에이전트가 승인 없이 움직이므로 같은 취급
 
@@ -85,6 +89,10 @@ export const isSettingsCard = async (env: { DB: D1Database }, me: string, id: st
 
 type Values = { pins: Pin[]; task_channels: boolean; task_repo: string; front_door: FrontDoor | null; primary_window: string | null; bot_name: string | null;
   node_values: Record<string, number>; unit: string | null; prefs: Record<string, unknown>; side_hide: string[]; ui: Record<string, string>; features: Record<string, boolean>; session_sync: boolean };
+const valuesFor = async (env: Env, h: Hooks, me: string, owner: string) => {
+  const all = await readAll(env, h, me);
+  return h.isOwner(env, owner) ? Object.fromEntries(OWNER_KEYS.map(k => [k, all[k]])) : all;
+};
 async function readAll(env: Env, h: Hooks, me: string): Promise<Values> {
   const db = env.DB;
   const [p, pins, pw, bot, nv, unit, hide, ui, feats, sync] = await Promise.all([
@@ -226,7 +234,7 @@ export function mountDeviceSettings(host: Hono<any>, h: Hooks) {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
     const me = d.owner.toLowerCase();
     await sweep(c.env.DB, me);
-    return c.json({ allowed: await allowed(c.env.DB, me, d.id), allowed_wide: await allowedWide(c.env.DB, me, d.id), pending: await pendingOf(c.env.DB, me, d.id), values: await readAll(c.env, h, me) }, 200, NOSTORE);
+    return c.json({ allowed: await allowed(c.env.DB, me, d.id), allowed_wide: await allowedWide(c.env.DB, me, d.id), pending: await pendingOf(c.env.DB, me, d.id), ...(h.isOwner(c.env, d.owner) ? { owner: true } : {}), values: await valuesFor(c.env, h, h.isOwner(c.env, d.owner) ? h.mails(c.env, d.owner)[0].toLowerCase() : me, d.owner) }, 200, NOSTORE);
   });
   app.post("/api/device/settings", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
@@ -235,10 +243,14 @@ export function mountDeviceSettings(host: Hono<any>, h: Hooks) {
     const b = Object(await c.req.json().catch(() => ({}))) as { key?: unknown; value?: unknown };
     const key = String(b.key ?? "") as Key;
     if (!KEYS.includes(key)) return c.json({ error: `key: ${KEYS.join(" | ")}` }, 400, NOSTORE);
+    if (h.isOwner(c.env, d.owner) && !(OWNER_KEYS as readonly string[]).includes(key)) return c.json({ error: OWNER_NO }, 409, NOSTORE);
     if (!(OLD_KEYS as readonly string[]).includes(key) && !(await allowedWide(c.env.DB, me, d.id))) return c.json({ error: "not_allowed", hint: "이 기기의 옛 허락은 새 설정 칸을 포함하지 않아요 — boarder settings allow 로 허락을 다시 받아요" }, 403, NOSTORE);
     if (!("value" in b)) return c.json({ error: "value 가 없어요" }, 400, NOSTORE);
-    const cur = await readAll(c.env, h, me), before = cur[key];
-    const r = await apply(c.env, h, me, key, b.value, cur);
+    // 주인은 메일이 넷이고 화면 설정은 로그인한 메일 줄에 저장되므로(ui · features · side_hide) 넷 모두에 같은 값을 씀 — 어느 메일로 화면에 들어와도 CLI 와 같은 값. 읽기는 첫 메일(주 메일)
+    const owner = h.isOwner(c.env, d.owner), targets = owner ? [...new Set(h.mails(c.env, d.owner).map(x => x.toLowerCase()))] : [me], main = targets[0];
+    const cur = await readAll(c.env, h, main), before = cur[key];
+    let r = await apply(c.env, h, main, key, b.value, cur);
+    for (const m of targets.slice(1)) { if ("error" in r) break; const x = await apply(c.env, h, m, key, b.value, await readAll(c.env, h, m)); if ("error" in x) r = x; }
     if ("error" in r) return c.json({ error: r.error, ...(r.extra || {}) }, r.status, NOSTORE);
     await logChange(c.env.DB, me, d.name, LABEL[key], show(key, before), show(key, r.after));
     return c.json({ ok: true, key, before, after: r.after }, 200, NOSTORE);
@@ -246,7 +258,7 @@ export function mountDeviceSettings(host: Hono<any>, h: Hooks) {
   // 내 기기 목록(읽기만, 허락 불필요) — 이름 · 도구 · 범위 · 마지막 연결. 지표 · 이력은 뺌(무거움). 폐기는 일부러 CLI 에 없음(되돌릴 수 없음 · 보안): 보드 화면에서
   app.get("/api/device/devices", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401, NOSTORE);
-    const list = await listDevices(c.env.DB, d.owner.toLowerCase());
+    const list = await listDevices(c.env.DB, h.mails(c.env, d.owner));
     return c.json({ this: d.id, devices: (list as unknown as Record<string, unknown>[]).map(x => ({ id: x.id, name: x.name, tools: x.tools, scope: x.scope, created_at: x.created_at, last_at: x.last_at, engine_at: x.engine_at ?? null })) }, 200, NOSTORE);
   });
   app.get("/api/device/settings/allow", async c => {
@@ -257,6 +269,7 @@ export function mountDeviceSettings(host: Hono<any>, h: Hooks) {
   });
   app.post("/api/device/settings/allow", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+    if (h.isOwner(c.env, d.owner)) return c.json({ error: "주인 서버 기기는 카드 대신 사람이 승인 링크로 권한을 줘요 — boarder approve ownercli.enable" }, 409, NOSTORE);
     const me = d.owner.toLowerCase(), now = Date.now();
     if (await allowedWide(c.env.DB, me, d.id)) return c.json({ allowed: true, pending: false }, 200, NOSTORE);   // 옛 허락(범위 좁음)이면 새 카드를 세워 다시 허락받음
     await sweep(c.env.DB, me, now);

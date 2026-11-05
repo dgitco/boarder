@@ -46,6 +46,30 @@ export async function artfolder(env: Env, body: { art?: unknown; folder?: unknow
   return [200, { ok: true, folder: folder || ix.arts[art].auto }];
 }
 
+const prefSet = (db: D1Database, art: string, col: "pin" | "thumb", v: number | string) => [
+  db.prepare(`INSERT INTO wl_art_pref(art, ${col}, at) VALUES (?, ?, ?) ON CONFLICT(art) DO UPDATE SET ${col} = excluded.${col}, at = excluded.at`).bind(art, v, now()),
+  change(db, "art_pref", [art], "up")];
+export async function artstar(env: Env, body: { art?: unknown; on?: unknown }, rid = ""): Promise<[number, object] | null> {
+  const art = String(body.art || "");
+  const ix = await files.index(env); if (!ix) return null;
+  if (!/^[A-Za-z0-9]{16,40}$/.test(art) || !ix.arts[art]) return [404, { ok: false, error: "없는 아티팩트" }];
+  const on = body.on === true || body.on === 1 || body.on === "1" || body.on === "true";
+  await ridBatch(env.DB, rid, prefSet(env.DB, art, "pin", on ? 1 : 0));
+  return [200, { ok: true, pin: on }];
+}
+export async function artthumb(env: Env, body: { art?: unknown; board?: unknown }, rid = ""): Promise<[number, object] | null> {
+  const art = String(body.art || "");
+  const ix = await files.index(env); if (!ix) return null;
+  if (!/^[A-Za-z0-9]{16,40}$/.test(art) || ix.arts[art]?.kind !== "canvas") return [404, { ok: false, error: "없는 캔버스" }];
+  const board = String(body.board || "").slice(0, 200);
+  if (board) {
+    const boards = await files.canvasBoards(env, art); if (boards === undefined) return null;   // R2 에 canvas.json 이 아직 없음 → 다리로
+    if (!boards.includes(board)) return [400, { ok: false, error: "그 캔버스에 없는 판이에요" }];
+  }
+  await ridBatch(env.DB, rid, prefSet(env.DB, art, "thumb", board));
+  return [200, { ok: true, thumb: board }];
+}
+
 export async function changes(db: D1Database, spec: Record<string, { cols: string[]; pk: string[] }>, after: number, limit: number) {
   const r = await db.prepare("SELECT seq, tbl, pk, op FROM wl_change WHERE origin = 'web' AND seq > ? ORDER BY seq LIMIT ?").bind(after, Math.min(Math.max(limit, 1), 500)).all<{ seq: number; tbl: string; pk: string; op: string }>();
   const cs = r.results.filter(c => spec[c.tbl]), keys = cs.map(c => JSON.parse(c.pk) as unknown[]);

@@ -4,8 +4,14 @@ import { BUNDLE_KEYS } from "./harness-bundles";
 
 type Env = { DB: D1Database; PUBLIC_URL: string };
 type C = Context<{ Bindings: Env }>;
-export type Dev = { id: string; owner: string; name: string };
-export type Hooks = { device: (c: C) => Promise<Dev | null>; human: (c: C) => Promise<string | null>; sameSite: (c: C) => boolean };
+export type Dev = { id: string; owner: string; name: string; scope?: string };
+export type Hooks = {
+  device: (c: C) => Promise<Dev | null>; human: (c: C) => Promise<string | null>; sameSite: (c: C) => boolean;
+  key: (env: Env, email: string) => string;     // 줄 열쇠: 주인 "" · 회원 메일(커넥터 who() 와 같음)
+  mails: (env: Env, email: string) => string[]; // 이 사람의 기기 owner 메일들(주인은 넷)
+  isOwner: (env: Env, email: string) => boolean;
+};
+type X = { key: string; mails: string[] };
 export const TTL = 10 * 60_000;
 export const MAX_OPEN = 5;
 const NOSTORE = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
@@ -19,33 +25,34 @@ const onoff = (v: unknown) => v === true || v === "on" || v === "true" ? true : 
 
 type Act = { summary: string; req: { method: string; url: string; body?: unknown } };
 /** 행동 목록: 인자를 검사해 (사람에게 보일 글 · 사람 세션으로 보낼 요청)을 만듦. 틀리면 에러 글 */
-export const ACTIONS: Record<string, { help: string; make: (p: Record<string, unknown>, db: D1Database, me: string, dev: Dev) => Promise<Act | string> }> = {
-  "connection.disconnect": { help: "id=<연결 id>", make: async (p, db, me) => {
+export const ACTIONS: Record<string, { help: string; make: (p: Record<string, unknown>, db: D1Database, me: string, dev: Dev, x: X) => Promise<Act | string>; ownerWatchOnly?: boolean }> = {
+  "connection.disconnect": { help: "id=<연결 id>", make: async (p, db, _me, _dev, x) => {
     const id = String(p.id ?? ""); if (!CID.test(id)) return "id: 연결 id(c_…)";
-    const r = await db.prepare("SELECT service, label FROM connection WHERE owner = ? AND id = ?").bind(me, id).first<{ service: string; label: string }>(); if (!r) return "내 연결이 아니에요";
+    const r = await db.prepare("SELECT service, label FROM connection WHERE owner = ? AND id = ?").bind(x.key, id).first<{ service: string; label: string }>(); if (!r) return "내 연결이 아니에요";
     return { summary: `연결 「${r.service}${r.label ? ` (${r.label})` : ""}」 을 끊고 로그인 권한을 돌려줘요`, req: { method: "DELETE", url: `/api/connections/${id}` } };
   } },
-  "connection.read-only": { help: "id=<연결 id> on=true|false", make: async (p, db, me) => {
+  "connection.read-only": { help: "id=<연결 id> on=true|false", make: async (p, db, _me, _dev, x) => {
     const id = String(p.id ?? ""), on = onoff(p.on); if (!CID.test(id) || on === null) return "id=<연결 id> on=true|false";
-    const r = await db.prepare("SELECT service, label FROM connection WHERE owner = ? AND id = ?").bind(me, id).first<{ service: string; label: string }>(); if (!r) return "내 연결이 아니에요";
+    const r = await db.prepare("SELECT service, label FROM connection WHERE owner = ? AND id = ?").bind(x.key, id).first<{ service: string; label: string }>(); if (!r) return "내 연결이 아니에요";
     return { summary: `연결 「${r.service}${r.label ? ` (${r.label})` : ""}」 을 ${on ? "읽기 전용으로" : "쓰기도 되게(읽기 전용 해제)"} 바꿔요`, req: { method: "PATCH", url: `/api/connections/${id}`, body: { read_only: on } } };
   } },
-  "connection.label": { help: "id=<연결 id> label=<새 이름>", make: async (p, db, me) => {
+  "connection.label": { help: "id=<연결 id> label=<새 이름>", make: async (p, db, _me, _dev, x) => {
     const id = String(p.id ?? ""), label = ctl(p.label, 24); if (!CID.test(id)) return "id=<연결 id> label=<새 이름>";
-    const r = await db.prepare("SELECT service FROM connection WHERE owner = ? AND id = ?").bind(me, id).first<{ service: string }>(); if (!r) return "내 연결이 아니에요";
+    const r = await db.prepare("SELECT service FROM connection WHERE owner = ? AND id = ?").bind(x.key, id).first<{ service: string }>(); if (!r) return "내 연결이 아니에요";
     return { summary: `연결 「${r.service}」 의 이름을 「${label || "(없음)"}」 으로 바꿔요`, req: { method: "PATCH", url: `/api/connections/${id}`, body: { label } } };
   } },
-  "connection.tools": { help: "id=<연결 id> off=<끌 도구 이름을 쉼표로, 비우면 다 켬>", make: async (p, db, me) => {
+  "connection.tools": { help: "id=<연결 id> off=<끌 도구 이름을 쉼표로, 비우면 다 켬>", make: async (p, db, _me, _dev, x) => {
     const id = String(p.id ?? ""); if (!CID.test(id)) return "id=<연결 id> off=a,b";
     const off = String(p.off ?? "").split(",").map(x => x.trim()).filter(Boolean);
     if (off.length > 200 || off.some(x => x.length > 120 || /[\x00-\x1f\x7f]/.test(x))) return "off: 도구 이름 쉼표 목록(200개 이하)";
-    const r = await db.prepare("SELECT service, label FROM connection WHERE owner = ? AND id = ?").bind(me, id).first<{ service: string; label: string }>(); if (!r) return "내 연결이 아니에요";
+    const r = await db.prepare("SELECT service, label FROM connection WHERE owner = ? AND id = ?").bind(x.key, id).first<{ service: string; label: string }>(); if (!r) return "내 연결이 아니에요";
     return { summary: off.length ? `연결 「${r.service}${r.label ? ` (${r.label})` : ""}」 에서 도구 ${off.length}개를 꺼요: ${off.slice(0, 5).join(", ")}${off.length > 5 ? " …" : ""}` : `연결 「${r.service}${r.label ? ` (${r.label})` : ""}」 의 꺼 둔 도구를 모두 켜요`, req: { method: "PATCH", url: `/api/connections/${id}`, body: { off } } };
   } },
-  "device.revoke": { help: "id=<기기 id>", make: async (p, db, me, dev) => {
+  "ownercli.enable": { help: "(인자 없음 — 주인 서버 기기 자신에게 설정·커넥터·승인 CLI 권한을 줌)", ownerWatchOnly: true, make: async (_p, _db, _me, dev) => ({ summary: `서버 기기 「${ctl(dev.name, 60)}」 에 보드 설정 · 커넥터 연결 · 승인 신청 CLI 권한을 줘요(이 기기의 에이전트가 내 보드 설정을 바꿀 수 있게 돼요. 기기를 끊으면 사라져요)`, req: { method: "POST", url: `/api/me/devices/${dev.id}/ownercli` } }) },
+  "device.revoke": { help: "id=<기기 id>", make: async (p, db, _me, dev, x) => {
     const id = String(p.id ?? ""); if (!/^[A-Za-z0-9_-]{3,40}$/.test(id)) return "id: 기기 id";
     if (id === dev.id) return "이 요청을 보낸 기기 자신은 끊을 수 없어요";
-    const r = await db.prepare("SELECT name FROM device WHERE id = ? AND owner = ? AND revoked_at IS NULL").bind(id, me).first<{ name: string }>(); if (!r) return "내 기기가 아니에요";
+    const r = await db.prepare(`SELECT name FROM device WHERE id = ? AND owner IN (${x.mails.map(() => "?").join(",")}) AND revoked_at IS NULL`).bind(id, ...x.mails).first<{ name: string }>(); if (!r) return "내 기기가 아니에요";
     return { summary: `기기 「${ctl(r.name, 60)}」 을 끊어요(그 기기의 토큰이 바로 죽고 되돌릴 수 없어요)`, req: { method: "POST", url: `/api/me/devices/${id}/revoke` } };
   } },
   "session-sync.on": { help: "(인자 없음)", make: async () => ({ summary: "세션 싱크를 켜요 — 앞으로 이 계정의 AI 대화가 서버에 저장돼요", req: { method: "POST", url: "/api/me/session-sync", body: { on: true } } }) },
@@ -59,6 +66,7 @@ export const ACTIONS: Record<string, { help: string; make: (p: Record<string, un
   } },
 };
 
+const xOf = (h: Hooks, env: Env, email: string): X => ({ key: h.key(env, email), mails: h.mails(env, email).map(m => m.toLowerCase()) });
 const page = (body: string, status = 200) => new Response(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>보더 승인</title><style>body{font:16px system-ui,sans-serif;max-width:420px;margin:12vh auto;padding:0 16px;color:#111113}button{font:inherit;padding:10px 18px;border-radius:8px;border:0;background:#111113;color:#fff;cursor:pointer}p.sub{color:#6b6b73}@media(prefers-color-scheme:dark){body{background:#111113;color:#eee}button{background:#eee;color:#111113}}</style></head><body>${body}</body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8", ...NOSTORE, "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } });
 
 export function mountApprovalLink(host: Hono<any>, h: Hooks) {
@@ -66,13 +74,14 @@ export function mountApprovalLink(host: Hono<any>, h: Hooks) {
 
   app.get("/api/device/approval-actions", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401, NOSTORE);
-    return c.json({ actions: Object.fromEntries(Object.entries(ACTIONS).map(([k, v]) => [k, v.help])) }, 200, NOSTORE);
+    const ownerWatch = h.isOwner(c.env, d.owner) && d.scope === "watch";   // 주인 감시 기기는 권한 올리기 하나만
+    return c.json({ actions: Object.fromEntries(Object.entries(ACTIONS).filter(([, v]) => ownerWatch ? v.ownerWatchOnly : !v.ownerWatchOnly).map(([k, v]) => [k, v.help])) }, 200, NOSTORE);
   });
 
   // 내 연결 목록(읽기만, 허락 불필요) — 에이전트가 승인 신청에 쓸 id 를 알도록. 토큰 · 주소 · 계정은 뺌
   app.get("/api/device/connections", async c => {
-    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401, NOSTORE);
-    const rows = (await c.env.DB.prepare("SELECT id, service, label, kind, status, read_only, off, tools_at FROM connection WHERE owner = ? ORDER BY service, label").bind(d.owner.toLowerCase()).all<{ id: string; service: string; label: string; kind: string; status: string; read_only: number; off: string; tools_at: number | null }>()).results;
+    const d = await h.device(c); if (!d || (h.isOwner(c.env, d.owner) && d.scope === "watch")) return c.json({ error: "기기 토큰" }, 401, NOSTORE);   // 주인 감시 기기는 권한을 올리기 전엔 못 읽음
+    const rows = (await c.env.DB.prepare("SELECT id, service, label, kind, status, read_only, off, tools_at FROM connection WHERE owner = ? ORDER BY service, label").bind(h.key(c.env, d.owner)).all<{ id: string; service: string; label: string; kind: string; status: string; read_only: number; off: string; tools_at: number | null }>()).results;
     return c.json({ connections: rows.map(r => ({ id: r.id, service: r.service, label: r.label, kind: r.kind, status: r.status, read_only: !!r.read_only, tools_off: r.off.split(",").filter(Boolean).length })) }, 200, NOSTORE);
   });
 
@@ -82,8 +91,10 @@ export function mountApprovalLink(host: Hono<any>, h: Hooks) {
     const action = String(b.action ?? "");
     if (!Object.hasOwn(ACTIONS, action)) return c.json({ error: `action: ${Object.keys(ACTIONS).join(" | ")}` }, 400, NOSTORE);
     const params = b.params && typeof b.params === "object" && !Array.isArray(b.params) ? b.params as Record<string, unknown> : {};
-    const me = d.owner.toLowerCase(), now = Date.now();
-    const made = await ACTIONS[action].make(params, c.env.DB, me, d);
+    const ownerWatch = h.isOwner(c.env, d.owner) && d.scope === "watch";
+    if (ownerWatch !== !!ACTIONS[action].ownerWatchOnly) return c.json({ error: ownerWatch ? "주인 감시 기기는 ownercli.enable 만 신청할 수 있어요" : "ownercli.enable 은 주인 감시 기기만 신청할 수 있어요" }, 400, NOSTORE);
+    const me = h.key(c.env, d.owner), now = Date.now();
+    const made = await ACTIONS[action].make(params, c.env.DB, d.owner.toLowerCase(), d, xOf(h, c.env, d.owner));
     if (typeof made === "string") return c.json({ error: made }, 400, NOSTORE);
     const token = newToken();
     await c.env.DB.prepare("DELETE FROM approval_link WHERE expires_at < ?").bind(now - 24 * 3600_000).run();
@@ -99,10 +110,10 @@ export function mountApprovalLink(host: Hono<any>, h: Hooks) {
     if (!TOKEN.test(token)) return page("<h2>링크가 맞지 않아요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 404);
     const me = await h.human(c);
     if (!me) return page(`<h2>먼저 로그인해요</h2><p class=sub>보더에 로그인한 브라우저에서 이 링크를 다시 열어요.</p><p><a href="${esc(c.env.PUBLIC_URL)}">보더 열기</a></p>`, 401);
-    const r = await c.env.DB.prepare("SELECT device_id, device_name, action, params, used_at, expires_at FROM approval_link WHERE hash = ? AND owner = ?").bind(await sha(token), me).first<{ device_id: string; device_name: string; action: string; params: string; used_at: number | null; expires_at: number }>();
+    const r = await c.env.DB.prepare("SELECT device_id, device_name, action, params, used_at, expires_at FROM approval_link WHERE hash = ? AND owner = ?").bind(await sha(token), h.key(c.env, me)).first<{ device_id: string; device_name: string; action: string; params: string; used_at: number | null; expires_at: number }>();
     if (!r) return page("<h2>링크가 맞지 않아요</h2><p class=sub>이 계정으로 만든 링크가 아니에요.</p>", 404);
     if (r.used_at || r.expires_at < Date.now()) return page("<h2>이미 쓰였거나 만료된 링크예요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 410);
-    let made: Act | string = "행동을 읽지 못했어요"; try { if (Object.hasOwn(ACTIONS, r.action)) made = await ACTIONS[r.action].make(JSON.parse(r.params), c.env.DB, me, { id: r.device_id, owner: me, name: r.device_name }); } catch {}
+    let made: Act | string = "행동을 읽지 못했어요"; try { if (Object.hasOwn(ACTIONS, r.action)) made = await ACTIONS[r.action].make(JSON.parse(r.params), c.env.DB, me, { id: r.device_id, owner: me, name: r.device_name }, xOf(h, c.env, me)); } catch {}
     if (typeof made === "string") return page(`<h2>할 수 없는 요청이에요</h2><p class=sub>${esc(made)}</p>`, 409);
     return page(`<h2>승인 요청</h2><p>기기 「${esc(r.device_name)}」 이 요청했어요: <b>${esc(made.summary)}</b></p><p class=sub>내가 시킨 일이 아니면 닫아요.</p><p><button id=go>계속</button></p><p id=msg class=sub></p>
 <script>
@@ -121,9 +132,9 @@ b.onclick=async()=>{b.disabled=true;msg.textContent='처리하는 중';
     const me = await h.human(c); if (!me) return c.json({ error: "로그인" }, 401, NOSTORE);
     const token = String(Object(await c.req.json().catch(() => ({}))).token ?? ""); if (!TOKEN.test(token)) return c.json({ error: "링크가 맞지 않아요" }, 404, NOSTORE);
     const hash = await sha(token), now = Date.now();
-    const u = await c.env.DB.prepare("UPDATE approval_link SET used_at = ? WHERE hash = ? AND owner = ? AND used_at IS NULL AND expires_at > ? AND device_id IN (SELECT id FROM device WHERE revoked_at IS NULL) RETURNING device_id, device_name, action, params").bind(now, hash, me, now).first<{ device_id: string; device_name: string; action: string; params: string }>();
+    const u = await c.env.DB.prepare("UPDATE approval_link SET used_at = ? WHERE hash = ? AND owner = ? AND used_at IS NULL AND expires_at > ? AND device_id IN (SELECT id FROM device WHERE revoked_at IS NULL) RETURNING device_id, device_name, action, params").bind(now, hash, h.key(c.env, me), now).first<{ device_id: string; device_name: string; action: string; params: string }>();
     if (!u) return c.json({ error: "이미 쓰였거나 만료됐거나 이 계정 링크가 아니에요" }, 410, NOSTORE);
-    let made: Act | string = "행동을 읽지 못했어요"; try { if (Object.hasOwn(ACTIONS, u.action)) made = await ACTIONS[u.action].make(JSON.parse(u.params), c.env.DB, me, { id: u.device_id, owner: me, name: u.device_name }); } catch {}
+    let made: Act | string = "행동을 읽지 못했어요"; try { if (Object.hasOwn(ACTIONS, u.action)) made = await ACTIONS[u.action].make(JSON.parse(u.params), c.env.DB, me, { id: u.device_id, owner: me, name: u.device_name }, xOf(h, c.env, me)); } catch {}
     if (typeof made === "string") { await c.env.DB.prepare("UPDATE approval_link SET used_at = NULL WHERE hash = ?").bind(hash).run(); return c.json({ error: made }, 409, NOSTORE); }
     return c.json({ ok: true, ...made.req, summary: made.summary }, 200, NOSTORE);
   });
@@ -133,7 +144,7 @@ b.onclick=async()=>{b.disabled=true;msg.textContent='처리하는 중';
     const me = await h.human(c); if (!me) return c.json({ error: "로그인" }, 401, NOSTORE);
     const token = String(Object(await c.req.json().catch(() => ({}))).token ?? ""); if (!TOKEN.test(token)) return c.json({ error: "링크가 맞지 않아요" }, 404, NOSTORE);
     const now = Date.now();
-    const u = await c.env.DB.prepare("UPDATE approval_link SET used_at = NULL WHERE hash = ? AND owner = ? AND used_at IS NOT NULL AND used_at > ? AND expires_at > ?").bind(await sha(token), me, now - 2 * 60_000, now).run();
+    const u = await c.env.DB.prepare("UPDATE approval_link SET used_at = NULL WHERE hash = ? AND owner = ? AND used_at IS NOT NULL AND used_at > ? AND expires_at > ?").bind(await sha(token), h.key(c.env, me), now - 2 * 60_000, now).run();
     return c.json({ ok: !!u.meta.changes }, 200, NOSTORE);
   });
 }

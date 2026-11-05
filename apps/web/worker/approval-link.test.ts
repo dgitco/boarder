@@ -91,7 +91,9 @@ test("신청: 목록에 있는 행동 · 검사된 인자만 · 내 연결/기�
   assert.equal((await ask(s, "device.revoke", { id: "dev2" })).status, 200);
   assert.equal((await ask(s, "bundle.set", { name: "nope", on: true })).status, 400); assert.equal((await ask(s, "bundle.set", { name: "phone-alert", on: true })).status, 200);
   assert.equal((await ask(s, "rule.set", { name: "outside", on: "false" })).status, 200);
-  for (const t of [DEVMW, DEVW]) assert.equal((await ask(s, "session-sync.on", {}, t)).status, 401);
+  assert.equal((await ask(s, "session-sync.on", {}, DEVMW)).status, 401, "회원 감시 기기");
+  assert.equal((await ask(s, "session-sync.on", {}, DEVW)).status, 400, "주인 감시 기기는 ownercli.enable 만");
+  assert.equal((await ask(s, "ownercli.enable", {}, DEV1)).status, 400, "회원 기기는 ownercli.enable 못 신청");
   assert.equal((await s.call("POST", "/api/device/approval-link", { action: "session-sync.on" })).status, 401);
   assert.equal((await ask(s, "session-sync.on")).status, 200); assert.equal((await ask(s, "session-sync.on")).status, 429, "6번째");
   assert.ok((await s.call("GET", "/api/device/approval-actions", undefined, s.dev(DEV1))).j.actions["device.revoke"]);
@@ -149,7 +151,7 @@ test("연결 목록 읽기(허락 불필요, 자기 연결만, 토큰 · 주소 
   const l = await s.call("GET", "/api/device/connections", undefined, s.dev(DEV1));
   assert.equal(l.status, 200, l.text); assert.deepEqual(l.j.connections.map((c: any) => c.id), [CONN]);
   assert.ok(!("auth" in l.j.connections[0]) && !("url" in l.j.connections[0]) && !("account" in l.j.connections[0]));
-  for (const t of [DEVMW, DEVW]) assert.equal((await s.call("GET", "/api/device/connections", undefined, s.dev(t))).status, 401);
+  for (const t of [DEVMW, DEVW]) assert.equal((await s.call("GET", "/api/device/connections", undefined, s.dev(t))).status, 401, "감시 기기(주인 포함)는 목록도 못 읽음");
   const a = await ask(s, "connection.tools", { id: CONN, off: "create_issue, delete_issue" });
   assert.equal(a.status, 200, a.text); assert.match(a.j.summary, /도구 2개/);
   const c = (await s.call("POST", "/api/approval/consume", { token: tokenOf(a.j.url) }, await s.human())).j;

@@ -25,6 +25,11 @@ export async function index(env: Env): Promise<Index | null> {
   idx = { at: Date.now(), v };
   return v;
 }
+export async function canvasBoards(env: Env, id: string): Promise<string[] | undefined> {
+  const it = (await index(env))?.arts[id]; if (!it || it.kind !== "canvas") return [];
+  const o = await env.RESULTS.get(`art/${id}/${it.cv ? it.cv + "/" : ""}canvas.json`).catch(() => null); if (!o) return undefined;
+  try { const b = (JSON.parse(await o.text()) as { boards?: unknown }).boards; return b && typeof b === "object" ? Object.keys(b) : []; } catch { return []; }
+}
 export async function isCanvas(env: Env, id: string) { return (await index(env))?.arts[id]?.kind === "canvas"; }
 
 const text = (status: number, s: string, ct = "text/plain"): Out => ({ status, headers: { "content-type": ct, "cache-control": "no-store" }, body: te.encode(s) });
@@ -156,12 +161,13 @@ export async function answer(env: Env, path: string, headers: Record<string, str
   }
   if (p === "/api/arts") {
     const ix = await index(env); if (!ix) return null;
-    const [fd, nc] = await env.DB.batch<{ art: string; folder?: string; n?: number }>([
+    const [fd, nc, pf] = await env.DB.batch<{ art: string; folder?: string; n?: number; pin?: number; thumb?: string }>([
       env.DB.prepare("SELECT art, folder FROM wl_art_folder"),
-      env.DB.prepare("SELECT art, count(*) AS n FROM wl_art_note WHERE deleted_at IS NULL GROUP BY art")]);
-    const mv = new Map(fd.results.map(r => [r.art, r.folder!])), cnt = new Map(nc.results.map(r => [r.art, r.n!]));
+      env.DB.prepare("SELECT art, count(*) AS n FROM wl_art_note WHERE deleted_at IS NULL GROUP BY art"),
+      env.DB.prepare("SELECT art, pin, thumb FROM wl_art_pref")]);
+    const mv = new Map(fd.results.map(r => [r.art, r.folder!])), cnt = new Map(nc.results.map(r => [r.art, r.n!])), pref = new Map(pf.results.map(r => [r.art, r]));
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(ix.arts)) out[k] = { kind: v.kind, title: v.title, at: v.at, acct: v.acct, folder: mv.get(k) || v.auto, moved: mv.has(k), notes: cnt.get(k) || 0 };
+    for (const [k, v] of Object.entries(ix.arts)) out[k] = { kind: v.kind, title: v.title, at: v.at, acct: v.acct, folder: mv.get(k) || v.auto, moved: mv.has(k), notes: cnt.get(k) || 0, pin: !!pref.get(k)?.pin, thumb: pref.get(k)?.thumb || "" };
     return json(out, headers["if-none-match"]);
   }
   const an = /^\/api\/artnotes\/([A-Za-z0-9]{16,40})$/.exec(p);

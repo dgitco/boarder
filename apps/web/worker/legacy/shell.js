@@ -942,7 +942,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
 })();
 (() => {
   if (!window.HB_LIVE || !window.BX_Q) return;
-  const f1 = window.fetch, Q = /(^|\/)api\/(chat|answer|todo|cardcheck|artnote|artfolder)$/, LS = 'bx-outbox', MAXN = 240, MAXAGE = 6 * 3600e3;
+  const f1 = window.fetch, Q = /(^|\/)api\/(chat|answer|todo|cardcheck|artnote|artfolder|artstar|artthumb)$/, LS = 'bx-outbox', MAXN = 240, MAXAGE = 6 * 3600e3;
   let items = [], wait = 2000, tk = null, flushing = false, idbBad = !window.indexedDB;
   const held = new Map();
   // ── 저장(IndexedDB, 안 되면 localStorage 통째로) — 다 try/catch: 저장이 안 돼도 보내기는 그대로
