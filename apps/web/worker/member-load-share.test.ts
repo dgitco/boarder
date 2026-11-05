@@ -135,3 +135,66 @@ test("loadRead: 나눠 받은 판이 상한(readOpts.wait) 안에 안 오면 이
     release!(); await first;
   } finally { readOpts.wait = keep; loadForget(who); }
 });
+
+test("노드 목록: 질의 둘(아직 있음 · 2분 안 보관 · 앞단 이름 / 하루 안 보관 맡김)을 합치면 예전 OR 꼴과 같은 노드 · 60초 안 다음 load 는 하루 치 다시 안 읽음 · 살아난 노드는 새 줄이 이김", async () => {
+  const { db, D1 } = d1(), real = Date.now, who = "arch@example.com";
+  try {
+    let t = real(); Date.now = () => t;
+    const node = (id: string, name: string, arch: number | null, pinned = "", up = t) => db.prepare("INSERT INTO mnode(owner, id, name, pinned_name, state, why, counts, created_at, updated_at, archived_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run(who, id, name, pinned, "working", "", "{}", t, up, arch);
+    node("live", "살아 있음", null, "", t - 10); node("arch1h", "한 시간 전 보관", t - 3600_000, "", t - 20); node("old", "사흘 전 보관", t - 3 * 86_400_000, "", t - 30);
+    node("front", "앞단 옛 노드", t - 5 * 86_400_000, "", t - 40); node("frontp", "다른 이름", t - 6 * 86_400_000, "앞단 고정", t - 50);
+    db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?)").run(who, JSON.stringify({ front_door: { pairs: [{ name: "앞단 옛 노드" }, { name: "앞단 고정" }] } }), t);
+    const was = (db.prepare(`SELECT id FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ? OR COALESCE(NULLIF(pinned_name, ''), name) IN (SELECT json_extract(p.value, '$.name') FROM node_setting s, json_each(json_extract(s.data, '$.front_door.pairs')) p WHERE s.owner = ?)) ORDER BY updated_at DESC`).all(who, t - 86_400_000, who) as { id: string }[]).map(r => r.id);
+    let dayReads = 0; const sent: { sql: string; args: unknown[] }[] = [];   // 코드가 보낸 노드 질의(SQL · 값)를 그대로 붙잡아 돌려 봄
+    const spy = { ...D1, prepare: (sql: string) => {
+      if (/FROM mnode WHERE owner = \? AND archived_at > \?$/.test(sql)) dayReads++;
+      const st = (D1 as any).prepare(sql);
+      if (/^SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = \?/.test(sql)) return { ...st, bind: (...a: unknown[]) => { sent.push({ sql, args: a }); return st.bind(...a); } };
+      return st; } } as unknown as D1Database;
+    const merged = (L: any) => [...L.byId.keys()];
+    const L1 = await load(spy, who);
+    assert.equal(sent.length, 2, "노드 질의 둘(batch 안 · 하루 치 맡김)");
+    const got = [...new Set(sent.flatMap(q => (db.prepare(q.sql).all(...(q.args as never[])) as { id: string }[]).map(r => r.id)))].sort();
+    assert.deepEqual(got, [...was].sort(), "코드가 보낸 질의 둘의 합 = 예전 OR 꼴(앞단 이름 · 고정 이름 포함)");
+    for (const q of sent) { const plan = (db.prepare("EXPLAIN QUERY PLAN " + q.sql).all(...(q.args as never[])) as { detail: string }[]).map(r => r.detail).join(" | "); assert.doesNotMatch(plan, /SCAN mnode(?! USING)/, "표 통째 훑기 없음: " + plan); }
+    assert.ok(merged(L1).includes("live") && merged(L1).includes("arch1h") && !merged(L1).includes("old"));
+    assert.equal(dayReads, 1);
+    t += 10_000;
+    db.prepare("UPDATE mnode SET archived_at = NULL, updated_at = ? WHERE owner = ? AND id = 'arch1h'").run(t, who);   // 다시 살아남
+    node("back", "막 보관", t - 1000, "", t - 5);   // 맡긴 뒤 막 보관 — 2분 안이라 새 질의가 잡음
+    const L2 = await load(spy, who) as any;
+    assert.equal(dayReads, 1, "60초 안이면 하루 치는 맡긴 것");
+    assert.equal(L2.byId.get("arch1h").archived_at, null, "살아난 노드는 새 줄(맡긴 보관 줄이 덮지 않음)");
+    assert.ok(L2.byId.has("back"), "막 보관한 노드도 보임");
+    t += 61_000; await load(spy, who); assert.equal(dayReads, 2, "60초 지나면 다시 읽음");
+  } finally { Date.now = real; }
+});
+
+test("loadRead: 상한 뒤 같이 기다리던 요청들은 먼저 깨어난 요청의 새 판 하나를 같이 씀 — D1 느릴 때 1+N 읽기 막기(A27)", async () => {
+  const { D1, count } = d1(), keep = readOpts.wait, who = "slow@example.com";
+  try {
+    readOpts.wait = 30;
+    let release: (() => void) | null = null;
+    const stuck = { ...D1, batch: (ss: any[]) => new Promise<any>(res => { release = () => res((D1 as any).batch(ss)); }) } as unknown as D1Database;
+    const first = loadRead(stuck, who, CTX);   // 이 판은 안 끝남(D1 이 느림)
+    const [b, c, d] = await Promise.all([loadRead(D1, who, CTX), loadRead(D1, who, CTX), loadRead(D1, who, CTX)]);
+    assert.ok((b as any).byId && b === c && c === d, "셋이 같은 새 판");
+    assert.equal(count(), 1, "상한 뒤 새로 읽은 것은 한 번(고치기 전엔 기다린 수만큼)");
+    release!(); await first;
+  } finally { readOpts.wait = keep; loadForget(who); }
+});
+
+test("loadRead: 상한 뒤 이어 받은 새 판도 안 오면 제 요청에서 읽음 — 매달리지 않음(A27)", async () => {
+  const { D1, count } = d1(), keep = readOpts.wait, who = "slow2@example.com";
+  try {
+    readOpts.wait = 30;
+    const rel: (() => void)[] = [];
+    const stuck = { ...D1, batch: (ss: any[]) => new Promise<any>(res => { rel.push(() => res((D1 as any).batch(ss))); }) } as unknown as D1Database;
+    const first = loadRead(stuck, who, CTX);
+    const b = loadRead(stuck, who, CTX);   // 상한 뒤 새 판을 걸지만 그 판도 안 끝남
+    const c = await loadRead(D1, who, CTX);   // 같이 기다리다 b 의 새 판을 이어 받고, 그것도 상한 뒤 제 요청에서
+    assert.ok((c as any).byId, "끝내 제 판을 받음");
+    assert.equal(count(), 1);
+    for (const r of rel) r(); await Promise.all([first, b]);
+  } finally { readOpts.wait = keep; loadForget(who); }
+});

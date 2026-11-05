@@ -172,11 +172,18 @@ function shareWait<T>(p: Promise<T>, own: () => Promise<T>, ms: number): Promise
 export function loadRead(db: D1Database, me: string, ctx?: Ctx | null, ver?: number): ReturnType<typeof load> {
   if (!ctx) return load(db, me);
   const k = ver === undefined ? me : `${me}#${ver}`, now = Date.now(), hit = readShare.get(k);
-  if (hit && now - hit.at < READ_TTL) return shareWait(hit.p, () => load(db, me), readOpts.wait);
-  if (readShare.size > 500) readShare.clear();
-  const p = load(db, me); readShare.set(k, { at: now, p });
-  ctx.waitUntil(p.catch(() => { if (readShare.get(k)?.p === p) readShare.delete(k); }));   // 실패는 나눠 주지 않음(다음 요청이 새로)
-  return p;
+  const start = () => {
+    if (readShare.size > 500) readShare.clear();
+    const p = load(db, me); readShare.set(k, { at: Date.now(), p });
+    ctx.waitUntil(p.catch(() => { if (readShare.get(k)?.p === p) readShare.delete(k); }));   // 실패는 나눠 주지 않음(다음 요청이 새로)
+    return p;
+  };
+  if (!(hit && now - hit.at < READ_TTL)) return start();
+  return shareWait(hit.p, () => {
+    const h2 = readShare.get(k);
+    if (h2 && h2.p !== hit.p && h2.at >= now) return shareWait(h2.p, () => load(db, me), readOpts.wait);
+    return start();
+  }, readOpts.wait);
 }
 export async function loadShared(db: D1Database, me: string, ctx?: Ctx | null): ReturnType<typeof load> {
   return loadRead(db, me, ctx);
@@ -185,6 +192,15 @@ export function loadForget(me: string) { const m = me.toLowerCase(); for (const 
 const GONE_TTL = 60_000, GONE_FRESH = 120_000, goneMemo = new Map<string, { at: number; v: R[] }>();
 const IMP_COLS = "key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle";
 export function goneForget(me: string) { goneMemo.delete(me.toLowerCase()); }
+const ARCH_FRESH = 120_000, archMemo = new Map<string, { at: number; v: R[] }>();
+async function archivedRows(db: D1Database, me: string): Promise<R[]> {
+  const k = me.toLowerCase(), now = Date.now(), m = archMemo.get(k);
+  if (m && now - m.at < GONE_TTL) return m.v;
+  for (const [kk, v] of archMemo) if (now - v.at >= GONE_TTL) archMemo.delete(kk);
+  if (archMemo.size > 500) archMemo.clear();
+  const v = (await db.prepare("SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND archived_at > ?").bind(me, now - 24 * 3600_000).all()).results as R[];
+  archMemo.set(k, { at: now, v }); return v;   // 실패면 throw — 맡기지 않음
+}
 async function goneRows(db: D1Database, me: string): Promise<R[]> {
   const k = me.toLowerCase(), now = Date.now(), m = goneMemo.get(k);
   if (m && now - m.at < GONE_TTL) return m.v;
@@ -198,10 +214,10 @@ export const setHarnessKey = (k: string) => { harnessKey = k; };
 export async function load(db: D1Database, me: string, readOnly = false) {   // readOnly = 쓰기 없이 읽기만(그림자 대조 — 주인 줄을 안 건드림)
   if (!readOnly) await closeStaleConnect(db, me);
   const tkP = tokenRows(db, me);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
-  const goneP = goneRows(db, me);
-  goneP.catch(() => {});   // 실패는 아래 await 가 던짐 — batch 가 먼저 실패해도 처리 안 된 거부로 남지 않게
+  const goneP = goneRows(db, me), archP = archivedRows(db, me);
+  goneP.catch(() => {}); archP.catch(() => {});   // 실패는 아래 await 가 던짐 — batch 가 먼저 실패해도 처리 안 된 거부로 남지 않게
   const [nd, mi, it, lg, cd, dr, ew, ns, pw, mb, cx, rvd, hw] = await db.batch([
-    db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ? OR COALESCE(NULLIF(pinned_name, ''), name) IN (${FRONT_NAMES})) ORDER BY updated_at DESC`).bind(me, Date.now() - 24 * 3600_000, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
+    db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND archived_at IS NULL UNION SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND archived_at > ? UNION SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND pinned_name IN (${FRONT_NAMES}) UNION SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND name IN (${FRONT_NAMES}) AND COALESCE(pinned_name, '') = '' ORDER BY updated_at DESC`).bind(me, me, Date.now() - ARCH_FRESH, me, me, me, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at > ?").bind(me, me, Date.now() - GONE_FRESH),   // 2분 안 사라짐만 — 하루 치는 goneP(60초 맡김)
     db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT ${LOG_MAX}`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
@@ -230,6 +246,11 @@ export async function load(db: D1Database, me: string, readOnly = false) {   // 
   const primary = pp.primary as unknown as R | null;
   const primKeys = new Set<string>(primary ? [String(primary.key), ...(primary.session ? [String(primary.session)] : [])] : []);
   const isOriginalPrimWin = (win: string) => !!primary?.win && (keyOfWin.get(win) || win) === primary.win;
+  {   // 맡긴 하루 안 보관 노드를 합침 — 새로 읽은 줄(다시 살아남 · 막 보관 · 앞단)이 이김, 순서는 예전처럼 마지막 움직임 순
+    const have = new Set((nd.results as R[]).map(n => String(n.id)));
+    const more = (await archP).filter(n => !have.has(String(n.id)));
+    if (more.length) (nd as { results: R[] }).results = [...(nd.results as R[]), ...more].sort((a, b) => (Number(b.updated_at) || 0) - (Number(a.updated_at) || 0));
+  }
   const nodes: Node[] = (nd.results as R[]).map(n => ({ id: n.id, pane: paneOfId(n.id), name: String(n.pinned_name || n.name || "노드"), area: String(n.area || "").trim(), state: n.state, why: n.why || "", updated_at: n.updated_at, archived_at: n.archived_at, wins: new Set<string>(), windows: [], convos: [], aliases: (json<{ aliases?: { id: string; name: string }[] }>(n.counts, {}).aliases || []).filter(a => a && typeof a.id === "string" && typeof a.name === "string") })).filter(n => !n.archived_at || n.archived_at > Date.now() - 24 * 3600_000 || frontDoorNode(fd, n));
   const byId = new Map(nodes.map(n => [n.id, n]));
   // 옛 채널에 다른 창이 남거나 다시 열렸으면 그 채널의 주소·사람 글은 제자리를 지킴.
