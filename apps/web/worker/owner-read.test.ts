@@ -208,3 +208,11 @@ test("모아 보기: 번호 표가 없으면(이주 전) 예전 질의로 한 �
   const o = await OR.build(throwing, CFG, { group: "cards", kind: "inbox" }, NOW, true, false);
   assert.deepEqual(o, want["cfg 초안"]);
 });
+
+test("모아 보기 카드 사슬 질의: 대화 표를 통째로 훑지 않음(CROSS JOIN 으로 묶는 순서 고정)", () => {
+  const db = new DatabaseSync(":memory:"); seed(db, "seeded");
+  const src = readFileSync(new URL("./owner-read.ts", import.meta.url), "utf8");
+  const dk = /const DKEYS = "(.*?)";/.exec(src)![1], sql = /const CARD_SQL = `([\s\S]*?)`;/.exec(src)![1].replace("${DKEYS}", dk);
+  const plan = (db.prepare("EXPLAIN QUERY PLAN " + sql).all("[]", 1) as { detail: string }[]).map(r => r.detail);
+  assert.ok(!plan.some(d => /^SCAN t\b/.test(d)), "대화 표 통째 훑기 없음: " + plan.join(" | "));
+});

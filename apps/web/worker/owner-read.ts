@@ -455,7 +455,6 @@ async function nodechat(db: D1Database, cfg: Cfg, raw: string, now: number, cach
 }
 
 const DKEYS = "dk(key) AS (SELECT value FROM json_each(?1) UNION SELECT substr(k, 8) FROM owner_state WHERE ?2 AND k > 'drafts:' AND k < 'drafts;')";
-// cardThread 가 갈 수 있는 곳: 씨앗(키 끝 「|」 뒤) · w 숫자면 w: 일지 · ref 로 하나만 맞는 카드 · replaced_by / dup_of 를 8단까지. 일지 글의 「스레드 」 뒤 ts 후보 전부
 const CARD_SQL = `WITH RECURSIVE ${DKEYS},
   item(item) AS (SELECT replace(r, rtrim(r, replace(r, '|', '')), '') FROM (SELECT substr(key, 6) r FROM dk WHERE substr(key, 1, 5) = 'card:' AND substr(key, -1) != '|')),
   hit(item, ts) AS (SELECT i.item, max(c.ts) FROM item i JOIN wl_cards c ON c.ref LIKE '%:' || i.item WHERE i.item != '' GROUP BY i.item HAVING count(*) = 1),
@@ -467,11 +466,11 @@ const CARD_SQL = `WITH RECURSIVE ${DKEYS},
   lg(ts, msg) AS (SELECT nts.ts, l.msg FROM nts JOIN wl_log l ON l.id = substr(nts.ts, 3) WHERE substr(nts.ts, 1, 2) = 'w:'),
   occ(rest) AS (SELECT msg FROM lg UNION ALL SELECT substr(rest, instr(rest, '스레드 ') + 4) FROM occ WHERE instr(rest, '스레드 ') > 0),
   m1(id) AS (SELECT ts FROM nts UNION SELECT thread FROM card UNION SELECT substr(rest, 1, instr(rest, '.') + 6) FROM occ UNION SELECT substr(key, 4) FROM dk WHERE substr(key, 1, 3) = 'th:'),
-  mid(id) AS (SELECT id FROM m1 UNION SELECT t.thread FROM m1 JOIN wl_talk_msg t ON t.id = m1.id)
+  mid(id) AS (SELECT id FROM m1 UNION SELECT t.thread FROM m1 CROSS JOIN wl_talk_msg t ON t.id = m1.id)
   SELECT 'c' AS k, ts AS a, thread AS b, replaced_by AS c, dup_of AS d FROM card
   UNION ALL SELECT 'h', item, ts, NULL, NULL FROM hit
   UNION ALL SELECT 'l', ts, msg, NULL, NULL FROM lg
-  UNION ALL SELECT 'm', t.id, t.chan, t.thread, t.text FROM mid JOIN wl_talk_msg t ON t.id = mid.id`;
+  UNION ALL SELECT 'm', t.id, t.chan, t.thread, t.text FROM mid CROSS JOIN wl_talk_msg t ON t.id = mid.id`;
 type Pre = { msg: Map<string, R>; card: Map<string, R>; hit: Map<string, string>; log: Map<string, string> };
 function preOf(rows: R[]): Pre {
   const p: Pre = { msg: new Map(), card: new Map(), hit: new Map(), log: new Map() };
