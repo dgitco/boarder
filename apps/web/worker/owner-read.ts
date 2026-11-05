@@ -507,10 +507,32 @@ function cardThread(p: Pre, item: string): R | null {
   return null;
 }
 
+const RAW = Symbol.for("bx.rawdb");   // agent-token-cache.ts 의 RAW 와 같은 기호(이 파일은 임포트 없이 섬)
+const TU_TTL = 600_000, TU_VER = "SELECT v FROM talk_ver WHERE k = 1";
+let tuMemo: { key: object; v: number; rows: R[]; at: number } | null = null;
+export function unreadForget() { tuMemo = null; }   // 시험용
+function unreadThreads(db: D1Database, q0: () => D1PreparedStatement) {
+  const key = ((db as unknown as Record<symbol, object>)[RAW]) || db, m = tuMemo, hit = !!m && m.key === key && Date.now() - m.at < TU_TTL;
+  const ver = () => db.prepare(TU_VER);
+  const vOf = (r: D1Result<R>) => Number((r.results?.[0] as { v?: number } | undefined)?.v ?? 0);
+  return {
+    stmts: hit ? [ver()] : [ver(), q0()],
+    done: async (b: D1Result<R>[]): Promise<R[]> => {
+      const v = vOf(b[0]);
+      if (hit && m!.v === v) return m!.rows;
+      let vv = v, rows: R[];
+      if (hit) { const [a, c] = await db.batch<R>([ver(), q0()]); vv = vOf(a); rows = c.results || []; }
+      else rows = b[1].results || [];
+      tuMemo = { key, v: vv, rows, at: Date.now() }; return rows;
+    },
+  };
+}
+
 // state = 초안 정본이 D1 owner_state(스위치 write_state) — 「올렸음」 줄이 없거나 못 풀면 cfg 초안(server.py 파일)
 async function inbox(db: D1Database, cfg: Cfg, now: number, state = false): Promise<Out> {
   const lim = 200, ulim = 1000, cutAt = now - 3 * 86400;   // 읽지 않음 상한 = inbox.UNREAD_LIMIT(목록 = 뱃지 = 사이드바 수)
-  const rs = await db.batch<R>([
+  // 스레드 읽지 않음 줄은 바뀜 번호(talk_ver, 0083 트리거)가 같으면 isolate 맡김(답글 줄 전부를 훑는 질의 — 한 번 약 1만 6천 행)
+  const q0 = () =>
     db.prepare(`SELECT r.chan AS chan, r.thread AS th, r.id AS mid, r.who AS who, r.author AS author, r.pane AS pane, r.text AS text, r.at AS at,
       (SELECT t.text FROM wl_talk_msg t WHERE t.id = r.thread) AS root,
       (SELECT count(*) FROM wl_talk_msg y WHERE y.thread = r.thread AND y.deleted_at IS NULL AND y.who = 'agent' AND y.at > max(
@@ -522,7 +544,26 @@ async function inbox(db: D1Database, cfg: Cfg, now: number, state = false): Prom
       AND r.at = (SELECT max(y.at) FROM wl_talk_msg y WHERE y.thread = r.thread AND y.deleted_at IS NULL AND y.who != 'system')
       AND NOT EXISTS (SELECT 1 FROM wl_talk_reaction x WHERE x.msg = r.id AND x.who = 'owner' AND x.removed_at IS NULL)
       AND NOT EXISTS (SELECT 1 FROM wl_talk_seen s WHERE s.who = 'owner' AND s.thread = r.thread AND s.at >= r.at)
-      ORDER BY r.at DESC LIMIT ?`).bind(ulim),
+      ORDER BY r.at DESC LIMIT ?`).bind(ulim);
+  const tu = unreadThreads(db, q0);
+  let rs: D1Result<R>[];
+  try { const b = await db.batch<R>([...tu.stmts,
+    db.prepare(`SELECT m.chan AS chan, m.id AS mid, m.who AS who, m.author AS author, m.pane AS pane, m.text AS text, m.at AS at FROM wl_talk_msg m
+      WHERE m.thread IS NULL AND m.deleted_at IS NULL AND m.who NOT IN ('system', 'owner') AND m.at > ?
+      AND NOT EXISTS (SELECT 1 FROM wl_talk_msg r WHERE r.thread = m.id AND r.deleted_at IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM wl_talk_reaction x WHERE x.msg = m.id AND x.who = 'owner' AND x.removed_at IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM wl_talk_seen s WHERE s.who = 'owner' AND s.chan = m.chan AND s.thread IN ('', m.id) AND s.at >= m.at)
+      ORDER BY m.at DESC LIMIT ?`).bind(cutAt, ulim),
+    db.prepare(`SELECT s.msg AS msg, s.chan AS chan, s.thread AS th, s.at AS sat, m.who AS who, m.author AS author, m.pane AS pane, m.text AS text, m.at AS at,
+      m.deleted_at AS gone, (SELECT t.text FROM wl_talk_msg t WHERE t.id = s.thread) AS root
+      FROM wl_talk_saved s LEFT JOIN wl_talk_msg m ON m.id = s.msg WHERE s.who = 'owner' ORDER BY s.at DESC LIMIT ?`).bind(lim),
+    db.prepare("SELECT DISTINCT msg FROM wl_talk_saved WHERE who = 'owner'"),
+    db.prepare(CARD_SQL).bind(JSON.stringify(Object.keys(cfg.drafts || {})), state ? 1 : 0),
+    ...(state ? [db.prepare("SELECT at, ver FROM owner_state WHERE k = 'drafts'"), db.prepare("SELECT k, v FROM owner_state WHERE k > 'drafts:' AND k < 'drafts;' ORDER BY ord, k")] : []),
+  ]); rs = [{ ...b[0], results: await tu.done(b) } as D1Result<R>, ...b.slice(tu.stmts.length)]; }
+  catch (e) {
+    if (!/no such table:?\s*talk_ver/i.test(String((e as Error)?.message || e))) throw e;   // 번호 표가 없음(이주 전 · 지운 뒤) — 예전 질의로 한 번 더(맡기지 않음)
+    rs = await db.batch<R>([q0(),
     db.prepare(`SELECT m.chan AS chan, m.id AS mid, m.who AS who, m.author AS author, m.pane AS pane, m.text AS text, m.at AS at FROM wl_talk_msg m
       WHERE m.thread IS NULL AND m.deleted_at IS NULL AND m.who NOT IN ('system', 'owner') AND m.at > ?
       AND NOT EXISTS (SELECT 1 FROM wl_talk_msg r WHERE r.thread = m.id AND r.deleted_at IS NULL)
@@ -536,6 +577,7 @@ async function inbox(db: D1Database, cfg: Cfg, now: number, state = false): Prom
     db.prepare(CARD_SQL).bind(JSON.stringify(Object.keys(cfg.drafts || {})), state ? 1 : 0),
     ...(state ? [db.prepare("SELECT at, ver FROM owner_state WHERE k = 'drafts'"), db.prepare("SELECT k, v FROM owner_state WHERE k > 'drafts:' AND k < 'drafts;' ORDER BY ord, k")] : []),
   ]);
+  }
   const unread: R[] = [], ths = new Set<string>();
   for (const r of rs[0].results) {
     if (ths.has(r.th)) continue;

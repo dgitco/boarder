@@ -18,8 +18,9 @@ create table wl_talk_seen (who TEXT NOT NULL, chan TEXT NOT NULL, thread TEXT NO
 create table owner_state (k text primary key, v text not null, at integer not null, ver integer not null default 0, ord integer not null default 0);`;
 
 const NOW = 1703400000, T1 = "1703300000.000100", T2 = "1703300001.000100";
+const TALK_VER = readFileSync(new URL("../migrations/0083_talk_ver.sql", import.meta.url), "utf8");   // 운영처럼 번호 표 · 트리거(없으면 예전 질의로 한 번 더 — 왕복 둘)
 function seed(db: DatabaseSync, state: "none" | "seeded" | "rows-only") {
-  db.exec(SCHEMA);
+  db.exec(SCHEMA); db.exec(TALK_VER);
   const m = db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
   m.run(T1, "dgit", null, "owner", null, null, "루트 글 *굵게* <https://a.b|링크>", 1703300000.0001, null);
   m.run("1703300000.000200", "dgit", T1, "agent", "도우미", "p1", "답 1", 1703300000.0002, null);
@@ -177,4 +178,33 @@ test("#메인 합쳐 보기(/api/chat/main): 다섯 채널 뿌리 글을 시간�
   const old = await OR.build(d1, cfg, OR.route("/api/chat/main?before=1703390102.000100")!, NOW) as O;
   assert.deepEqual(old.body.messages.map(x => x.ch), ["company", "primary"], "옛 글 쪽(커서)도 채널을 가로질러");
   assert.equal(await OR.build(d1, { channels: { harness: "C9" } }, OR.route("/api/chat/main")!, NOW), null, "기본 채널이 하나도 없으면 다리로");
+});
+
+test("모아 보기 스레드 읽지 않음 맡김: 번호가 같으면 답글 훑기 질의를 안 보냄 · 답글 · 읽음이 들어오면 새 줄 · 답은 그대로", async () => {
+  OR.unreadForget();
+  const db = new DatabaseSync(":memory:"); seed(db, "none");
+  const { d1 } = fakeD1(db); let scans = 0;
+  const spy = { prepare: (sql: string) => { if (/FROM wl_talk_msg r WHERE r\.thread IS NOT NULL/.test(sql)) scans++; return (d1 as any).prepare(sql); }, batch: (s: any[]) => (d1 as any).batch(s) } as unknown as D1Database;
+  const a = await OR.build(spy, CFG, { group: "cards", kind: "inbox" }, NOW, true, false);
+  const b = await OR.build(spy, CFG, { group: "cards", kind: "inbox" }, NOW, true, false);
+  assert.equal(scans, 1, "두 번째는 맡긴 줄"); assert.deepEqual(b, a);
+  const th = (db.prepare("SELECT thread FROM wl_talk_msg WHERE thread IS NOT NULL LIMIT 1").get() as { thread: string } | undefined)?.thread || T1;
+  db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at) VALUES (?,?,?,?,?,?,?,?)").run("1703399999.000100", "dgit", th, "agent", "에이전트", "", "새 답", 1703399999.0001);
+  const c = await OR.build(spy, CFG, { group: "cards", kind: "inbox" }, NOW, true, false) as any;
+  assert.equal(scans, 2, "답글이 들어오면 번호가 올라 다시 훑음");
+  assert.ok(JSON.stringify(c.body.unread).includes("새 답"), "새 답글이 읽지 않음에");
+  db.prepare("INSERT INTO wl_talk_seen(who, chan, thread, last_id, at) VALUES ('owner', 'dgit', ?, '1703399999.000100', 1703399999.5) ON CONFLICT(who, chan, thread) DO UPDATE SET at = excluded.at").run(th);
+  const d = await OR.build(spy, CFG, { group: "cards", kind: "inbox" }, NOW, true, false) as any;
+  assert.equal(scans, 3, "읽음이 들어와도 다시"); assert.ok(!JSON.stringify(d.body.unread).includes("새 답"), "읽은 스레드는 빠짐");
+});
+
+test("모아 보기: 번호 표가 없으면(이주 전) 예전 질의로 한 번 더 — 답은 그대로", async () => {
+  OR.unreadForget();
+  const db = new DatabaseSync(":memory:"); db.exec(SCHEMA);
+  const ref = new DatabaseSync(":memory:"); seed(ref, "none");
+  for (const t of ["wl_cards", "wl_log", "wl_talk_msg", "wl_talk_reaction", "wl_talk_saved", "wl_talk_seen", "owner_state"]) for (const r of ref.prepare(`SELECT * FROM ${t}`).all() as Record<string, unknown>[]) { const k = Object.keys(r); db.prepare(`INSERT INTO ${t}(${k.join(",")}) VALUES (${k.map(() => "?").join(",")})`).run(...(Object.values(r) as never[])); }
+  const { d1 } = fakeD1(db);
+  const throwing = { prepare: (sql: string) => (d1 as any).prepare(sql), batch: (s: any[]) => s.some((x: any) => /talk_ver/.test(String(x.sql ?? x.q ?? ""))) ? Promise.reject(new Error("D1_ERROR: no such table: talk_ver: SQLITE_ERROR")) : (d1 as any).batch(s) } as unknown as D1Database;
+  const o = await OR.build(throwing, CFG, { group: "cards", kind: "inbox" }, NOW, true, false);
+  assert.deepEqual(o, want["cfg 초안"]);
 });
