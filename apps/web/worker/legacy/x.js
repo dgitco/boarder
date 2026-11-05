@@ -109,7 +109,7 @@
     const rows = opts.map(b => { const t = String(b.label).replace(/\s*\(추천\)\s*$/, ''), rec = /추천/.test(b.label);
       if (st === 'open') return `<button type="button" class="xop" data-xvote="${E(b.label)}" data-ts="${E(m.ts)}" data-root="${E(root)}" data-k="${E(k)}"><span>${E(t)}</span>${rec ? '<i>추천</i>' : ''}</button>`;
       const me = pick === b.label; return `<div class="xop res${me ? ' me' : ''}"><span class="xf" style="width:${me ? 100 : 0}%"></span><span>${E(t)}</span>${me ? `<b>${CHK(16, 2.6)}</b>` : ''}</div>`; }).join('');
-    const ft = {open: `${G('TURN') || '내 차례'} · 하나 누르면 바로 접수`, voted: '<b>접수됨</b> · 투표 끝남', reply: '<b>답글로 답해서 접수됨</b> · 투표 끝남', else: '<b>다른 데서 답해서 접수됨</b> · 투표 끝남'}[st];
+    const ft = {open: `${G('TURN') || window.HB_MEMBER?.turn || '내 차례'} · 하나 누르면 바로 접수`, voted: '<b>접수됨</b> · 투표 끝남', reply: '<b>답글로 답해서 접수됨</b> · 투표 끝남', else: '<b>다른 데서 답해서 접수됨</b> · 투표 끝남'}[st];
     return `<div class="xpoll">${rows}<div class="xft">${ft}</div></div>`;
   }
   const nn = s => `<span class="xnn">${s}</span>`;
@@ -143,8 +143,8 @@
   const DR2 = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9h16M4 15h16"/></svg>';
   const FND = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
   function priHead(){
-    const D0 = G('D'), bf = window.HB_MEMBER && D0 ? (D0.areas || []).find(a => a.key === 'primary')?.avatar : (typeof AGENT_CUSTOM === 'object' && AGENT_CUSTOM?.primary) || null;
-    const name = window.HB_MEMBER?.bot || String(AN().primary || 'Primary').replace(/\s*리드\s*$/, ''), S = 34;
+    const D0 = G('D'), pa = D0 ? (D0.areas || []).find(a => a && a.key === 'primary') : null, bf = pa && 'avatar' in pa ? pa.avatar : (typeof AGENT_CUSTOM === 'object' && AGENT_CUSTOM?.primary) || null;   // 틀 로고(shell.js priFace)와 같은 판정: 서버가 준 primary.avatar 칸이 있으면 그것, 없으면 고른 얼굴
+    const name = String(AN().primary || 'Primary').replace(/\s*리드\s*$/, ''), S = 34;
     let face = ''; try { face = bf?.photo && window.BXBot?.live ? window.BXBot.live(bf, S) : window.HB_BLOB ? window.HB_BLOB(bf?.seed || 'primary', {size: S, background: false, ...(bf ? {hue: bf.hue} : {})}) : ''; } catch {}
     return {name, face: face || av(name, S)};
   }

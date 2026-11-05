@@ -171,8 +171,8 @@ test("태스크 줄에 채널 키(번호 포함 노드 이름) — 자리표 있
 
 const shell = readFileSync(new URL("./legacy/shell.js", import.meta.url), "utf8");
 const board = readFileSync(new URL("../board-template/page.html", import.meta.url), "utf8");
-test("사이드바: 부서 그룹은 채널 = 태스크를 켠 사람만(꺼진 회원은 main 과 같은 「채널」 칸)", () => {
-  assert.match(shell, /const DG = RS && TS && window\.HB_MEMBER \?/);
+test("사이드바: 부서 그룹은 자리표 · 채널 = 태스크 데이터가 있을 때만(꺼진 회원은 main 과 같은 「채널」 칸) — 사람 종류(HB_MEMBER)로 안 가름", () => {
+  assert.match(shell, /const DG = RS && TS \?/);
 });
 test("사이드바: 접힌 그룹 수는 서버가 준 채널 키로 · 머리는 역할 이름으로 찾음", () => {
   assert.match(shell, /unreadOf\(\[t\.chan \|\| 'n:' \+ t\.name, 'node:' \+ t\.pane\], t\.pane\)/);

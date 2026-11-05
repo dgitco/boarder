@@ -393,5 +393,16 @@ test("스냅숏에만 있던 칸: 상시 에이전트 표 · 판 agent/aname · 
     assert.deepEqual(D.relinks, { OldArtifactId01: "NewArtifactId01" }, "꼴이 틀린 id 는 버림");
     assert.ok(!D.panes.some((p: any) => p.pane === "%1"), "하네스 총괄이 있으면 회원 메인 봇 판은 뺌(보드에 총괄 둘)");
     assert.equal(D.panes.filter((p: any) => p.kind === "primary").length, 1);
+    assert.deepEqual(D.areas.slice(1, 5).map((a: any) => a.lead_name), ["회사 리드", "퍼스널 리드", "DGit 리드", "가게 리드"], "열 머리 이름(화면 HB_CH 갈래가 이 값으로 AREA_NAME 을 덮음)");
+    assert.equal(D.areas[0].lead_name, undefined, "Primary 는 메인 봇 이름 그대로");
+    assert.equal(D.areas[0].avatar, undefined, "주인이 고른 얼굴이 없으면 Primary 얼굴 칸을 비움(회원 메인 봇 얼굴 = 주인 아바타를 안 실음)");
+    s.db.prepare("INSERT INTO agent_face(owner, key, seed, hue, photo, at) VALUES (?,?,?,?,?,?)").run(OWNER, "primary", "mochi", 265, "", Date.now());
+    s.db.prepare("INSERT INTO agent_face(owner, key, seed, hue, photo, at) VALUES (?,?,?,?,?,?)").run("", "company", "tofu", 320, "", Date.now());
+    s.db.prepare("INSERT INTO agent_face(owner, key, seed, hue, photo, at) VALUES (?,?,?,?,?,?)").run("", "primary", "echo", 18, "", Date.now());   // 같은 키 옛 줄 — canon 줄이 이김
+    const D2: any = await s.owner();
+    assert.deepEqual(D2.areas[0].avatar, { seed: "mochi", hue: 265 }, "주인이 고른 Primary 얼굴");
+    assert.deepEqual(D2.areas[1].avatar, { seed: "tofu", hue: 320 }, "옛 '' 열쇠 줄도 읽음");
+    assert.equal(D.tree_shape, "cols", "하네스 총괄이 있으면 주인 꼴(Primary 가 첫 열)");
+    assert.equal(before.tree_shape, "stack", "하네스 값을 올리기 전(회원 꼴) — 회원 보드 기본");
   } finally { s.done(); }
 });

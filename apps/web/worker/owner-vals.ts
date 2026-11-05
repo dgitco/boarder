@@ -94,6 +94,8 @@ export async function read(db: D1Database, me: string, panes: string[], now = Da
     db.prepare("SELECT ts, ref, thread, channel, kind, area, state, title, posted_at FROM wl_cards WHERE state IN ('open','answered') ORDER BY posted_at"),
     db.prepare("SELECT ts, thread, channel, kind, area, state, title, posted_at, closed_at FROM wl_cards WHERE state IN ('done','closed','failed') AND kind NOT IN ('blocker','briefing') AND ts GLOB '[0-9]*.[0-9]*' ORDER BY closed_at DESC LIMIT 50"),
     db.prepare("SELECT c.ts, c.area, c.thread, q.qid, q.short, q.question, q.due FROM wl_cards c JOIN wl_questions q ON c.ref = q.area || ':' || q.qid WHERE c.kind = 'todo' AND c.state = 'open' AND q.state = 'open' ORDER BY q.qid"),
+    // 주인이 고른 에이전트 얼굴(agent_face — 열쇠는 canon, 옛 '' 줄도): 영역 열 · Primary 얼굴(없으면 칸을 비워 화면 기본 얼굴 — 회원 메인 봇 얼굴이 아님)
+    db.prepare("SELECT key, seed, hue, photo FROM agent_face WHERE owner IN (?, '') AND seed != '' ORDER BY owner = ''").bind(me),
   ];
   // 판마다 마지막 줄(감시 포함) · 최근 다섯 줄(감시 빼고) — (pane, at) 색인을 거꾸로 타고 멈춤
   const per = ps.flatMap(p => [
@@ -107,7 +109,8 @@ export async function read(db: D1Database, me: string, panes: string[], now = Da
   ps.forEach((p, i) => { const l = rows(fixed.length + 2 * i)[0]; if (l) last.set(p, l); recent.set(p, rows(fixed.length + 2 * i + 1)); });
   for (const r of rows(2)) (hist.get(r.pane) || hist.set(r.pane, []).get(r.pane)!).push(r);
   return { hs: json<R>(hsRow?.v, {}), hsAt: Number(hsRow?.at || 0), pri: json<Record<string, { pri?: string }>>(rows(1)[0]?.v, {}), last, recent, hist,
-    feed: rows(3), closed: rows(4), decRen: rows(5), questions: rows(6), checks: rows(7), cards: rows(8), done: rows(9), todoRows: rows(10) };
+    feed: rows(3), closed: rows(4), decRen: rows(5), questions: rows(6), checks: rows(7), cards: rows(8), done: rows(9), todoRows: rows(10),
+    faces: rows(11).reduce((m, r) => (m[String(r.key)] ??= { seed: String(r.seed), hue: Number(r.hue), ...(r.photo ? { photo: String(r.photo) } : {}) }, m), {} as Record<string, { seed: string; hue: number; photo?: string }>) };
 }
 
 // ── snapshot.py 작은 함수 옮김 ──
@@ -169,8 +172,7 @@ export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.no
   for (const c of cond.values()) if (!had.has(String(c.name)))
     parked.push({ id: c.id, name: c.name, area: c.area || "primary", msg: c.msg, owner: !!c.owner, ago: ago(c.at), stale: c.stale ?? null, wait: c.wait || "", topics: c.topics || [], pri: priOf(V.pri, String(c.name)), pane: c.pane || null, short: c.short || "", title: c.title || "", watch: c.watch || "", harness: true });
   if (isObj(hs.leads)) {
-    const prim = (out.areas as R[]).find(a => a.key === "primary") || {};
-    out.areas = [...AREAS.map(([key, name]) => ({ ...(key === "primary" ? { avatar: prim.avatar } : {}), key, name, lead: key === "primary" ? leads.primary || null : (leads.leads || {})[key] ?? null })), ...(out.areas as R[]).filter(a => a.key !== "primary")];
+    out.areas = [...AREAS.map(([key, name]) => ({ ...(V.faces[key] ? { avatar: V.faces[key] } : {}), ...(key === "primary" ? {} : { lead_name: `${name} 리드` }), key, name, lead: key === "primary" ? leads.primary || null : (leads.leads || {})[key] ?? null })), ...(out.areas as R[]).filter(a => a.key !== "primary")];
   }
   out.agents = Array.isArray(hs.agents) ? hs.agents : [];
   const feed = V.feed.map(r => ({ id: Number(r.id), ago: ago(r.at), pane: String(r.pane), win: clean(r.win, 30), kind: String(r.kind), msg: clean(r.msg, 160), wl: true }));
@@ -239,6 +241,7 @@ export function apply(out: R, V: Awaited<ReturnType<typeof read>>, now = Date.no
   if (isObj(hs.relinks)) out.relinks = hs.relinks;
   const prim = String(leads.primary || "");
   if (prim && live.has(prim)) {
+    out.tree_shape = "cols";   // Primary 가 다섯 열 중 첫 열(주인 꼴) — 회원은 member-board 의 "stack"(Primary 위, 열 밑)
     out.panes = (out.panes as R[]).filter(p => !(p.pane === MAIN_PANE && p.kind === "primary" && !p.harness));
     for (const k of ["decisions", "to_check", "feed", "cards", "cardlist"]) for (const x of (Array.isArray(out[k]) ? out[k] : []) as R[]) if (x?.pane === MAIN_PANE) x.pane = prim;
   }

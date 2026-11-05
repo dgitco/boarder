@@ -5,7 +5,7 @@
   const OFF = new Set(window.BX_FLAGS_OFF || []);
   const MENU0 = [['계정', [['start', '시작하기'], ['profile', '프로필'], ['look', '모양'], ['devices', '기기'], ['features', '기능']]], ['연결', [['connectors', '커넥터'], ['sessions', '세션'], ['profiles', 'CLI 프로필']]], ['에이전트', [['nodes', '노드']]], ['관리', [['emoji', '이모지'], ['invite', '사람 초대']]]];
   let OWNER = true;   // 관리 묶음은 관리자(주인)만 — api/me 의 owner 로 확인, 아니면 숨김
-  const isMem = () => !!window.HB_MEMBER || !OWNER;   // 회원 화면(서버가 HB_MEMBER 를 넣음) — 시작하기는 회원만
+  const isMem = () => (window.HB_CAPS?.start_tab ?? false) || !OWNER;   // 「시작하기」 = 서버 능력값 start_tab(회원 참 · 켠 주인 거짓, 없으면 거짓 = 지금 주인) 또는 관리 권한 없음
   let MENU = [];
   const buildMenu = () => { MENU = MENU0.map(([g, xs]) => [g, xs.filter(([k]) => !(k === 'start' && !isMem()) && !(k === 'profiles' && OFF.has('cli_profiles')) && !(k === 'invite' && !OWNER))]).filter(([, xs]) => xs.length); };
   buildMenu();
@@ -938,7 +938,7 @@
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>폰에서 글을 누르면 스레드 열기</b><p class="bxs-mut">휴대폰에서 채널 글을 짧게 누르면 그 글 스레드가 열려요. 끄면 길게 눌러 메뉴에서 회신해요. 컴퓨터(마우스)는 그대로예요</p></div>${sw(tapt(), `data-tt="${tapt() ? 0 : 1}"`, '폰에서 글을 누르면 스레드 열기')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>읽지 않음에서 읽은 글 남기기</b><p class="bxs-mut">뒤로 가기로 돌아오면 아까 목록과 보던 자리가 그대로이고, 읽은 글은 「읽음」으로 남아 「읽지 않음으로」 되돌릴 수 있어요. 되돌린 글은 이 기기에만 남아요</p></div>${sw(unk(), `data-uk="${unk() ? 0 : 1}"`, '읽지 않음에서 읽은 글 남기기')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>캔버스를 닫으면 앞 화면으로</b><p class="bxs-mut">캔버스를 열기 직전 화면으로 돌아가요. 주소로 바로 연 캔버스는 홈으로 가요</p></div>${sw(canvasBack(), `data-cb="${canvasBack() ? 0 : 1}"`, '캔버스를 닫으면 앞 화면으로')}</div></div>`
-        + (isMem() || window.HB_CH ? '' : `<div class="bxs-card"><div class="bxs-row between"><div><b>#메인 한 줄기</b><p class="bxs-mut">Primary 채널을 열면 다섯 채널(Primary · 회사 · 퍼스널 · DGit · 가게) 글이 시간순 한 줄로 보여요. 답은 원래 채널 스레드로, 새 글은 Primary 로 가요. 글 주소도 /m/… 꼴로 읽혀요</p></div>${sw(mainM(), `data-mm="${mainM() ? 0 : 1}"`, '#메인 한 줄기')}</div></div>`);
+        + (isMem() || !(window.HB_CAPS?.mainline ?? true) ? '' : `<div class="bxs-card"><div class="bxs-row between"><div><b>#메인 한 줄기</b><p class="bxs-mut">Primary 채널을 열면 다섯 채널(Primary · 회사 · 퍼스널 · DGit · 가게) 글이 시간순 한 줄로 보여요. 답은 원래 채널 스레드로, 새 글은 Primary 로 가요. 글 주소도 /m/… 꼴로 읽혀요</p></div>${sw(mainM(), `data-mm="${mainM() ? 0 : 1}"`, '#메인 한 줄기')}</div></div>`);
       hideDraw(el); pinsDraw(el);
     };
     const setAcc = (v, redraw = true) => {

@@ -616,3 +616,28 @@ test("켬: 장부 바뀜 알림이 켠 주인 칸(live:<canon>)에는 chat 과 d
   assert.deepEqual(by[live.OWNER_SNAP], ["chat"], "주인 칸(스냅숏 길)은 그대로 chat 만");
   assert.deepEqual(by[U], ["chat", "data"], "켠 주인 칸에는 data 도 — 판 줄 · 결정이 2분 확인까지 안 멈춤");
 });
+
+test("켬: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS — 켠 주인은 관리 권한 값 · 차례 글은 사람 설정 · 열 꼴 주인, 회원은 지금 값", async () => {
+  const t = await setup();
+  await t.flag("owner_unified", true);
+  const page = async (who: string) => (await t.req("GET", "/", undefined, await t.human(who))).text;
+  const vals = (html: string) => ({ caps: JSON.parse((/window\.HB_CAPS = (\{[^\n]*?\});/.exec(html) || [])[1] || "null"), mem: JSON.parse((/window\.HB_MEMBER = (\{[^\n]*?\})<\/script>/.exec(html) || [])[1] || "null"), css: /id="hbm-css"/.test(html) });
+  const o = vals(await page(OWNER)), m = vals(await page(MEMBER));
+  assert.deepEqual(o.caps, { invite: true, org_links: true, mainline: true, session_files: false, start_tab: false, push: true }, "켠 주인(관리 권한)은 지금 주인 기능 문 — 세션 첨부만 아직 거짓(회원 세션 길이 첨부를 안 넘김)");
+  assert.equal(o.css, true, "하네스 총괄 판이 없으면(이 시험 준비) 켠 주인도 회원 틀 CSS — 아래에서 총괄 판을 넣으면 빠짐");
+  assert.deepEqual([m.caps?.org_links, m.caps?.session_files, m.caps?.push], [false, false, false], "회원 org_links · session_files 거짓, push = member_push(꺼짐)");
+  const o2 = vals(await page(OWNER2)); assert.deepEqual(o2.caps, o.caps, "다른 주인 메일로 들어온 미리 보기도 canon 값");
+  assert.equal(m.caps?.start_tab, true, "회원은 「시작하기」 그대로"); assert.equal(m.caps?.invite, false); assert.equal(m.caps?.mainline, false);
+  assert.equal(m.mem?.turn, "내 차례"); assert.equal(m.css, true, "회원 틀 CSS 그대로(열 하나)");
+  t.db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?) ON CONFLICT(owner) DO UPDATE SET data = json_set(data, '$.turn_label', '내 차례')").run(OWNER, JSON.stringify({ turn_label: "내 차례" }), Date.now());
+  assert.equal(vals(await page(OWNER)).mem?.turn, "내 차례", "차례 글은 사람 설정(데이터)");
+  const { Engine } = await import("./engine.ts"), OV = await import("./owner-vals.ts"), T = Date.now();
+  const t2 = await setup(); await t2.flag("owner_unified", true); await ledger.f7On(t2.D1, "__reset__");
+  const page2 = async (who: string) => (await t2.req("GET", "/", undefined, await t2.human(who))).text;
+  t2.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devHx", OWNER, "owner-host harness", "", "h".repeat(64), T, T, "harness", T);
+  await new (Engine as any)({ setWebSocketAutoResponse() {} }, { DB: t2.D1 }).hsync([{ id: "ew_pane15", state: "background", name: "총괄", meta: { pane: "%15", win: "1 총괄", role: "리드", cwd: "~/work", kind: "primary" } }], true, "devHx", OWNER, T);
+  await OV.ingest(t2.D1, OWNER, { v: 1, at: Math.floor(T / 1000), panes: { "%15": { area: "primary", kind: "primary", acct: "c", dur: "", stuck: "", branch: "", wait: 0 } }, topics: {}, leads: { primary: "%15", leads: {}, windows: {} }, agents: [], parked: [], archived: [], promises: null, snoozed: [], ch_keys: {}, attn: null, roster: [{ key: "nx_x", name: "지어낸 기능 리드", role: "agent", area: "company", parent: "primary", pane: null, win: "", state: "idle", last: null }] });
+  { const MBf = await import("./member-board.ts"); MBf.loadForget(OWNER); MBf.loadForget(MEMBER); }   // 회원 보드 읽기 캐시는 메일 열쇠(400ms) — 앞 준비(t)에서 읽은 값을 비움
+  assert.equal(vals(await page2(OWNER)).css, false, "총괄 판이 있으면 회원 틀 CSS 안 넣음");
+  assert.equal(vals(await page2(MEMBER)).css, true, "회원은 그대로");
+});

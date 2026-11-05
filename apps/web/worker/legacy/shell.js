@@ -6,6 +6,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const MOBILE_ON = true;
   const R = document.documentElement, PC = matchMedia('(min-width: 861px)');
   const on = () => PC.matches || MOBILE_ON;
+  const turnT = () => typeof TURN === 'string' ? TURN : (window.HB_MEMBER?.turn ?? '내 차례');   // 차례 글: 보드 TURN, 없으면 서버 HB_MEMBER.turn
+  const capOn = k => window.HB_CAPS?.[k] ?? true;   // 기능 문(초대 · #메인 · 세션 첨부 …): 서버 능력값, 없으면 참(지금 주인)
+  const xHeads = () => ((typeof D === 'object' && D?.areas) || []).filter(a => a && a.key !== 'primary' && a.lead && !(typeof CH !== 'undefined' && CH.includes(a.key)));
+  const priFace = () => { const pa = ((typeof D === 'object' && D?.areas) || []).find(a => a && a.key === 'primary'); return pa && 'avatar' in pa ? pa.avatar : (typeof AGENT_CUSTOM === 'object' && AGENT_CUSTOM?.primary) || null; };
   const EMB = new URLSearchParams(location.search).get('embed') || '';
   const EMBED = /^(primary|company|personal|dgit|shop)$/.test(EMB) && window.parent !== window;
   if (EMBED) R.classList.add('bx-embed');
@@ -59,14 +63,14 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   }
   function logoEl(which){
     const st = logoState(), c = LG[which];
-    const bf = window.HB_MEMBER && typeof D !== 'undefined' ? (D?.areas || []).find(a => a.key === 'primary')?.avatar : (typeof AGENT_CUSTOM === 'object' && AGENT_CUSTOM?.primary) || null, fk = bf ? `${bf.seed}|${bf.hue}|${bf.photo || ''}` : '';
-    if (c && c.key === st.key && c.fk === fk){ c.el.title = c.el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : window.HB_MEMBER ? '내 차례' : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`; return c.el; }
+    const bf = priFace(), fk = bf ? `${bf.seed}|${bf.hue}|${bf.photo || ''}` : '';
+    if (c && c.key === st.key && c.fk === fk){ c.el.title = c.el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${turnT()} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`; return c.el; }
     const el = mk('button', 'lg lgb mood-' + st.key); el.type = 'button'; el.dataset.go = 'chan:primary';
     const ex = window.HB_EXPR || {};
     el.innerHTML = bf?.photo && window.BXBot?.live ? window.BXBot.live(bf, 34)
       : window.HB_BLOB_ANIM ? window.HB_BLOB_ANIM(bf?.seed || 'primary', {size: 34, background: false, animate: 'always', ...(bf ? {hue: bf.hue} : {}), ...(st.key === 'sad' ? {expression: ex.sad} : st.key === 'think' ? {expression: ex.thinking} : {})})
       : window.HB_BLOB ? window.HB_BLOB(bf?.seed || 'primary', {size: 34, background: false, ...(bf ? {hue: bf.hue} : {})}) : '<img src="icons/icon-192.png" alt="" width="32" height="32">';
-    el.title = el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${typeof TURN === 'string' ? TURN : window.HB_MEMBER ? '내 차례' : '내 차례'} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`;
+    el.title = el.ariaLabel = `${AREA_NAME.primary} 와 대화${st.n ? ` · ${turnT()} ${st.n}` : ''}${st.m === 'busy' ? ' · 일하는 중' : ''}`;
     LG[which] = {key: st.key, fk, el}; return el;
   }
   const placeLogo = () => { for (const [w, box] of [['sb', sb], ['dr', dr]]){ const slot = box.querySelector('.lgslot') || box.querySelector('.top > .lgb'), el = slot && logoEl(w); if (el && el !== slot) slot.replaceWith(el); } };
@@ -186,16 +190,16 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const act = active(), top = S.ib || ibChat() ? null : act, chan = chatMode() && !cur.page && cur.chan;
     const tn = typeof attnCount === 'function' ? attnCount() : 0;
     const ib = it('turn', I.flag, '결정 · 할 일', cnt(tn, true), ibChat() === 'turn') + IBK.map(k => it(k, I[k], IBN[k], cnt(c[k], k === 'unread'), S.ib === k || ibChat() === k)).join('');
-    const MA = window.HB_CH ? ((typeof D === 'object' && D?.areas) || []).filter(a => a && a.key !== 'primary' && a.lead && typeof byPane !== 'undefined' && byPane[a.lead] && (!byPane[a.lead].tk || byPane[a.lead].tkdept)) : []
+    const MA = xHeads().filter(a => typeof byPane !== 'undefined' && byPane[a.lead] && (!byPane[a.lead].tk || byPane[a.lead].tkdept))
     const RS = (typeof D === 'object' && Array.isArray(D?.role_seats)) ? D.role_seats : null;
     const MA2 = RS ? MA.filter(a => byPane[a.lead]?.tkdept && RS.includes(a.seat_name || AREA_NAME[a.key] || a.lead_name || a.name)) : MA;
     const pg = !ans.hidden && !!cur?.page && cur.p;
     const chP = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('');
-    const RW = window.HB_MEMBER && !RS ? (typeof panes !== 'undefined' ? panes : []).filter(p => p && p.rolewin && p.kind === 'lead' && !p.tk && !MA2.some(a => a.lead === p.pane)) : [], RWP = new Set(RW.map(p => p.pane));
+    const RW = !RS ? (typeof panes !== 'undefined' ? panes : []).filter(p => p && p.rolewin && p.kind === 'lead' && !p.tk && !MA2.some(a => a.lead === p.pane)) : [], RWP = new Set(RW.map(p => p.pane));
     const ch = chP + MA2.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('')
       + RW.map(p => it('node:' + p.pane, blob(nameOf(p), 20), esc(nameOf(p)), rowPanes().has(p.pane) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === p.pane)).join('');
     const rp = rowPanes();
-    const nd = myNodes().filter(p => !RWP.has(p.pane)).map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), rp.has(p.pane) ? `<i class="ud" aria-label="${window.HB_MEMBER ? '내 차례' : '내 차례'}"></i>` : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
+    const nd = myNodes().filter(p => !RWP.has(p.pane)).map(p => it('node:' + p.pane, I.hash, esc(nameOf(p)), rp.has(p.pane) ? `<i class="ud" aria-label="${turnT()}"></i>` : '', !ans.hidden && !!cur?.page && cur.p === p.pane)).join('');
     // 사이드 「태스크」(채널 = 태스크를 켠 회원, 서버 member-board taskSide): 채널 대신 #번호 · 제목 · 상태. 진행 중 · 최근 글 순, 끝난 것은 접힌 「끝난 태스크」 안. 누르면 그 태스크 대화(노드 화면)
     const TS = (typeof D === 'object' && Array.isArray(D?.task_side)) ? D.task_side : null;
     const tkIt = t => `<button type="button" class="bx-it bx-task" data-go="node:${esc(t.pane)}" title="${esc(t.issue + ' ' + t.name)}"${!ans.hidden && !!cur?.page && cur.p === t.pane ? ' aria-current="page"' : ''}><b class="bx-tkno">${esc(t.issue.replace(/^.*#/, '#'))}</b><span>${esc(t.name)}</span>${rp.has(t.pane) ? `<i class="ud" aria-label="내 차례"></i>` : ''}<em class="bx-tkst" data-st="${esc(t.state)}">${esc(t.state_ko || '')}</em></button>`;
@@ -209,7 +213,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       const hb = head ? it('chan:' + head.key, blob(n, 20), esc(n), '', pg === head.lead) : `<span class="bx-it bx-dgn0"><span>${esc(n)}</span></span>`;
       return `<div class="bx-dg">${hb}${badge ? `<span class="bx-dgc" aria-label="새 글 · 내 차례 ${badge}">${badge > 99 ? '99+' : badge}</span>` : ''}<button type="button" class="bx-dgf" data-fold="${esc(k)}" aria-expanded="${!SB.fold[k]}" aria-label="${esc(n)} 태스크 ${SB.fold[k] ? '펴기' : '접기'}">${I.fold}</button></div>`
         + `<div class="bx-sbody bx-dgb" data-sec="${esc(k)}"${SB.fold[k] ? ' hidden' : ''}>${list.map(tkIt).join('') || '<div class="bx-dge">태스크 없음</div>'}</div>`; };
-    const DG = RS && TS && window.HB_MEMBER ? (() => {   // 태스크 묶음이라 채널 = 태스크를 켠 사람만(TS) — 꺼진 회원은 main 과 같은 「채널」 칸 · 에이전트 칸
+    const DG = RS && TS ? (() => {   // 태스크 묶음이라 채널 = 태스크를 켠 사람만(TS) — 꺼진 회원은 main 과 같은 「채널」 칸 · 에이전트 칸
       const by2 = new Map(RS.map(n => [n, []])), none = [];
       for (const t of tkOpen) (by2.get(t.dept || '') || none).push(t);
       const headOf = n => MA.find(a => byPane[a.lead]?.tkdept && (a.seat_name || AREA_NAME[a.key] || a.lead_name || a.name) === n);
@@ -272,13 +276,13 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   }).catch(() => {});
   const rankOf = v => typeof priRank === 'function' ? priRank(v) : 2.5;
   // 업무 노드를 왼쪽 채널에 올리는 것은 설정 › 노드 「채널 = 태스크」를 켠 사람만(D.task_channels) — 끈 사람은 예전처럼 업무는 트리 · /tasks 에서
-  const myNodes = () => (typeof panes !== 'undefined' ? panes : []).filter(p => !p.standing && ((typeof D !== 'undefined' && D?.task_channels) ? !p.tkdept : !p.tk) && !['primary', 'arealead', 'helper'].includes(p.kind) && (((typeof D !== 'undefined' && D?.task_channels) && p.tk) || !(window.HB_CH && typeof MHEAD !== 'undefined' && MHEAD.has(p.pane))))   // 회원 열 머리는 「에이전트」 칸에(두 번 안 나오게)
+  const myNodes = () => (typeof panes !== 'undefined' ? panes : []).filter(p => !p.standing && ((typeof D !== 'undefined' && D?.task_channels) ? !p.tkdept : !p.tk) && !['primary', 'arealead', 'helper'].includes(p.kind) && (((typeof D !== 'undefined' && D?.task_channels) && p.tk) || !xHeads().some(a => a.lead === p.pane)))   // 회원 열 머리는 「에이전트」 칸에(두 번 안 나오게)
     .map((p, i) => [p, i]).sort((a, b) => rankOf(a[0].pri) - rankOf(b[0].pri) || a[1] - b[1]).map(x => x[0]);
   function rowPanes(){ try { return new Set((attnRows() || []).map(rowPane)); } catch { return new Set(myNodes().filter(p => nodeRows(p.pane).length).map(p => p.pane)); } }   // 함수 선언 — 위의 lists() 가 먼저 불려도 됨
   const rcSig = () => recent().map(r => r.id + (r.title || '')).join('|') + '#' + (typeof attnCount === 'function' ? attnCount() : 0)
     + '#' + (rp => myNodes().map(p => p.pane + nameOf(p) + (rp.has(p.pane) ? '*' : '')).join('|'))(rowPanes()) + (cur?.page ? '@' + cur.p : '') + '#' + chats().map(c => c.sid + c.title).join('|') + (!ans.hidden && cur?.chan?.startsWith('q:') ? '@' + cur.chan : '')
     + '#' + (window.BXStatus?.sig?.() || '') + ((typeof D === 'object' && Array.isArray(D?.task_side)) ? '#' + D.task_side.map(t => t.pane + t.issue + t.name + t.state + (t.done ? 'd' : '') + (t.dept || '')).join('|') : '') + ((typeof D === 'object' && Array.isArray(D?.role_seats)) ? '#' + D.role_seats.join('|') : '')
-    + (window.HB_CH ? '#' + ((typeof D === 'object' && D?.areas) || []).map(a => a.key + ':' + a.lead + ':' + (AREA_NAME[a.key] || a.lead_name || '')).join('|') : '');
+    + '#' + ((typeof D === 'object' && D?.areas) || []).map(a => a.key + ':' + a.lead + ':' + (AREA_NAME[a.key] || a.lead_name || '')).join('|');
   const loadChats = () => { fetch('api/chats', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.chats)){ window.HB_CHATS = j.chats; if (on()) lists(); } }).catch(() => {}); };
   loadChats(); setInterval(loadChats, 20000); window.addEventListener('hb-chats', () => { if (on()) lists(); setTimeout(loadChats, 1500); });
   setInterval(() => { if (on() && lists.sig !== rcSig()) lists(); }, 3000);
@@ -421,7 +425,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const DK = 'bx-dock';
     let dock = null, dockK = '';
     const db = mk('button', 'bx-dockb', I.chat);
-    db.type = 'button'; const botn = String(window.HB_MEMBER?.bot || '').trim() || 'Primary'; db.title = `${botn} 채팅 — 오른쪽 판`; db.setAttribute('aria-label', `${botn} 채팅 판`); db.setAttribute('aria-pressed', 'false');
+    db.type = 'button'; const botn = typeof BOTN === 'string' && BOTN ? BOTN : 'Primary'; db.title = `${botn} 채팅 — 오른쪽 판`; db.setAttribute('aria-label', `${botn} 채팅 판`); db.setAttribute('aria-pressed', 'false');
     const dockOn = () => { try { return localStorage.getItem(DK) === '1'; } catch { return false; } };
     function dockSet(v, k = 'primary'){
       if (k === 'primary') try { localStorage.setItem(DK, v ? '1' : ''); } catch {}
@@ -458,7 +462,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   }
 
   const mi = (k, icon, label) => `<button type="button" class="bx-it" data-mi="${k}" role="menuitem">${icon}<span>${label}</span></button>`;
-  const mp = mk('div', 'bx-mpop', (window.HB_MEMBER ? '' : mi('invite', I.invite, '초대')) + mi('feedback', I.feedback, '피드백') + mi('out', I.out, '로그아웃'));
+  const mp = mk('div', 'bx-mpop', (capOn('invite') ? mi('invite', I.invite, '초대') : '') + mi('feedback', I.feedback, '피드백') + mi('out', I.out, '로그아웃'));
   mp.hidden = true; mp.setAttribute('role', 'menu'); document.body.append(mp);
   if (!EMBED) fetch('/api/sales/teams', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => { if (j?.teams?.length) mp.insertAdjacentHTML('afterbegin', mi('sales', I.sales, '영업 보드')); }).catch(() => {});
   if (!EMBED) fetch('/api/me/tasks/has', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => { if (j?.has) mp.insertAdjacentHTML('afterbegin', mi('tasks', I.sales, '업무 판')); }).catch(() => {});

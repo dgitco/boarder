@@ -17,7 +17,7 @@
   const BY = () => typeof byPane !== 'undefined' && byPane ? byPane : {};
   const C = () => typeof cur !== 'undefined' ? cur : null;
   const AN = () => typeof AREA_NAME === 'object' && AREA_NAME ? AREA_NAME : {};
-  const PINS = ['primary', 'company', 'shop', 'dgit', 'personal'].filter(k => !Array.isArray(window.HB_CH) || window.HB_CH.includes(k)), PIN0 = {primary: '비서', company: '회사', shop: '가게', dgit: 'DGit', personal: '퍼스널'};
+  const PINS = ['primary', 'company', 'shop', 'dgit', 'personal'].filter(k => !(typeof CH !== 'undefined' && Array.isArray(CH)) || CH.includes(k)), PIN0 = {primary: '비서', company: '회사', shop: '가게', dgit: 'DGit', personal: '퍼스널'};   // 고정 원 = 보드 채널 표(CH = 서버 HB_CH, 없으면 기본 다섯)에 있는 것만
   const pinName = k => k === 'primary' ? (window.HB_MEMBER?.bot || '비서') : String(AN()[k] || '').replace(/\s*리드\s*/g, ' ').trim() || PIN0[k];
   const pinAv = k => AN()[k] || PIN0[k];
   // 읽지 않음 = shell.js lists() 의 by(k) 와 같은 판정
@@ -46,6 +46,7 @@
   const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
   const list = mk('nav', 'bx-ea-list'); list.setAttribute('aria-label', '비서 대화');
   const PLUS = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+  const turnT = () => typeof TURN === 'string' ? TURN : (window.HB_MEMBER?.turn ?? '내 차례');   // 차례 글 = 보드 TURN, 없으면 서버 값(ui-unify-contract) — 없으면 지금 주인 글
   const meName = () => window.HB_MEMBER?.name || window.BX_ME?.name || 'Owner';
   list.innerHTML = `<div class="bx-ea-bar" aria-hidden="true"><b>비서</b></div><div class="bx-ea-title bx-ea-top"><span class="bx-ea-me" aria-hidden="true"></span><span class="bx-ea-gap"></span><button type="button" class="bx-ea-find bx-ea-circ" aria-label="찾기">${lu('search', 20)}</button><button type="button" class="bx-ea-compose bx-ea-circ" aria-label="새 대화">${PLUS}</button></div>`
     + `<div class="bx-ea-sc"><div class="bx-ea-pins" role="list" aria-label="고정된 대화" hidden></div><div class="bx-ea-rows" role="list"></div></div>`;
@@ -63,7 +64,7 @@
   // ── 줄 그리기 — 서명이 바뀐 때만(shell.js sync 처럼)
   const LOCK = '<svg class="bx-ea-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-label="비밀값 요청" role="img"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
   const row = (k, name, av_, when, pre, dot, cur_, lock, chip) => `<button type="button" class="bx-ea-row" role="listitem" data-k="${E(k)}"${cur_ ? ' aria-current="true"' : ''}>`
-    + (dot ? `<i class="bx-ea-dot" aria-label="${window.HB_MEMBER ? '내 차례' : '내 차례'}"></i>` : '')
+    + (dot ? `<i class="bx-ea-dot" aria-label="${turnT()}"></i>` : '')
     + `<span class="bx-ea-ava">${av_}</span><span class="bx-ea-tx"><span class="bx-ea-l1"><b>${E(name)}</b>${chip ? `<span class="bx-ea-status${['막힘', '멈춤'].includes(chip) ? ' bx-ea-warning' : ''}">${E(chip)}</span>` : ''}${lock ? LOCK : ''}<time>${E(when)}</time>${lu('chevron-right', 14)}</span><span class="bx-ea-pv">${E(pre)}</span></span></button>`;
   const pin = (k, ud, cur_, lock) => `<button type="button" class="bx-ea-pin" role="listitem" data-k="${E(k)}"${cur_ ? ' aria-current="true"' : ''} aria-label="${E(pinName(k) + (ud ? ' · 읽지 않음' : '') + (lock ? ' · 비밀값 요청' : ''))}">`
     + `<span class="bx-ea-pa">${av(pinAv(k), 56)}${ud ? '<i class="bx-ea-ud"></i>' : ''}${lock ? `<i class="bx-ea-pl">${LOCK}</i>` : ''}</span><span class="bx-ea-pn">${E(pinName(k))}</span></button>`;
@@ -87,7 +88,7 @@
   const COMPANY = [
     {k: 'c:primary', name: () => pinName('primary'), av: () => pinAv('primary'), pre: () => lastOf('primary')?.text || '무엇이든 맡겨 주세요', at: () => lastOf('primary')?.ts, n: () => 0, open: () => fn('openChan') && openChan('primary')},
     {k: 'c:i:unread', name: () => '슬랙 인박스', av: () => 'slack inbox', pre: () => IBC().unread ? `읽지 않은 글 ${IBC().unread}개` : '새 글이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.unread || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => IBC().unread || 0, open: () => window.HBInbox?.openFeed?.('unread')},
-    {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => ATTN() ? `${window.HB_MEMBER ? '내 차례' : '내 차례'} ${ATTN()}개` : '할 일이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.turn || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => ATTN(), open: () => window.HBInbox?.openFeed?.('turn')},
+    {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => ATTN() ? `${turnT()} ${ATTN()}개` : '할 일이 없어요', at: () => { try { return Math.max(0, ...(window.HBInbox?.state?.turn || []).map(x => +x.ts || 0)) || null; } catch { return null; } }, n: () => ATTN(), open: () => window.HBInbox?.openFeed?.('turn')},
     {k: 'c:shop', name: () => '상담봇', av: () => 'counsel bot', pre: () => lastOf('shop')?.text || '채널톡 상담 답 초안을 올려요', at: () => lastOf('shop')?.ts, n: () => 0, open: () => fn('openChan') && openChan('shop')},
   ];
   const PERSONAL = window.BX_EA_MODE === 'personal';
@@ -98,7 +99,7 @@
     {k: 'c:personal', name: () => '비서', av: () => pinAv('personal'), pre: () => lastOf('personal')?.text || '일정 · 이동 · 돈 · 잔일을 맡겨 주세요', at: () => lastOf('personal')?.ts, n: () => 0, open: () => fn('openChan') && openChan('personal')},
     ...(typeof window.HBInbox?.setOnly === 'function' ? [
       {k: 'c:i:unread', name: () => '읽지 않은 글', av: () => 'unread', pre: () => IBC().unread ? `읽지 않은 글 ${IBC().unread}개` : '새 글이 없어요', at: ibAt('unread'), n: () => IBC().unread || 0, open: () => window.HBInbox?.openFeed?.('unread')},
-      {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => IBC().turn ? `내 차례 ${IBC().turn}개` : '할 일이 없어요', at: ibAt('turn'), n: () => IBC().turn || 0, open: () => window.HBInbox?.openFeed?.('turn')}] : []),
+      {k: 'c:i:turn', name: () => '할 일 관리', av: () => 'todo', pre: () => IBC().turn ? `${turnT()} ${IBC().turn}개` : '할 일이 없어요', at: ibAt('turn'), n: () => IBC().turn || 0, open: () => window.HBInbox?.openFeed?.('turn')}] : []),
   ];
   const BOTS = PERSONAL ? PERSONAL_BOTS : COMPANY;
   if (PERSONAL) try { window.HBInbox?.setOnly?.(mine); } catch {}

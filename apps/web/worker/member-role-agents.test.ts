@@ -98,7 +98,8 @@ test("화면: 역할 창 판만 에이전트로(업무 · 열 머리로 이미 �
 });
 test("화면: 자리표 있는 회원 · 주인 · 역할 창 없는 사람은 빈 목록(사이드바 예전 그대로)", () => {
   assert.deepEqual(rwOf({ panes: PANES, RS: ["기술장"] })[0], []);
-  assert.deepEqual(rwOf({ panes: PANES, member: false })[0], []);
+  assert.deepEqual(rwOf({ panes: PANES.map(({ rolewin, ...p }) => p), member: false })[0], [], "주인 판(하네스 스냅숏)엔 rolewin 이 없음 — 판정은 데이터(rolewin)만");
+  assert.doesNotMatch(shell.match(/^    const RW = .*$/m)![0], /HB_MEMBER/, "사람 종류로 안 가름");
   assert.deepEqual(rwOf({ panes: PANES.map(({ rolewin, ...p }) => p) })[0], []);
 });
 test("화면: 채널 칸은 RWP 를 빼고, 에이전트 줄은 열 머리 줄과 같은 꼴(blob · 이름 · 내 차례 점 · 지금 연 판)", () => {
