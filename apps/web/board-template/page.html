@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "cce3ef8b9b20";
+window.HB_VER = "17a81bef0d90";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1205,7 +1205,7 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
 .msg.sending .mbody{opacity:.85}
 .msg.sending .pst{font-size:11.5px;color:var(--muted)}
 
-.msg.sending.bad .mbody,.msg.sending.sent .mbody{opacity:1}
+.msg.sending.bad .mbody,.msg.sending.acked .mbody{opacity:1}
 .msg.sending.bad .fbar{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;margin-top:4px;font-size:12.5px;line-height:18px;color:var(--danger)}
 .fbar .fstat{display:inline-flex;align-items:center;gap:4px;height:26px;margin-left:-6px;padding:0 6px;border:0;border-radius:6px;background:none;color:var(--danger);font:inherit;font-weight:600;cursor:pointer}
 @media (hover:hover){.fbar .fstat:hover,.fbar .fstat[aria-expanded="true"]{background:var(--hover)}}
@@ -1926,6 +1926,13 @@ html.hb-unkeep .inbr:first-child:has(> .ibun) .rtools{right:132px}
 .ibun:hover .ibun-r,.ibun:focus-visible .ibun-r{display:none}
 .ibun:hover .ibun-a,.ibun:focus-visible .ibun-a{display:inline}
 @media (hover:none){.ibun .ibun-r{display:none}.ibun .ibun-a{display:inline}}
+
+#ibptr{position:fixed;left:50%;transform:translateX(-50%);z-index:65;display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;background:var(--surface);box-shadow:0 4px 16px var(--shadow),0 0 0 1px var(--line);color:var(--muted);font-size:13px;pointer-events:none;transition:opacity .12s}
+#ibptr[hidden]{display:none}
+#ibptr i{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent,#3b82f6)}
+#ibptr.spin i{animation:ibptrspin .7s linear infinite}
+@keyframes ibptrspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){#ibptr.spin i{animation:none}}
 </style></head><body>
 
 <div class="wrap">
@@ -4844,7 +4851,7 @@ for (const t of ["pointerdown", "keydown", "wheel", "touchstart", "input"]) docu
 setInterval(() => {
   if (LIVE && newVer && !document.hidden && Date.now() - lastInput > 12e4 && reloadAuto()) reloadKeep();
 }, 3e4);
-const busyNow = () => sending || !!window.HBV?.memo || !!window.HBV?.call || Object.keys(CS.pend).some((k) => /spin| sent"/.test(CS.pend[k])) || Object.values(CS.mark).some((x) => x.st === "spin");
+const busyNow = () => sending || !!window.HBV?.memo || !!window.HBV?.call || Object.keys(CS.pend).some((k) => /spin| acked"/.test(CS.pend[k])) || Object.values(CS.mark).some((x) => x.st === "spin");
 const pageSc = () => {
   const w = document.querySelector(".wrap");
   return w && /auto|scroll/.test(getComputedStyle(w).overflowY) ? w : document.scrollingElement;
@@ -7968,7 +7975,7 @@ const markOf = (ts) => {
 };
 const mineHead = (mark, at) => `${avatar(ME_NAME, initials(ME_NAME))}<div class="mbody" style="min-width:0"><div class="mh"><b>${esc(ME_NAME)}</b><span class="tm">${when((at || Date.now()) / 1e3)}</span>${mark}</div>`;
 const pimHTML = (pim) => pim?.length ? `<div class="mfiles mmedia${pim.length > 1 ? " grid" : ""}">${pim.map((x) => `<img src="${x.url}" width="${x.w}" height="${x.h}" alt="${esc(x.name)}" data-media data-kind="i" data-src="${x.url}" data-name="${esc(x.name)}">`).join("")}</div>` : "";
-const mineHTML = (text, nfiles, st, key, vnl, pim, o = {}) => vnl ? `<div class="msg me sending${st === "bad" ? " bad" : st ? "" : " sent"}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${vnHTML(vnl, true)}${text ? `<div class="bd vtr">${md(text.replace(/^\s*🎙\s*/, ""), false)}</div>` : ""}${pimHTML(pim)}${nfiles - 1 - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - 1 - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>` : `<div class="msg me sending${st === "bad" ? " bad" : st ? "" : " sent"}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${text ? `<div class="bd">${md(text, false)}</div>` : ""}${pimHTML(pim)}${nfiles - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>`;
+const mineHTML = (text, nfiles, st, key, vnl, pim, o = {}) => vnl ? `<div class="msg me sending${st === "bad" ? " bad" : st ? "" : " acked"}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${vnHTML(vnl, true)}${text ? `<div class="bd vtr">${md(text.replace(/^\s*🎙\s*/, ""), false)}</div>` : ""}${pimHTML(pim)}${nfiles - 1 - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - 1 - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>` : `<div class="msg me sending${st === "bad" ? " bad" : st ? "" : " acked"}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${text ? `<div class="bd">${md(text, false)}</div>` : ""}${pimHTML(pim)}${nfiles - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>`;
 const FAIL_WHY = { net: "", srv: "", unk: "받았는지 확인하지 못했어요", unk2: "올라갔을 수 있어요 — 새로고침으로 확인해 주세요", slow: "", big: "글이나 첨부가 너무 커요", node: "노드를 다시 열지 못했어요", maybe: "올라갔을 수 있어요 · 채널에 보이면 지워 주세요" };
 const failWhy = (f) => FAIL_WHY[f?.why] || (/[가-힣]/.test(f?.why || "") ? String(f.why).slice(0, 80) : "");
 const failId = (k) => "fp-" + String(k).replace(/[^\w-]/g, "_");
@@ -12219,6 +12226,85 @@ setInterval(() => {
     turnSync();
     return load();
   };
+  const PTR_GO = 64, PTR_MAX = 96;
+  let ptr = null, ptrBusy = false, ptrTouch = 0;
+  const ptrEl = () => document.getElementById("ibptr") || (() => {
+    const d = document.createElement("div");
+    d.id = "ibptr";
+    d.setAttribute("role", "status");
+    d.setAttribute("aria-live", "polite");
+    d.innerHTML = "<i></i><b></b>";
+    document.body.appendChild(d);
+    return d;
+  })();
+  const ptrShow = (dy, msg, spin) => {
+    const d = ptrEl(), f = document.getElementById("cfeed"), top = f ? f.getBoundingClientRect().top : 0;
+    d.style.top = `${Math.round(top + Math.min(dy, PTR_MAX) - 40)}px`;
+    d.style.opacity = String(Math.min(1, dy / PTR_GO));
+    d.classList.toggle("spin", !!spin);
+    d.querySelector("b").textContent = msg;
+    d.hidden = false;
+  };
+  const ptrHide = () => {
+    const d = document.getElementById("ibptr");
+    if (d) {
+      d.hidden = true;
+      d.classList.remove("spin");
+    }
+  };
+  const ptrFeed = (t) => {
+    const f = t && t.closest ? t.closest("#cfeed") : null;
+    return f && typeof CS === "object" && /^i:/.test(CS.at || "") && !document.getElementById("mview") ? f : null;
+  };
+  document.addEventListener("touchstart", (e) => {
+    ptrTouch = Date.now();
+    const f = ptrFeed(e.target);
+    ptr = !ptrBusy && f && f.scrollTop <= 0 && e.touches.length === 1 ? { f, y: e.touches[0].clientY, dy: 0 } : null;
+  }, { passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (!ptr) return;
+    if (ptr.f.scrollTop > 0) {
+      ptr = null;
+      ptrHide();
+      return;
+    }
+    ptr.dy = Math.max(0, (e.touches[0].clientY - ptr.y) / 2);
+    if (ptr.dy > 4) ptrShow(ptr.dy, ptr.dy >= PTR_GO ? "놓으면 새로고침" : "당겨서 새로고침");
+    else ptrHide();
+  }, { passive: true });
+  const ptrEnd = () => {
+    const p = ptr;
+    ptr = null;
+    if (!p || p.dy < PTR_GO) {
+      ptrHide();
+      return;
+    }
+    ptrBusy = true;
+    ptrShow(PTR_GO, "새로고침 중…", true);
+    const t0 = Date.now(), done = () => setTimeout(() => {
+      ptrBusy = false;
+      ptrHide();
+    }, Math.max(0, 500 - (Date.now() - t0)));
+    const pinTop = () => {
+      const at = Date.now(), go = () => {
+        if (ptrTouch > at) return;
+        const f = document.getElementById("cfeed");
+        if (f && f.scrollTop > 0) f.scrollTop = 0;
+        if (Date.now() - at < 1500) requestAnimationFrame(go);
+      };
+      go();
+    };
+    Promise.allSettled([load(), typeof refresh === "function" ? refresh() : null]).then(() => {
+      turnSync();
+      emit();
+      pinTop();
+    }).finally(done);
+  };
+  document.addEventListener("touchend", ptrEnd, { passive: true });
+  document.addEventListener("touchcancel", () => {
+    ptr = null;
+    ptrHide();
+  }, { passive: true });
   const HB = window.HBInbox = {
     mount,
     counts,

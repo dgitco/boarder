@@ -189,6 +189,7 @@ app.use("*", async (c, next) => {
   const rn = (rec as { renew?: Renew }).renew;
   if (rn?.done && rn.done === rn.email) rec.cookies.push(await bxCookie(c, rn.email, rn.th));
   const lw = rec.who && /^[^@\s:%]+@[^@\s:%]+$/.test(rec.who) ? rec.who : rec.dev;
+  if (lw && !["GET", "HEAD", "OPTIONS"].includes(c.req.method)) memberBoard.loadForget(lw);
   if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && !isOwner(c.env, lw) && !/^\/api\/(relay\/|device\/metrics|device\/taskboard|me\/taskboard|me\/devboard|me\/features$|draft$|cardcheck$|me\/tasks\/view$)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok). 상태 페이지 쓰기는 보드 화면 값을 안 바꿈(그 페이지가 스스로 다시 읽음)
     c.executionCtx.waitUntil(live.bumpMember(c.env, lw));
   const total = Date.now() - t0, st = [...Object.entries(rec.seg).map(([k, v]) => `${k};dur=${v}`), ...(meter.d1rn ? [`d1r;dur=${meter.d1r};desc=${meter.d1rn}`] : []), ...(meter.d1wn ? [`d1w;dur=${meter.d1w};desc=${meter.d1wn}`] : []), ...(meter.dobn ? [`dob;dur=${meter.dob};desc=${meter.dobn}`] : []), ...(meter.r2n ? [`r2m;dur=${meter.r2};desc=${meter.r2n}`] : []), `total;dur=${total}`].join(", ");
@@ -459,7 +460,7 @@ app.get("/api/live", async c => {
     return live.liveOf(c.env, me).fetch(c.req.raw);
   }
   const o = await live.table(c.env, me, async () => {
-    const m = me.toLowerCase(), [d, l] = await Promise.all([memberBoard.data(c.env.DB, m, await memberBot(c.env, m)), c.env.DB.prepare("SELECT max(id) n FROM board_log WHERE owner = ?").bind(m).first<{ n: number | null }>()]);
+    const m = me.toLowerCase(), [d, l] = await Promise.all([memberBoard.data(c.env.DB, m, await memberBot(c.env, m), await memberBoard.loadRead(c.env.DB, m, c.executionCtx)), c.env.DB.prepare("SELECT max(id) n FROM board_log WHERE owner = ?").bind(m).first<{ n: number | null }>()]);
     const tag = await memberBoard.etag(JSON.stringify(d));
     return { data: tag, chat: tag + (l?.n ?? 0) };
   });
@@ -2151,7 +2152,7 @@ async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) 
 async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea: boolean | "x" = false) {
   const pg = await snap(c.env).get("page"); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
   await memberBoard.fresh(c.env, me).catch(e => console.error("묶기", e));
-  const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot)), tag = await memberBoard.etag(d);
+  const d = JSON.stringify(await memberBoard.data(c.env.DB, me, bot, await memberBoard.loadRead(c.env.DB, me, c.executionCtx))), tag = await memberBoard.etag(d);
   const html = (await tplHtml(c.env, c.executionCtx, pg)).replace("__BX_DATA__", () => d.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(tag));
   // 회원 값: 채널은 Primary 하나(보드 CH) · 내 이름 · 메인 봇 이름. 영역 칸이 하나라 트리 줄을 한 칸으로
   const member = `<script>window.HB_CH = ["primary"]; window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name, avatar: await memberBoard.myAvatar(c.env.DB, me).catch(() => null), push: await ledger.f7On(c.env.DB, "member_push").catch(() => false), unit: await c.env.DB.prepare("SELECT json_extract(data, '$.unit') u FROM node_setting WHERE owner = ? AND json_valid(data)").bind(me).first<{ u: string | null }>().then(r => r?.u === "agent" || r?.u === "goal" ? r.u : null).catch(() => null) }).replace(/</g, "\\u003c")}</script><style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>`;
@@ -2351,7 +2352,7 @@ app.all("*", async c => {
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드
         if (sl) return sl;
         const r = await memberBoard.get(c.env.DB, me, await memberBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"),
-          async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name);   // 내 글 · 답 이름 = 회원 이름(HB_MEMBER.name 과 같게 — 세션엔 메일만 있어 user 표에서)
+          async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name, c.executionCtx);   // 내 글 · 답 이름 = 회원 이름(HB_MEMBER.name 과 같게 — 세션엔 메일만 있어 user 표에서)
         if (r) return r;
       }
       if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {   // 몸통이 파일 · 녹음(JSON 아님) — 회원 쓰기와 같은 문
@@ -2600,6 +2601,21 @@ async function memberPushRoute(c: Context<{ Bindings: Env }>, me: string, url: U
   else r = await pu.mAck(me, b);
   return c.json(r[1], r[0] as 200);
 }
+
+const AGAIN = "x-bx-again", D1_BUSY = /overloaded|Too many resources consumed/i;
+app.onError(async (err, c) => {
+  const u = new URL(c.req.url), m = c.req.method, msg = String((err as Error)?.message ?? err).slice(0, 300), again = c.req.raw.headers.has(AGAIN), busy = D1_BUSY.test(msg);
+  console.error(JSON.stringify({ ev: "req_error", m, path: u.pathname.slice(0, 120), again, busy, msg }));
+  if (m !== "GET" && m !== "HEAD") return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 500, { "cache-control": "no-store" });
+  if (!again && !busy && !u.pathname.startsWith("/api/auth/")) {
+    await new Promise(ok => setTimeout(ok, 150 + Math.floor(Math.random() * 200)));
+    const h = new Headers(c.req.raw.headers); h.set(AGAIN, "1");
+    try { const r = await app.fetch(new Request(c.req.raw.url, { method: m, headers: h }), c.env, c.executionCtx); if (r.status < 500) return r; } catch { /* 아래 503 */ }
+  }
+  if ((c.req.header("accept") || "").includes("text/html") && !u.pathname.startsWith("/api/"))
+    return c.html('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>보더</title><p style="font:15px system-ui;color:#888;text-align:center;margin-top:40vh">잠시 붐벼요. 곧 다시 열어요</p><noscript><meta http-equiv="refresh" content="15"></noscript><script>(function(){var k="bx-busy",n=0,t=Date.now();try{var v=(sessionStorage.getItem(k)||"").split(":");if(t-(+v[1]||0)<120000)n=+v[0]||0;sessionStorage.setItem(k,(n+1)+":"+t)}catch(e){}var s=[2,4,8,15,30][Math.min(n,4)];setTimeout(function(){location.reload()},(s+Math.random()*s/2)*1000)})()</script>', 503, { "retry-after": "5", "cache-control": "no-store" });
+  return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1", "retry-after": "1", "cache-control": "no-store" });
+});
 
 // app 에 scheduled 를 붙여 내보냄 — 시험이 default 로 받는 app(onError · request)이 그대로 Hono 앱이게
 export default Object.assign(app, {

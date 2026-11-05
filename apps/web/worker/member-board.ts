@@ -131,12 +131,24 @@ const closeStaleConnect = (db: D1Database, me: string) => db.prepare("UPDATE boa
 // 앞단 설정(node_setting.data.front_door.pairs[].name — front-door.ts)의 노드 이름들. 설정 없음 · 망가진 값이면 빈 목록
 const LOG_MAX = 600;
 const FRONT_NAMES = "SELECT json_extract(p.value, '$.name') FROM node_setting s, json_each(CASE WHEN json_valid(s.data) THEN CASE WHEN json_type(s.data, '$.front_door.pairs') = 'array' THEN json_extract(s.data, '$.front_door.pairs') END END) p WHERE s.owner = ?";
+type Ctx = { waitUntil(p: Promise<unknown>): void };
+const READ_TTL = 400, readShare = new Map<string, { at: number; p: ReturnType<typeof load> }>();
+export function loadRead(db: D1Database, me: string, ctx?: Ctx | null): ReturnType<typeof load> {
+  if (!ctx) return load(db, me);
+  const now = Date.now(), hit = readShare.get(me);
+  if (hit && now - hit.at < READ_TTL) return hit.p;
+  if (readShare.size > 500) readShare.clear();
+  const p = load(db, me); readShare.set(me, { at: now, p });
+  ctx.waitUntil(p.catch(() => { if (readShare.get(me)?.p === p) readShare.delete(me); }));   // 실패는 나눠 주지 않음(다음 요청이 새로)
+  return p;
+}
+export function loadForget(me: string) { readShare.delete(me.toLowerCase()); }
 export async function load(db: D1Database, me: string) {
   await closeStaleConnect(db, me);
   const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb, cx, rvd] = await db.batch([
     db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ? OR COALESCE(NULLIF(pinned_name, ''), name) IN (${FRONT_NAMES})) ORDER BY updated_at DESC`).bind(me, Date.now() - 24 * 3600_000, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
-    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND (gone_at IS NULL OR gone_at > ?)").bind(me, Date.now() - 24 * 3600_000),
+    db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at > ?").bind(me, me, Date.now() - 24 * 3600_000),
     db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
     db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT ${LOG_MAX}`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
     db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
@@ -786,25 +798,25 @@ export async function chatLog(db: D1Database, me: string, sid: string, now = Dat
 // 회원 GET — 보드 화면 길만. null = 이 길은 회원 보드 것이 아님(→ 403)
 export async function etag(b: string) { return '"m' + [...new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(b)))].slice(0, 8).map(x => x.toString(16).padStart(2, "0")).join("") + '"'; }
 const ETAG_PATHS = /^\/api\/(chat\/|nodechat$|topics$|inbox$)/;
-export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>)): Promise<Response | null> {
+export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null): Promise<Response | null> {
   inm = inm?.replace(/^W\//, "");
-  const r = await getInner(db, me, bot, url, emoji, inm, who);
+  const r = await getInner(db, me, bot, url, emoji, inm, who, ctx);
   if (!r || r.status !== 200 || r.headers.has("etag") || !ETAG_PATHS.test(url.pathname) || !(r.headers.get("content-type") || "").startsWith("application/json")) return r;
   const txt = await r.text(), t = await etag(txt.replace(/"read_at":\d+,?/g, ""));
   const h = new Headers(r.headers); h.set("etag", t);
   return inm === t ? new Response(null, { status: 304, headers: h }) : new Response(txt, { status: 200, headers: h });
 }
-async function getInner(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>)): Promise<Response | null> {
+async function getInner(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null): Promise<Response | null> {
   // 내 이름(who): 글 이름이 나가는 채팅 길에서만 읽음 — 함수면 그때 한 번(index.ts 는 user 표를 읽는 함수로 넘김, /api/data 폴링엔 안 읽음)
   // 앞단 설정(front_door)은 채팅 · 노드 채팅 · 세션 길에서만 읽음(작은 읽기 하나 — /api/data 는 load 가 읽음)
   const fd = /^\/api\/(chat\/primary|nodechat$|sesslog$)/.test(url.pathname) ? await readFrontDoor(db, me) : null;
   const p = url.pathname, mainName = fd?.name || bot?.name || "Primary", my = myName(me, typeof who === "function" ? (/^\/api\/(chat\/|nodechat$|sesslog$)/.test(p) ? await who().catch(() => null) : null) : who);
   const j = (o: unknown, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" } });
   if (p === "/api/data") {   // 보드처럼 ETag — 안 바뀌면 빈 304(20초 폴링)
-    const b = JSON.stringify(await data(db, me, bot)), t = await etag(b), h = { etag: t, "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" };
+    const b = JSON.stringify(await data(db, me, bot, await loadRead(db, me, ctx))), t = await etag(b), h = { etag: t, "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" };
     return inm === t ? new Response(null, { status: 304, headers: h }) : new Response(b, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
   }
-  if (p === "/api/topics") return j(await topics(db, me, bot));   // 노드 주제 칩 · 찾기 「노드」(member-views.ts — 주인 topics.py 꼴)
+  if (p === "/api/topics") return j(await topics(db, me, bot, await loadRead(db, me, ctx)));   // 노드 주제 칩 · 찾기 「노드」(member-views.ts — 주인 topics.py 꼴)
   if (p === "/api/history") return j(await history(db, me, url.searchParams.get("since")));   // 타임라인 지난 판(주인 history.py 꼴)
   if (p === "/api/inbox") return j({ unread: [], drafts: [], saved: [], saved_ids: [] });
   if (p === "/api/arts") return j({});
@@ -908,6 +920,7 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
 
 export type Hop = { path: string; body: unknown; log?: { win: string; text: string; ch?: string; thread?: string } } | { error: string; status: number } | { ok: R };
 export async function post(db: D1Database, me: string, path: string, b: R): Promise<Hop> {
+  loadForget(me);
   if (path === "/api/sess/send") {
     const pane = String(b.pane || ""), text = String(b.text || "").trim();
     if (!text) return { error: "내용을 적어요", status: 400 };

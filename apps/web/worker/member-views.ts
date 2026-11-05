@@ -127,8 +127,8 @@ export async function history(db: D1Database, me: string, q?: string | null) {
 
 const slug = (t: string) => t.trim().toLowerCase().replace(/[^\p{L}\p{N}_]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 40) || `t${Math.floor(Date.now() / 1000)}`;
 const winTitle = (w: unknown) => String(w || "").replace(/^\d+\s+/, "").trim();
-export async function topics(db: D1Database, me: string, bot: { name?: string } | null) {
-  const L = await load(db, me), D = await data(db, me, bot, L);   // load 한 번(예전엔 data 안 · 밖 두 번)
+export async function topics(db: D1Database, me: string, bot: { name?: string } | null, pre?: Awaited<ReturnType<typeof load>> | null) {   // pre = 읽기 길이 나눠 쓴 load(loadRead)
+  const L = pre || await load(db, me), D = await data(db, me, bot, L);   // load 한 번(예전엔 data 안 · 밖 두 번)
   const out = new Map<string, R>();
   for (const p of D.panes as R[]) {
     if (p.kind !== "lead") continue;
