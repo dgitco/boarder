@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "77860aac672c";
+window.HB_VER = "4cc3f44f0633";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1305,6 +1305,17 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
 .msheet .sl button svg{width:20px;height:20px;color:var(--soft);flex:none}
 .msheet .sl .danger,.msheet .sl .danger svg{color:var(--danger)}
 .msheet .sl .sep{height:1px;background:var(--line);margin:6px 0}
+
+.msheet.glass{background:color-mix(in srgb,var(--surface) 78%,transparent);-webkit-backdrop-filter:blur(30px) saturate(1.7);backdrop-filter:blur(30px) saturate(1.7);border-radius:28px 28px 0 0;box-shadow:0 -10px 50px var(--shadow),inset 0 1px 0 color-mix(in srgb,var(--ink) 8%,transparent);padding:10px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.msheet.glass .grab{width:38px;height:5px;margin:0 auto 16px;background:color-mix(in srgb,var(--ink) 22%,transparent)}
+.msheet.glass .sq button,.msheet.glass .sgrid button{background:color-mix(in srgb,var(--ink) 9%,transparent)}
+.msheet.glass .sl{border-top:0;padding-top:0;gap:12px}
+.msheet.glass .grp{background:color-mix(in srgb,var(--ink) 7%,transparent);border-radius:18px;overflow:hidden}
+.msheet.glass .grp button{border-radius:0;min-height:54px;padding:0 18px;gap:14px;font-size:16.5px}
+.msheet.glass .grp button + button{box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 9%,transparent)}
+.msheet.glass .grp button svg{width:21px;height:21px}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.msheet.glass{background:var(--surface)}}
+#mchatbox .cfeed .msg.selecting,#mchatbox .cfeed .msg.selecting .bd{-webkit-user-select:text!important;user-select:text!important;-webkit-touch-callout:default}
 .rep:hover{background:var(--hover)}
 .rep:hover b{text-decoration:underline}
 .rep span{color:var(--muted)}
@@ -3054,6 +3065,7 @@ const ICON = {
   file: '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><path d="M11.5 2.75H6A1.75 1.75 0 0 0 4.25 4.5v11A1.75 1.75 0 0 0 6 17.25h8a1.75 1.75 0 0 0 1.75-1.75V7L11.5 2.75z M11.5 2.75V7h4.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
   react: '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="10" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 11.5a3 3 0 0 0 5 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="8.5" r=".9" fill="currentColor"/><circle cx="11" cy="8.5" r=".9" fill="currentColor"/><path d="M16.5 2.5v4M14.5 4.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
   reply: '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.75h12a1 1 0 0 1 1 1v7.5a1 1 0 0 1-1 1H9l-4 3v-3H4a1 1 0 0 1-1-1v-7.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+  select: '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3a2 2 0 0 0-2 2"/><path d="M19 3a2 2 0 0 1 2 2"/><path d="M21 19a2 2 0 0 1-2 2"/><path d="M5 21a2 2 0 0 1-2-2"/><path d="M9 3h1"/><path d="M9 21h1"/><path d="M14 3h1"/><path d="M14 21h1"/><path d="M3 9v1"/><path d="M21 9v1"/><path d="M3 14v1"/><path d="M21 14v1"/><path d="M7 8h8"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>',
   copy: '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9.5" height="9.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13 4.5V4a1.5 1.5 0 0 0-1.5-1.5h-7A1.5 1.5 0 0 0 3 4v7a1.5 1.5 0 0 0 1.5 1.5H5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
   pen: '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><path d="M12.8 4.2l3 3L7.5 15.5 4 16l.5-3.5 8.3-8.3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
   trash: '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5.5h12M8 5.5V4h4v1.5M5.5 5.5l.8 10.2a1.5 1.5 0 0 0 1.5 1.3h4.4a1.5 1.5 0 0 0 1.5-1.3l.8-10.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -6538,7 +6550,7 @@ function toolsHTML(m, k, root, inThread) {
     ${inThread ? "" : `<button data-copen="${root}" data-cch="${k}" data-cfocus="1" aria-label="답장하기" title="답장하기">${ICON.reply}</button>`}
     ${LIVE && !m.ledger ? `<button data-msave="${m.ts}" aria-pressed="${isSaved(m.ts)}" aria-label="${isSaved(m.ts) ? "저장 풀기" : "저장"}" title="${isSaved(m.ts) ? "저장 풀기" : "저장"}">${isSaved(m.ts) ? ICON.saved : ICON.save}</button>` : ""}
     <button data-pop="menu" data-pts="${m.ts}" aria-label="더보기" title="더보기" aria-expanded="${open === "menu"}">${ICON.more}</button></span>
-    ${open === "menu" ? `<div class="pop menu" role="menu"><button role="menuitem" data-copy="${m.ts}">글 복사</button><button role="menuitem" data-mlink="${m.ts}" data-mlt="${inThread ? root : m.ts}" data-mlc="${k}">링크 복사</button>${window.HB_MEMBER ? "" : `<button role="menuitem" data-plink="${m.ts}" data-pch="${k}">Slack 에서 열기</button>`}${inThread ? "" : `<button role="menuitem" data-copen="${m.ts}" data-cch="${k}">스레드 열기</button>`}${mineMsg(m) ? `<button role="menuitem" data-medit="${m.ts}">수정</button><button role="menuitem" class="danger" data-mdel="${m.ts}">${CS.pop.confirm ? "한 번 더 누르면 지워져요" : "삭제"}</button>` : ""}</div>` : ""}`;
+    ${open === "menu" ? `<div class="pop menu" role="menu"><button role="menuitem" data-copy="${m.ts}">글 복사</button><button role="menuitem" data-mlink="${m.ts}" data-mlt="${inThread ? root : m.ts}" data-mlc="${k}">링크 복사</button>${inThread ? "" : `<button role="menuitem" data-copen="${m.ts}" data-cch="${k}">스레드 열기</button>`}${mineMsg(m) ? `<button role="menuitem" data-medit="${m.ts}">수정</button><button role="menuitem" class="danger" data-mdel="${m.ts}">${CS.pop.confirm ? "한 번 더 누르면 지워져요" : "삭제"}</button>` : ""}</div>` : ""}`;
 }
 function splitImgs(text) {
   const imgs = [], out = [];
@@ -7855,6 +7867,13 @@ function patchKids(a, b) {
     const n = seen[k0] = (seen[k0] || 0) + 1;
     return k0 + "#" + n;
   };
+  const srcOf = (el) => {
+    if (!el.classList?.contains("selecting")) return el._src || el.outerHTML;
+    el.classList.remove("selecting");
+    const t = el._src || el.outerHTML;
+    el.classList.add("selecting");
+    return t;
+  };
   const so = {}, old = new Map([...a.children].map((c) => [key(c, so), c]));
   const sn = {};
   let ref = a.firstElementChild;
@@ -7863,7 +7882,7 @@ function patchKids(a, b) {
     let o = old.get(k);
     if (o) {
       old.delete(k);
-      if ((o._src || o.outerHTML) !== src && !(o.querySelector?.("#medit, #fedit") && nb.querySelector?.("#medit, #fedit"))) {
+      if (srcOf(o) !== src && !(o.querySelector?.("#medit, #fedit") && nb.querySelector?.("#medit, #fedit"))) {
         const at = o === ref, ta = o.querySelector?.("#cth"), tb = ta && nb.querySelector?.("#cth"), foc = ta && document.activeElement === ta, sel = foc && [ta.selectionStart, ta.selectionEnd];
         o.replaceWith(nb);
         nb._src = src;
@@ -8781,21 +8800,6 @@ document.addEventListener("click", (e) => {
     navigator.clipboard?.writeText(bdText(el)).then(() => toast("글을 복사했어요"), () => toast(ERR));
     return;
   }
-  const pl = t.closest("[data-plink]");
-  if (pl) {
-    stop();
-    CS.pop = null;
-    viewChat(true);
-    const w = window.open("", "_blank");
-    getJSON(`api/permalink/${pl.dataset.pch}/${pl.dataset.plink}`).then((j) => {
-      if (w) w.location = j.url;
-      else location.href = j.url;
-    }, (e2) => {
-      w?.close();
-      toast(ERR);
-    });
-    return;
-  }
   if (t.closest("[data-creply]")) {
     stop();
     CS.pop = null;
@@ -9332,13 +9336,13 @@ function sheetDraw() {
   }
   const mine = (e) => (m.reactions || []).some((r) => r.name === e && r.mine);
   const eb = (e) => `<button data-sr="${e}" class="${mine(e) ? "mine" : ""}" aria-pressed="${mine(e)}" aria-label=":${e}: 반응${mine(e) ? " 취소" : ""}">${EMO[e]}</button>`;
-  const rows = [`<button data-sa="reply">${ICON.reply}<span>회신</span></button>`, ...LIVE && !m.ledger ? [`<button data-sa="save">${isSaved(s.ts) ? ICON.saved : ICON.save}<span>${isSaved(s.ts) ? "저장 풀기" : "저장"}</span></button>`] : [], `<button data-sa="copy">${ICON.copy}<span>글 복사</span></button>`, `<button data-sa="link">${ICON.link}<span>링크 복사</span></button>`];
-  if (mineMsg(m)) rows.push(
-    '<i class="sep"></i>',
-    `<button data-sa="edit">${ICON.pen}<span>수정</span></button>`,
-    `<button data-sa="del" class="danger">${ICON.trash}<span>${s.confirm ? "한 번 더 누르면 지워져요" : "삭제"}</span></button>`
-  );
-  sheetEl.innerHTML = `<div class="sscrim" data-sx></div><div class="msheet" role="dialog" aria-modal="true" aria-label="글 메뉴" data-modal><div class="grab" data-sx aria-hidden="true"></div>
+  const grp = (bs) => bs.length ? `<div class="grp">${bs.join("")}</div>` : "";
+  const rows = [
+    grp([`<button data-sa="reply">${ICON.reply}<span>회신</span></button>`, ...LIVE && !m.ledger ? [`<button data-sa="save">${isSaved(s.ts) ? ICON.saved : ICON.save}<span>${isSaved(s.ts) ? "저장 풀기" : "저장"}</span></button>`] : []]),
+    grp([`<button data-sa="copy">${ICON.copy}<span>글 복사</span></button>`, `<button data-sa="select">${ICON.select}<span>글 선택</span></button>`, `<button data-sa="link">${ICON.link}<span>링크 복사</span></button>`]),
+    ...mineMsg(m) ? [grp([`<button data-sa="edit">${ICON.pen}<span>수정</span></button>`, `<button data-sa="del" class="danger">${ICON.trash}<span>${s.confirm ? "한 번 더 누르면 지워져요" : "삭제"}</span></button>`])] : []
+  ];
+  sheetEl.innerHTML = `<div class="sscrim" data-sx></div><div class="msheet glass" role="dialog" aria-modal="true" aria-label="글 메뉴" data-modal><div class="grab" data-sx aria-hidden="true"></div>
     ${s.pick ? `<div class="sgrid" role="group" aria-label="반응 추가">${PICK.map(eb).join("")}</div>` : `<div class="sq" role="group" aria-label="빠른 반응">${SHEETQ.map(eb).join("")}<button data-sradd aria-label="반응 추가">${ICON.react}</button></div>`}
     <div class="sl">${rows.join("")}</div></div>`;
 }
@@ -9380,6 +9384,24 @@ sheetEl.addEventListener("click", (e) => {
     return navigator.clipboard?.writeText(t).then(() => toast("글을 복사했어요"), () => toast(ERR));
   }
   if (a === "link") return navigator.clipboard?.writeText(msgLink(k, inTh ? root : ts, ts)).then(() => toast("링크를 복사했어요"), () => toast(ERR));
+  if (a === "select") {
+    const g = document.querySelector(`#mchatbox .msg[data-mts="${ts}"]`), bd = g?.querySelector(".bd");
+    if (!bd) return;
+    document.querySelectorAll("#mchatbox .msg.selecting").forEach((x) => x.classList.remove("selecting"));
+    g.classList.add("selecting");
+    const sel = getSelection(), rg = document.createRange();
+    rg.selectNodeContents(bd);
+    sel.removeAllRanges();
+    sel.addRange(rg);
+    const done = () => {
+      if (sel.isCollapsed) {
+        g.classList.remove("selecting");
+        document.removeEventListener("selectionchange", done);
+      }
+    };
+    setTimeout(() => document.addEventListener("selectionchange", done), 300);
+    return;
+  }
   if (a === "edit") return editStart(ts, inTh);
   if (a === "del") return chatDelete(k, ts, inTh ? root : "");
 });
@@ -11535,7 +11557,7 @@ setInterval(() => {
       b.push(`<button data-msave="${esc(x.ts)}" aria-pressed="${on2}" aria-label="${l}" title="${l}">${on2 ? ERASE : ICON.save}</button>`);
     }
     if (menu) b.push(`<button data-pop="imenu" data-pts="${esc(x.ts)}" aria-label="더보기" title="더보기" aria-expanded="${!!open}">${ICON.more}</button>`);
-    return `<span class="tools rtools" role="toolbar" aria-label="줄 도구">${b.join("")}</span>` + (open ? `<div class="pop menu imenu" role="menu"><button role="menuitem" data-iopen="${i}">스레드 열기</button><button role="menuitem" data-mlink="${esc(x.ts)}" data-mlt="${esc(thOf(x))}" data-mlc="${esc(x.chan)}">링크 복사</button><button role="menuitem" data-plink="${esc(x.ts)}" data-pch="${esc(x.chan)}">Slack 에서 열기</button></div>` : "");
+    return `<span class="tools rtools" role="toolbar" aria-label="줄 도구">${b.join("")}</span>` + (open ? `<div class="pop menu imenu" role="menu"><button role="menuitem" data-iopen="${i}">스레드 열기</button><button role="menuitem" data-mlink="${esc(x.ts)}" data-mlt="${esc(thOf(x))}" data-mlc="${esc(x.chan)}">링크 복사</button></div>` : "");
   }
   const KINDS = /* @__PURE__ */ new Set([...Object.values(KIND), "비서"]);
   const chanAgent = (ch) => {
