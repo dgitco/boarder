@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "1d2ed44ebe87";
+window.HB_VER = "30a1d3436a98";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -4820,6 +4820,13 @@ function verSeen(ver) {
   newVer = ver;
   $("#h-new").hidden = false;
 }
+let lastInput = Date.now();
+for (const t of ["pointerdown", "keydown", "wheel", "touchstart", "input"]) document.addEventListener(t, () => {
+  lastInput = Date.now();
+}, { capture: true, passive: true });
+setInterval(() => {
+  if (LIVE && newVer && !document.hidden && Date.now() - lastInput > 12e4 && reloadAuto()) reloadKeep();
+}, 3e4);
 const busyNow = () => sending || !!window.HBV?.memo || !!window.HBV?.call || Object.keys(CS.pend).some((k) => /spin/.test(CS.pend[k])) || Object.values(CS.mark).some((x) => x.st === "spin");
 const pageSc = () => {
   const w = document.querySelector(".wrap");

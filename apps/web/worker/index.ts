@@ -105,6 +105,20 @@ const boardCall = async (env: Env, ch: string, r: { method: string; path: string
 const boardTool = async (env: Env, ch: string, name: string, args: Record<string, unknown>, agent: string) => (hosted.exec && await hosted.exec.on(env.DB)) ? hosted.exec.tool(env, ch, name, args, agent) : bridge(env, ch).tool(name, args, agent);
 const chOf = (c: Context<{ Bindings: Env }>) => /(?:^|;\s*)bx-ch=test(?:;|$)/.test(c.req.header("cookie") || "") ? "test" : "owner";
 const snap = (env: Env) => env.SNAP.get(env.SNAP.idFromName(live.OWNER_SNAP), { locationHint: "apac" });
+let verMemo = { at: 0, v: "" };
+async function pageVer(env: Env) {
+  if (Date.now() - verMemo.at < 60_000) return verMemo.v;
+  verMemo.at = Date.now();
+  verMemo.v = "";
+  try { const pg = await snap(env).get("page"); if (pg && Date.now() - Math.max(pg.at, pg.checked || 0) < 15_000) verMemo.v = String(JSON.parse(pg.body).ver || "").slice(0, 40); } catch { /* 다음 판에 */ }
+  return verMemo.v;
+}
+app.use("/api/data", async (c, next) => {
+  await next();
+  if (c.req.method !== "GET" || c.res.headers.has("X-HB-Ver")) return;
+  const v = await pageVer(c.env); if (!v) return;
+  try { c.res.headers.set("X-HB-Ver", v); } catch { const r = new Response(c.res.body, c.res); r.headers.set("X-HB-Ver", v); c.res = r; }   // 다리에서 받은 답은 머리가 잠겨 있음
+});
 const search = (env: Env) => env.SEARCH.get(env.SEARCH.idFromName("owner@wnam"), { locationHint: "wnam" });
 const pusher = (env: Env) => env.PUSH.get(env.PUSH.idFromName("owner"), { locationHint: "apac" }) as unknown as import("./push-do").PushApi;
 const memberPusher = (env: Env, me: string) => { const n = PU.memberName(me); return n ? env.PUSH.get(env.PUSH.idFromName(n), { locationHint: "apac" }) as unknown as import("./push-do").MemberPushApi : null; };
