@@ -143,7 +143,7 @@
   const FND = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
   function priHead(){
     const D0 = G('D'), bf = window.HB_MEMBER && D0 ? (D0.areas || []).find(a => a.key === 'primary')?.avatar : (typeof AGENT_CUSTOM === 'object' && AGENT_CUSTOM?.primary) || null;
-    const name = window.HB_MEMBER?.bot || String(AN().primary || 'Primary').replace(/\s*리드\s*$/, ''), S = 30;
+    const name = window.HB_MEMBER?.bot || String(AN().primary || 'Primary').replace(/\s*리드\s*$/, ''), S = 34;
     let face = ''; try { face = bf?.photo && window.BXBot?.live ? window.BXBot.live(bf, S) : window.HB_BLOB ? window.HB_BLOB(bf?.seed || 'primary', {size: S, background: false, ...(bf ? {hue: bf.hue} : {})}) : ''; } catch {}
     return {name, face: face || av(name, S)};
   }
@@ -152,6 +152,11 @@
     return `<div class="xcmp"><span class="xav">${av(ME(), 42)}</span><div class="xc"><div class="xmeh"><b class="xme">${E(ME())}</b><button type="button" class="xsel" data-xsel aria-haspopup="listbox">${E(NAMES()[X.sel] || X.sel)} ▾</button></div>`
       + (ib ? ib('xnew', '무엇을 시킬까요?', {flow: true, label: '새 글', voice: {ch: X.sel}}) : '') + `</div></div>`;
   }
+  const keepThumb = el => {
+    const old = new Map();
+    try { for (const i of el.querySelectorAll('img[data-thumb]')) if (i.complete && i.naturalWidth){ const k = i.getAttribute('src'); (old.get(k) || old.set(k, []).get(k)).push(i); } } catch {}
+    return () => { if (!old.size) return; try { for (const n of el.querySelectorAll('img[data-thumb]')){ const o = old.get(n.getAttribute('src'))?.shift(); if (o && o !== n) n.replaceWith(o); } } catch {} };
+  };
   let lastSig = '';
   function drawHome(force){
     fetchWanted();
@@ -163,7 +168,8 @@
     const sl = v.querySelector('.xsel'); if (sl) sl.textContent = `${NAMES()[X.sel] || X.sel} ▾`;
     const st = v.scrollTop;
     const nAsk = all.filter(y => y.ask).length; v.querySelector('.xfl').innerHTML = [['all', '전체'], ['ask', `결정${nAsk ? ` ${nAsk}` : ''}`], ['info', '정보']].map(([k, l]) => `<button type="button" role="tab" aria-selected="${X.fl === k}" data-xfl="${k}">${l}</button>`).join('');
-    v.querySelector('.xfeed').innerHTML = it.map(unit).join('') || `<p class="xempty">${X.fl === 'ask' ? '지금 고를 것이 없어요' : '글이 없어요'}</p>`;
+    { const fd = v.querySelector('.xfeed'), back = keepThumb(fd);
+      fd.innerHTML = it.map(unit).join('') || `<p class="xempty">${X.fl === 'ask' ? '지금 고를 것이 없어요' : '글이 없어요'}</p>`; back(); }
     v.scrollTop = st; watchSeen();
     for (const x of it.slice(0, 30)){ const t = thr(x.m.ts), l = t && t[t.length - 1]; if (x.m.replies && (!t || (x.m.latest && l && +x.m.latest > +l.ts))) loadThr(x.k, x.m.ts); }   // 한 번 읽은 스레드도 새 답이 왔으면 다시(안 그러면 피드 댓글이 옛 글에 멈춤)
   }
@@ -195,7 +201,7 @@
     }
     if (v.dataset.sig === h) return; v.dataset.sig = h;
     const stick = Date.now() < (X.stickTo || 0) || (v.scrollTop > 0 && v.scrollHeight - v.scrollTop - v.clientHeight < 80);   // 맨 아래를 보던 중이면(방금 보낸 답 포함) 새 글이 와도 아래에 붙음
-    v.querySelector('.xfeed').innerHTML = h; if (stick) v.scrollTop = v.scrollHeight;
+    { const fd = v.querySelector('.xfeed'), back = keepThumb(fd); fd.innerHTML = h; back(); } if (stick) v.scrollTop = v.scrollHeight;
   }
   async function openThread(k, ts){ X.th = {k, ts}; show('thread'); drawThread(); await Promise.all([loadThr(k, ts), ...[...(X.kids.get(ts) || [])].map(kid => loadThr(k, kid))]); drawThread(); }
 

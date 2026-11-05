@@ -18,7 +18,7 @@ html.bx-x #toast.err{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 #bxx .xfnd{position:absolute;right:8px;bottom:6px;width:40px;height:40px;display:grid;place-items:center;color:var(--xink);background:none;border:0;padding:0;cursor:pointer}
 @media (min-width:861px){#bxx .xdrb{display:none}}
 #bxx .xpri{display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:calc(100% - 112px);background:none;border:0;padding:0;color:var(--xink);font:inherit;cursor:pointer}
-#bxx .xpa{width:30px;height:30px;flex:none;display:block;border-radius:50%;overflow:hidden}#bxx .xpa > *,#bxx .xpa svg,#bxx .xpa img{width:100%!important;height:100%!important;display:block}
+#bxx .xpa{width:34px;height:34px;flex:none;display:block;border-radius:50%;overflow:hidden}#bxx .xpa > *,#bxx .xpa svg,#bxx .xpa img{width:100%!important;height:100%!important;display:block}
 #bxx .xpri b{font-size:17px!important;font-weight:600;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #bxx .xhd b{font-size:19px;font-weight:700;letter-spacing:-.02em}
 #bxx .xhd.xbk{flex-direction:column;gap:0}#bxx .xhd.xbk b{font-size:16px;font-weight:600;letter-spacing:0;line-height:20px}#bxx .xhd.xbk small{font-size:12.5px;line-height:15px;color:var(--xmut)}
