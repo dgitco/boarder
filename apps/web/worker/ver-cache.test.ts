@@ -50,3 +50,15 @@ test("읽음 표시: 번호 표가 없으면(이주 전 · 지운 뒤) 예전 �
   assert.deepEqual(await read(f.D1), ["%3:1000"]); assert.deepEqual(await read(f.D1), ["%3:1000"]);
   assert.equal(f.reads(), 2, "그때그때 읽음");
 });
+test("읽음 표시 맡김은 사람마다 — 두 회원의 바뀜 번호가 같아도(둘 다 1) 서로의 줄을 안 줌", async () => {
+  const f = d1(); SEEN.forget(f.D1);
+  const B = "other@example.com";
+  const upAs = (who: string, pane: string, at: number) => f.db.prepare("INSERT INTO member_seen(owner, pane, at) VALUES (?,?,?) ON CONFLICT(owner, pane) DO UPDATE SET at = MAX(at, excluded.at)").run(who, pane, at);
+  const readAs = async (who: string) => { const s = SEEN.stmts(f.D1, who); return (await s.done(await f.D1.batch(s.stmts))).map((r: any) => `${r.pane}:${r.at}`).sort(); };
+  upAs(A, "%3", 1000); upAs(B, "%9", 9000);
+  assert.deepEqual(await readAs(A), ["%3:1000"]);
+  assert.deepEqual(await readAs(B), ["%9:9000"], "B 는 제 줄(A 맡김을 꺼내면 안 됨)");
+  assert.deepEqual(await readAs(A), ["%3:1000"], "다시 읽어도 A 는 제 줄");
+  assert.deepEqual(await readAs(B), ["%9:9000"]);
+  assert.equal(f.reads(), 2, "둘 다 두 번째는 제 맡김");
+});
