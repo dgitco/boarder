@@ -79,7 +79,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   window.BXSideW = w => sbwSet(w >= SBW[0] && w <= SBW[1] ? w : 0);   // settings.js 가 계정 값을 받으면 부름
   const dr = mk('nav', 'bx-dr'); dr.setAttribute('aria-label', '메뉴'); dr.setAttribute('role', 'dialog'); dr.setAttribute('aria-modal', 'true');
   const menu = mk('button', 'bx-menu bx-glass', I.menu); menu.type = 'button'; menu.setAttribute('aria-label', '메뉴');
-  const cmb = mk('button', 'bx-chatmenu', I.menu); cmb.type = 'button'; cmb.setAttribute('aria-label', '메뉴');
+  const cmb = mk('button', 'bx-chatmenu', lu('chevron-left', 22)); cmb.type = 'button'; cmb.setAttribute('aria-label', '목록');
   cmb.addEventListener('click', () => openDr());
   const seg = mk('div', 'bx-seg', '');
   seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', '트리 보기');

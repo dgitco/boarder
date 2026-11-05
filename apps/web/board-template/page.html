@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "2c9029cdb69f";
+window.HB_VER = "aa96ba5d8164";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1305,6 +1305,24 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
 .msheet .sl button svg{width:20px;height:20px;color:var(--soft);flex:none}
 .msheet .sl .danger,.msheet .sl .danger svg{color:var(--danger)}
 .msheet .sl .sep{height:1px;background:var(--line);margin:6px 0}
+
+.ah .who .hav{display:none}
+@media (hover:none) and (max-width:640px){
+  :root{--gl-bg:var(--glass,color-mix(in srgb,var(--surface) 62%,transparent));--gl-line:var(--glass-line,color-mix(in srgb,var(--ink) 8%,transparent));--gl-hi:var(--glass-hi,color-mix(in srgb,var(--ink) 6%,transparent))}
+  #ans > .ah,.cth > .chd{border-bottom:0}
+  #ans > .ah .who:not(:has(.ibhr)){flex:0 1 auto;margin:0 auto;min-width:0;max-width:calc(100% - 150px);height:44px;box-sizing:border-box;padding:0 18px 0 8px;display:flex;align-items:center;gap:8px;border-radius:22px;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line);box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi)}
+  #ans > .ah .who:not(:has(.ibhr)) .hav{display:inline-flex;flex:none;width:28px;height:28px}
+  #ans > .ah .who:not(:has(.ibhr)) .hav{align-items:center;justify-content:center;color:var(--soft)}#ans > .ah .who:not(:has(.ibhr)) .hav .bl,#ans > .ah .who:not(:has(.ibhr)) .hav .bl svg,#ans > .ah .who:not(:has(.ibhr)) .hav .bl img{width:28px;height:28px;border-radius:50%}
+  #ans > .ah .who:not(:has(.ibhr)) .n{min-width:0}
+  #ans > .ah .hcall,#ans > .ah .hmore > summary,.cth > .chd [data-cclose]{width:44px;height:44px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line);box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi);color:var(--ink)}
+  .cth > .chd [data-cclose]{margin-left:0!important}
+  html.bx.bx-chat body .bx-chatmenu.bx-chatmenu{width:44px;height:44px;box-sizing:border-box;border-radius:50%;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line);box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi)}   
+  #ans > .ah .hcall svg,#ans > .ah .hmore > summary svg{width:18px;height:18px}
+  #ans > .ah{gap:10px}
+  .cth > .chd .t{display:inline-flex;align-items:center;height:44px;box-sizing:border-box;padding:0 18px;border-radius:22px;background:var(--gl-bg);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--gl-line);box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi)}
+  .cth > .chd{height:60px;gap:10px}
+  :is(html,html.bx) body #ans .mchat2 .ccomp:not(.flow) .box.box{background:var(--gl-bg)!important;-webkit-backdrop-filter:blur(24px) saturate(180%)!important;backdrop-filter:blur(24px) saturate(180%)!important;border:1px solid var(--gl-line)!important;box-shadow:0 4px 18px rgba(0,0,0,.10),inset 0 1px 0 var(--gl-hi)!important;border-radius:28px}
+}
 
 .msheet.glass{background:color-mix(in srgb,var(--surface) 78%,transparent);-webkit-backdrop-filter:blur(30px) saturate(1.7);backdrop-filter:blur(30px) saturate(1.7);border-radius:28px 28px 0 0;box-shadow:0 -10px 50px var(--shadow),inset 0 1px 0 color-mix(in srgb,var(--ink) 8%,transparent);padding:10px 16px calc(16px + env(safe-area-inset-bottom,0px))}
 .msheet.glass .grab{width:38px;height:5px;margin:0 auto 16px;background:color-mix(in srgb,var(--ink) 22%,transparent)}
@@ -4291,7 +4309,9 @@ function renderNow() {
   const keepBox = tab === "chat" && cur.chatFor === p.pane ? $("#mchatbox") : null, keepAct = keepBox?.contains(document.activeElement) ? document.activeElement.id : null;
   const keepScroll = keepBox ? ["cfeed", "cthfeed"].map((id) => [id, keepBox.querySelector("#" + id)?.scrollTop]) : [];
   const body = `<div class="mchat2" id="mchatbox"></div>`;
-  const head = `${cur.back ? `<button class="aback${cur.fromPage ? " npb" : ""}" data-alist aria-label="${cur.fromPage ? "노드로" : TURN + " 목록으로"}">${cur.fromPage ? "‹ 노드" : "‹ 목록"}</button>` : ""}${tabs}<div class="who"><div class="n">${esc(tab === "chat" && isGptCh(cur.chan) ? gptTitle(cur.chan) : tab === "chat" && isSessCh(cur.chan) ? sessName(cur.chan) : tab === "chat" && isNodeCh(cur.chan) ? cur.chan.slice(2) : tab === "chat" && isIbCh(cur.chan) ? cur.chan === "i:unread" && window.HBInbox?.isBoth?.() ? "전체" : { "i:unread": "읽지 않음", "i:saved": "저장", "i:drafts": "초안", "i:turn": "결정 · 할 일" }[cur.chan] : tab === "chat" && isXCh(cur.chan) ? "↔ " + (undefined || "") : tab === "chat" && AGENT_CH.some((a) => a.key === cur.chan) ? AREA_NAME[cur.chan] : nameOf(p))}${isIbCh(cur.chan) || isXCh(cur.chan) || isGptCh(cur.chan) ? "" : waitChip(p)}</div>${tab === "chat" && isIbCh(cur.chan) ? window.HBInbox?.feedHead?.(cur.chan) || "" : ""}</div>`;
+  const ttl = tab === "chat" && isGptCh(cur.chan) ? gptTitle(cur.chan) : tab === "chat" && isSessCh(cur.chan) ? sessName(cur.chan) : tab === "chat" && isNodeCh(cur.chan) ? cur.chan.slice(2) : tab === "chat" && isIbCh(cur.chan) ? cur.chan === "i:unread" && window.HBInbox?.isBoth?.() ? "전체" : { "i:unread": "읽지 않음", "i:saved": "저장", "i:drafts": "초안", "i:turn": "결정 · 할 일" }[cur.chan] : tab === "chat" && isXCh(cur.chan) ? "↔ " + (undefined || "") : tab === "chat" && AGENT_CH.some((a) => a.key === cur.chan) ? AREA_NAME[cur.chan] : nameOf(p);
+  const hav = tab === "chat" && !isIbCh(cur.chan) && !isXCh(cur.chan) && !isGptCh(cur.chan) && !isSessCh(cur.chan) ? `<span class="hav" aria-hidden="true">${isNodeCh(cur.chan) ? nodeIc(p, 28) : blobP(p, 28, ttl)}</span>` : "";
+  const head = `${cur.back ? `<button class="aback${cur.fromPage ? " npb" : ""}" data-alist aria-label="${cur.fromPage ? "노드로" : TURN + " 목록으로"}">${cur.fromPage ? "‹ 노드" : "‹ 목록"}</button>` : ""}${tabs}<div class="who">${hav}<div class="n">${esc(ttl)}${isIbCh(cur.chan) || isXCh(cur.chan) || isGptCh(cur.chan) ? "" : waitChip(p)}</div>${tab === "chat" && isIbCh(cur.chan) ? window.HBInbox?.feedHead?.(cur.chan) || "" : ""}</div>`;
   ans.innerHTML = `<div class="ah">${head}
       ${LIVE && tab === "chat" && !p.parked && !isIbCh(cur.chan) ? `${vcallBtn(p.pane, nameOf(p)).replace('class="vcall"', 'class="vcall hcall"')}${hmenuItems(p) ? `<details class="hmore"><summary aria-label="더 보기" title="더 보기"><svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.75" cy="10" r="1.4" fill="currentColor"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/><circle cx="15.25" cy="10" r="1.4" fill="currentColor"/></svg></summary><div class="hmenu" role="menu">${hmenuItems(p)}</div></details>` : ""}` : ""}<button class="xbtn" id="x" aria-label="닫기">${ICON.x}</button></div>
     ${tab === "chat" && isNodeCh(cur.chan) ? nodeBox(p) + `<div class="nthr" data-nthr hidden></div>` + (setTimeout(nthrFill, 0), "") + todoBox(cur.chan.slice(2)) : ""}
