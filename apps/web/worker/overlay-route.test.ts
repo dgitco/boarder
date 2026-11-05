@@ -218,7 +218,8 @@ test("DELETE: 기본은 내 칸만, ?all=1 이면 래퍼 칸(css · js · 사이
 
 test("화면에 얹힘: 로그인한 그 사람 것만, ?no_overlay=1 이면 안 얹음", async () => {
   const s = await setup();
-  await s.call("/api/device/overlay", { tok: "o", body: { slot: "mine", set: { css: ".x{}", js: "window.__o=1" } } });
+  await s.grant("o", OWNER);   // 주인 기기도 js 는 허락 뒤에만
+  assert.equal((await s.call("/api/device/overlay", { tok: "o", body: { slot: "mine", set: { css: ".x{}", js: "window.__o=1" } } })).status, 200);
   const on = await (await s.web("/", OWNER)).text();
   assert.match(on, /id="hb-overlay-css"/); assert.match(on, /id="hb-overlay-js"/);
   const off = await (await s.web("/?no_overlay=1", OWNER)).text();
@@ -248,7 +249,7 @@ test("허락 뒤: 그 기기의 js 쓰기만 200 — 다른 기기로 안 번짐
   assert.equal((await s.q("SELECT js FROM person_custom WHERE owner = ?", MEMBER))?.js, js);
 });
 
-test("허락 없어도 되는 것: css · js 비우기(boarder view overlay off · ui off) · 지금과 같은 js 다시 보내기 · 읽기 · 주인 기기 · 같은 사이트 회원 화면", async () => {
+test("허락 없어도 되는 것: css · js 비우기(boarder view overlay off · ui off) · 지금과 같은 js 다시 보내기 · 읽기 · 같은 사이트 회원 화면 / 주인 기기는 허락 뒤에만", async () => {
   const s = await setup(), js = "window.__k=1";
   assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "mine", set: { css: "a{}" } } })).status, 200);
   assert.equal((await s.call("/api/device/overlay", { method: "GET", tok: "a" })).status, 200);
@@ -257,7 +258,9 @@ test("허락 없어도 되는 것: css · js 비우기(boarder view overlay off 
   assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "mine", set: { css: null, js: null } } })).status, 200, "끄기는 늘 됨");
   assert.equal((await s.q("SELECT js FROM person_custom WHERE owner = ?", MEMBER))?.js || "", "");
   assert.equal((await s.call("/api/device/overlay", { tok: "a", body: { slot: "wrapper", set: { js: null } } })).status, 200, "래퍼 js 끄기도");
-  assert.equal((await s.call("/api/device/overlay", { tok: "o", body: { slot: "mine", set: { js } } })).status, 200, "주인 기기는 settings allow 가 막혀 있어 예외");
+  assert.equal((await s.call("/api/device/overlay", { tok: "o", body: { slot: "mine", set: { js } } })).status, 403, "주인 기기도 허락 없으면 js 못 올림");
+  await s.grant("o", OWNER);
+  assert.equal((await s.call("/api/device/overlay", { tok: "o", body: { slot: "mine", set: { js } } })).status, 200, "허락 뒤 주인 기기");
   assert.equal((await s.call("/api/device/overlay", { tok: "o", body: { slot: "wrapper", set: { js, side: { pins: [{ id: "abcd1234", title: "x" }] } }, consent: await sha(js) } })).status, 200);
 });
 

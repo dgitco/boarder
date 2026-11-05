@@ -14,6 +14,7 @@ import { orderFromData, rankOf, deptOf } from "./node-order";
 import { frontDoorFromData, frontDoorNode, readFrontDoor } from "./front-door";
 import { addRows, dropRef, RESERVED, type ConvoRow } from "./task-convo";
 import { peerIds, peerKey, peerTail, peerTs, PEER_TS } from "./agents-fold";
+import * as ownerVals from "./owner-vals";
 
 type R = Record<string, any>;
 const FREQ = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];   // owner-read FREQ_DEFAULT
@@ -481,15 +482,18 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   // 보관한 노드 이름(주인 D.archived 와 같은 꼴) — 찾기 · 타임라인 · 「보관」 띠가 씀
   const archived = ((await db.prepare("SELECT COALESCE(pinned_name, name) AS n FROM mnode WHERE owner = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 300").bind(me).all<R>()).results).map(r => String(r.n || "노드"));
   // 약속(member_promise, 0047): 열린 것 = 주인 D.promises 꼴, 기한이 지난 것은 to_check(「지켰는지 확인」) — 표가 아직 없으면(이주 전) 빈 꼴
-  const promPane = (w: string) => { const ew = L.engineNodes.find(x => x.name === w), p = ew ? paneOfId(ew.id) : ""; return p && known.has(p) ? p : toPane(w); };
+  const promPane = (w: string) => { if (L.harness.length && /^%\d{1,7}$/.test(w)) return w;
+    const ew = L.engineNodes.find(x => x.name === w), p = ew ? paneOfId(ew.id) : ""; return p && known.has(p) ? p : toPane(w); };
   const { promises, to_check } = await promiseRows(db, me, promPane, nowMin);
   const seatName = new Map(L.nodes.filter(n => L.seatIds.has(n.id)).map(n => [n.id, L.seatRole.get(n.id)!]));
   const seatId = new Map([...seatName].map(([id, nm]) => [nm, id]));
   const seatOrder = L.roleNames.map((nm, i) => ({ nm, i })).sort((a, b) => rank(seatId.get(a.nm) || "") - rank(seatId.get(b.nm) || "") || a.i - b.i).map(x => x.nm);
   const dept = (id: string) => deptOf(id, { parents: L.parents, seatName, fields: tasks.get(id)?.fields, seats: L.roleNames });
-  return { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
+  const out: R = { generated: kst(now), areas, panes, closed, parked, archived, decisions, to_check, promises, feed,
     park_metrics: { at: Math.floor(now / 60_000) * 60, open: panes.length, due: 0, overdue: 0, overdue_names: [], parked: parked.length, reopen_ok_24h: 0, reopen_fail_24h: 0, overdue_max_24h: 0 },
     cards: [], cardlist, cardsdone, attn: null, relinks: {}, ...nodeAliases(L.nodes), ...(L.taskChannels ? { task_channels: true, task_side: taskSide(L.nodes, tasks, lastAt, nowMin, L.roleNames.length ? dept : undefined) } : {}), ...(L.roleNames.length ? { role_seats: seatOrder } : {}), ...(L.tidy ? { tree_tidy: true } : {}), ...(L.agentsFold ? { agents_fold: true } : {}), ...(L.front ? { front_door: { name: L.front.name, pane: L.front.pane, aliases: L.front.aliases } } : {}), todos, bthreads: [], me_avatar: L.meFace || faceOf(String(me).toLowerCase()) };
+  if (L.harness.length) ownerVals.apply(out, await ownerVals.read(db, me, L.harness.map(w => harnessPane(String(w.id)) || ""), now), now);
+  return out;
 }
 
 // 업무 노드의 옛 채널 별칭 → 그 업무 판(채널 = 태스크를 켠 사람만 생김). 없으면 칸도 안 넣음(꺼진 사람의 판이 예전과 같게)

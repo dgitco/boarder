@@ -92,6 +92,8 @@ async function setup() {
   return { db, D1, env, call, flag, human, sent, done, setSnap: (o: unknown) => { snapBody = JSON.stringify(o); } };
 }
 const events = (sent: any[], name: string) => sent.filter(e => e.event === name);
+const WIN = new Set(["panes", "name", "state", "kind", "group", "parked"]);
+const winAt = (at: string[] | string) => (Array.isArray(at) ? at : String(at).split(",")).filter(k => WIN.has(k));
 
 test("회원 길이 canon 의 하네스 판을 판 · 주차로 읽음: 판 번호 = 진짜 %N, 창 이름 · 상태 · 종류는 스냅숏 꼴", async () => {
   const s = await setup();
@@ -104,7 +106,7 @@ test("회원 길이 canon 의 하네스 판을 판 · 주차로 읽음: 판 번�
     assert.deepEqual((D.parked as any[]).filter(x => x.harness).map(x => [x.pane, x.name]), [["%77", "주차한 일"]]);
     assert.equal((D.panes as any[])[0].pane, "%1", "메인 봇 판은 그대로 맨 앞");
     const d = SH.windowsDiff(SNAP, D);
-    assert.deepEqual(d.at, [], JSON.stringify(d));
+    assert.deepEqual(winAt(d.at), [], JSON.stringify(d));
     assert.equal(d.n_snap, 4); assert.equal(d.n_d1, 4); assert.equal(d.parked_snap, 1); assert.equal(d.parked_d1, 1);
     const t = await (await import("./member-views.ts")).topics(s.D1, OWNER, null, await MB.load(s.D1, OWNER, true));
     assert.deepEqual((t as any).topics.filter((x: any) => x.panes.some((p: string) => /^%\d{1,3}$/.test(p))).map((x: any) => x.panes), [["%40"], ["%77"]], "리드 판 · 주차 창은 노드(topics)로 · 도우미 · 총괄 판은 아님");
@@ -125,7 +127,7 @@ test("회원 동작 그대로: canon 의 하네스 줄이 있어도 회원 판�
 test("windowsDiff: 한쪽에만 있는 판 · 이름 · 상태 · 종류 · 묶음 · 주차를 개수로만", () => {
   const d1 = { panes: [{ pane: "%1", win: "메인", kind: "primary" }, { pane: "%40", win: "5 다른 이름", state: "쉼", kind: "helper", harness: true }, { pane: "%99", win: "9 새 창", state: "쉼", kind: "lead", harness: true }, { pane: "%1234567", win: "들여온 노드", kind: "lead" }], parked: [] };
   const d = SH.windowsDiff(SNAP, d1);
-  assert.deepEqual(d.at, ["panes", "name", "state", "kind", "group", "parked"]);
+  assert.deepEqual(winAt(d.at), ["panes", "name", "state", "kind", "group", "parked"]);
   assert.deepEqual([d.only_snap, d.only_d1, d.name, d.state, d.kind, d.parked_only_snap, d.parked_only_d1, d.d1_other], [3, 1, 1, 1, 1, 1, 0, 1]);
   assert.ok(!JSON.stringify(d).includes("총괄") && !JSON.stringify(d).includes("지어낸"), "창 이름 · 글은 안 실음");
 });
@@ -144,19 +146,20 @@ test("스위치 shadow_unified 끔 = 예전 그대로(스냅숏 답 · 대조 �
     SH._reset();
     const same = await s.call("GET", "/api/data", undefined, h);
     assert.equal(same.text, off.text, "켬: 답은 그대로 스냅숏"); assert.equal(same.etag, off.etag);
-    assert.equal(events(s.sent, "unify_shadow_diff").length, 0, "같으면 diff 없음");
+    assert.ok(events(s.sent, "unify_shadow_diff").every(e => !winAt(e.properties.at).length), "창 목록이 같으면 창 칸 차이 없음");
     // 304 도 그대로
     SH._reset();
     const nm = await s.call("GET", "/api/data", undefined, { ...h, "if-none-match": String(off.etag) });
     assert.equal(nm.status, 304);
     const changed = { ...SNAP, panes: [...SNAP.panes.map(p => p.pane === "%40" ? { ...p, state: "쉼" } : p), { win: "7 스냅숏만", role: "리드", pane: "%55", state: "쉼", kind: "lead", area: "dgit" }] };
     s.setSnap(changed); SH._reset();
+    s.sent.splice(0);
     const r = await s.call("GET", "/api/data", undefined, h);
     assert.equal(r.text, JSON.stringify(changed), "켬: 답은 스냅숏 그대로");
     const ev = events(s.sent, "unify_shadow_diff");
     assert.equal(ev.length, 1, JSON.stringify(s.sent.map(e => e.event)));
     const p = ev[0].properties;
-    assert.equal(p.at, "panes,state"); assert.equal(p.only_snap, 1); assert.equal(p.state, 1); assert.equal(p.n_snap, 5); assert.equal(p.n_d1, 4);
+    assert.deepEqual(winAt(p.at), ["panes", "state"]); assert.equal(p.only_snap, 1); assert.equal(p.state, 1); assert.equal(p.n_snap, 5); assert.equal(p.n_d1, 4);
     assert.ok(!JSON.stringify(ev[0]).includes("스냅숏만") && !JSON.stringify(ev[0]).includes("총괄") && !JSON.stringify(ev[0]).includes(OWNER), "창 이름 · 메일 안 실음");
     // 1분에 한 번: 바로 다시 불러도 대조 안 함
     await s.call("GET", "/api/data", undefined, h);

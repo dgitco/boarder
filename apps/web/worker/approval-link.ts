@@ -69,6 +69,9 @@ export const ACTIONS: Record<string, { help: string; make: (p: Record<string, un
   } },
 };
 
+// 주인 full 기기(스위치 owner_unified_prep 이 켜졌을 때만 이 길의 device 고리가 받음 — index.ts cliDevice): 설정 허락 카드가 아직 주인 화면에 안 떠
+//   회원 행동 + ownercli.enable(이름은 그대로 — 사람이 링크로 「이 기기가 내 보드 설정을 바꿔도 돼요」를 남김, 범위는 full 그대로)
+const ownerFull = (h: Hooks, env: Env, d: Dev) => h.isOwner(env, d.owner) && d.scope === "full";
 const xOf = (h: Hooks, env: Env, email: string): X => ({ key: h.key(env, email), keys: kp(env, h.key(env, email)), mails: h.mails(env, email).map(m => m.toLowerCase()) });
 const page = (body: string, status = 200) => new Response(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>보더 승인</title><style>body{font:16px system-ui,sans-serif;max-width:420px;margin:12vh auto;padding:0 16px;color:#111113}button{font:inherit;padding:10px 18px;border-radius:8px;border:0;background:#111113;color:#fff;cursor:pointer}p.sub{color:#6b6b73}@media(prefers-color-scheme:dark){body{background:#111113;color:#eee}button{background:#eee;color:#111113}}</style></head><body>${body}</body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8", ...NOSTORE, "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" } });
 
@@ -78,7 +81,7 @@ export function mountApprovalLink(host: Hono<any>, h: Hooks) {
   app.get("/api/device/approval-actions", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401, NOSTORE);
     const ownerWatch = h.isOwner(c.env, d.owner) && d.scope === "watch";   // 주인 감시 기기는 권한 올리기 하나만
-    return c.json({ actions: Object.fromEntries(Object.entries(ACTIONS).filter(([, v]) => ownerWatch ? v.ownerWatchOnly : !v.ownerWatchOnly).map(([k, v]) => [k, v.help])) }, 200, NOSTORE);
+    return c.json({ actions: Object.fromEntries(Object.entries(ACTIONS).filter(([, v]) => ownerWatch ? v.ownerWatchOnly : !v.ownerWatchOnly || ownerFull(h, c.env, d)).map(([k, v]) => [k, v.help])) }, 200, NOSTORE);
   });
 
   // 내 연결 목록(읽기만, 허락 불필요) — 에이전트가 승인 신청에 쓸 id 를 알도록. 토큰 · 주소 · 계정은 뺌
@@ -95,7 +98,7 @@ export function mountApprovalLink(host: Hono<any>, h: Hooks) {
     if (!Object.hasOwn(ACTIONS, action)) return c.json({ error: `action: ${Object.keys(ACTIONS).join(" | ")}` }, 400, NOSTORE);
     const params = b.params && typeof b.params === "object" && !Array.isArray(b.params) ? b.params as Record<string, unknown> : {};
     const ownerWatch = h.isOwner(c.env, d.owner) && d.scope === "watch";
-    if (ownerWatch !== !!ACTIONS[action].ownerWatchOnly) return c.json({ error: ownerWatch ? "주인 감시 기기는 ownercli.enable 만 신청할 수 있어요" : "ownercli.enable 은 주인 감시 기기만 신청할 수 있어요" }, 400, NOSTORE);
+    if (ownerWatch !== !!ACTIONS[action].ownerWatchOnly && !(ownerFull(h, c.env, d) && action === "ownercli.enable")) return c.json({ error: ownerWatch ? "주인 감시 기기는 ownercli.enable 만 신청할 수 있어요" : "ownercli.enable 은 주인 감시 기기만 신청할 수 있어요" }, 400, NOSTORE);
     const me = h.key(c.env, d.owner), now = Date.now();
     const made = await ACTIONS[action].make(params, c.env.DB, d.owner.toLowerCase(), d, xOf(h, c.env, d.owner));
     if (typeof made === "string") return c.json({ error: made }, 400, NOSTORE);
