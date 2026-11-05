@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { register } from "node:module";
 register("./test-hooks.mjs", import.meta.url);
-const { data, get, load, paneOfId, tsOf } = await import("./member-board.ts");
+const { data, get, load, paneOfId, tsOf, foldScreen } = await import("./member-board.ts");
 const { inbox } = await import("./member-inbox.ts");
 const { peerIds, PEER_TS } = await import("./agents-fold.ts");
 const { prefsPatch, savePrefs, readPrefs } = await import("./node-prefs.ts");
@@ -177,4 +177,14 @@ test("끈 사람은 load 가 늘지 않음: 카드 스레드 0 · 접은 글 꼴
   db.prepare("INSERT INTO board_log(owner,win,kind,text,thread,at) VALUES(?,?,?,?,?,?)").run(OWNER, "나", "chat", "합성 글", "primary", T);
   c.reset(); assert.equal((await get(c.C, OWNER, BOT, new URL("/api/chat/primary/1793770000.961234", "https://demo.test"), async () => null))!.status, 200);
   assert.equal(c.batches(), 0, "설정 없는 사람 Primary 접은 글 꼴 ts load 없음");
+});
+
+test("접기 대상: task_channels 켠 사람의 부서장 자리 노드(tk_<부서>)는 접고, 업무 노드(tk_<번호>)는 안 접음", () => {
+  const node = (id: string) => ({ id } as never);
+  const L = { agentsFold: true, taskChannels: true, seatIds: new Set(["tk_tech"]), agentScreen: () => true };
+  assert.equal(foldScreen(L as never, node("tk_tech")), true);
+  assert.equal(foldScreen(L as never, node("tk_1976")), false);
+  assert.equal(foldScreen({ ...L, taskChannels: false } as never, node("tk_1976")), true);
+  assert.equal(foldScreen({ ...L, agentsFold: false } as never, node("tk_tech")), false);
+  assert.equal(foldScreen({ ...L, agentScreen: () => false } as never, node("tk_tech")), false);
 });

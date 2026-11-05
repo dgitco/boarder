@@ -1,3 +1,4 @@
+import { RAW } from "./agent-token-cache";
 export type Meter = { d1r: number; d1rn: number; d1w: number; d1wn: number; dob: number; dobn: number; r2: number; r2n: number };
 export const newMeter = (): Meter => ({ d1r: 0, d1rn: 0, d1w: 0, d1wn: 0, dob: 0, dobn: 0, r2: 0, r2n: 0 });
 
@@ -21,6 +22,7 @@ function meterStmt(st: D1PreparedStatement, read: boolean, m: Meter): D1Prepared
 function meterDB(db: D1Database, m: Meter): D1Database {
   return new Proxy(db, {
     get(t, k) {
+      if (k === RAW) return (t as unknown as Record<symbol, object>)[RAW] || t;   // 늘려 읽기 캐시가 요청마다 바뀌는 감싸개 대신 원래 DB 로 나눔
       if (k === "prepare") return (sql: string) => meterStmt(t.prepare(sql), isRead(sql), m);
       if (k === "batch") return (sts: D1PreparedStatement[]) => {
         const s0 = Date.now(), read = sts.every(s => (s as any).__bxRead);

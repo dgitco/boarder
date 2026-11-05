@@ -1,4 +1,5 @@
 
+import { tokenRows } from "./agent-token-cache";
 import { frontDoorFromData, frontDoorId } from "./front-door";
 
 type R = Record<string, any>;
@@ -33,17 +34,18 @@ export async function query(db: D1Database, me: string, q0: string, o: { sem?: b
   const like = terms.map(t => "%" + t.replace(/[\\%_]/g, m => "\\" + m) + "%");
   const all = (col: string) => terms.map(() => `lower(${col}) LIKE ? ESCAPE '\\'`).join(" AND ");
   const CARD = "question || ' ' || COALESCE(body, '') || ' ' || COALESCE(answer, '')", NODE = "COALESCE(pinned_name, '') || ' ' || name || ' ' || why";
-  const [lg, cd, td, nd, tk, it, mi, ns, fs] = await db.batch([
+  const tkP = tokenRows(db, me);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
+  const [lg, cd, td, nd, it, mi, ns, fs] = await db.batch([
     db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND ${all("text")} ${NC_LOG} ORDER BY at DESC LIMIT 200`).bind(me, ...like),
     db.prepare(`SELECT rowid AS n, id, win, question, body, answer, state, at, answered_at FROM board_card WHERE owner = ? AND ${all(CARD)} ${NC_CARD} ORDER BY at DESC LIMIT 60`).bind(me, ...like),
     db.prepare(`SELECT key, title, state, state_at, seen_at FROM imp_item WHERE owner = ? AND kind = 'todo' AND gone_at IS NULL AND ${all("title")} ORDER BY seen_at DESC LIMIT 30`).bind(me, ...like),
     db.prepare(`SELECT id, name, pinned_name, state, why, updated_at, archived_at FROM mnode WHERE owner = ? AND ${all(NODE)} ORDER BY updated_at DESC LIMIT 30`).bind(me, ...like),
-    db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
     db.prepare("SELECT key, kind, win FROM imp_item WHERE owner = ?").bind(me),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT id, name, pinned_name, state, why, updated_at FROM mnode WHERE owner = ?").bind(me),
     db.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),   // 앞단(설정 front_door) — 없으면 아무 일도 안 함
   ]);
+  const tk = { results: await tkP };
   const fd = frontDoorFromData((fs.results[0] as R | undefined)?.data);
   const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(r.win, r.pane);
   const itemOfWin = new Map<string, string>(); for (const i of it.results as R[]) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(i.win, i.key);

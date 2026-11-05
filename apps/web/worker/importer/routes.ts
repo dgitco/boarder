@@ -1,3 +1,4 @@
+import { tokenRows } from "../agent-token-cache";
 import { taskIssueFor } from "./task-repo";
 import { REVOKED, withRv } from "./revoked";
 import { cleanPins, readPins, savePins } from "../side-order";
@@ -79,19 +80,20 @@ const json = <T>(v: string | null | undefined, d: T): T => { try { return v ? JS
 
 export async function regroup(env: Env, owner: string) {
   const t = now();
-  const [it, lg, cd, mp, nd, wn, ns, rl, em, tk, rvd] = await env.DB.batch([
+  const wnP = tokenRows(env.DB, owner);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
+  const [it, lg, cd, mp, nd, ns, rl, em, tk, rvd] = await env.DB.batch([
     env.DB.prepare("SELECT key, kind, engine, title, cwd, repo, branch, refs, state, state_at, win, session, seen_at, gone_at, device_id, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ?").bind(owner),
     env.DB.prepare(`SELECT win, kind, text, at FROM board_log WHERE owner = ? AND (thread IS NULL OR (thread != 'primary' AND thread NOT LIKE 'p:%')) AND kind != 'me' ${notChat("board_log")} ORDER BY at DESC LIMIT 400`).bind(owner),
     env.DB.prepare(`SELECT id, win, state, question, at FROM board_card WHERE owner = ? ${notChat("board_card")} ORDER BY at DESC LIMIT 200`).bind(owner),
     env.DB.prepare("SELECT item, node, how FROM mnode_item WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT id, name, pinned_name, area, state, why, counts, created_at, updated_at, archived_at FROM mnode WHERE owner = ? AND id NOT LIKE 'sl\\_%' ESCAPE '\\' AND id NOT LIKE 'tk\\_%' ESCAPE '\\'").bind(owner),
-    env.DB.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(owner),
     env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(owner),
     env.DB.prepare("SELECT name FROM role WHERE owner = ? UNION SELECT name FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed','gone')").bind(owner, owner),
     env.DB.prepare("SELECT 1 FROM engine_window w JOIN device d ON d.id = w.device_id WHERE w.owner = ? AND w.kind = 'main' AND w.state NOT IN ('closed','failed','gone') AND d.revoked_at IS NULL LIMIT 1").bind(owner),   // 보더 메인 봇이 떠 있나(있으면 들여온 primary 는 노드)
     env.DB.prepare("SELECT id, name, pinned_name, task, counts, archived_at FROM mnode WHERE owner = ? AND id LIKE 'tk\\_%' ESCAPE '\\'").bind(owner),
     REVOKED(env.DB, owner),
   ]);
+  const wn = { results: await wnP };
   const items = withRv(it.results as (Item & { refs: string })[], rvd.results as { id: string }[]).map(r => ({ ...r, refs: json<string[]>(r.refs as unknown as string, []) }));
   const winNames = Object.fromEntries((wn.results as { pane: string; win: string }[]).map(r => [r.pane, r.win]));
   const keyOf = paneOf(wn.results as { pane: string; win: string }[]);

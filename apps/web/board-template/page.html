@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "eb72d035fe1e";
+window.HB_VER = "57601cf0372f";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -6307,7 +6307,9 @@ function chWin(k, all) {
     if (i >= 0) n = Math.max(n, all.length - i + 10);
   }
   CW[k] = n;
-  return all.length > n ? all.slice(-n) : all;
+  if (all.length <= n) return all;
+  const w = all.slice(-n), fold = typeof D === "object" && D?.agents_fold ? all.find((m) => m.fold?.agents) : null;
+  return fold && !w.includes(fold) ? [fold, ...w] : w;
 }
 async function loadOlder(k) {
   const c0 = CS.ch[k];

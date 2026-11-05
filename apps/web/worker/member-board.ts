@@ -1,4 +1,5 @@
 
+import { tokenRows } from "./agent-token-cache";
 import { regroup } from "./importer/routes";
 import { parseConnectKind, titleOf, readsOf, oauthApi, CONNECT_TTL } from "./connectors/connect-card";
 import { boardHead, withHead } from "./board-head";
@@ -150,11 +151,11 @@ const TOPICS_TTL = 15_000, TOPICS_MAX = 100, topicsShare = new Map<string, { at:
 export function loadForget(me: string) { const k = me.toLowerCase(); readShare.delete(k); for (const t of [...topicsShare.keys()]) if (t.startsWith(k + "\n")) topicsShare.delete(t); }
 export async function load(db: D1Database, me: string) {
   await closeStaleConnect(db, me);
-  const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb, cx, rvd] = await db.batch([
+  const tkP = tokenRows(db, me);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
+  const [nd, mi, it, lg, cd, dr, ew, ns, pw, mb, cx, rvd] = await db.batch([
     db.prepare(`SELECT id, name, pinned_name, area, state, why, counts, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ? OR COALESCE(NULLIF(pinned_name, ''), name) IN (${FRONT_NAMES})) ORDER BY updated_at DESC`).bind(me, Date.now() - 24 * 3600_000, me),   // 앞단(설정 front_door)으로 고른 노드는 보관돼도 읽음 — 설정 없으면 빈 목록
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at IS NULL UNION ALL SELECT key, kind, engine, title, cwd, branch, refs, state, state_at, seen_at, win, session, device_id, gone_at, CASE WHEN kind = 'window' THEN handle END handle FROM imp_item WHERE owner = ? AND gone_at > ?").bind(me, me, Date.now() - 24 * 3600_000),
-    db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
     db.prepare(`SELECT id, win, kind, text, thread, at, wid FROM board_log WHERE owner = ? ${NOT_CHAT} ORDER BY at DESC LIMIT ${LOG_MAX}`).bind(me),   // 「세션」 칸 대화 줄은 그 대화 화면에만(chatLog)
     db.prepare("SELECT rowid AS n, id, win, kind, snooze_until, question, choices, recommend, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR (state = 'answered' AND answered_at > ?)) ORDER BY at DESC LIMIT 100").bind(me, Date.now() - 86_400_000),
     db.prepare("SELECT rowid AS n, id, name, brief, at FROM (SELECT rowid, id, name, brief, created_at AS at FROM role_draft WHERE owner = ? AND state = 'draft' ORDER BY created_at DESC LIMIT 30)").bind(me),
@@ -165,6 +166,7 @@ export async function load(db: D1Database, me: string) {
     db.prepare("SELECT id, win, kind, question, at, answered_at FROM board_card WHERE owner = ? AND state = 'closed' ORDER BY at DESC LIMIT 50").bind(me),
     REVOKED(db, me),
   ]);
+  const tk = { results: await tkP };
   const items = new Map(withRv(it.results as R[], rvd.results as { id: string }[]).map(r => [String(r.key), r]));
   const keyOfWin = new Map<string, string>(), keysOfWin = new Map<string, string[]>();
   for (const r of tk.results as R[]) { keyOfWin.set(r.win, r.pane); (keysOfWin.get(r.win) || keysOfWin.set(r.win, []).get(r.win)!).unshift(r.pane); }
@@ -249,7 +251,7 @@ export async function paneLogs(db: D1Database, me: string) {
   const agent = (r: R) => r.kind !== "me" && r.win !== ME && !OWN.test(r.win);
   const chans = [
     // 에이전트끼리 접기(켠 사람 · 에이전트 화면만): 접힌 칸 줄은 읽지 않음에 안 셈
-    ...L.nodes.map(n => { const peer = L.agentsFold && L.agentScreen(n) && !(L.taskChannels && n.id.startsWith("tk_")) ? peersOf(L, nodeRows(L, n)) : null;
+    ...L.nodes.map(n => { const peer = foldScreen(L, n) ? peersOf(L, nodeRows(L, n)) : null;
       return { pane: n.pane, name: n.name, rows: L.logs.filter(r => !inPrim(r) && agent(r) && L.nodeOfWin(r.win) === n && !peer?.has(String(r.id))) }; }),
     ...L.engineNodes.map(w => { const peer = L.agentsFold ? peersOf(L, L.logs.filter(r => !inPrim(r) && r.win === w.name)) : null;
       return { pane: paneOfId(w.id), name: String(w.name), rows: L.logs.filter(r => !inPrim(r) && agent(r) && r.win === w.name && !peer?.has(String(r.id))) }; }),
@@ -716,7 +718,9 @@ async function primaryPeerThread(db: D1Database, me: string, L: Loaded, ts: stri
 function screenRows(L: Loaded, n: Node | null, ew: R | undefined) {
   return L.logs.filter(r => !inPrim(r) && !CARD_TS.test(String(r.thread || "")) && !OWN.test(String(r.win)) && (n ? inNode(L, n, r) : r.win === ew!.name)).slice(0, 300);
 }
-const screenOn = (L: Loaded, n: Node | null, ew: R | undefined) => L.agentsFold && (n ? L.agentScreen(n) && !(L.taskChannels && n.id.startsWith("tk_")) : !!ew);
+export const foldScreen = (L: Pick<Loaded, "agentsFold" | "agentScreen" | "taskChannels" | "seatIds">, n: Node) =>
+  !!L.agentsFold && L.agentScreen(n) && !(L.taskChannels && n.id.startsWith("tk_") && !L.seatIds.has(n.id));
+const screenOn = (L: Loaded, n: Node | null, ew: R | undefined) => L.agentsFold && (n ? foldScreen(L, n) : !!ew);
 async function nodePeerThread(db: D1Database, me: string, L: Loaded, raw: string, ts: string, my: string, mainName: string, nodeId = "") {
   if (!L.agentsFold || !PEER_TS.test(ts)) return null;
   const t = raw.replace(/^\d+\s+/, "").trim(), n = L.resolveNode(raw, nodeId) || L.resolveNode(t) || null, ew = n ? undefined : L.engineNodes.find(x => x.name === raw || x.name === t);

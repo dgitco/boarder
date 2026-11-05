@@ -1,3 +1,4 @@
+import { tokenRows } from "./agent-token-cache";
 import { load, data, paneOfId, ME, OWN, inPrim, tsOf, cut, json, CARD_TS, myName, NOT_CHAT } from "./member-board";
 
 type R = Record<string, any>;
@@ -51,16 +52,17 @@ export async function history(db: D1Database, me: string, q?: string | null) {
   const now = Date.now() / 1000, want = q && /^\d{9,11}$/.test(q) ? Number(q) : now - 72 * 3600;
   const from = Math.min(want, now - 72 * 3600) - 24 * 3600;   // 기간 앞 하루도 읽어 그때 상태가 이어지게
   const L = await load(db, me), D = await data(db, me, null, L);   // load 한 번
-  const [nd, mi, it, tk, lg, cd, ew, first] = await db.batch([
+  const tkP = tokenRows(db, me);   // 열쇠 표는 늘려 읽기(agent-token-cache.ts)
+  const [nd, mi, it, lg, cd, ew, first] = await db.batch([
     db.prepare("SELECT id, name, pinned_name, area, state, updated_at, archived_at FROM mnode WHERE owner = ? AND (archived_at IS NULL OR archived_at > ?)").bind(me, from * 1000),
     db.prepare("SELECT item, node FROM mnode_item WHERE owner = ?").bind(me),
     db.prepare("SELECT key, kind, win FROM imp_item WHERE owner = ?").bind(me),
-    db.prepare("SELECT pane, win FROM agent_token WHERE owner = ? ORDER BY created_at").bind(me),
     db.prepare(`SELECT id, win, kind, thread, at FROM board_log WHERE owner = ? AND at >= ? ${NOT_CHAT} ORDER BY at DESC, id DESC LIMIT 5000`).bind(me, from * 1000),
     db.prepare("SELECT id, win, kind, state, answered_at, at FROM board_card WHERE owner = ? AND (at >= ? OR state = 'open') ORDER BY at DESC LIMIT 500").bind(me, from * 1000),
     db.prepare("SELECT id, kind, name, state, state_at, created_at, closed_at FROM engine_window WHERE owner = ? AND kind = 'role' AND (closed_at IS NULL OR closed_at > ?)").bind(me, from * 1000),
     db.prepare("SELECT MIN(at) at FROM board_log WHERE owner = ?").bind(me),
   ]);
+  const tk = { results: await tkP };
   const keyOfWin = new Map<string, string>(); for (const r of tk.results as R[]) keyOfWin.set(String(r.win), String(r.pane));
   const itemOfWin = new Map<string, string>(); for (const i of it.results as R[]) if (i.win && (i.kind === "window" || !itemOfWin.has(i.win))) itemOfWin.set(String(i.win), String(i.key));
   const nodeOfItem = new Map((mi.results as R[]).map(r => [String(r.item), String(r.node)]));
