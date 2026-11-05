@@ -532,7 +532,7 @@ export async function myPrimaryTs(db: D1Database, me: string, text: string, thre
 }
 async function primaryReplies(db: D1Database, me: string, roots: string[]) {
   const by = new Map<string, R[]>(); if (!roots.length) return by;
-  const rs = (await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at, id LIMIT 2000").bind(me, JSON.stringify(roots.map(primaryThread))).all<R>()).results;
+  const rs = (await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at + 0, id LIMIT 2000").bind(me, JSON.stringify(roots.map(primaryThread))).all<R>()).results;
   for (const r of rs) { const k = String(r.thread).slice(2); (by.get(k) || by.set(k, []).get(k)!).push(r); }
   return by;
 }

@@ -147,7 +147,7 @@ export async function topics(db: D1Database, me: string, bot: { name?: string } 
   const mainName = bot?.name || "Primary", my = myName(me);
   const threads: R[] = [];
   const cards = (await db.prepare("SELECT rowid AS n, id, win, kind, question, choices, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR at > ?) ORDER BY at DESC LIMIT 200").bind(me, Date.now() - 7 * 86_400_000).all<R>()).results;
-  const said = cards.length ? (await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at, id LIMIT 2000").bind(me, JSON.stringify(cards.map(c => String(c.id)))).all<R>()).results : [];
+  const said = cards.length ? (await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at + 0, id LIMIT 2000").bind(me, JSON.stringify(cards.map(c => String(c.id)))).all<R>()).results : [];
   for (const c of cards) {
     if (!CARD_TS.test(String(c.id))) continue;
     const n = L.nodeOfWin(String(c.win)), ew = L.engineNodes.find(w => w.name === c.win), owner = n?.pane || (ew ? paneOfId(ew.id) : null);
@@ -162,7 +162,7 @@ export async function topics(db: D1Database, me: string, bot: { name?: string } 
   // Primary 채팅의 뿌리 글(3일 안 · 최근 100): 내 글은 그 스레드 답(p:<ts>)까지 — 봇 · 보더 글은 답이 없음
   const roots = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary' AND at > ? ORDER BY at DESC, id DESC LIMIT 100").bind(me, Date.now() - 3 * 86_400_000).all<R>()).results;
   const mineTs = roots.filter(r => r.win === ME).map(r => "p:" + tsOf(Number(r.at), Number(r.id)));
-  const reps = mineTs.length ? (await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at, id LIMIT 2000").bind(me, JSON.stringify(mineTs)).all<R>()).results : [];
+  const reps = mineTs.length ? (await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at + 0, id LIMIT 2000").bind(me, JSON.stringify(mineTs)).all<R>()).results : [];
   for (const r of roots) {
     if (OWN.test(String(r.win))) continue;
     const ts = tsOf(Number(r.at), Number(r.id)), mine = r.win === ME, rs = reps.filter(x => x.thread === "p:" + ts), l = rs.at(-1) || r;

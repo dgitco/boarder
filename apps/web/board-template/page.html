@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "ec683b3a2740";
+window.HB_VER = "eb72d035fe1e";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -7705,7 +7705,7 @@ async function gptSend(ta, text) {
 }
 function chanHTML() {
   if (isGptCh(CS.at)) return gptHTML(CS.at);
-  if (isIbCh(CS.at) && window.HBInbox?.feedHTML) return window.HBInbox.feedHTML(CS.at);
+  if (isIbCh(CS.at)) return window.HBInbox?.feedHTML ? window.HBInbox.feedHTML(CS.at) : `<div class="cmain">${LOADING}</div>`;
   const k = CS.at, c = CS.ch[k] || { messages: [], loading: true };
   const ms = chWin(k, c.messages), hid = c.messages.length - ms.length;
   const feed = c.messages.length ? (CS.oldBusy[k] || hid ? '<div class="oldspin" role="status" aria-label="옛 글 불러오는 중"><i class="g g-spin"></i></div>' : "") + ms.map((m) => msgHTML(m, k, false)).join("") : c.loading ? LOADING : c.err ? readErr("ch:" + k) : emptyHTML({ ic: "chat", t: "아직 글이 없어요", p: "아래 칸에 첫 글을 쓰면 여기서 이어져요.", sk: "msg" });

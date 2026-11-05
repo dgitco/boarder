@@ -111,23 +111,33 @@ export async function upload(c: C, me: string) {
 /** GET /api/file/:id — 올린 사람만(남의 것은 없는 것과 같게 404). ?dl = 내려받기 */
 export async function fileGet(c: C, me: string, id: string, dl: boolean) {
   if (!FID.test(id)) return c.json({ error: "없는 파일" }, 404);
-  const o = await c.env.RESULTS.get(`mfiles/${id}`);
-  if (!o || o.customMetadata?.owner !== me) return c.json({ error: "없는 파일" }, 404);
-  const r = await headers(o, dl); return new Response(r.body, { headers: r.h });
+  return cachedServe(c, id, dl, owner => owner === me, () => c.json({ error: "없는 파일" }, 404));
 }
 export async function signedGet(c: C, id: string) {
   if (!(await linkOk(c.env.BETTER_AUTH_SECRET, id, c.req.query("e") || "", c.req.query("t") || ""))) return c.text("link expired or invalid\n", 403);
-  const key = new Request(new URL(`/f/${id}`, c.req.url).toString()), cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+  return cachedServe(c, id, false, () => true, () => c.text("not found\n", 404));
+}
+async function cachedServe(c: C, id: string, dl: boolean, allow: (owner: string) => boolean, nf: () => Response) {
+  const key = new Request(new URL(`/f/${id}${dl ? "?dl" : ""}`, c.req.url).toString()), cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
   const hit = await cache?.match(key).catch(() => undefined);
-  if (hit) { const h = new Headers(hit.headers); h.set("cache-control", "private, max-age=300"); h.set("x-bx-cache", "hit"); return new Response(hit.body, { status: hit.status, headers: h }); }
-  const o = await c.env.RESULTS.get(`mfiles/${id}`); if (!o) return c.text("not found\n", 404);
-  const r = await headers(o, false), res = new Response(r.body, { headers: r.h });
+  const own = hit?.headers.get("x-bx-owner");
+  if (hit && own !== null && own !== undefined) {
+    let o0 = ""; try { o0 = decodeURIComponent(own); } catch { return nf(); }
+    if (!allow(o0)) return nf();
+    const h = new Headers(hit.headers); h.delete("x-bx-owner"); h.set("cache-control", "private, max-age=300"); h.set("x-bx-cache", "hit");
+    return new Response(hit.body, { status: hit.status, headers: h });
+  }
+  const o = await c.env.RESULTS.get(`mfiles/${id}`);
+  if (!o) return nf();
+  const owner = String(o.customMetadata?.owner || "");
+  if (!allow(owner)) return nf();
+  const r = await headers(o, dl), res = new Response(r.body, { headers: r.h });
   let ctx: { waitUntil(p: Promise<unknown>): void } | undefined; try { ctx = (c as unknown as { executionCtx: typeof ctx }).executionCtx; } catch { /* ctx 없는 시험 */ }
   if (cache && ctx && c.req.method === "GET" && o.size <= 8 * 1024 * 1024) {
-    const ch = new Headers(r.h); ch.set("cache-control", "public, max-age=3600");
-    const [a, b] = res.body!.tee();
-    ctx.waitUntil(cache.put(key, new Response(b, { headers: ch })).catch(() => {}));
-    return new Response(a, { headers: r.h });
+    const ch = new Headers(r.h); ch.set("cache-control", "public, max-age=3600"); ch.set("x-bx-owner", encodeURIComponent(owner));
+    const [x, y] = res.body!.tee();
+    ctx.waitUntil(cache.put(key, new Response(y, { headers: ch })).catch(() => {}));
+    return new Response(x, { headers: r.h });
   }
   return res;
 }
