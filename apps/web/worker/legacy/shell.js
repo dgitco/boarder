@@ -82,11 +82,13 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   sbwSet((() => { try { const w = +localStorage.getItem('hb-sbw'); return isW(w) ? w : 0; } catch { return 0; } })());
   const rz = mk('div', 'bx-sbrz'); rz.setAttribute('role', 'separator'); rz.setAttribute('aria-orientation', 'vertical'); rz.setAttribute('aria-label', '사이드바 폭 — 끌어서 목록 · 아이콘 막대 · 숨김, 두 번 누르면 기본'); rz.title = '끌어서 사이드바 폭 바꾸기(좁히면 아이콘 막대 · 더 좁히면 숨김) · 두 번 누르면 기본'; rz.tabIndex = 0;
   const sbwNow = () => parseInt(getComputedStyle(R).getPropertyValue('--bx-sbw')) || 264, clampW = w => Math.round(Math.min(SBW[1], Math.max(SBW[0], w)));
-  const stepOf = x => x < TO_HIDE ? 0 : x < TO_A ? RAIL : clampW(x);   // 0 = 숨김
+  const feedOn = () => R.classList.contains('bx-x') && !R.classList.contains('xnodes');
+  const stepOf = x => !feedOn() ? clampW(x) : x < TO_HIDE ? 0 : x < TO_A ? RAIL : clampW(x);   // 0 = 숨김
   const keepW = w => sbwKeep(w === 264 ? 0 : w);
   rz.addEventListener('pointerdown', e => {
     if (e.button !== 0) return; e.preventDefault(); rz.setPointerCapture(e.pointerId); R.classList.add('bx-sbdrag');
-    const w0 = sbwNow();
+    const w0 = sbwNow(), fd = feedOn();
+    if (!fd && w0 === RAIL){ sbwSet(0); }   // 피드 밖은 막대가 없음 — 보이는 폭(기본)에서 끌기 시작
     // 숨김은 끄는 동안 미리 보기만(bx-colpv — 손잡이는 남아 계속 끌 수 있음), 놓을 때 접음
     const mv = ev => { const s = stepOf(ev.clientX); R.classList.toggle('bx-colpv', !s); if (s) sbwSet(s); tipOff(); };
     const up = () => { rz.removeEventListener('pointermove', mv); R.classList.remove('bx-sbdrag');
@@ -96,7 +98,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   });
   rz.addEventListener('dblclick', () => { sbwSet(0); sbwKeep(0); });
   rz.addEventListener('keydown', e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; e.preventDefault();
-    const w = sbwNow(), n = e.key === 'ArrowRight' ? (w === RAIL ? SBW[0] : clampW(w + 16)) : (w === RAIL ? 0 : w <= SBW[0] ? RAIL : clampW(w - 16));
+    const w = sbwNow(), n = !feedOn() ? clampW(w + (e.key === 'ArrowRight' ? 16 : -16)) : e.key === 'ArrowRight' ? (w === RAIL ? SBW[0] : clampW(w + 16)) : (w === RAIL ? 0 : w <= SBW[0] ? RAIL : clampW(w - 16));
     if (!n) return setCol(true); sbwSet(n); keepW(n); });
   window.BXSideW = w => sbwSet(isW(w) ? w : 0);   // settings.js 가 계정 값을 받으면 부름
   // 막대(안 B)에서 마우스를 올리면 이름(시안 「마우스 올리면 이름」) — 사이드바는 굴림 칸이라 밖(body)에 하나 띄움
@@ -118,7 +120,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   ibox.after(agBox);
   document.body.append(sb, rz, scrim, dr, cmb, tip);
   sb.addEventListener('pointerover', e => {
-    if (!R.classList.contains('bx-rail') || R.classList.contains('bx-sbdrag')) return tipOff();
+    if (!R.classList.contains('bx-rail') || !feedOn() || R.classList.contains('bx-sbdrag')) return tipOff();
     const b = e.target.closest?.('.bx-it, .lgb, .bx-me, .bx-tools button'); if (!b || !sb.contains(b)) return tipOff();
     const t = (b.querySelector(':scope > span')?.textContent || b.getAttribute('aria-label') || b.title || '').trim(), n = b.querySelector(':scope > .n')?.textContent || '';
     if (!t) return tipOff();
@@ -234,7 +236,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       + it('agents', IA.bot, '에이전트', '', agOn) + fl('node', aTop === 'node' ? IA.nodeOn : IA.node, '노드') + fl('canvas', I.canvas, '캔버스')
       + (window.BXStatus?.side?.(it, aTop) || '') + pins + '</div>';
     if (S.ag) agDraw({a: DG !== null ? `<div class="bx-dgs">${DG}</div>` : ch, c: (DG !== null ? '' : TS ? tks : nd) + ss, x: xc});
-    const sbH = `<div class="top">${logo}<span class="tr"><button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + sbA + foot;
+    const sbH = !feedOn() ? `<div class="top">${logo}<span class="tr">${fb}<button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + body + foot
+      : `<div class="top">${logo}<span class="tr"><button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + sbA + foot;
     const drH = `<div class="top">${logo}<span class="tr">${fb}</span></div>` + body + foot;
     if (lists.html !== sbH + drH){ lists.html = sbH + drH; const k1 = window.HBKeepAv?.(sb), k2 = window.HBKeepAv?.(dr); sb.innerHTML = sbH; dr.innerHTML = drH; k1?.(); k2?.(); }   // 같은 아바타는 애니메이션을 이어서(다시 안 틂, 보드 HBKeepAv)
     [sb, dr].forEach((x, i) => { const sc = x.querySelector('.bx-sbsc'); if (sc && keep[i]) sc.scrollTop = keep[i]; });
@@ -333,6 +336,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   window.HB_VIEW_OFF = () => on() && (R.classList.contains('bx-chat') || R.classList.contains('bx-route') || R.classList.contains('bx-set') || R.classList.contains('bx-stpg') || !!S.ib || !!S.ag || !!document.querySelector('#mview.full'));
   let wakeQ = 0; const wakeLater = () => { if (!wakeQ) wakeQ = requestAnimationFrame(() => { wakeQ = 0; window.HBViewWake?.(); }); };
   new MutationObserver(wakeLater).observe(R, {attributes: true, attributeFilter: ['class']});
+  let wasFeed = feedOn(); new MutationObserver(() => { const f = feedOn(); if (f !== wasFeed){ wasFeed = f; if (on()) lists(); } }).observe(R, {attributes: true, attributeFilter: ['class']});   // 피드 ↔ 다른 화면: 사이드바 목록이 바뀜(한 줄 목록은 피드에서만)
   new MutationObserver(wakeLater).observe(document.body, {childList: true});
 
   const show0 = window.show, chan0 = window.openChan;

@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "40b474ab93bf";
+window.HB_VER = "40801ead3c75";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1561,6 +1561,8 @@ html.hboff.bx.bx-col.bx-chat .bx-exp{top:calc(19px + var(--netbar))}
   .cth{position:fixed;inset:0;z-index:25;background:var(--surface);padding-top:env(safe-area-inset-top,0px)}
   .thgrip{display:none}   
 }
+
+.chat.thcover > .cmain{content-visibility:hidden}
 
 .mtabs{flex:none;display:flex;gap:6px}
 .mtabs button{height:32px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--soft);font-size:14px;font-weight:500;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
@@ -4675,8 +4677,18 @@ async function nodeFlash(ts) {
     if (g) {
       CS.hl = ts;
       CS.flash = { ts, until: Date.now() + 2400 };
-      g.scrollIntoView({ block: "center" });
+      const cf2 = g.closest(".thcover") && g.closest("#cfeed");
+      if (cf2) {
+        cf2._anc = { ts, off: Math.round(cf2.clientHeight / 3) };
+        cf2._end = false;
+      } else g.scrollIntoView({ block: "center" });
       g.classList.add("flash");
+      return;
+    }
+    const cf = document.querySelector(".chat.thcover #cfeed");
+    if (cf && i >= 3) {
+      cf._anc = { ts, off: Math.round(cf.clientHeight / 3) };
+      cf._end = false;
       return;
     }
     await sleep(200);
@@ -5086,6 +5098,11 @@ function feedAnchor(f) {
 }
 function feedRestore(f, a) {
   if (!f || !a) return;
+  if (f.closest(".thcover")) {
+    f._anc = a;
+    f._end = false;
+    return;
+  }
   const el = a.ts && f.querySelector(`.msg[data-mts="${a.ts}"]`);
   const y = el ? f.scrollTop + (el.getBoundingClientRect().top - f.getBoundingClientRect().top) - a.off : a.y ?? f.scrollTop;
   if (Math.abs(f.scrollTop - y) > 0.5) f.scrollTop = y;
@@ -5101,6 +5118,12 @@ const feedRO = window.ResizeObserver ? new ResizeObserver((es) => {
     f._w = w;
   }
 }) : null;
+try {
+  matchMedia("(max-width:860px)").addEventListener("change", () => {
+    if (typeof chatOn === "function" && chatOn()) viewChat(true);
+  });
+} catch (e) {
+}
 function feedWatch(f) {
   if (!f || f._ro || !feedRO) return;
   f._ro = 1;
@@ -7978,13 +8001,15 @@ function viewChat(keepScroll) {
   }
   saveDrafts();
   const f = $("#cfeed"), tf = $("#cthfeed");
-  const keep = { f: f ? f.scrollTop : 0, fEnd: !f || atBottom(f), fa: f && feedAnchor(f), tf: tf ? tf.scrollTop : null, tfEnd: tf && atBottom(tf) };
+  const cov0 = !!f?.closest(".thcover");
+  const keep = { f: f ? f.scrollTop : 0, fEnd: !f || (cov0 ? f._end !== false : atBottom(f)), fa: f && (cov0 ? f._anc : feedAnchor(f)), tf: tf ? tf.scrollTop : null, tfEnd: tf && atBottom(tf) };
   const act = document.activeElement?.id, caret = caretSave(), hv = hovGet(), nMsg = [f, tf].map((x) => x ? x.querySelectorAll(":scope > .msg").length : 0).join();
   const sig = (CS.at || "") + "|" + (CS.th?.ts || ""), sameCh = (el.dataset.sig || "").split("|")[0] === (CS.at || "");
   const thSwap = sameCh && el.dataset.sig !== sig;
   if ((el.dataset.sig === sig || thSwap) && (el.querySelector("#cnew") || isIbCh(CS.at) && el.querySelector("#cfeed"))) {
     const tmp = document.createElement("div");
-    tmp.innerHTML = `<div class="chat${CS.th && !thInline() ? " th" : ""}">${chanHTML()}${thHTML()}</div>`;
+    const skipCh = !!(CS.th && !thInline() && matchMedia("(max-width:860px)").matches);
+    tmp.innerHTML = `<div class="chat${CS.th && !thInline() ? " th" : ""}">${skipCh ? '<div class="cmain"></div>' : chanHTML()}${thHTML()}</div>`;
     if (thSwap) {
       const c0 = el.querySelector(":scope > .chat"), c1 = tmp.firstElementChild, a = el.querySelector(":scope > .chat > .cth"), b = tmp.querySelector(":scope > .chat > .cth");
       if (c0 && c1 && c0.className !== c1.className) c0.className = c1.className;
@@ -7999,11 +8024,11 @@ function viewChat(keepScroll) {
         grow(ct, true);
       }
     }
-    for (const sel of [".cmain > .chd", ".cmain > .nbanner", ".cth > .chd"]) {
+    for (const sel of skipCh ? [".cth > .chd"] : [".cmain > .chd", ".cmain > .nbanner", ".cth > .chd"]) {
       const a = el.querySelector(sel), b = tmp.querySelector(sel);
       if (a && b && a.innerHTML !== b.innerHTML) a.innerHTML = b.innerHTML;
     }
-    for (const sel of ["#cfeed", "#cthfeed"]) {
+    for (const sel of skipCh ? ["#cthfeed"] : ["#cfeed", "#cthfeed"]) {
       const a = el.querySelector(sel), b = tmp.querySelector(sel);
       if (a && b) patchKids(a, b);
       else if (a && !b) a.remove();
@@ -8034,6 +8059,18 @@ function viewChat(keepScroll) {
     CS.fedit = null;
     if (CS.fail[k]) CS.pend[k] = failPend(k);
   }
+  {
+    const ch = el.querySelector(":scope > .chat"), th = ch?.querySelector(":scope > .cth");
+    const cov = !!(ch?.classList.contains("th") && th && getComputedStyle(th).position === "fixed");
+    if (ch && ch.classList.contains("thcover") !== cov) {
+      const cf = ch.querySelector("#cfeed");
+      if (cov && cf) {
+        cf._anc = keep.fa;
+        cf._end = keep.fEnd;
+      }
+      ch.classList.toggle("thcover", cov);
+    }
+  }
   const nf = $("#cfeed"), ntf = $("#cthfeed"), down = CS.toBottom === true || CS.toBottom === "main", tdown = CS.toBottom === true || CS.toBottom === "th";
   const setTop = (fe, y) => {
     if (fe && Math.abs(fe.scrollTop - y) > 1) fe.scrollTop = y;
@@ -8042,7 +8079,7 @@ function viewChat(keepScroll) {
     if (!keepScroll || !f || !sameCh) setTop(nf, 0);
     else if (keep.fa) feedRestore(nf, keep.fa);
     else setTop(nf, keep.f);
-  } else if (nf) {
+  } else if (nf && !nf.closest(".thcover")) {
     if (down || !keepScroll || keep.fEnd) setTop(nf, nf.scrollHeight);
     else if (keep.fa) feedRestore(nf, keep.fa);
     else setTop(nf, keep.f);

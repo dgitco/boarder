@@ -8,8 +8,10 @@ const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
 const consts = shell.match(/^  const SBW = \[200, 480\], RAIL = 72, TO_A = 160, TO_HIDE = 40, isW = .*$/m)![0];
 const clamp = shell.match(/clampW = w => [^;]*;/)![0].replace(/;$/, "");
+const feed = shell.match(/^  const feedOn = .*$/m)![0];
 const step = shell.match(/^  const stepOf = .*$/m)![0];
-const fns = new Function(`${consts}\nconst ${clamp};\n${step}\nreturn {stepOf, isW};`)() as { stepOf: (x: number) => number; isW: (w: number) => boolean };
+const mk = (cls: string[]) => new Function("R", `${consts}\nconst ${clamp};\n${feed}\n${step}\nreturn {stepOf, isW};`)({ classList: { contains: (k: string) => cls.includes(k) } }) as { stepOf: (x: number) => number; isW: (w: number) => boolean };
+const fns = mk(["bx", "bx-x"]), other = mk(["bx"]), nodesTab = mk(["bx", "bx-x", "xnodes"]);
 
 test("끈 자리 → 단계: 160 이상 = 목록(200~480), 40~160 = 아이콘 막대 72, 40 밑 = 숨김(0)", () => {
   assert.equal(fns.stepOf(700), 480);
@@ -24,6 +26,10 @@ test("끈 자리 → 단계: 160 이상 = 목록(200~480), 40~160 = 아이콘 �
   assert.equal(fns.stepOf(0), 0);
 });
 
+test("피드 밖(노드 · 채팅 · 캔버스, 피드의 노드 칸)은 예전처럼 200~480 만 — 막대 · 숨김 없음", () => {
+  for (const f of [other, nodesTab]) { assert.equal(f.stepOf(120), 200); assert.equal(f.stepOf(10), 200); assert.equal(f.stepOf(300), 300); assert.equal(f.stepOf(700), 480); }
+});
+
 test("저장 값: 막대 72 · 목록 200~480 만 받음(그 밖은 기본 264)", () => {
   for (const w of [72, 200, 264, 480]) assert.equal(fns.isW(w), true, String(w));
   for (const w of [0, 71, 73, 199, 481, NaN]) assert.equal(fns.isW(w), false, String(w));
@@ -33,8 +39,8 @@ test("놓을 때 숨김이면 끌기 전 폭으로 되돌리고 접음(펴면 �
   assert.match(shell, /if \(R\.classList\.contains\('bx-colpv'\)\)\{ R\.classList\.remove\('bx-colpv'\); sbwSet\(w0 === 264 \? 0 : w0\); return setCol\(true\); \}/);
 });
 
-test("PC 사이드바는 안 A 목록(섹션 머리 없음), 폰 서랍은 예전 목록 그대로", () => {
-  assert.match(shell, /const sbH = `<div class="top">\$\{logo\}<span class="tr"><button type="button" class="bx-colb" data-sbcol[^`]*` \+ sbA \+ foot;/);
+test("피드 화면 PC 사이드바만 안 A 목록(섹션 머리 없음), 다른 화면 · 폰 서랍은 예전 목록", () => {
+  assert.match(shell, /const sbH = !feedOn\(\) \? `<div class="top">\$\{logo\}<span class="tr">\$\{fb\}<button[^`]*` \+ body \+ foot\n\s*: `<div class="top">\$\{logo\}<span class="tr"><button type="button" class="bx-colb" data-sbcol[^`]*` \+ sbA \+ foot;/, "피드면 안 A(sbA), 아니면 예전 목록(body)");
   assert.match(shell, /const drH = `<div class="top">\$\{logo\}<span class="tr">\$\{fb\}<\/span><\/div>` \+ body \+ foot;/);
   const sbA = shell.match(/const sbA = [\s\S]*?\+ '<\/div>';/)![0];
   assert.doesNotMatch(sbA, /sec\(/, "PC 목록에 섹션 머리 없음");

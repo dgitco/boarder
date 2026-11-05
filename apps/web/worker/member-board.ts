@@ -149,8 +149,7 @@ export function loadRead(db: D1Database, me: string, ctx?: Ctx | null, ver?: num
   return p;
 }
 export async function loadShared(db: D1Database, me: string, ctx?: Ctx | null): ReturnType<typeof load> {
-  const r = await db.prepare("SELECT v FROM owner_ver WHERE owner = ?").bind(me).first<{ v: number }>().catch(() => null);
-  return r && Number.isSafeInteger(r.v) ? loadRead(db, me, ctx, r.v) : load(db, me);
+  return loadRead(db, me, ctx);
 }
 export function loadForget(me: string) { const m = me.toLowerCase(); for (const k of [...readShare.keys()]) if (k === m || k.startsWith(m + "#")) readShare.delete(k); }
 export async function load(db: D1Database, me: string) {
@@ -867,7 +866,7 @@ const ETAG_PATHS = /^\/api\/(chat\/|nodechat$|topics$|inbox$)/;
 export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null, tv?: (() => Promise<string | null>) | null): Promise<Response | null> {
   inm = inm?.replace(/^W\//, "");
   const boardPath = url.pathname === "/api/data" || url.pathname === "/api/topics";
-  const cache = boardPath && typeof caches !== "undefined" ? (caches as unknown as { default?: Cache }).default : null;
+  const cache = null as Cache | null;
   let ver: { v: number } | null = null;
   if (cache) {
     try { ver = await db.prepare("SELECT v FROM owner_ver WHERE owner = ?").bind(me).first<{ v: number }>(); } catch { /* 이주 전 · 읽기 실패는 캐시 없이 계산 */ }
