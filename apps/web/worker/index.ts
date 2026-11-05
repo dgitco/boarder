@@ -99,7 +99,33 @@ import * as bxs from "./bxs";
 
 type Env = AuthEnv & PH & { SNAP: DurableObjectNamespace<import("./board").BoardSnap>; BRIDGE: DurableObjectNamespace<import("./bridge").Bridge>; RELAY_TOKEN: string; LEDGER_TOKEN?: string; ADMIN_TOKEN?: string; ENGINE: DurableObjectNamespace<Engine>; RESULTS: R2Bucket; CF_VERSION_METADATA: WorkerVersionMetadata; CONNECTOR_KEY?: string; SEARCH: DurableObjectNamespace<import("./search").Search>; AI: Ai; VOYAGE_API_KEY?: string; OB_EXPORT_SIGN_KEY?: string; OB_EXPORT_URL?: string; PUSH: DurableObjectNamespace<import("./push-do").Pusher>; VAPID_PRIVATE?: string; SOURCE_URL?: string; FAULT_OK?: string };
 const app = new Hono<{ Bindings: Env }>();
-const KEYS = new Set(["data", "topics", "page", "cfg", "history", "emoji"]);
+const MC_PATHS = /^\/api\/(data|inbox|topics|chats|chat\/[^/]+(\/\d{9,11}\.\d{6})?)$/, MC_TTL = 10, MC_RATE = new Map<string, { at: number; n: number }>();
+app.use("*", async (c, next) => {
+  const u = new URL(c.req.url), ck = c.req.header("cookie") || "";
+  if ((c.env as unknown as { BX_MCACHE?: string }).BX_MCACHE === "off" || !ck) return next();
+  if (c.req.method !== "GET") {
+    await next();
+    const who = REC.get(c.req.raw)?.who;
+    if (c.res.status < 400 && who && /@/.test(who) && !isOwner(c.env, who) && !/^\/api\/(draft$|clientlog|relay\/)/.test(u.pathname) && !/(^|;\s*)bx_w=/.test(ck)) {
+      const v = "bx_w=1; Max-Age=20; Path=/; SameSite=Lax; Secure; HttpOnly";
+      try { c.res.headers.append("set-cookie", v); } catch { const r0 = c.res, r = new Response(r0.body, { status: r0.status, statusText: r0.statusText, headers: new Headers(r0.headers), ...((r0 as any).encodeBody ? { encodeBody: (r0 as any).encodeBody } : {}) }); r.headers.append("set-cookie", v); c.res = r; } }
+    return;
+  }
+  if (!MC_PATHS.test(u.pathname) || /(^|;\s*)bx_w=/.test(ck)) return next();
+  const who = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ck)))].slice(0, 12).map(b => b.toString(16).padStart(2, "0")).join("");
+  const now = Date.now(), r = MC_RATE.get(who);
+  if (!r || now - r.at > 60_000) { if (MC_RATE.size > 5000) MC_RATE.clear(); MC_RATE.set(who, { at: now, n: 1 }); } else if (++r.n > 300) return c.json({ ok: false, error: "잠시 뒤 다시" }, 429, { "retry-after": "5", "cache-control": "no-store" });
+  const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default; if (!cache) return next();
+  const key = new Request(`${u.origin}/__mc/${who}${u.pathname}${u.search}`), inm = (c.req.header("if-none-match") || "").replace(/^W\//, "");
+  const hit = await cache.match(key).catch(() => undefined);
+  if (hit) { const h = new Headers(hit.headers); h.set("cache-control", "no-store"); h.set("x-bx-mc", "hit"); const et = (h.get("etag") || "").replace(/^W\//, "");
+    return et && inm === et ? new Response(null, { status: 304, headers: h }) : new Response(hit.body, { status: 200, headers: h }); }
+  await next();
+  const res = c.res; if (res.status !== 200 || !(res.headers.get("content-type") || "").includes("json") || res.headers.has("set-cookie") || res.headers.has("content-encoding")) return;
+  const copy = res.clone(), h = new Headers(copy.headers); h.set("cache-control", `public, max-age=${MC_TTL}`); h.delete("set-cookie");
+  c.executionCtx.waitUntil(copy.arrayBuffer().then(b => cache.put(key, new Response(b, { status: 200, headers: h }))).catch(() => {}));
+});
+const KEYS = new Set(["data", "topics", "page", "cfg", "history", "emoji", "chats"]);
 const bridge = (env: Env, ch = "owner") => env.BRIDGE.get(env.BRIDGE.idFromName(ch === "test" ? "test@wnam" : "owner@wnam"), { locationHint: "wnam" });
 const boardCall = async (env: Env, ch: string, r: { method: string; path: string; headers: Record<string, string>; body?: Uint8Array }) => (hosted.exec && await hosted.exec.on(env.DB)) ? hosted.exec.call(env, ch, r) : bridge(env, ch).call(r);
 // 에이전트 도구(받은편지함 · 감시 줄 · 웹훅 깨우기)도 같은 스위치로 — 실행기가 bridge.mjs 와 같은 명령 · 같은 인자 검사(relay-tools.mjs)
@@ -170,7 +196,7 @@ async function signedIn(c: Context<{ Bindings: Env }>): Promise<Sess | null> {
 type Renew = { th: string; email: string; done?: string | null };   // 미리 갈기(signedIn → 타이밍 미들웨어)
 const REC = new WeakMap<Request, { seg: Record<string, number>; via?: string; who?: string; dev?: string; cookies: string[]; renew?: Renew; hit?: Record<string, number>; quiet?: boolean }>();
 const hit = (req: Request, name: string, yes: boolean) => { const r = REC.get(req); if (r) (r.hit ||= {})[`cache_${name}`] = yes ? 1 : 0; };   // 캐시 맞음 1 · 빗나감 0 — PostHog boarder_request
-const BRIDGE_SEG = new Set(["bridge", "hop", "relay", "board", "tool"]);
+const BRIDGE_SEG = new Set(["bridge", "hop", "relay", "board", "tool", "voice"]);
 function seg(req: Request, name: string, ms: number) { const r = REC.get(req); if (r) { r.seg[name] = (r.seg[name] || 0) + Math.max(0, ms); if (BRIDGE_SEG.has(name)) r.via = "bridge"; } }
 function who(req: Request, id: string) { const r = REC.get(req); if (r) r.who = id; }
 function quiet(req: Request) { const r = REC.get(req); if (r) r.quiet = true; }
@@ -2084,7 +2110,7 @@ async function ownMisc(c: Context<{ Bindings: Env }>, url: URL): Promise<Respons
     if (!(await ledger.f7On(c.env.DB, "read_log"))) return null;
     const h = await snap(c.env).get("history"); return fresh2(h) ? j(historySince(JSON.parse(h!.body), url.searchParams.get("since"))) : null;
   }
-  if (!["/emoji.json", "/api/push/key", "/api/drafts"].includes(p) || !(await ledger.f7On(c.env.DB, "read_misc"))) return null;
+  if (!["/emoji.json", "/api/push/key", "/api/drafts", "/api/chats"].includes(p) || !(await ledger.f7On(c.env.DB, "read_misc"))) return null;
   if (p === "/emoji.json") {
     const e = await snap(c.env).get("emoji"); if (!e) return null;
     if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === e.etag) return new Response(null, { status: 304, headers: { etag: e.etag } });
@@ -2093,7 +2119,8 @@ async function ownMisc(c: Context<{ Bindings: Env }>, url: URL): Promise<Respons
   if (p === "/api/drafts") { const d = await OS.get(c.env.DB, "drafts").catch(() => null); if (d) return j(d.v); }
   if (p === "/api/drafts" && cookieOf(c, "bx_w")) return null;   // 방금 쓴 사람은 다리로(cfg 는 5초쯤 늦음)
   const cf = await snap(c.env).get("cfg"); if (!fresh2(cf)) return null;
-  const v = JSON.parse(cf!.body) as { push_key?: string; drafts?: unknown };
+  const v = JSON.parse(cf!.body) as { push_key?: string; drafts?: unknown; chats?: unknown };
+  if (p === "/api/chats") return Array.isArray(v.chats) && !cookieOf(c, "bx_w") ? j({ chats: v.chats }) : null;
   if (p === "/api/push/key") return v.push_key ? j({ key: v.push_key }) : null;
   return j(v.drafts || {});
 }
@@ -2410,7 +2437,7 @@ app.all("*", async c => {
       sent = new TextEncoder().encode(JSON.stringify(b));
     }
   }
-  const sk = c.req.method === "GET" && !url.search && chOf(c) === "owner" && !cookieOf(c, "bx_w") ? ({ "/api/data": "data", "/api/topics": "topics" } as Record<string, string>)[url.pathname] : undefined;
+  const sk = c.req.method === "GET" && !url.search && chOf(c) === "owner" && !cookieOf(c, "bx_w") ? ({ "/api/data": "data", "/api/topics": "topics", "/api/chats": "chats" } as Record<string, string>)[url.pathname] : undefined;
   if (sk) {
     const ts = Date.now(), sn = await snap(c.env).get(sk); seg(c.req.raw, "snap", Date.now() - ts);
     hit(c.req.raw, "snap", !!sn && Date.now() - Math.max(sn.at, sn.checked || 0) < 15_000);
