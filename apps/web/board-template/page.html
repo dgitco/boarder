@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "fc18605a1adb";
+window.HB_VER = "40b474ab93bf";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -15,6 +15,7 @@ window.HB_DTAG = "__BX_DTAG__";
     if (p[0] === "node" && p[1]) return p[2] && /^\d{10}\.\d{6}$/.test(p[2]) ? "/nodes/" + seg(p[1]) + "?thread=" + p[2] + (qs ? "&" + qs.slice(1) : "") : "/nodes/" + seg(p.slice(1).join("/")) + qs;
     if (p[0] === "art" && p[1] && p.length === 2) return "/canvas/" + seg(p[1]) + qs;
     if (p[0] === "w" && p[1]) return "/w/" + seg(p.slice(1).join("/")) + qs;
+    if (p[0] === "agents" && (p.length === 1 || p.length === 2 && /^(channels|a2a)$/.test(p[1]))) return "/" + p.join("/") + qs;
     if (p[0] === "settings") return "/" + p.map(seg).join("/") + qs;
     if (p[0] === "chat" && p[1] && p.length <= 4) {
       if (p[3]) return "/chat/" + seg(p[1]) + "/" + seg(p[3]) + "?thread=" + encodeURIComponent(decodeURIComponent(p[2])) + (qs ? "&" + qs.slice(1) : "");
@@ -35,6 +36,7 @@ window.HB_DTAG = "__BX_DTAG__";
     if (p[0] === "nodes" && p[1]) return "#node/" + p.slice(1).join("/") + (t && /^\d{10}\.\d{6}$/.test(t) ? "/" + t : "");
     if (p[0] === "canvas" && p[1]) return "#art/" + p[1];
     if (p[0] === "w" && p[1]) return "#w/" + p.slice(1).join("/");
+    if (p[0] === "agents") return "#agents" + (/^(channels|a2a)$/.test(p[1] || "") ? "/" + p[1] : "");
     if (p[0] === "settings") return "#" + p.join("/") + qs;
     if (p[0] === "chat" && p[1]) return t && p[2] ? "#chat/" + p[1] + "/" + encodeURIComponent(t) + "/" + p[2] : "#chat/" + p.slice(1, 3).join("/");
     return "";

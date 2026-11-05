@@ -74,8 +74,8 @@ test("화면 설정: 쓴 값을 다른 기기(같은 계정)에서 받음 · 남
 
 test("화면 설정 sbw(사이드바 폭): 200~480 정수 · 0(기본)만, 그 밖은 400 · 남의 계정엔 안 보임", async () => {
   const { req } = setup();
-  for (const v of ["200", "320", "480", "0"]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "sbw", v })).status, 200, v);
-  for (const v of ["199", "481", "1000", "-1", "300.5", "0300", "abc", "", " 300"]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "sbw", v })).status, 400, JSON.stringify(v));
+  for (const v of ["200", "320", "480", "0", "72"]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "sbw", v })).status, 200, v);
+  for (const v of ["199", "71", "73", "072", "481", "1000", "-1", "300.5", "0300", "abc", "", " 300"]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "sbw", v })).status, 400, JSON.stringify(v));
   assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "sbw", v: "360" })).status, 200);
   assert.equal((await req("GET", "/api/me/ui", MEMBER)).j.sbw, "360");
   assert.equal((await req("GET", "/api/me/ui", OTHER)).j.sbw, undefined);

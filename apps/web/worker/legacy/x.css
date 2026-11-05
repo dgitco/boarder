@@ -1,7 +1,7 @@
 html.bx-x{--xbg:#fff;--xink:#000;--xname:#000;--xmut:#999;--xico:#424242;--xline:#dadada;--xthr:#e5e5e5;--xsoft:#424242;--xsunk:#f5f5f5;--xpill:#f0f0f0;--xlink:#0095f6;--xdot:#0a84ff;--xred:#ff3040;--xtoast:#1e1e1e;--xf:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Geist","Noto Sans KR",system-ui,sans-serif}
 @media (prefers-color-scheme:dark){html.bx-x:not([data-theme="light"]){--xbg:#101010;--xink:#f3f5f7;--xname:#f3f5f7;--xmut:#777;--xico:#ccc;--xline:#313232;--xthr:#323638;--xsoft:#ccc;--xsunk:#1e1e1e;--xpill:#292929;--xlink:#49a3f8;--xtoast:#2f2f2f}}
 html.bx-x[data-theme="dark"]{--xbg:#101010;--xink:#f3f5f7;--xname:#f3f5f7;--xmut:#777;--xico:#ccc;--xline:#313232;--xthr:#323638;--xsoft:#ccc;--xsunk:#1e1e1e;--xpill:#292929;--xlink:#49a3f8;--xtoast:#2f2f2f}
-html.bx-x:not(.xnodes) body > *:not(#bxx):not(#toast):not(#mview):not(.sscrim):not(.bx-sb):not(.bx-dr):not(.bx-scrim):not(.bx-dd):not(.bx-find):not(.menpop):not(#hbv):not(.vtabnote):not(.bx-mpop):not(#pushp):not(#pushsheet):not(.bx-toast){display:none!important}
+html.bx-x:not(.xnodes) body > *:not(#bxx):not(#toast):not(#mview):not(.sscrim):not(.bx-sb):not(.bx-dr):not(.bx-scrim):not(.bx-dd):not(.bx-find):not(.menpop):not(#hbv):not(.vtabnote):not(.bx-mpop):not(#pushp):not(#pushsheet):not(.bx-toast):not(.bx-sbrz):not(.bx-exp):not(.bx-tip){display:none!important}
 html.bx-x:not(.xnodes) body{background:var(--xbg);overflow:hidden}
 html:not(.bx-x) #bxx{display:none}
 @media (max-width:860px){html.bx-x:not(.xnodes) .bx-sb,html.bx-x:not(.xnodes) .bx-dd{display:none!important}}
@@ -148,9 +148,12 @@ html.xnodes:has(#ans:not([hidden])) #bxx .xglass,html.xnodes:has(#mview:not([hid
   html.bx-x #bxx .xglass,html.bx-x #bxx .xfab{display:none}
   html.bx-x #bxx .xv:not([data-v="thread"]){padding-bottom:40px}
   html.bx-x #bxx .xrep{left:var(--bx-sbw,264px)}
-  html.bx-x #bxx .xtoast{left:calc(50% + 132px);bottom:32px}
-  html.bx-x.bx-col .bx-sb{display:flex}
-  html.bx-x .bx-sb [data-sbcol],html.bx-x .bx-exp{display:none}
+  html.bx-x #bxx .xtoast{left:calc(50% + var(--bx-sbw,264px) / 2);bottom:32px}
+  html.bx-x.bx-col #bxx,html.bx-x.bx-colpv #bxx,html.bx-x.bx-col #bxx .xrep{left:0}
+  html.bx-x.bx-col #bxx .xtoast{left:50%}
+  html.bx-x.bx-col .bx-exp,html.bx-x .bx-sbrz{z-index:31}
+  /* 데스크톱 머리 찾기 없앰(찾기는 사이드바 「찾기」 줄) */
+  #bxx .xfnd{display:none}
 }
 #bxx a.atm,#bxx a.atm:visited{color:var(--xname)}#bxx a.atm .atmt b{color:var(--xname)}
 

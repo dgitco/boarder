@@ -635,7 +635,7 @@ const CTRL_ALL = /[\x00-\x1f\x7f-\x9f]/g;
 const clean = (v: unknown, n: number) => String(v ?? "").replace(CTRL_ALL, "").trim().slice(0, n);
 const docNav = (c: { req: { method: string; header(k: string): string | undefined } }, url: URL) =>
   c.req.method === "GET" && c.req.header("sec-fetch-dest") === "document" && !url.pathname.startsWith("/api/") && url.pathname !== "/";
-export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/[A-Za-z0-9]{16,40})?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/\d{10}\.\d{6})?|w\/[^/]+|settings(?:\/[^/]+){0,2}|task-status(?:\/[\w.-]{1,40})?|device-sessions)\/?$/;
+export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/[A-Za-z0-9]{16,40})?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/\d{10}\.\d{6})?|w\/[^/]+|settings(?:\/[^/]+){0,2}|task-status(?:\/[\w.-]{1,40})?|device-sessions|agents(?:\/(?:channels|a2a))?)\/?$/;
 const NOFRAME = { "cache-control": "no-store", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" };
 const sameSite = (c: Context<{ Bindings: Env }>) => c.req.header("x-hb") === "1" && ["same-origin", "none", undefined].includes(c.req.header("sec-fetch-site"));
 async function deviceOf(c: Context<{ Bindings: Env }>, opt: { watch?: boolean; harness?: boolean; ownercli?: boolean } = {}) {
@@ -1401,7 +1401,7 @@ app.get("/api/me/onboarding", async c => {
   const s = await signedIn(c); if (!s || isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   return c.json(await onboarding(c.env.DB, s.user.email.toLowerCase(), { server: c.env.PUBLIC_URL, push: await ledger.f7On(c.env.DB, "member_push").catch(() => false) }), 200, { "cache-control": "no-store" });
 });
-const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1", unreadkeep: v => v === "0" || v === "1", canvasback: v => v === "0" || v === "1", ibboth: v => v === "0" || v === "1", sbw: v => v === "0" || (/^[1-9]\d{2}$/.test(v) && +v >= 200 && +v <= 480) };
+const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1", unreadkeep: v => v === "0" || v === "1", canvasback: v => v === "0" || v === "1", ibboth: v => v === "0" || v === "1", sbw: v => v === "0" || v === "72" || (/^[1-9]\d{2}$/.test(v) && +v >= 200 && +v <= 480) }
 app.get("/api/me/ui", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const rs = (await c.env.DB.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(s.user.email.toLowerCase()).all<{ k: string; v: string }>()).results || [];

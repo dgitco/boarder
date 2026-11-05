@@ -34,6 +34,17 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     gridv: lu('layout-grid', 16),
     listv: '<svg class="lu" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   };
+  // PC 사이드바 안 A · B 아이콘(시안 hbFFjcBL1iHHtFRprbZczQ1q Icons 판): 피드 = 원래 홈(lucide house, 고르면 채움), 노드 = 보드 둥글이 선 그림(고르면 채움 · 눈 비움), 새 글 = lucide square-pen, 에이전트 = lucide bot
+  const sv24 = (d, w = 20) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const HOUSE = (on) => sv24(`<path${on ? ' fill="currentColor"' : ''} d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path${on ? ' stroke="var(--surface)"' : ''} d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/>`);
+  const BLOB_D = 'M80.44 48.88C80.16 56.94 78.39 67.04 73.42 72.2C68.46 77.36 58.73 79.31 50.64 79.82C42.55 80.33 30.61 80.39 24.89 75.24C19.17 70.08 16.4 57.74 16.33 48.88C16.26 40.02 18.75 27.78 24.47 22.09C30.19 16.41 42.2 14.49 50.64 14.77C59.08 15.06 70.16 18.13 75.12 23.82C80.09 29.5 80.72 40.82 80.44 48.88Z';
+  const NODEI = (on, w = 20) => `<svg width="${w}" height="${w}" viewBox="10 8 78 78" fill="none" aria-hidden="true"><path d="${BLOB_D}" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/><g stroke="${on ? 'var(--surface)' : 'currentColor'}" stroke-width="6.5" stroke-linecap="round"><line x1="40.5" y1="38" x2="40.5" y2="49"/><line x1="58" y1="38" x2="58" y2="48.5"/></g></svg>`;
+  const IA = {house: HOUSE(false), houseOn: HOUSE(true), node: NODEI(false), nodeOn: NODEI(true),
+    pen: sv24('<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>'),
+    search: sv24('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'),
+    bot: sv24('<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>'),
+    hash: sv24('<line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/>', 17),
+    a2a: sv24('<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>', 17)};
   const IBK = ['unread', 'saved', 'drafts'], IBN = {unread: '읽지 않음', saved: '저장', drafts: '초안'};
   const ibKey = h => String(h || '').slice(1).replace(/^unread\?msg=\d{10}\.\d{6}$/, 'unread');   // #unread?msg=<글>(읽지 않음의 그 글 주소)도 모아 보기 열쇠로
   const S = {ib: null, chat: null, last: 'primary', ret: null};
@@ -65,19 +76,32 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
 
   const sb = mk('nav', 'bx-sb'); sb.setAttribute('aria-label', '메뉴');
   const scrim = mk('div', 'bx-scrim');
-  const SBW = [200, 480], sbwSet = w => { if (w) R.style.setProperty('--bx-sbw', w + 'px'); else R.style.removeProperty('--bx-sbw'); };
+  const SBW = [200, 480], RAIL = 72, TO_A = 160, TO_HIDE = 40, isW = w => w === RAIL || (w >= SBW[0] && w <= SBW[1]);
+  const sbwSet = w => { R.classList.toggle('bx-rail', w === RAIL); if (w) R.style.setProperty('--bx-sbw', w + 'px'); else R.style.removeProperty('--bx-sbw'); };
   const sbwKeep = w => { try { if (w) localStorage.setItem('hb-sbw', String(w)); else localStorage.removeItem('hb-sbw'); } catch {} window.bxUiSave?.('sbw', String(w || 0)); };
-  sbwSet((() => { try { const w = +localStorage.getItem('hb-sbw'); return w >= SBW[0] && w <= SBW[1] ? w : 0; } catch { return 0; } })());
-  const rz = mk('div', 'bx-sbrz'); rz.setAttribute('role', 'separator'); rz.setAttribute('aria-orientation', 'vertical'); rz.setAttribute('aria-label', '사이드바 폭 — 끌어서 바꾸고, 두 번 누르면 기본'); rz.title = '끌어서 사이드바 폭 바꾸기 · 두 번 누르면 기본'; rz.tabIndex = 0;
+  sbwSet((() => { try { const w = +localStorage.getItem('hb-sbw'); return isW(w) ? w : 0; } catch { return 0; } })());
+  const rz = mk('div', 'bx-sbrz'); rz.setAttribute('role', 'separator'); rz.setAttribute('aria-orientation', 'vertical'); rz.setAttribute('aria-label', '사이드바 폭 — 끌어서 목록 · 아이콘 막대 · 숨김, 두 번 누르면 기본'); rz.title = '끌어서 사이드바 폭 바꾸기(좁히면 아이콘 막대 · 더 좁히면 숨김) · 두 번 누르면 기본'; rz.tabIndex = 0;
   const sbwNow = () => parseInt(getComputedStyle(R).getPropertyValue('--bx-sbw')) || 264, clampW = w => Math.round(Math.min(SBW[1], Math.max(SBW[0], w)));
+  const stepOf = x => x < TO_HIDE ? 0 : x < TO_A ? RAIL : clampW(x);   // 0 = 숨김
+  const keepW = w => sbwKeep(w === 264 ? 0 : w);
   rz.addEventListener('pointerdown', e => {
     if (e.button !== 0) return; e.preventDefault(); rz.setPointerCapture(e.pointerId); R.classList.add('bx-sbdrag');
-    const mv = ev => sbwSet(clampW(ev.clientX)), up = () => { rz.removeEventListener('pointermove', mv); R.classList.remove('bx-sbdrag'); const w = sbwNow(); sbwKeep(w === 264 ? 0 : w); };
+    const w0 = sbwNow();
+    // 숨김은 끄는 동안 미리 보기만(bx-colpv — 손잡이는 남아 계속 끌 수 있음), 놓을 때 접음
+    const mv = ev => { const s = stepOf(ev.clientX); R.classList.toggle('bx-colpv', !s); if (s) sbwSet(s); tipOff(); };
+    const up = () => { rz.removeEventListener('pointermove', mv); R.classList.remove('bx-sbdrag');
+      if (R.classList.contains('bx-colpv')){ R.classList.remove('bx-colpv'); sbwSet(w0 === 264 ? 0 : w0); return setCol(true); }
+      keepW(sbwNow()); };
     rz.addEventListener('pointermove', mv); rz.addEventListener('pointerup', up, {once: true}); rz.addEventListener('pointercancel', up, {once: true});
   });
   rz.addEventListener('dblclick', () => { sbwSet(0); sbwKeep(0); });
-  rz.addEventListener('keydown', e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; e.preventDefault(); const w = clampW(sbwNow() + (e.key === 'ArrowRight' ? 16 : -16)); sbwSet(w); sbwKeep(w === 264 ? 0 : w); });
-  window.BXSideW = w => sbwSet(w >= SBW[0] && w <= SBW[1] ? w : 0);   // settings.js 가 계정 값을 받으면 부름
+  rz.addEventListener('keydown', e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; e.preventDefault();
+    const w = sbwNow(), n = e.key === 'ArrowRight' ? (w === RAIL ? SBW[0] : clampW(w + 16)) : (w === RAIL ? 0 : w <= SBW[0] ? RAIL : clampW(w - 16));
+    if (!n) return setCol(true); sbwSet(n); keepW(n); });
+  window.BXSideW = w => sbwSet(isW(w) ? w : 0);   // settings.js 가 계정 값을 받으면 부름
+  // 막대(안 B)에서 마우스를 올리면 이름(시안 「마우스 올리면 이름」) — 사이드바는 굴림 칸이라 밖(body)에 하나 띄움
+  const tip = mk('div', 'bx-tip'); tip.hidden = true; tip.setAttribute('aria-hidden', 'true');
+  const tipOff = () => { tip.hidden = true; };
   const dr = mk('nav', 'bx-dr'); dr.setAttribute('aria-label', '메뉴'); dr.setAttribute('role', 'dialog'); dr.setAttribute('aria-modal', 'true');
   const menu = mk('button', 'bx-menu bx-glass', I.menu); menu.type = 'button'; menu.setAttribute('aria-label', '메뉴');
   const cmb = mk('button', 'bx-chatmenu', lu('chevron-left', 22)); cmb.type = 'button'; cmb.setAttribute('aria-label', '목록');
@@ -89,7 +113,18 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const hr = document.querySelector('header .hr'), hrt = hr.querySelector('.hrt');
   hr.prepend(menu, seg);
   document.querySelector('.wrap header').after(ibox);
-  document.body.append(sb, rz, scrim, dr, cmb);
+  // 「에이전트」 화면(안 A · B 공통, 시안 Agents 판): 위 탭 에이전트 · 채널 · A2A 로 옛 사이드바 칸(에이전트 · 채널/태스크 + 세션 · 에이전트 채널)을 본 칸에. 주소 #agents[/channels|/a2a]
+  const agBox = mk('section', 'bx-agp'); agBox.hidden = true; agBox.setAttribute('aria-label', '에이전트');
+  ibox.after(agBox);
+  document.body.append(sb, rz, scrim, dr, cmb, tip);
+  sb.addEventListener('pointerover', e => {
+    if (!R.classList.contains('bx-rail') || R.classList.contains('bx-sbdrag')) return tipOff();
+    const b = e.target.closest?.('.bx-it, .lgb, .bx-me, .bx-tools button'); if (!b || !sb.contains(b)) return tipOff();
+    const t = (b.querySelector(':scope > span')?.textContent || b.getAttribute('aria-label') || b.title || '').trim(), n = b.querySelector(':scope > .n')?.textContent || '';
+    if (!t) return tipOff();
+    const r = b.getBoundingClientRect(); tip.textContent = n ? `${t} ${n}` : t; tip.style.left = Math.round(r.right + 10) + 'px'; tip.style.top = Math.round(r.top + r.height / 2) + 'px'; tip.hidden = false;
+  });
+  sb.addEventListener('pointerleave', tipOff); sb.addEventListener('pointerdown', tipOff); sb.addEventListener('scroll', tipOff, true);
   const exp = mk('button', 'bx-colb bx-exp'); exp.type = 'button'; exp.setAttribute('aria-label', '사이드바 펴기'); exp.title = '펴기'; exp.innerHTML = I.panel; exp.addEventListener('click', () => setCol(false)); document.body.append(exp);
   const tools = mk('div', 'bx-tools');
   function place(){
@@ -191,7 +226,15 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const foot = `<div class="bx-foot"><button type="button" class="bx-me" data-me aria-haspopup="true" aria-expanded="false">${meAv()}<span>${esc(window.HB_MEMBER?.name || ME()?.name || 'Owner')}</span></button></div>`;
     const fb = `<button type="button" class="bx-colb" data-go="find" aria-label="찾기" title="찾기 ⌘K">${I.search}</button>`;
     const keep = [sb, dr].map(x => x.querySelector('.bx-sbsc')?.scrollTop || 0);
-    const sbH = `<div class="top">${logo}<span class="tr">${fb}<button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + body + foot;
+    const agOn = !!S.ag || (chatMode() && !ibChat()), aTop = agOn ? null : top;
+    const fl = (k, icon, label, extra) => hid.has(k) ? '' : it(k, icon, label, extra || '', aTop === k);
+    const sbA = '<div class="bx-sbsc bx-sba">' + fl('feed', aTop === 'feed' ? IA.houseOn : IA.house, '피드')
+      + (hid.has('feed') ? '' : `<button type="button" class="bx-it" data-go="feed" data-xnew>${IA.pen}<span>새 글</span></button>`) + it('find', IA.search, '찾기')
+      + '<i class="bx-gap" aria-hidden="true"></i>' + ib + '<i class="bx-gap" aria-hidden="true"></i>'
+      + it('agents', IA.bot, '에이전트', '', agOn) + fl('node', aTop === 'node' ? IA.nodeOn : IA.node, '노드') + fl('canvas', I.canvas, '캔버스')
+      + (window.BXStatus?.side?.(it, aTop) || '') + pins + '</div>';
+    if (S.ag) agDraw({a: DG !== null ? `<div class="bx-dgs">${DG}</div>` : ch, c: (DG !== null ? '' : TS ? tks : nd) + ss, x: xc});
+    const sbH = `<div class="top">${logo}<span class="tr"><button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + sbA + foot;
     const drH = `<div class="top">${logo}<span class="tr">${fb}</span></div>` + body + foot;
     if (lists.html !== sbH + drH){ lists.html = sbH + drH; const k1 = window.HBKeepAv?.(sb), k2 = window.HBKeepAv?.(dr); sb.innerHTML = sbH; dr.innerHTML = drH; k1?.(); k2?.(); }   // 같은 아바타는 애니메이션을 이어서(다시 안 틂, 보드 HBKeepAv)
     [sb, dr].forEach((x, i) => { const sc = x.querySelector('.bx-sbsc'); if (sc && keep[i]) sc.scrollTop = keep[i]; });
@@ -244,7 +287,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     }
     if (typeof window.HBOpenCard === 'function') window.HBOpenCard(th, {c: CH.includes(ch) ? ch : 'primary', t: th});
   }, true);
-  const active = () => window.BXStatus?.cur?.() ? 'pg:' + window.BXStatus.cur() : R.classList.contains('bx-x') && !R.classList.contains('xnodes') ? 'feed' : S.ib || chatMode() ? 'chat' : current === 'arts' ? 'canvas' : 'node';
+  const active = () => window.BXStatus?.cur?.() ? 'pg:' + window.BXStatus.cur() : S.ag ? 'agents' : R.classList.contains('bx-x') && !R.classList.contains('xnodes') ? 'feed' : S.ib || chatMode() ? 'chat' : current === 'arts' ? 'canvas' : 'node';
   window.addEventListener('hbside', () => sync());
   window.addEventListener('bx-stp', () => sync());   // 상태 페이지가 열리고 닫힘 · 켠 기능이 바뀜(status.js)
   function sync(){
@@ -263,22 +306,39 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
 
   function ibOpen(k, fromPop){
     if (!IBK.includes(k) || !window.HBInbox || !on()) return;
-    S.ret = null; if (!ans.hidden) closeAns();
+    S.ret = null; agClose(); if (!ans.hidden) closeAns();
     if (S.ib !== k){ ibM?.destroy(); ibM = window.HBInbox.mount(ibox, k, {}); }
     S.ib = k; ibox.hidden = false; scrollTo(0, 0); document.querySelector('.wrap')?.scrollTo(0, 0);
     if (!fromPop && !EMBED && !HBR.same(HBR.hash(), '#' + k)) history.pushState(null, '', '#' + k);
     sync();
   }
   function ibClose(){ if (!S.ib) return; ibM?.destroy(); ibM = null; S.ib = null; ibox.hidden = true; }
-  window.HB_VIEW_OFF = () => on() && (R.classList.contains('bx-chat') || R.classList.contains('bx-route') || R.classList.contains('bx-set') || R.classList.contains('bx-stpg') || !!S.ib || !!document.querySelector('#mview.full'));
+  const AGT = {a: ['에이전트', IA.bot, '에이전트가 없어요'], c: ['채널', IA.hash, '열린 채널이 없어요'], x: ['A2A', IA.a2a, '다른 보더와 잇는 대화가 아직 없어요']}, AGH = {a: '', c: 'channels', x: 'a2a'};
+  const agHash = t => '#agents' + (AGH[t] ? '/' + AGH[t] : '');
+  function agDraw(part){
+    const t = S.ag, body = part[t] || '';
+    const h = `<div class="bx-agp-h"><h1>에이전트</h1></div><div class="bx-agseg" role="tablist" aria-label="에이전트 보기">${Object.entries(AGT).map(([k, [l, ic]]) => `<button type="button" role="tab" data-agtab="${k}" aria-selected="${k === t}">${ic}<span>${l}</span></button>`).join('')}</div>`
+      + `<div class="bx-agl" role="tabpanel">${body || (window.HBEmpty ? window.HBEmpty({ic: AGT[t][1], t: AGT[t][2], p: ''}) : `<p class="bx-agp-e">${AGT[t][2]}</p>`)}</div>`;
+    if (agDraw.html === h && agBox.firstChild) return; agDraw.html = h;
+    const k = window.HBKeepAv?.(agBox); agBox.innerHTML = h; k?.();
+  }
+  function agOpen(t, fromPop){
+    if (!on() || EMBED) return; if (!AGT[t]) t = 'a';
+    S.ret = null; ibClose(); if (!ans.hidden) closeAns(); window.BXStatus?.close?.(); window.BXFeed?.off?.();
+    const was = S.ag; S.ag = t; agBox.hidden = false; R.classList.add('bx-agpg');
+    if (was !== t){ agDraw.html = ''; document.querySelector('.wrap')?.scrollTo(0, 0); scrollTo(0, 0); }
+    sync(); if (!fromPop) recLater();
+  }
+  function agClose(){ if (!S.ag) return; S.ag = null; agBox.hidden = true; agBox.innerHTML = ''; agDraw.html = ''; R.classList.remove('bx-agpg'); }
+  window.HB_VIEW_OFF = () => on() && (R.classList.contains('bx-chat') || R.classList.contains('bx-route') || R.classList.contains('bx-set') || R.classList.contains('bx-stpg') || !!S.ib || !!S.ag || !!document.querySelector('#mview.full'));
   let wakeQ = 0; const wakeLater = () => { if (!wakeQ) wakeQ = requestAnimationFrame(() => { wakeQ = 0; window.HBViewWake?.(); }); };
   new MutationObserver(wakeLater).observe(R, {attributes: true, attributeFilter: ['class']});
   new MutationObserver(wakeLater).observe(document.body, {childList: true});
 
   const show0 = window.show, chan0 = window.openChan;
-  window.show = function(v){ S.ret = null; ibClose(); const r = show0.apply(this, arguments); sync(); return r; };
+  window.show = function(v){ S.ret = null; ibClose(); agClose(); const r = show0.apply(this, arguments); sync(); return r; };
   window.openChan = function(k){
-    const from = S.ib;
+    const from = S.ib; agClose();
     const r = chan0.apply(this, arguments);
     if (!ans.hidden && cur && cur.tab === 'chat'){ ibClose(); S.chat = cur.chan || (CH.includes(k) ? k : 'primary'); S.last = S.chat; S.ret = from; }
     sync(); return r;
@@ -286,6 +346,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   let wasOpen = false;
   new MutationObserver(() => {
     const open = !ans.hidden;
+    if (open && S.ag) agClose();   // 찾기 · 알림 · 글 링크가 대화를 열면 에이전트 화면은 닫힘(뒤로 가면 주소 #agents 로 다시 열림)
     if (open && !S.chat && cur?.tab === 'chat' && cur.chan){ S.chat = cur.chan; if (!/^i:/.test(cur.chan)) S.last = cur.chan; }
     if (!open && wasOpen && S.chat){ S.chat = null; const back = S.ret; S.ret = null; if (back && !(applying && HBR.hash().startsWith('#chat/'))) return ibOpen(back, true); }
     if (!open) S.chat = null;
@@ -296,6 +357,9 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   // ── 누르기
   function go(g){
     closeDr(); S.ret = null;
+    if (g === 'agents') return agOpen(S.ag || 'a');
+    if (g === 'find') return findOpen();   // 찾기는 덮개 — 에이전트 화면은 그대로
+    agClose();
     if (g.startsWith('pg:')){ ibClose(); if (!ans.hidden) closeAns(); window.BXFeed?.off?.(); return window.BXStatus?.open?.(g.slice(3)); }   // 상태 페이지(status.js) — 본 칸에 그 페이지
     window.BXStatus?.close?.();   // 다른 곳으로 가면 상태 페이지는 닫음
     if (g === 'feed') return window.BXFeed ? window.BXFeed.on() : void (location.href = '/feed');   // 피드 = /feed(폰 · PC 같은 화면)
@@ -310,10 +374,13 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (g === 'node'){ if (!ans.hidden && cur?.chan?.startsWith('n:')) closeAns();   // 노드 채팅에서 「노드」 = 트리로
       if (current === 'arts') return show('tree'); ibClose(); if (!EMBED && !HBR.same(HBR.hash(), '#' + current)) history.pushState(null, '', '#' + current); return sync(); }
   }
-  for (const n of [sb, dr]) n.addEventListener('click', e => {
+  for (const n of [sb, dr, agBox]) n.addEventListener('click', e => {
+    const at = e.target.closest('[data-agtab]'); if (at) return agOpen(at.dataset.agtab);
+    const nw = e.target.closest('[data-xnew]');   // 새 글 = 피드 글 칸(#xnew)에 바로 쓰기
+    if (nw){ closeDr(); agClose(); window.BXStatus?.close?.(); ibClose(); if (!window.BXFeed) return void (location.href = '/feed'); window.BXFeed.on(); const t0 = Date.now(), f = () => { const ta = document.getElementById('xnew'); if (ta && ta.offsetParent) ta.focus(); else if (Date.now() - t0 < 5000) setTimeout(f, 120); }; return f(); }
     const f = e.target.closest('[data-fold]');
     if (f){ const k = f.dataset.fold; SB.fold[k] = !SB.fold[k]; saveSB();
-      for (const x of [sb, dr]){ const h = x.querySelector(`[data-fold="${k}"]`), s = x.querySelector(`[data-sec="${k}"]`); h?.setAttribute('aria-expanded', !SB.fold[k]); if (s) s.hidden = !!SB.fold[k]; }
+      for (const x of [sb, dr, agBox]){ const h = x.querySelector(`[data-fold="${k}"]`), s = x.querySelector(`[data-sec="${k}"]`); h?.setAttribute('aria-expanded', !SB.fold[k]); if (s) s.hidden = !!SB.fold[k]; }
       return; }
     if (e.target.closest('[data-sbcol]')) return setCol(!SB.col);
     const me = e.target.closest('[data-me]'); if (me) return meOpen(me);
@@ -538,7 +605,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   menu.addEventListener('click', openDr);
   scrim.addEventListener('click', closeDr);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && R.classList.contains('bx-dron')){ e.stopPropagation(); closeDr(); menu.focus(); } }, true);
-  const ROUTE = /^#(chat\/|art\/|node\/|w\/|inbox$)/;
+  const ROUTE = /^#(chat\/|art\/|node\/|w\/|inbox$|agents(\/|$))/;
   const MVv = () => MV.el && document.body.contains(MV.el) && MV.el === S.artEl ? S.art : null;
   const nodeKey = p => { if (/^g:/.test(p || '')) return p.slice(2); const x = (typeof byPane !== 'undefined' && byPane[p]) || (typeof parkBy !== 'undefined' && parkBy[p]); const n = x && typeof nodeTitle === 'function' ? nodeTitle(x) : ''; return n || p; };   // 닫힌 노드(g:<이름>)는 이름만
   const nodePane = a => { const alias = typeof D !== 'undefined' && D?.node_aliases?.[a]; if (alias && typeof byPane !== 'undefined' && byPane[alias]) return alias; return (typeof byPane !== 'undefined' && byPane[a]) ? a : (typeof liveNode === 'function' && liveNode(a)?.pane) || ''; };
@@ -552,6 +619,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       if (cur.w) return '#w/' + encodeURIComponent(cur.w);
       if (cur.p) return '#node/' + encodeURIComponent(nodeKey(cur.p));
     }
+    if (S.ag) return agHash(S.ag);
     return '#' + (S.ib || current);
   }
   let applying = 0, recQ = 0, backing = 0, G = 0;
@@ -605,6 +673,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     try {
       const pre0 = () => { window.HB_ART0?.remove(); window.HB_ART0 = null; };
       if (k !== 'art'){ S.artBack = null; if (MVv()) mvClose(); pre0(); }
+      if (k !== 'agents') agClose();
       if (k === 'art'){ const aid = () => ARTS[a] ? a : window.artId?.('#art/' + a);
         if (MVv() !== a){ if (await linkUntil(aid)){ if (gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ if (!ans.hidden) closeAns(); const id = aid(); openArt(id); if (id !== a){ history.replaceState(history.state, '', '#art/' + id); moved = true; } } } else if (gen === G){ pre0(); linkFail(); } } }
       else if (k === 'chat' && CH.includes(a)){
@@ -624,6 +693,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
         if (!got && gen === G){ if (typeof openNode === 'function' && typeof nodeName === 'function' && nodeName(a)){ await openNode(a); await nodeTh(b, gen); } else linkFail(); }   // 닫힌 노드는 이름으로(보드 openNode)
         else if (got && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash()) && !(cur?.page && cur.p === pa)){ ibClose(); openAns({p: pa, page: true}); }
         if (got && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())) await nodeTh(b, gen); }
+      else if (k === 'agents'){ if (!ans.hidden) closeAns(); agOpen(a === 'channels' ? 'c' : a === 'a2a' ? 'x' : 'a', true); }
       else if (k === 'w'){ if (cur?.w !== a){ ibClose(); openAns({w: a}); } }
       else if (FEED(k)){ S.ret = null; if (ibChat() !== k){ const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail(); else if (ready && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ ibClose(); window.HBInbox.openFeed(k); } }
         if (k === 'unread' && gen === G && hq.get('msg')) window.HBInbox?.focusTo?.(hq.get('msg')); }   // 그 글로(뒤로 · 앞으로 · 새로 고침 · 복사한 주소)

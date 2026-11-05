@@ -873,7 +873,7 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     try { ver = await db.prepare("SELECT v FROM owner_ver WHERE owner = ?").bind(me).first<{ v: number }>(); } catch { /* 이주 전 · 읽기 실패는 캐시 없이 계산 */ }
   }
   const key = ver && Number.isSafeInteger(ver.v) && ver.v >= 0
-    ? new Request(`https://cache.internal/mb/${encodeURIComponent(me)}/${encodeURIComponent(bot?.name || "")}/${url.pathname.slice(1)}/v${ver.v}`) : null;
+    ? new Request(`${url.origin}/__mbcache/${encodeURIComponent(me)}/${encodeURIComponent(bot?.name || "")}/${url.pathname.slice(1)}/v${ver.v}`) : null;
   const now = Date.now();
   if (cache && key) {
     const hit = await cache.match(key).catch(() => undefined);

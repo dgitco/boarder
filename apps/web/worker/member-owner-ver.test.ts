@@ -74,7 +74,7 @@ for (const path of ["/api/data", "/api/topics"]) test(`${path}: 같은 v는 버�
     insert(db, "node_setting");
     const first = await call(path), body = await first.text(), tag = first.headers.get("etag")!;
     assert.equal(cache.entries.size, 1);
-    assert.match([...cache.entries.keys()][0], /cache\.internal\/mb\/cache%40example.com\/%EB%B4%87\/api\/(data|topics)\/v1$/);
+    assert.match([...cache.entries.keys()][0], /^https:\/\/example\.com\/__mbcache\/cache%40example.com\/%EB%B4%87\/api\/(data|topics)\/v1$/);
     assert.equal(first.headers.get("cache-control"), "no-store"); assert.equal(first.headers.has("x-boarder-cached-at"), false);
     queries.length = 0;
     const second = await call(path); assert.equal(await second.text(), body); assert.equal(second.headers.get("etag"), tag);
