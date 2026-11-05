@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "0070684f5f02";
+window.HB_VER = "93a09af9f67b";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -11076,7 +11076,9 @@ setInterval(() => {
   let saved = /* @__PURE__ */ new Set();
   const subs = /* @__PURE__ */ new Set(), TITLE = { unread: "읽지 않음", drafts: "초안", saved: "저장", turn: "결정 · 할 일" };
   const EMPTY = {
-    unread: ["read", "다 읽었어요", "새 글 · 새 답이 오면 여기 모여요."],
+    unread: ["read", "다 읽었어요", ""],
+    both: ["read", "다 읽었어요", "새 글 · 새 답이 오면 여기 모여요."],
+    // 읽지 않음만 한 줄, 전체 탭은 옛 보조 줄 그대로
     drafts: ["drafts", "쓰다 만 글이 없어요", "보내지 않은 글은 여기 남아요."],
     saved: ["saved", "저장한 글이 없어요", "글에서 저장을 누르면 여기 모여요."],
     turn: ["flag", `지금 ${typeof TURN === "string" ? TURN : "내 차례"}가 없어요`, "결정 · 질문 · 할 일이 생기면 여기 떠요."],
@@ -11891,9 +11893,9 @@ setInterval(() => {
   function feedHTML(ch) {
     const f = fstate(ch);
     if (!f.items.length) fsync(f);
-    if (!expanded(f)) return `<div class="cmain ibmain">${fwrapIb(!S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : f.items.length ? rowsHTML(f) : emptyOf(f.k === "turn" && S.doneOn ? "turnDone" : f.k))}</div>`;
+    if (!expanded(f)) return `<div class="cmain ibmain">${fwrapIb(!S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : f.items.length ? rowsHTML(f) : emptyOf(f.k === "turn" && S.doneOn ? "turnDone" : f.k === "unread" && BOTH ? "both" : f.k))}</div>`;
     const gs = groups(f), sh = f.shown || /* @__PURE__ */ new Set(), more = gs.some(([c, xs]) => !f.fold.has(c) && xs.some((x) => !sh.has(idOf(f.k, x))));
-    const body = !S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : !gs.length ? emptyOf(f.k) : gs.map(([c, all]) => {
+    const body = !S.ok ? S.err ? `<div class="empty">${ERR}</div>` : LOADING : !gs.length ? emptyOf(f.k === "unread" && BOTH ? "both" : f.k) : gs.map(([c, all]) => {
       const vis = all.filter((x) => sh.has(idOf(f.k, x)));
       if (!vis.length) return "";
       const xs = all;

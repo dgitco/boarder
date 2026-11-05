@@ -2357,7 +2357,8 @@ app.all("*", async c => {
         const sl = await slackImport.get(c.env as never, me, url);   // Slack 채널 노드(sl_…)의 노드 채팅 · 스레드
         if (sl) return sl;
         const r = await memberBoard.get(c.env.DB, me, await memberBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"),
-          async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name, c.executionCtx);   // 내 글 · 답 이름 = 회원 이름(HB_MEMBER.name 과 같게 — 세션엔 메일만 있어 user 표에서)
+          async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name, c.executionCtx,
+          () => live.liveOf(c.env, me).tags().then(x => JSON.stringify(x.t)));   // 주제 답 나눠 쓰기 열쇠(화면 알림 표시, member-board /api/topics)   // 내 글 · 답 이름 = 회원 이름(HB_MEMBER.name 과 같게 — 세션엔 메일만 있어 user 표에서)
         if (r) return r;
       }
       if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {   // 몸통이 파일 · 녹음(JSON 아님) — 회원 쓰기와 같은 문
@@ -2435,7 +2436,9 @@ app.all("*", async c => {
     catch { return rid ? queue.retrySafe(c) : c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503); }
     if (r && r[0] < 400 && url.pathname === "/api/artnote" && !b.del && /^(?:📍\d+ \(|✅ 정함|\[?[A-Z]\d{1,3}(?![0-9A-Za-z]))/.test(String(b.text || "").trim()) && await files.isCanvas(c.env, String(b.art))) {
       const cut = (v: unknown, n: number) => String(v ?? "").slice(0, n);
-      const sending = boardCall(c.env, chOf(c), { method: "POST", path: "/api/artpin", headers: { "content-type": "application/json", "x-hb": "1" }, body: new TextEncoder().encode(JSON.stringify({ art: cut(b.art, 40), target: cut(b.target, 200), page: cut(b.page, 200), text: cut(b.text, 4000), near: cut(b.near, 400) })) })
+      const t0 = String(b.text || "").trim().slice(0, 4000), mine = ((r[1] as { notes?: { id: number; target: string; who: string; text: string }[] }).notes || []).filter(n => n.who === "owner" && n.target === String(b.target || "").slice(0, 200) && n.text === t0);
+      const nid = mine.length ? Math.max(...mine.map(n => Number(n.id) || 0)) : 0;
+      const sending = boardCall(c.env, chOf(c), { method: "POST", path: "/api/artpin", headers: { "content-type": "application/json", "x-hb": "1" }, body: new TextEncoder().encode(JSON.stringify({ art: cut(b.art, 40), target: cut(b.target, 200), page: cut(b.page, 200), text: cut(b.text, 4000), near: cut(b.near, 400), ...(nid ? { id: nid } : {}) })) })
         .then(x => (JSON.parse(new TextDecoder().decode(x.body)) as { sent?: string | null }).sent ?? null, () => null).catch(() => null);
       c.executionCtx.waitUntil(sending);
       const sent = await Promise.race([sending, new Promise<null>(ok => setTimeout(() => ok(null), 3000))]);

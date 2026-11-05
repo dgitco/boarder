@@ -143,7 +143,8 @@ export function loadRead(db: D1Database, me: string, ctx?: Ctx | null): ReturnTy
   ctx.waitUntil(p.catch(() => { if (readShare.get(me)?.p === p) readShare.delete(me); }));   // 실패는 나눠 주지 않음(다음 요청이 새로)
   return p;
 }
-export function loadForget(me: string) { readShare.delete(me.toLowerCase()); }
+const TOPICS_TTL = 15_000, TOPICS_MAX = 100, topicsShare = new Map<string, { at: number; ver: string; v: unknown }>();
+export function loadForget(me: string) { const k = me.toLowerCase(); readShare.delete(k); for (const t of [...topicsShare.keys()]) if (t.startsWith(k + "\n")) topicsShare.delete(t); }
 export async function load(db: D1Database, me: string) {
   await closeStaleConnect(db, me);
   const [nd, mi, it, tk, lg, cd, dr, ew, ns, pw, mb, cx, rvd] = await db.batch([
@@ -803,15 +804,15 @@ export async function chatLog(db: D1Database, me: string, sid: string, now = Dat
 // 회원 GET — 보드 화면 길만. null = 이 길은 회원 보드 것이 아님(→ 403)
 export async function etag(b: string) { return '"m' + [...new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(b)))].slice(0, 8).map(x => x.toString(16).padStart(2, "0")).join("") + '"'; }
 const ETAG_PATHS = /^\/api\/(chat\/|nodechat$|topics$|inbox$)/;
-export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null): Promise<Response | null> {
+export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null, tv?: (() => Promise<string | null>) | null): Promise<Response | null> {
   inm = inm?.replace(/^W\//, "");
-  const r = await getInner(db, me, bot, url, emoji, inm, who, ctx);
+  const r = await getInner(db, me, bot, url, emoji, inm, who, ctx, tv);
   if (!r || r.status !== 200 || r.headers.has("etag") || !ETAG_PATHS.test(url.pathname) || !(r.headers.get("content-type") || "").startsWith("application/json")) return r;
   const txt = await r.text(), t = await etag(txt.replace(/"read_at":\d+,?/g, ""));
   const h = new Headers(r.headers); h.set("etag", t);
   return inm === t ? new Response(null, { status: 304, headers: h }) : new Response(txt, { status: 200, headers: h });
 }
-async function getInner(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null): Promise<Response | null> {
+async function getInner(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null, tv?: (() => Promise<string | null>) | null): Promise<Response | null> {
   // 내 이름(who): 글 이름이 나가는 채팅 길에서만 읽음 — 함수면 그때 한 번(index.ts 는 user 표를 읽는 함수로 넘김, /api/data 폴링엔 안 읽음)
   // 앞단 설정(front_door)은 채팅 · 노드 채팅 · 세션 길에서만 읽음(작은 읽기 하나 — /api/data 는 load 가 읽음)
   const fd = /^\/api\/(chat\/primary|nodechat$|sesslog$)/.test(url.pathname) ? await readFrontDoor(db, me) : null;
@@ -821,7 +822,13 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
     const b = JSON.stringify(await data(db, me, bot, await loadRead(db, me, ctx))), t = await etag(b), h = { etag: t, "cache-control": "no-store", "x-content-type-options": "nosniff", "x-boarder-src": "member" };
     return inm === t ? new Response(null, { status: 304, headers: h }) : new Response(b, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
   }
-  if (p === "/api/topics") return j(await topics(db, me, bot, await loadRead(db, me, ctx)));   // 노드 주제 칩 · 찾기 「노드」(member-views.ts — 주인 topics.py 꼴)
+  if (p === "/api/topics") {
+    const k = me.toLowerCase() + "\n" + (bot?.name || ""), now = Date.now(), ver = tv ? await tv().catch(() => null) : null, hit = ver ? topicsShare.get(k) : undefined;
+    if (hit && hit.ver === ver && now - hit.at < TOPICS_TTL) return j(hit.v);
+    const v = await topics(db, me, bot, await loadRead(db, me, ctx));
+    if (ver) { if (topicsShare.size >= TOPICS_MAX) topicsShare.clear(); topicsShare.set(k, { at: now, ver, v }); }
+    return j(v);
+  }   // 노드 주제 칩 · 찾기 「노드」(member-views.ts — 주인 topics.py 꼴)
   if (p === "/api/history") return j(await history(db, me, url.searchParams.get("since")));   // 타임라인 지난 판(주인 history.py 꼴)
   if (p === "/api/inbox") return j({ unread: [], drafts: [], saved: [], saved_ids: [] });
   if (p === "/api/arts") return j({});
