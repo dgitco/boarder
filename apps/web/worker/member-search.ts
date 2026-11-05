@@ -6,7 +6,7 @@ type R = Record<string, any>;
 const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;   // 보더 자신의 줄(member-board OWN 과 같음)
 const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;   // member-board 채팅 글 ts 와 같음 — 찾은 글로 바로 가는 자리
 const ME = "나";
-const notChat = (t: string) => `AND (${t}.wid IS NULL OR ${t}.wid NOT IN (SELECT id FROM engine_window WHERE owner = ${t}.owner AND kind = 'chat'))`;
+const notChat = (t: string) => `AND (${t}.wid IS NULL OR NOT EXISTS (SELECT 1 FROM engine_window ew WHERE ew.id = ${t}.wid AND ew.owner = ${t}.owner AND ew.kind = 'chat'))`;
 const NC_LOG = notChat("board_log"), NC_CARD = notChat("board_card");
 const TURN: Record<string, string> = { turn: "내 차례", blocked: "막힘", working: "일하는 중", parked: "주차" };
 
