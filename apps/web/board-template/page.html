@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "d67ef998df1b";
+window.HB_VER = "7239af496e61";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -5033,7 +5033,12 @@ function openChan(k, ts, noFocus) {
     return;
   }
   k = isCh(k) ? k : "primary";
-  if (ts && inMain(k)) {
+  if (ts && !TLC[ts] && mainOn() && AGENT_CH.some((a) => a.key === k) && !inMainAt(k, ts) && !(openChan.tried ||= /* @__PURE__ */ new Set()).has(ts)) {
+    openChan.tried.add(ts);
+    const again = () => openChan(k, ts, noFocus);
+    return tkLoad(k, ts).then(again, again);
+  }
+  if (ts && inMainAt(k, ts)) {
     const pp = panes.find((x) => x.kind !== "helper" && isMain(x) && mainKey(x) === "primary") || byPane[leadPane("primary")];
     if (pp) {
       if (current !== "tree" && current !== "timeline") show("tree", true);
@@ -5527,6 +5532,7 @@ const mainOn = () => {
 };
 const chApi = (k) => k === "primary" && LIVE && mainOn() ? "main" : k;
 const inMain = (c) => c !== "primary" && MAIN5.includes(c) && mainOn();
+const inMainAt = (c, t) => inMain(c) || c !== "primary" && !!t && mainOn() && AGENT_CH.some((a) => a.key === c) && ((CS.ch.primary?.messages || []).some((m) => m.ts === t && m.ch === c) || (TLC[t] || []).some((m) => m.ts === t && m.who === "owner"));
 const CH_DESC = { primary: "Primary와 영역 리드 · Slack 원문", company: "회사 리드 · Slack 원문", personal: "퍼스널 리드 · Slack 원문", dgit: "DGit 리드 · Slack 원문", shop: "가게 리드 · Slack 원문" };
 for (const a of AGENT_CH) CH_DESC[a.key] = `${a.name} · 보더 채널`;
 const EMO = {
@@ -5928,7 +5934,7 @@ async function goLink(l) {
     openNode(l.c.slice(2));
     if (!chatOn() || !isNodeCh(CS.at)) return;
     await openThread(l.c, l.t);
-  } else if (chatOn() && (CS.at === l.c || CS.at === "primary" && inMain(l.c))) await openThread(l.c, l.t);
+  } else if (chatOn() && (CS.at === l.c || CS.at === "primary" && inMainAt(l.c, l.t))) await openThread(l.c, l.t);
   else openChan(l.c, l.t);
   await flashAt("cthfeed", want);
 }
@@ -7238,7 +7244,8 @@ const MEN_RE = /^bxm:([@#])(primary|lead:(\w+)|pane:(%\d+))$/;
 function menOut(a, n) {
   const m = MEN_RE.exec(a);
   if (!m) return null;
-  const u = BX_URL + (m[2] === "primary" ? "chat/primary" : m[3] ? "chat/" + m[3] : "nodes/" + encodeURIComponent(m[4]));
+  const q = m[4] && (byPane[m[4]] || parkBy[m[4]]), nm = q && !q.standing && q.win ? nodeName(q.win) : "";
+  const u = BX_URL + (m[2] === "primary" ? "chat/primary" : m[3] ? "chat/" + m[3] : "nodes/" + encodeURIComponent(nm && !/^%\d+$/.test(nm) ? nm : m[4]));
   return `<${u}|${m[1]}${String(n || "").replace(/ /g, " ").replace(/[<>|]/g, "")}>`;
 }
 function menIn(u) {
@@ -7250,7 +7257,7 @@ function menIn(u) {
   }
   let m = /^#chat\/(\w+)$/.exec(h);
   if (m && CH.includes(m[1])) return `data-bxch="${m[1]}"`;
-  m = /^#node\/(%25\d+|%\d+)$/.exec(h);
+  m = /^#node\/([^/?#]+)$/.exec(h);
   if (!m) return "";
   try {
     return `data-bxp="${esc(decodeURIComponent(m[1]))}"`;

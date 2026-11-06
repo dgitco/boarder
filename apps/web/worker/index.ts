@@ -1931,7 +1931,7 @@ app.post("/api/admin/f7-flag", async c => {
   if (/^(envelope|owner_unified):/i.test(b.name || "") && !/^envelope:o:/.test(b.name || "")) b.name = b.name!.toLowerCase();
   if (/^owner_unified:/.test(b.name || "") && !isOwner(c.env, b.name!.slice("owner_unified:".length))) return c.json({ error: "owner_unified:<메일> 은 주인 메일(ALLOW_EMAILS)만" }, 400);
   if (b.on && /^owner_unified(:|$)/.test(b.name || "") && !(await c.env.DB.prepare("SELECT 1 FROM f7_flag WHERE name = 'owner_unified_prep' AND on_at IS NOT NULL").first().catch(() => null))) return c.json({ error: "owner_unified_prep 을 먼저 켜고 옮기기(run)를 돌려요" }, 409);
-  if (!/^(read|write|shadow|member)_[a-z][a-z_]{1,24}$/.test(b.name || "") && !/^owner_(device|key_canon|unified_prep|unified)$/.test(b.name || "") && !/^owner_unified:[^@\s:,]{1,64}@[^@\s:,]{1,190}$/.test(b.name || "")
+  if (!/^(read|write|shadow|member)_[a-z][a-z0-9_]{1,24}$/.test(b.name || "") && !/^owner_(device|key_canon|unified_prep|unified)$/.test(b.name || "") && !/^owner_unified:[^@\s:,]{1,64}@[^@\s:,]{1,190}$/.test(b.name || "")
     && !/^envelope:o:[A-Za-z0-9_-]{1,40}$/.test(b.name || "") && !/^envelope(:owner|:[^@\s:,]{1,64}@[^@\s:,]{1,190})?$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음> · owner_device · owner_key_canon · owner_unified_prep · owner_unified · owner_unified:<주인 메일> · envelope · envelope:<메일 | owner | o:<id>>" }, 400);
   // e2e 판이 있는 사람의 envelope:<owner> 는 못 끔(vault adoptE2e 의 지킬 것 — 끄면 그 사람 쓰기가 봉해지지 않음)
   if (!b.on && /^envelope:/.test(b.name!)) {
