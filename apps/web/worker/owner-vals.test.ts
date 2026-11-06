@@ -411,3 +411,15 @@ test("스냅숏에만 있던 칸: 상시 에이전트 표 · 판 agent/aname · 
     assert.equal(before.tree_shape, "stack", "하네스 값을 올리기 전(회원 꼴) — 회원 보드 기본");
   } finally { s.done(); }
 });
+
+test("판마다 마지막 끝 줄 질의: (at) 색인으로 12시간 범위만 — (pane, at) 색인 통째 훑기 안 함", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const { DatabaseSync } = await import("node:sqlite");
+  const MIG = new URL("../migrations/", import.meta.url), db = new DatabaseSync(":memory:");
+  for (const f of readdirSync(MIG).filter(f => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(f, MIG), "utf8"));
+  const src = readFileSync(new URL("./owner-vals.ts", import.meta.url), "utf8");
+  const sql = /"(SELECT pane, win, at, msg, cwd FROM wl_log WHERE id IN \(SELECT max\(id\) FROM wl_log[^"]*)"/.exec(src)![1];
+  const plan = (db.prepare("EXPLAIN QUERY PLAN " + sql).all(0) as { detail: string }[]).map(r => r.detail).join(" | ");
+  assert.match(plan, /SEARCH wl_log USING INDEX wl_log_at \(at>\?\)/, plan);
+  assert.doesNotMatch(plan, /SCAN wl_log USING COVERING INDEX wl_log_pane_at/, plan);
+});

@@ -5,12 +5,14 @@ import { DIGEST_MS, PROGRESS_PREFS, SENT_KEEP, digestMsg, type ProgressPref } fr
 
 type Env = { DB: D1Database; VAPID_PRIVATE?: string };
 const EVERY = 10_000, LOG_MAX = 3000;
+const OWN_KIND: Record<string, string> = { decision: "decision", question: "question", todo: "todo" };
 const te = new TextEncoder();
 type Res = [number, Record<string, unknown>];
 // Worker 가 부르는 길(RPC 꼴 추론이 unknown 값을 never 로 만들어서 손으로 적음)
 export type PushApi = {
   key(): Promise<string>; subscribe(b: unknown): Promise<Res>; unsubscribe(b: unknown): Promise<Res>; trial(b: unknown, welcome?: boolean): Promise<Res>; ack(b: unknown): Promise<Res>;
   tickNow(): Promise<[string, P.Msg][]>; page(after: number | null): Promise<Res>; ensure(): Promise<boolean>; importData(b: unknown): Promise<{ ok: boolean; error?: string }>; stat(): Promise<unknown>;
+  oNotify(card: { id: string; question: string; kind?: string }, key: string): Promise<Res>; nSubs(): Promise<number>;
 };
 // 회원 칸(이름 = 회원 메일, index.ts memberPusher): 늘 그 사람 메일(세션)을 첫 값으로 — 칸에 적힌 주인과 다르면 거절
 export type MemberPushApi = {
@@ -152,6 +154,22 @@ export class Pusher extends DurableObject<Env> {
     catch (e) { this.log({ ev: "error", err: `${(e as Error)?.name}: ${(e as Error)?.message}`.slice(0, 200) }); }
     await this.ctx.storage.setAlarm(Date.now() + EVERY);
   }
+
+  oNotify(card: { id: string; question: string; kind?: string }, key: string): Promise<Res> {
+    return this.lock(async () => {
+      if (this.member()) return this.no();
+      const sent = this.sentKeys();
+      if (sent.includes(key)) return [200, { ok: true, sent: 0, dup: true }] as Res;
+      this.ctx.storage.sql.exec("INSERT INTO kv(k, v) VALUES ('sent', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", JSON.stringify([...sent, key].slice(-SENT_KEEP)));   // 보내기 전에 적음 — 두 요청이 겹쳐도 한 통
+      const msg = P.cardMsg({ ts: card.id, area: "primary", kind: OWN_KIND[card.kind ?? ""] ?? "choice", title: card.question, label: null, shape: null });
+      this.pageAdd(msg);   // 웹 푸시가 없는 브라우저(주인 Ardia 등)의 「보드가 열려 있을 때 알림」 몫
+      if (!this.subs().length || !(await this.vapid())) return [200, { ok: true, sent: 0 }] as Res;
+      const res = await this.send(msg);
+      return [200, { ok: true, sent: res.length }] as Res;
+    });
+  }
+  /** 이 칸 구독 수(켠 주인 온보딩 「알림 켜기」 칸 — member-onboarding ownerSubs) */
+  async nSubs() { return this.subs().length; }
 
   // ---------- 회원 칸(초대 계정, 이름 = 회원 메일) ----------
   // 원천은 회원 카드 · 글을 만든 요청(mNotify · mDigest)뿐 — wl_* · 주인 상태는 안 읽음. 알람은 넓힘을 켠 회원의 진행 글 묶음 한 번만(다시 안 걸음). 스위치 member_push 는 부르는 쪽(index.ts)이 봄

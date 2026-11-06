@@ -624,7 +624,7 @@ test("켬: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS
   const page = async (who: string) => (await t.req("GET", "/", undefined, await t.human(who))).text;
   const vals = (html: string) => ({ caps: JSON.parse((/window\.HB_CAPS = (\{[^\n]*?\});/.exec(html) || [])[1] || "null"), mem: JSON.parse((/window\.HB_MEMBER = (\{[^\n]*?\})<\/script>/.exec(html) || [])[1] || "null"), css: /id="hbm-css"/.test(html) });
   const o = vals(await page(OWNER)), m = vals(await page(MEMBER));
-  assert.deepEqual(o.caps, { invite: true, org_links: true, mainline: true, session_files: false, start_tab: false, push: true }, "켠 주인(관리 권한)은 지금 주인 기능 문 — 세션 첨부만 아직 거짓(회원 세션 길이 첨부를 안 넘김)");
+  assert.deepEqual(o.caps, { invite: true, org_links: true, mainline: true, session_files: false, start_tab: false, push: true, push_wide: false }, "켠 주인(관리 권한)은 지금 주인 기능 문 — 세션 첨부만 아직 거짓(회원 세션 길이 첨부를 안 넘김)");
   assert.equal(o.css, true, "하네스 총괄 판이 없으면(이 시험 준비) 켠 주인도 회원 틀 CSS — 아래에서 총괄 판을 넣으면 빠짐");
   assert.deepEqual([m.caps?.org_links, m.caps?.session_files, m.caps?.push], [false, false, false], "회원 org_links · session_files 거짓, push = member_push(꺼짐)");
   const o2 = vals(await page(OWNER2)); assert.deepEqual(o2.caps, o.caps, "다른 주인 메일로 들어온 미리 보기도 canon 값");
@@ -642,3 +642,92 @@ test("켬: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS
   assert.equal(vals(await page2(OWNER)).css, false, "총괄 판이 있으면 회원 틀 CSS 안 넣음");
   assert.equal(vals(await page2(MEMBER)).css, true, "회원은 그대로");
 });
+
+// ── 켠 주인 회원 길의 빠짐 채우기(delete-plan.md 3절 5 · 9 · 12) ──
+test("켬: #메인(/api/chat/main)은 끈 주인 길과 같은 답 — 주인 메일 넷의 「켠 시각」(mainmerge_at) 거름, 못 만들면 404 가 아니라 503 다시 읽기(빠짐 5)", async () => {
+  const t = await setup(), h = await t.human(OWNER), now = Date.now() / 1000;
+  seedTalk(t.db);
+  const m = t.db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cli')");
+  m.run("1703300000.000400", "company", null, "agent", "회사 리드", "%20", "켠 뒤 에이전트끼리 글", now - 30);
+  m.run("1703300000.000500", "company", null, "owner", "Owner", null, "켠 뒤 Owner 글", now - 20);
+  m.run("1703300000.000600", "company", null, "agent", "회사 리드", "%20", "켜기 전 에이전트 글", now - 300);
+  // 켠 시각은 다른 주인 메일(OWNER2)에 적힘 — 로그인 메일 하나만 넘기면 못 찾음
+  t.db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?, 'mainmerge_at', ?, ?)").run(OWNER2, String(Math.round((now - 60) * 1000)), Math.round((now - 60) * 1000));
+  await ledger.setFlag(t.D1, "read_chat", true); await ledger.f7On(t.D1, "__reset__");
+  const off = await t.req("GET", "/api/chat/main", undefined, h);
+  assert.equal(off.status, 200, off.text); assert.deepEqual(t.bridge, []);
+  const texts = (j: any) => (j.messages as { text: string }[]).map(x => x.text);
+  assert.ok(!texts(off.j).includes("켠 뒤 에이전트끼리 글") && texts(off.j).includes("켠 뒤 Owner 글") && texts(off.j).includes("켜기 전 에이전트 글"), "끈 주인 길 기준 답 — " + off.text.slice(0, 200));
+  await ledger.setFlag(t.D1, "read_chat", false);
+  await t.flag("owner_unified", true); t.reset();
+  const on = await t.req("GET", "/api/chat/main", undefined, h);
+  assert.equal(on.status, 200, on.text); assert.equal(on.h.get("x-f7"), "d1");
+  assert.deepEqual(on.j, off.j, "켠 주인 #메인이 끈 주인 길과 다름(켠 시각 거름 빠짐)");
+  assert.deepEqual(t.bridge, []);
+  // cfg 에 기본 다섯 채널이 하나도 없으면 #메인을 못 만듦 — 끈 주인 길은 다리로 넘기고, 켠 주인은 404(「없는 채널」) 대신 503 다시 읽기
+  const env0 = t.env.SNAP;
+  t.env.SNAP = { ...env0, get: (n: string) => { const o = env0.get(n); return { ...o, get: async (k: string) => k === "cfg" ? { body: '{"channels":{}}', etag: '"e-cfg-empty"', at: Date.now(), checked: Date.now() } : o.get(k) }; } };
+  const r = await t.req("GET", "/api/chat/main", undefined, h);
+  assert.equal(r.status, 503, r.text); assert.equal(r.h.get("x-retry-safe"), "1");
+  assert.equal((await t.req("GET", "/api/chat/nosuch", undefined, h)).status, 404, "등록 안 된 채널은 그대로 404");
+  t.env.SNAP = env0;
+  assert.deepEqual(t.bridge, []);
+});
+
+test("켬: 설정 › 노드 보관함에 하네스 닫힌 창 · 다시 열기는 하네스 기기 엔진 reopen(빠짐 9) — 회원은 그대로 · 다리 0", async () => {
+  const t = await setup(), h = await t.human(OWNER), T = Date.now(), s = T / 1000, OV = await import("./owner-vals.ts");
+  t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devH", OWNER, "owner-host harness", "", "h".repeat(64), T, T, "harness", T);
+  await new (Engine as any)({ setWebSocketAutoResponse() {} }, { DB: t.D1 }).hsync([{ id: "ew_pane43", state: "busy", name: "열린 창", meta: { pane: "%43", win: "3 열린 창", role: "리드", cwd: "~/src/x" } }], true, "devH", OWNER, T);
+  await OV.ingest(t.D1, OWNER, { v: 1, at: Math.floor(s), panes: {}, topics: {}, leads: { primary: null, leads: {}, windows: {} }, agents: [], parked: [], archived: ["보관 노드", "오래된 노드"], promises: null, snoozed: [], ch_keys: {}, attn: null });
+  const lg = t.db.prepare("INSERT INTO wl_log(at, pane, win, kind, msg, cwd) VALUES (?,?,?,?,?,?)");
+  lg.run(s - 3 * 86400, "%40", "12 보관 노드", "진행", "하는 중", "~/src/x");
+  lg.run(s - 2 * 86400, "%40", "12 보관 노드", "끝", "다 끝냄 — 증거 링크", "~/src/x");
+  lg.run(s - 8 * 86400, "%41", "9 오래된 노드", "끝", "옛 일", "~/src/x");
+  lg.run(s - 3600, "%42", "7 쉬는 창", "끝", "방금 끝", "~/src/x");   // 보관 전(닫힌 창) — 목록엔 없고 다시 열기는 됨(server.py 와 같음)
+  lg.run(s - 3600, "%43", "3 열린 창", "끝", "끝났지만 판이 살아 있음", "~/src/x");
+  const cmds: unknown[] = [];
+  t.env.ENGINE = { idFromName: (n: string) => n, get: (id: string) => ({ revoke: async () => 0, cmd: async (v: string, a: unknown) => { cmds.push([id, v, a]); return {}; } }) };
+  await t.flag("owner_unified", true); t.reset();
+  const ns = await t.req("GET", "/api/me/nodeset", undefined, h);
+  assert.equal(ns.status, 200, ns.text);
+  const arch = ns.j.archive as { id?: string; name: string; at: number; msg: string; reopen: boolean }[];
+  assert.deepEqual(arch.map(x => [x.name, x.reopen, x.id ?? null]), [["보관 노드", true, null], ["오래된 노드", false, null]], "하네스 보관 창(id 없음 → 화면이 /api/me/nodereopen) — " + ns.text.slice(0, 300));
+  assert.equal(arch[0].msg, "다 끝냄 — 증거 링크"); assert.equal(arch[0].at, Math.trunc(s - 2 * 86400), "끝 시각 = 그 창 장부 마지막 줄(초, server.py int 와 같이 버림)");
+  const ro = (name: string, path = "/api/me/nodereopen") => t.req("POST", path, { name }, h);
+  const ok = await ro("보관 노드");
+  assert.equal(ok.status, 200, ok.text); assert.deepEqual(ok.j, { ok: true, name: "보관 노드" });
+  assert.deepEqual(cmds, [["dev:devH", "reopen", { id: null, handle: { name: "보관 노드", closed: true } }]], "하네스 기기 엔진 reopen 동사(끈 주인 실행기 nodeReopen 과 같은 손잡이)");
+  assert.equal((await ro("오래된 노드")).status, 409, "7일 넘음");
+  assert.equal((await ro("쉬는 창")).status, 200, "보관 전 닫힌 창도 열림");
+  assert.equal((await ro("열린 창")).status, 404, "살아 있는 판은 다시 열기 아님");
+  assert.equal((await ro("없는 노드")).status, 404);
+  cmds.length = 0;
+  const g = await ro("보관 노드", "/api/nodereopen");
+  assert.equal(g.status, 200, g.text); assert.equal(cmds.length, 1);
+  const gm = await ro("없는 노드", "/api/nodereopen");
+  assert.equal(gm.status, 404, gm.text); assert.equal(gm.j.error, "없는 노드예요", "회원 길(member-board nodereopen) 답 그대로");
+  assert.equal((await t.req("POST", "/api/nodereopen", { name: "보관 노드" }, { cookie: (await t.human(OWNER)).cookie, "x-hb": "1", "sec-fetch-site": "cross-site" })).status, 403, "다른 사이트에서는 못 엶");
+  assert.equal(cmds.length, 1);
+  cmds.length = 0;
+  const hm = await t.human(MEMBER), mn = await t.req("GET", "/api/me/nodeset", undefined, hm);
+  assert.equal(mn.status, 200, mn.text); assert.deepEqual(mn.j.archive, []);
+  assert.equal((await t.req("POST", "/api/me/nodereopen", { name: "보관 노드" }, hm)).status, 404);
+  assert.deepEqual(cmds, []); assert.deepEqual(t.bridge, []);
+});
+
+test("켬: /ea(퍼스널 비서)는 관리 권한이면 같은 틀에 BX_EA_MODE=personal(끈 주인 길과 같음, 빠짐 12) — 회원은 /es 로 302 그대로", async () => {
+  const t = await setup();
+  await t.flag("owner_unified", true); t.reset();
+  const ea = await t.req("GET", "/ea", undefined, await t.human(OWNER));
+  assert.equal(ea.status, 200, ea.text.slice(0, 200));
+  assert.equal(ea.h.get("x-boarder-src"), "member", "회원 길(memberPage)");
+  assert.match(ea.text, /<script>window\.BX_EA=1;window\.BX_EA_MODE="personal"<\/script>/);
+  const es = await t.req("GET", "/es", undefined, await t.human(OWNER));
+  assert.ok(es.text.includes("window.BX_EA=1") && !es.text.includes("BX_EA_MODE"), "/es 는 BX_EA_MODE 없음");
+  const o2 = await t.req("GET", "/ea", undefined, await t.human(OWNER2));
+  assert.equal(o2.status, 200, "다른 주인 메일도(canon 관리 권한)");
+  const m = await t.req("GET", "/ea?x=1", undefined, await t.human(MEMBER));
+  assert.equal(m.status, 302); assert.equal(m.h.get("location"), "/es?x=1");
+  assert.deepEqual(t.bridge, []);
+});
+

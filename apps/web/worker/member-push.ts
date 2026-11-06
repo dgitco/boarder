@@ -111,6 +111,10 @@ export async function routeCard(db: D1Database, me: string, card: PushCard, pu: 
   if (!tier) return null;
   return pu.mNotify(me.toLowerCase(), { id: card.id, question: card.question }, `card:${card.id}`, { wide: tier === "wide" });
 }
+export async function routeOwnerCard(db: D1Database, me: string, card: PushCard, pu: Pick<import("./push-do").PushApi, "oNotify">) {
+  if (await memberPushTier(db, me, card) !== "urgent") return null;
+  return pu.oNotify({ id: card.id, question: card.question, kind: card.kind }, `card:${card.id}`);
+}
 /** 에이전트 글 한 줄을 회원 칸으로(index.ts memberLinePush): 넓힘이 꺼졌으면(기본) 아무것도 안 함 — 글 알림은 넓힘을 켠 사람만 */
 export async function routeLine(db: D1Database, me: string, line: PushLine, pu: Pu) {
   const m = me.toLowerCase(), pr = await pu.mPrefs(m);

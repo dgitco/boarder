@@ -17,8 +17,8 @@ export const SETTINGS_HELP = `Board settings from this machine (show: any member
   boarder connections                                             your connections: id, service, status, read-only, how many tools are off (use the id with approve)
   boarder avatar show | set [--seed <word>] [--hue 0-359] [--photo <png|jpg|webp file> | --photo-id <id> | --no-photo]   your avatar (only the parts you pass change)
   boarder devices                                                 your machines on this board: name, tools, scope, last seen (revoking stays on the board screen)
-  boarder windows [--since 2h|<ms>|<ISO>] [--task 1234] [--limit 100] [--cursor <next>]
-                                                                  every window that wrote a line to your board since (default 1 day): machine, window, name, task, last line, open/parked/closed, blocked, waiting (read only)
+  boarder windows [--since 2h|<ms>|<ISO>] [--task 1234] [--limit 100] [--cursor <next>] [--closed 0|1]
+                                                                  every window that wrote a line to your board since (default 1 day): machine, window, name, task, last line, open/parked/closed, blocked, waiting (read only). A 30-day window drops closed windows unless --closed 1
   boarder node-values show | set check_min=30 split_at=3 move_h=24 rename_h=6 archive_h=6   node numbers (only the ones you pass change)
   boarder unit show | set goal|agent                              what a channel groups: one goal or one agent
   boarder prefs show | set park_on=false park_h=6 task_dots=true tree_tidy=true primary_item=auto rules.<key>=false bundles.<name>=false
@@ -130,7 +130,7 @@ export function windowsPath(flags, now = Date.now()) {
   const qs = new URLSearchParams(), rel = /^(\d{1,4})([mhd])$/.exec(String(flags.since ?? ''));
   if (rel) qs.set('since', String(now - Number(rel[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[rel[2]]));
   else if (typeof flags.since === 'string') qs.set('since', flags.since);
-  for (const k of ['task', 'limit', 'cursor']) if (typeof flags[k] === 'string' || typeof flags[k] === 'number') qs.set(k, String(flags[k]));
+  for (const k of ['task', 'limit', 'cursor', 'closed']) if (typeof flags[k] === 'string' || typeof flags[k] === 'number') qs.set(k, String(flags[k]));
   const q = qs.toString(); return '/api/device/windows' + (q ? '?' + q : '');
 }
 

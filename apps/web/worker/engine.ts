@@ -286,7 +286,8 @@ export class Engine extends DurableObject<EngEnv> {
     const { device, harness } = await this.who(), db = this.env.DB, now = Date.now(), id = rid("ew_");
     if (harness) throw new EngineError(5, "주인 하네스 기기는 서버가 창을 열지 않아요");
     const cfg = await ownerCfg(db, o.owner);
-    const spec = { id, name: o.name, cwd: o.cwd, model: MODEL, perm: cfg.perm, ...(o.system ? { system: o.system } : {}), ...(o.config_dir ? { config_dir: o.config_dir } : {}), session_id: crypto.randomUUID() };
+    const codex = (cfg.rules as Record<string, unknown>).provider === "codex";
+    const spec = { id, name: o.name, cwd: o.cwd, ...(codex ? { provider: "codex" } : { model: MODEL }), perm: cfg.perm, ...(o.system ? { system: o.system } : {}), ...(o.config_dir ? { config_dir: o.config_dir } : {}), ...(codex ? {} : { session_id: crypto.randomUUID() }) };
     await db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, role_id, name, state, state_at, handle, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
       .bind(id, o.owner, device, o.kind, o.role_id ?? null, o.name, "opening", now, JSON.stringify({ engine: "tmux", ...spec }), now).run();
     try {
@@ -314,7 +315,11 @@ export class Engine extends DurableObject<EngEnv> {
       const cwd = `~/boarder/${r.id}`;
       await db.prepare("INSERT OR IGNORE INTO role(owner, id, name, instructions, intake, engine, source, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(owner, r.id, r.name, r.instructions, r.brief, JSON.stringify({ device, engine: "tmux", model: MODEL, cwd }), "default", now, now).run();
       try { await this.open({ owner, kind: "role", role_id: r.id, name: r.name, cwd, prompt: rolePrompt(r.name, r.instructions, rules.one_goal !== false) }); opened++; }
-      catch (e) { why = shortWhy(e); }
+      catch (e) {
+        why = shortWhy(e);
+        await db.batch([db.prepare("UPDATE role SET engine = json_set(engine, '$.pending', 1) WHERE owner = ? AND id = ? AND json_valid(engine)").bind(owner, r.id),
+          db.prepare("UPDATE engine_window SET state = 'closed', state_at = ? WHERE owner = ? AND role_id = ? AND state = 'failed'").bind(Date.now(), owner, r.id)]).catch(() => null);
+      }
     }
     await sysLine(db, owner, opened ? `기본 역할 ${opened}개(${defaults.map(r => r.name).join(" · ")})를 만들었어요` : `기본 역할을 만들었지만 창은 못 열었어요${why ? ` — ${why}` : ""}`).catch(() => null);
     return { seeded: defaults.length, opened };
@@ -351,7 +356,11 @@ export class Engine extends DurableObject<EngEnv> {
       await sysLine(db, owner, `메인 봇을 못 열었어요 — ${shortWhy(e)}`).catch(() => null);
       return null;
     });
-    if (r) await sysLine(db, owner, "메인 봇이 이 기기에서 시작했어요", r.id);
+    if (r) {
+      await sysLine(db, owner, "메인 봇이 이 기기에서 시작했어요", r.id);
+      // 새 메인 창이 열렸다 = 이 기기 엔진이 이제 일함(예: 구독 로그인 뒤 첫 글) — 미뤄 둔 역할 창도 지금 엶(hello 를 기다리지 않음, 먼저 차지한 한 번만)
+      this.ctx.waitUntil(this.openPending(owner).catch(() => null));
+    }
     return r?.id || null;
   }
   async deliver(id: string, text: string, ordered = true, k?: string): Promise<Delivered> {
@@ -632,14 +641,23 @@ export class Engine extends DurableObject<EngEnv> {
     const db = this.env.DB, { rules } = await ownerCfg(db, owner), done: string[] = [];
     const rows = (await db.prepare("SELECT * FROM engine_window WHERE device_id = ? AND kind = 'role' AND state IN ('idle','background','busy')").bind(device).all<Win>()).results;
     for (const w of rows) {
-      const last = await db.prepare("SELECT kind, at FROM board_log WHERE owner = ? AND wid = ? AND kind IN ('start','progress','blocked','waiting','done','decision','incident','deadline') ORDER BY at DESC LIMIT 1").bind(owner, w.id).first<{ kind: string; at: number }>();
-      const held = last?.kind === "blocked" || last?.kind === "waiting";
+      const last = await db.prepare(
+        `SELECT l.kind lk, l.at la,
+           CASE WHEN l.kind IS NULL OR l.kind <> 'waiting' THEN l.kind
+                ELSE (SELECT kind FROM board_log WHERE owner = ?1 AND wid = ?2 AND kind IN ('start','progress','blocked','done','decision','incident','deadline') ORDER BY at DESC LIMIT 1) END wk,
+           (SELECT max(at) FROM board_log WHERE owner = ?1 AND wid = ?2 AND kind IN ('session_start','session_end') AND at > coalesce(l.at, -1)) sa
+         FROM (SELECT 1) LEFT JOIN (SELECT kind, at FROM board_log WHERE owner = ?1 AND wid = ?2 AND kind IN ('start','progress','blocked','waiting','done','decision','incident','deadline') ORDER BY at DESC LIMIT 1) l ON 1`
+      ).bind(owner, w.id).first<{ lk: string | null; la: number | null; wk: string | null; sa: number | null }>();
+      const lastKind = last?.lk ?? null, lastAt = last?.la ?? 0, workKind = last?.wk ?? null, sessionAt = last?.sa ?? 0;
+      // 기다림은 세션 줄이 풂 · 막힘은 사람이 풀어야 하므로 세션 줄로 안 풂(자동 요약 SessionStart 가 사람 몫 막힘을 조용히 풀지 않게).
+      //   막힘 판단도 끝 판단과 같은 기준(workKind — 훅이 턴마다 쓰는 waiting 은 건너뜀): 막힘 → 기다림(Stop 훅) → 세션 시작/끝도 계속 막힘으로 봄
+      const held = workKind === "blocked" || (lastKind === "waiting" && sessionAt <= lastAt);
       const card = await db.prepare("SELECT waited_at FROM board_card WHERE owner = ? AND wid = ? AND state = 'open' ORDER BY at DESC LIMIT 1").bind(owner, w.id).first<{ waited_at: number | null }>();
       const waiting = !!card && (card.waited_at || 0) > now - 120_000;
       if (w.state === "busy" && !waiting) continue;   // 그냥 일하는 중
-      const since = Math.max(w.state_at || 0, last?.at || 0, w.created_at), quiet = now - since;
+      const since = Math.max(w.state_at || 0, lastAt, sessionAt, w.created_at), quiet = now - since;
       const idle = w.state === "idle";
-      if (idle && last?.kind === "done" && quiet >= rules.close_min * 60_000) {
+      if (idle && workKind === "done" && quiet >= rules.close_min * 60_000) {
         if (rules.one_goal !== false) {
           if (!(await this.park(w.id, "끝 — 같은 목표 일이 오면 다시 열림")).ok) continue;
           await sysLine(db, owner, `「${w.name}」 창이 일을 끝내고 쉬어요 — 이 역할 채널에 쓰면 다시 열려요`, w.id); done.push(`park-done ${w.id}`); continue;
@@ -650,7 +668,7 @@ export class Engine extends DurableObject<EngEnv> {
         if (!(await this.park(w.id, card ? "사람 답 기다림" : "막힘")).ok) continue;
         await sysLine(db, owner, `「${w.name}」 창을 주차했어요 — ${card ? "질문에 답하면" : "채팅으로 말하면"} 다시 열려요`, w.id); done.push(`park ${w.id}`); continue;
       }
-      if (idle && !held && last?.kind !== "done" && !card && now - Math.max(since, w.woke_at || 0) >= rules.wake_min * 60_000) {
+      if (idle && !held && workKind !== "done" && !card && now - Math.max(since, w.woke_at || 0) >= rules.wake_min * 60_000) {
         try { await this.cmd("send", { id: w.id, text: WAKE }); await db.prepare("UPDATE engine_window SET woke_at = ? WHERE id = ?").bind(now, w.id).run(); done.push(`wake ${w.id}`); } catch {}
       }
     }

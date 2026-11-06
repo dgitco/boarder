@@ -4,7 +4,7 @@ type Dir = { tool: string; where: string; state: string };
 const json = <T,>(s: string | null, d: T): T => { try { return s ? JSON.parse(s) as T : d; } catch { return d; } };
 const TOOL = { claude: "Claude Code", codex: "Codex", cursor: "Cursor", gemini: "Gemini CLI" } as Record<string, string>;
 
-export async function onboarding(db: Db, me: string, o: { server: string; push: boolean }) {
+export async function onboarding(db: Db, me: string, o: { server: string; push: boolean; ownerSubs?: number }) {
   const [dv, win, ew, conn, sl, pref, push] = await db.batch([
     db.prepare("SELECT id, name, features, last_at FROM device WHERE owner = ? AND revoked_at IS NULL AND scope = 'full' ORDER BY last_at DESC LIMIT 20").bind(me),
     db.prepare("SELECT key, title, device_id FROM imp_item WHERE owner = ? AND kind = 'window' AND gone_at IS NULL AND device_id != '' ORDER BY seen_at DESC LIMIT 40").bind(me),
@@ -22,7 +22,7 @@ export async function onboarding(db: Db, me: string, o: { server: string; push: 
   const target = (pref.results[0] as { v: string } | undefined)?.v || null, alive = !!target && wins.some(w => w.target === target);
   const conns = conn.results as { service: string; label: string; read_only: number }[];
   const s = sl.results[0] as { n: number; m: number };
-  const pushN = Number((push.results[0] as { n: number })?.n || 0);
+  const pushN = o.ownerSubs ?? Number((push.results[0] as { n: number })?.n || 0);
   const host = o.server.replace(/\/+$/, "");
   const where = (x: Dir & { device: string }) => `${TOOL[x.tool] || x.tool}${x.where ? ` (${x.where})` : ""} — ${x.device}`;
   const steps: Step[] = [
@@ -41,7 +41,7 @@ export async function onboarding(db: Db, me: string, o: { server: string; push: 
       detail: alive ? `일반 채널 글은 「${wins.find(w => w.target === target)!.title}」 창으로 가요` : target ? "고른 창이 닫혔어요 — 다시 골라요" : "일반 채널에 쓴 글을 받을 창(팀장 창)을 골라요 — 안 고르면 메인 봇이 받아요",
       pick: wins.map(w => ({ ...w, on: w.target === target })) },
     { key: "push", title: "알림 켜기", done: pushN > 0,
-      detail: !o.push ? "알림은 아직 준비 중이에요" : pushN ? `이 계정 알림을 받는 브라우저 ${pushN}곳` : "폰 · 브라우저로 결정 카드 알림을 받아요 — 보드 위 종 단추에서 켜요" },
+      detail: !o.push ? "알림은 아직 준비 중이에요" : pushN ? `이 계정 알림을 받는 브라우저 ${pushN}곳` : o.ownerSubs !== undefined ? "폰 · 브라우저로 급한 일 알림을 받아요 — 보드 위 종 단추에서 켜요" : "폰 · 브라우저로 결정 카드 알림을 받아요 — 보드 위 종 단추에서 켜요" },
   ];
   return { steps, done: steps.filter(x => x.done).length, total: steps.length };
 }

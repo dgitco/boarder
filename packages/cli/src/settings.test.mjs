@@ -71,5 +71,6 @@ test('boarder windows 질의: --since 30m · 2h · 1d 는 지금부터 거꾸로
   assert.equal(windowsPath({ since: '30m' }, now), `/api/device/windows?since=${now - 1_800_000}`);
   assert.equal(windowsPath({ since: '1d', limit: '50', cursor: 'abc_-' }, now), `/api/device/windows?since=${now - 86_400_000}&limit=50&cursor=abc_-`);
   assert.equal(windowsPath({ since: '2026-11-05T21:00:00+09:00', task: true }, now), '/api/device/windows?since=2026-11-05T21%3A00%3A00%2B09%3A00', 'ISO 는 그대로 · 값 없는 --task 는 안 보냄');
+  assert.equal(windowsPath({ since: '30d', closed: '1' }, now), `/api/device/windows?since=${now - 30 * 86_400_000}&closed=1`, '30일 창에서 닫힌 창을 다시 넣기');
   assert.ok(SETTINGS_COMMANDS.includes('windows') && SETTINGS_COMMANDS.includes('window'), '창 하나(window) 와 모든 창(windows) 둘 다');
 });

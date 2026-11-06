@@ -31,13 +31,13 @@ function pageServer() {
     read: (after: number | null) => ({ seq: q.seq, items: after == null ? [] : q.items.filter(x => x.seq > after).map(x => x.msg) }) };
 }
 const msg = (n: number) => ({ title: "내 차례", body: "카드 " + n, url: `./?open=card:${n}`, tag: `card:${n}` });
-function tab(o: { server?: ReturnType<typeof pageServer>; ls?: any; member?: any; href?: string; baseURI?: string; throws?: () => boolean; sub?: any; enable?: () => Promise<any>; prefs?: any } = {}) {
+function tab(o: { server?: ReturnType<typeof pageServer>; ls?: any; member?: any; caps?: any; href?: string; baseURI?: string; throws?: () => boolean; sub?: any; enable?: () => Promise<any>; prefs?: any } = {}) {
   const ls = o.ls ?? memLS(), server = o.server ?? pageServer(), shown: any[] = [], reports: string[] = [], assigns: string[] = [], timers: (() => void)[] = [], fetched: string[] = [], els: any[] = [], posts: any[] = [];
   let hold: Promise<void> | null = null;
   class N { static permission = "granted"; onclick: any; title: string; constructor(t: string, op: any) { if (o.throws?.()) throw new TypeError("Illegal constructor"); this.title = t; Object.assign(this, op); shown.push(this); } close() {} }
   const href = o.href ?? "https://board.example/", loc = { href, origin: new URL(href).origin, pathname: new URL(href).pathname, search: new URL(href).search, assign: (u: string) => assigns.push(u) };
   const doc = { baseURI: o.baseURI ?? href, body: { append() {} }, createElement: () => { const el: any = { innerHTML: "", on: {} as any, isConnected: true, remove() { el.isConnected = false; }, addEventListener(t: string, f: any) { el.on[t] = f; } }; els.push(el); return el; } };
-  const win = { HB_MEMBER: o.member, Notification: N, focus() {}, HBInbox: { openFeed() {} } };
+  const win = { HB_MEMBER: o.member, HB_CAPS: o.caps, Notification: N, focus() {}, HBInbox: { openFeed() {} } };
   const el0 = { classList: { add() {}, toggle() {} } };
   const fakeFetch = async (u: string) => {
     fetched.push(u);
@@ -183,6 +183,19 @@ test("3. 회원: 기본은 급한 일, 넓힘을 켠 사람은 결정 · 할 일
   assert.match(on.panel().innerHTML, /결정·할 일 새 카드/);
   const b1 = await clickTest(on);
   assert.match(b1, /급한 일과 결정·할 일·답이/); assert.doesNotMatch(b1, /Owner/);
+});
+
+test("3. 켠 주인(HB_MEMBER 있음 · HB_CAPS.push_wide 거짓): 패널 · 시험 알림 「급한 일만」 · 넓힘 칸 없음 · prefs 안 읽음 — 서버 값 전(push_wide 없음)은 회원 꼴 그대로", async () => {
+  const sub = { endpoint: "https://push.example/send/on" };
+  const on = tab({ member: { email: "owner@example.com" }, caps: { push: true, push_wide: false }, prefs: { wide: true, progress: "digest" }, sub });
+  await startPage(on); on.pushPanel(); await on.flush(); await on.flush();
+  const h = on.panel().innerHTML;
+  assert.match(h, /급한 일만 와요\. 누르면 그 글이 열려요/);
+  assert.doesNotMatch(h, /결정·할 일·답도 받기|결정·할 일 새 카드/);
+  assert.equal(on.fetched.some(u => u.startsWith("api/push/prefs")), false, "주인 구독 칸엔 범위 칸 없음 — prefs 안 읽음");
+  const old = tab({ member: { email: "owner@example.com" }, caps: { push: true }, prefs: { wide: true, progress: "digest" }, sub });
+  await startPage(old); old.pushPanel(); await old.flush(); await old.flush();
+  assert.match(old.panel().innerHTML, /결정·할 일·답도 받기/, "값이 없으면 지금 판정(회원 꼴)");
 });
 
 // ---------- 4. 영업 보드 주소 ----------

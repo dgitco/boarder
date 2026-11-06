@@ -77,6 +77,18 @@ test("회원 보드: task · wait_cond · status kind(phase) 저장, device 는 
   ]);
 });
 
+test("저장할 때 task 앞 0 정리(#04321 → #4321) · 장부 id · 16자리 넘는 번호는 그대로", async () => {
+  const { db, D1 } = fakeD1();
+  const t = localTools(D1, A, "일 창", "https://b.example", "pc3:%1", undefined, undefined, undefined, undefined, "dev_1", "pc3");
+  await t("inbox_log", { kind: "progress", text: "앞 0", task: "#04321" });
+  await t("inbox_status", { text: "상태 앞 0", kind: "progress", task: "#0001" });
+  await t("inbox_log", { kind: "progress", text: "이미 정리", task: "#4321" });
+  await t("inbox_log", { kind: "progress", text: "장부 id", task: "ops-watch" });
+  await t("inbox_log", { kind: "progress", text: "0 만", task: "#000000" });
+  await t("inbox_log", { kind: "progress", text: "긴 번호(정밀도 안 바꿈)", task: "#99999999999999999999" });
+  assert.deepEqual(rows(db).map(r => r.task), ["#4321", "#1", "#4321", "ops-watch", "#0", "#99999999999999999999"]);
+});
+
 test("device 본문 값은 안 믿음: 열쇠의 기기와 다르면 거절 · 기기 없는 열쇠는 device 를 못 적음 · 거절된 줄은 안 남음", async () => {
   const { db, D1 } = fakeD1();
   const t = localTools(D1, A, "일 창", "https://b.example", "pc3:%1", undefined, undefined, undefined, undefined, "dev_1", "pc3");

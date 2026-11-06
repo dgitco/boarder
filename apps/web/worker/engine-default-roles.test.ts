@@ -96,6 +96,37 @@ test("창을 못 열어도 역할 줄은 남고, 이유(비밀값 없이 짧게)
   const line = s.sys().find(t => /못 열었어요/.test(t))!; assert.ok(line);
 });
 
+test("쓸 구독이 codex 인 회원: 창 열기 명령에 provider codex · Claude 모델 이름 없음 / 기본 회원은 그대로 Claude 모델(ChatGPT 구독만 있는 회원)", async () => {
+  const s = setup();
+  s.db.prepare("UPDATE engine_owner SET rules = ? WHERE owner = ?").run(JSON.stringify({ default_roles: true, provider: "codex" }), MEMBER);
+  assert.ok(await s.eng.ensureMain(MEMBER, DEV));
+  const spec = s.sent.find(m => m.verb === "open" || m.args?.spec)?.args?.spec ?? s.sent[0]?.spec ?? s.sent[0]?.args?.spec;
+  assert.equal(spec.provider, "codex"); assert.equal(spec.model, undefined); assert.equal(spec.session_id, undefined, "Codex 에 가짜 대화 id 를 안 보냄 — 첫 턴이 새 대화를 엶");
+  const t = setup();
+  assert.ok(await t.eng.ensureMain(MEMBER, DEV));
+  const spec2 = t.sent.find(m => m.verb === "open" || m.args?.spec)?.args?.spec ?? t.sent[0]?.spec ?? t.sent[0]?.args?.spec;
+  assert.equal(spec2.provider, undefined); assert.match(spec2.model, /^claude-/);
+});
+
+test("로그인 전 첫 hello 에 못 연 역할은 「엔진이 쓸 수 있게 되면 열기」로 미뤄지고, 실패 창은 닫힘", async () => {
+  const s = setup({ failOpen: true });
+  await s.eng.seedRoles(MEMBER);
+  const p = s.db.prepare("SELECT json_extract(engine, '$.pending') p FROM role WHERE owner = ?").all(MEMBER) as { p: number }[];
+  assert.deepEqual(p.map(x => x.p), [1, 1, 1], "셋 다 미룸");
+  assert.ok(s.wins().every(w => w.state === "closed"), "실패 창은 닫힘 — 역할 칸에 「멈춤」으로 안 남음");
+});
+
+test("새 메인 창이 열리면(로그인 뒤 첫 글) 미룬 역할 창도 hello 를 안 기다리고 엶", async () => {
+  const s = setup();
+  let jobs: Promise<unknown>[] = []; s.eng.ctx.waitUntil = (p: Promise<unknown>) => { jobs.push(p); };
+  for (const r of DEFAULT_ROLES) s.db.prepare("INSERT INTO role(owner, id, name, instructions, intake, engine, source, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run(MEMBER, r.id, r.name, r.instructions, r.brief, JSON.stringify({ device: DEV, engine: "tmux", cwd: `~/boarder/${r.id}`, pending: 1 }), "default", T, T);
+  const id = await s.eng.ensureMain(MEMBER, DEV);
+  assert.ok(id, "메인 창 열림");
+  await Promise.all(jobs);
+  const open = s.db.prepare("SELECT role_id FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed')").all(MEMBER) as { role_id: string }[];
+  assert.equal(open.length, DEFAULT_ROLES.length, "미룬 역할 창이 다 열림");
+});
+
 test("메인 봇 열기 실패는 삼키지 않고 그 회원 시스템 줄에 이유를 남김", async () => {
   const s = setup({ failOpen: true });
   const id = await s.eng.ensureMain(MEMBER, DEV);

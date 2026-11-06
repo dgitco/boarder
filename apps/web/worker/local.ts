@@ -20,9 +20,10 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
   const wid = /:(ew_[a-z0-9]{6,30})$/.exec(key)?.[1] ?? null;
   const devName = deviceName || null;
   type Meta = { task?: string; phase?: string; wait_cond?: string };
+  const normTask = (t: string | undefined) => t === undefined ? t : t.replace(/^#0+(?=\d)/, "#");
   const log = async (kind: string, text: string, thread?: string, ev?: { tool: PushLine["tool"]; unblocks?: string }, m: Meta = {}) => {
     const r = await db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid, task, device, phase, wait_cond) VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id")
-      .bind(owner, win, kind, text, thread ?? null, Date.now(), wid, m.task ?? null, devName, m.phase ?? null, m.wait_cond ?? null).first<{ id: number }>();
+      .bind(owner, win, kind, text, thread ?? null, Date.now(), wid, normTask(m.task) ?? null, devName, m.phase ?? null, m.wait_cond ?? null).first<{ id: number }>();
     if (ev && r && onLine) onLine({ id: Number(r.id), tool: ev.tool, kind, text, thread: thread ?? null, unblocks: ev.unblocks, win });
   };
   const sameDevice = (d: unknown) => { if (d !== undefined && d !== devName) throw new Error("device 가 이 창 열쇠의 기기와 다름"); };
