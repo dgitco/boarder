@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "c1981b642215";
+window.HB_VER = "abfa455a7414";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -3925,6 +3925,7 @@ async function taskPull() {
 }
 const TK_SLASH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-label="막힘"><circle cx="12" cy="12" r="10"/><line x1="9" y1="15" x2="15" y2="9"/></svg>';
 const TK_RUN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-label="진행"><path d="M21 12a9 9 0 1 1-6.2-8.56"/></svg>';
+const slashIc = (size) => `<svg class="slash" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-label="막힘" style="flex:none;vertical-align:-3px;margin-right:6px"><circle cx="12" cy="12" r="10"/><line x1="9" y1="15" x2="15" y2="9"/></svg>`;
 const tkWhy = (s) => nsbText(String(s || "").replace(/^(blocked\s+by|막힘)\s*:?\s*/i, "").replace(/^owner\b/i, "Owner"));
 const tasksOf = (p) => {
   if (!TK.list.length || !p) return [];
@@ -3945,12 +3946,12 @@ function node(p, label) {
   const r = right(p, p.kind === "lead" && !label ? priChip(nameOf(p), p.pri) : ""), tks = taskRows(p);
   return `<div class="node${need(p) ? " need" : ""}${p.busy ? " busy" : ""}${p.stall && !need(p) ? " stall" : ""}" style="--rt:${r.pad}px">
     <button class="hit" data-p="${p.pane}" aria-label="${esc(label || nameOf(p))}"></button>
-    <span class="n">${tks && !["primary", "arealead", "helper"].includes(p.kind) ? blobP(p, 18) : nodeIc(p, 18)}${esc(label || nameOf(p))}${waitChip(p)}${taskChips(p)}</span>
+    <span class="n">${tks && !["primary", "arealead", "helper"].includes(p.kind) ? blobP(p, 18) : ownerBlocked(p) && nodeIc(p, 18) === chh(18) ? slashIc(18) : nodeIc(p, 18)}${esc(label || nameOf(p))}${waitChip(p)}${taskChips(p)}</span>
     <span class="s"><i class="g g-${p.g}"></i><span>${esc(asPrimary(p.s))}</span></span>${tks}${r.html}${p.standing ? "" : vcallBtn(p.pane, label || nameOf(p))}</div>`;
 }
 const parkHit = (w) => w.park ? `data-p="${esc(w.park.pane || "park-" + w.park.id)}"` : `data-w="${esc(w.id)}"`;
 const waitNode = (w) => `<div class="node wait${w.park?.stale ? " stale" : ""}"${w.park ? ' style="--rt:26px"' : ""}><button class="hit" ${parkHit(w)} aria-label="${esc(w.title)}"></button>${w.park ? `<span class="rt">${priChip(w.park.name || w.title, w.park.pri)}</span>` : ""}
-    <span class="n">${w.park ? chh(18) : ""}${esc(w.title)}</span>${w.s ? `<span class="s">${CLOCK}<span>${esc(w.s)}</span></span>` : ""}</div>`;
+    <span class="n">${w.park ? slashIc(18) : ""}${esc(w.title)}</span>${w.s ? `<span class="s">${CLOCK}<span>${esc(w.s)}</span></span>` : ""}</div>`;
 function waitList(pane) {
   return { vis: bigOf(pane), more: "" };
 }
