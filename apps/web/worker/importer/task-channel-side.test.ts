@@ -16,7 +16,7 @@ const sideList = (D: unknown) => {
   const source = shell.match(/^  const myNodes = .*\n.*map\(x => x\[0\]\);$/m)![0];
   const panes = [{ pane: "%1", kind: "primary" }, { pane: "%2", kind: "lead", tk: true, tkdept: true }, { pane: "%3", kind: "lead", tk: true }, { pane: "%4", kind: "lead" }, { pane: "%5", kind: "lead", tk: true, pri: "high" }];
   const xHeads = () => [{ key: "m0", lead: "%2" }, { key: "m1", lead: "%3" }];
-  return new Function("panes", "xHeads", "rankOf", "D", source + "; return myNodes;")(panes, xHeads, () => 0, D)().map((p: any) => p.pane);
+  return new Function("panes", "xHeads", "rankOf", "D", "mainOnly", source + "; return myNodes;")(panes, xHeads, () => 0, D, () => false)().map((p: any) => p.pane);
 };
 test("채널 = 태스크를 켠 사람: 왼쪽 목록은 업무 채널을 보이고 부서는 에이전트에만, 머리 업무도 채널에서 빠지지 않음", () => {
   assert.deepEqual(sideList({ task_channels: true }), ["%3", "%4", "%5"]);

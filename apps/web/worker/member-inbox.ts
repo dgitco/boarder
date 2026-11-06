@@ -34,6 +34,24 @@ export async function logByTs(db: D1Database, me: string, ts: unknown): Promise<
 }
 const cardByTs = (db: D1Database, me: string, ts: string) => TS.test(ts) ? db.prepare("SELECT id, win, question, state, answer, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me).first<R>() : Promise.resolve(null);
 
+// 기존 단건 SQL을 묶음. 카드가 있는 뿌리는 글 조회를 계속 생략한다.
+export async function threadHomes(db: D1Database, me: string, roots: string[]): Promise<Map<string, R | null>> {
+  const home = new Map<string, R | null>(), ids = [...new Set(roots)];
+  for (let i = 0; i < ids.length; i += 100) {
+    const part = ids.slice(i, i + 100), cards = await db.batch<R>(part.map(ts =>
+      db.prepare("SELECT id, win, question, state, answer, at FROM board_card WHERE id = ? AND owner = ?").bind(ts, me)));
+    const missing: string[] = [];
+    part.forEach((ts, j) => { const card = cards[j].results?.[0] || null; home.set(ts, card); if (!card) missing.push(ts); });
+    if (!missing.length) continue;
+    const logs = await db.batch<R>(missing.map(ts => {
+      const [s, id] = ts.split("."), at = Number(s) * 1000;
+      return db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? LIMIT 1").bind(me, Number(id), at, at + 1000);
+    }));
+    missing.forEach((ts, j) => home.set(ts, logs[j].results?.[0] || null));
+  }
+  return home;
+}
+
 // 채널 열쇠(틀의 「n:<화면 이름>」) ↔ pane
 type Ctx = { waitUntil(p: Promise<unknown>): void };
 async function chans(db: D1Database, me: string, ctx?: Ctx | null) {
@@ -151,9 +169,7 @@ async function threadUnread(db: D1Database, me: string, seen: Map<string, number
   }
   const out: R[] = [], byRoot = new Map<string, R>();   // rows 는 새것부터 — 처음 만난 답이 그 스레드 항목
   const fresh = (r: R) => { const root = rootOf(r.thread); return !!root && !mine(r) && !OWN.test(String(r.win)) && r.win !== "보더" && !QUIET.has(String(r.kind)) && Number(r.at) > Math.max(all, seen.get(thKey(root)) ?? 0, floor.get(root) ?? 0); };
-  const home = new Map<string, R | null>();
-  for (const r of rows) { if (!fresh(r) || PTH.test(String(r.thread))) continue; const root = rootOf(r.thread)!; if (home.has(root)) continue;
-    home.set(root, (await cardByTs(db, me, root)) || (await logByTs(db, me, root))); }
+  const home = await threadHomes(db, me, rows.filter(r => fresh(r) && !PTH.test(String(r.thread))).map(r => rootOf(r.thread)!));
   for (const r of rows) {
     if (!fresh(r)) continue;
     const root = rootOf(r.thread)!, h = home.get(root);

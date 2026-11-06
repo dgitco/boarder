@@ -99,6 +99,6 @@ test("글이 없는 채널 · 스레드는 다시 읽는 동안 스피너", () =
 });
 
 test("loadTh · loadCh 첫머리에서 수를 정리함(평소 갱신 성공을 놓치지 않게)", () => {
-  assert.match(board, /async function loadTh\(k, ts\) ?\{\n  rtSweep\(\);/);
-  assert.match(board, /async function loadCh\(k[^)]*\) ?\{\n  rtSweep\(\);/);
+  assert.match(board, /async function loadTh\(k, ts[^{]*\{\n  rtSweep\(\);/);
+  assert.match(board, /async function loadCh\(k[^{]*\{\n  rtSweep\(\);/);
 });

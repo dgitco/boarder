@@ -89,7 +89,7 @@ test("업무 노드(tk_)는 역할 창 이름이어도 표지 없음 — 부서 
 const shell = readFileSync(new URL("./legacy/shell.js", import.meta.url), "utf8");
 const rwOf = (o: { panes: any[]; member?: boolean; RS?: string[] | null; MA2?: any[] }) => {
   const line = shell.match(/^    const RW = .*$/m)![0];
-  return new Function("window", "panes", "RS", "MA2", line + "; return [RW.map(p => p.pane), [...RWP]];")(o.member === false ? {} : { HB_MEMBER: { email: "x" } }, o.panes, o.RS ?? null, o.MA2 || []);
+  return new Function("window", "panes", "RS", "MA2", "mainOnly", line + "; return [RW.map(p => p.pane), [...RWP]];")(o.member === false ? {} : { HB_MEMBER: { email: "x" } }, o.panes, o.RS ?? null, o.MA2 || [], () => false);
 };
 const PANES = [{ pane: "%1", kind: "primary" }, { pane: "%2", kind: "lead", rolewin: true }, { pane: "%3", kind: "lead" }, { pane: "%4", kind: "lead", rolewin: true }, { pane: "%5", kind: "lead", rolewin: true, tk: true }];
 test("화면: 역할 창 판만 에이전트로(업무 · 열 머리로 이미 있는 판 빼고), 채널 칸에서 뺄 판도 같은 것", () => {

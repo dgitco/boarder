@@ -916,7 +916,7 @@ test("가려진 첨부: 주인 노드 채팅·전달 상자·저장 글도 복�
   assert.ok(ib.j.saved.find((m: any) => m.ts === agent).text.includes("«가림»"));
 });
 
-test("모아 보기 로컬 사본(snap_inbox): 사본 번호가 D1 웹 바뀜 번호 이상이면 스냅숏, 낮음 · 방금 쓴 사람 · 끔 · 낡음이면 D1", async () => {
+test("모아 보기 로컬 사본(snap_inbox): 사본 번호가 D1 웹 바뀜 번호 이상이면 스냅숏, 낮음 · 끔 · 초안 다름 · 가림이면 D1", async () => {
   const t = await setup(), h = await t.human(OWNER), rl = { authorization: "Bearer relay-made-up" };
   seedTalk(t.db);
   await t.flag("owner_unified", true);
@@ -933,7 +933,7 @@ test("모아 보기 로컬 사본(snap_inbox): 사본 번호가 D1 웹 바뀜 �
   const sn = await t.req("GET", "/api/inbox", undefined, h);
   assert.equal(sn.status, 200, sn.text); assert.equal(sn.h.get("x-f7"), "snap"); assert.deepEqual(sn.j.saved_ids, ["from-snap"]);
   assert.equal((await t.req("GET", "/api/inbox", undefined, { ...h, "if-none-match": sn.h.get("etag")! })).status, 304, "같은 ETag 면 304");
-  assert.equal((await t.req("GET", "/api/inbox", undefined, { ...h, cookie: h.cookie + "; bx_w=1" })).h.get("x-f7"), "d1", "방금 쓴 사람은 D1");
+  assert.equal((await t.req("GET", "/api/inbox", undefined, { ...h, cookie: h.cookie + "; bx_w=1" })).h.get("x-f7"), "snap", "방금 쓴 사람도 번호 · 초안이 맞으면 판(쓰기는 번호 대조가 거름)");
   os.run("drafts:chan:primary", JSON.stringify({ text: "고친 글", at: 7000 }), 2);
   assert.equal((await t.req("GET", "/api/inbox", undefined, h)).h.get("x-f7"), "d1", "초안 시각이 판과 다르면 D1(owner_state 는 바뀜 번호에 안 걸림)");
   os.run("drafts:chan:primary", JSON.stringify({ text: "쓰던 글", at: 5000 }), 3);
@@ -1051,4 +1051,19 @@ test("조건부 화면 틀: /bxs 차가운 읽기에서 틀을 받아 덩어리 
   const html = await t.req("GET", "/nodes", undefined, h);
   assert.equal(html.status, 200, html.text); assert.ok(html.text.includes(`/bxs/${sha}.js`));
   assert.equal(full, 1); assert.ok(same >= 1);
+});
+
+
+test("main_only: 주인 채널은 메인 하나, 모드는 옛 페이지와 통합 페이지에 전달하고 회원은 그대로", async () => {
+  const t = await setup(), previous = t.env.SNAP;
+  t.env.SNAP = { ...previous, get: (n: string) => { const o = previous.get(n); return { ...o, get: async (k: string) => k === "cfg" ? {body: JSON.stringify({...JSON.parse(CFG), main_only: true}), etag: '"main-only"', at: Date.now()} : o.get(k) }; } };
+  await t.flag("read_page", true);
+  const old = await t.req("GET", "/", undefined, await t.human(OWNER));
+  assert.match(old.text, /window\.HB_MAIN_ONLY = true;/);
+  await t.flag("owner_unified", true);
+  const owner = await t.req("GET", "/", undefined, await t.human(OWNER));
+  assert.match(owner.text, /window\.HB_CH = \["primary"\];/);
+  assert.match(owner.text, /window\.HB_MAIN_ONLY = true;/);
+  const member = await t.req("GET", "/", undefined, await t.human(MEMBER));
+  assert.match(member.text, /window\.HB_MAIN_ONLY = false;/);
 });

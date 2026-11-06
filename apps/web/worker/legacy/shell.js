@@ -10,7 +10,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const on = () => PC.matches || MOBILE_ON;
   const turnT = () => typeof TURN === 'string' ? TURN : (window.HB_MEMBER?.turn ?? '내 차례');   // 차례 글: 보드 TURN, 없으면 서버 HB_MEMBER.turn
   const capOn = k => window.HB_CAPS?.[k] ?? true;   // 기능 문(초대 · #메인 · 세션 첨부 …): 서버 능력값, 없으면 참(지금 주인)
-  const xHeads = () => ((typeof D === 'object' && D?.areas) || []).filter(a => a && a.key !== 'primary' && a.lead && !(typeof CH !== 'undefined' && CH.includes(a.key)));
+  const mainOnly = () => window.HB_MAIN_ONLY === true;
+  const xHeads = () => mainOnly() ? [] : ((typeof D === 'object' && D?.areas) || []).filter(a => a && a.key !== 'primary' && a.lead && !(typeof CH !== 'undefined' && CH.includes(a.key)));
   const priFace = () => { const pa = ((typeof D === 'object' && D?.areas) || []).find(a => a && a.key === 'primary'); return pa && 'avatar' in pa ? pa.avatar : (typeof AGENT_CUSTOM === 'object' && AGENT_CUSTOM?.primary) || null; };
   const EMB = new URLSearchParams(location.search).get('embed') || '';
   const EMBED = /^(primary|company|personal|dgit|shop)$/.test(EMB) && window.parent !== window;
@@ -200,7 +201,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const MA2 = RS ? MA.filter(a => byPane[a.lead]?.tkdept && RS.includes(a.seat_name || AREA_NAME[a.key] || a.lead_name || a.name)) : MA;
     const pg = !ans.hidden && !!cur?.page && cur.p;
     const chP = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('');
-    const RW = !RS ? (typeof panes !== 'undefined' ? panes : []).filter(p => p && p.rolewin && p.kind === 'lead' && !p.tk && !MA2.some(a => a.lead === p.pane)) : [], RWP = new Set(RW.map(p => p.pane));
+    const RW = !mainOnly() && !RS ? (typeof panes !== 'undefined' ? panes : []).filter(p => p && p.rolewin && p.kind === 'lead' && !p.tk && !MA2.some(a => a.lead === p.pane)) : [], RWP = new Set(RW.map(p => p.pane));
     const ch = chP + MA2.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('')
       + RW.map(p => it('node:' + p.pane, blob(nameOf(p), 20), esc(nameOf(p)), rowPanes().has(p.pane) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === p.pane)).join('');
     const rp = rowPanes();
@@ -218,7 +219,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       const hb = head ? it('chan:' + head.key, blob(n, 20), esc(n), '', pg === head.lead) : `<span class="bx-it bx-dgn0"><span>${esc(n)}</span></span>`;
       return `<div class="bx-dg">${hb}${badge ? `<span class="bx-dgc" aria-label="새 글 · 내 차례 ${badge}">${badge > 99 ? '99+' : badge}</span>` : ''}<button type="button" class="bx-dgf" data-fold="${esc(k)}" aria-expanded="${!SB.fold[k]}" aria-label="${esc(n)} 태스크 ${SB.fold[k] ? '펴기' : '접기'}">${I.fold}</button></div>`
         + `<div class="bx-sbody bx-dgb" data-sec="${esc(k)}"${SB.fold[k] ? ' hidden' : ''}>${list.map(tkIt).join('') || '<div class="bx-dge">태스크 없음</div>'}</div>`; };
-    const DG = RS && TS ? (() => {   // 태스크 묶음이라 채널 = 태스크를 켠 사람만(TS) — 꺼진 회원은 main 과 같은 「채널」 칸 · 에이전트 칸
+    const DG = !mainOnly() && RS && TS ? (() => {   // 태스크 묶음이라 채널 = 태스크를 켠 사람만(TS) — 꺼진 회원은 main 과 같은 「채널」 칸 · 에이전트 칸
       const by2 = new Map(RS.map(n => [n, []])), none = [];
       for (const t of tkOpen) (by2.get(t.dept || '') || none).push(t);
       const headOf = n => MA.find(a => byPane[a.lead]?.tkdept && (a.seat_name || AREA_NAME[a.key] || a.lead_name || a.name) === n);
@@ -245,7 +246,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       + it('agents', IA.bot, '에이전트', '', agOn) + fl('node', aTop === 'node' ? IA.nodeOn : IA.node, '조직도') + fl('canvas', I.canvas, '캔버스')
       + (window.BXStatus?.side?.(it, aTop) || '') + pins + '</div>';
     const org = (() => {
-      if (DG !== null || typeof windowsOf !== 'function' || typeof subsOf !== 'function' || !(typeof D === 'object' && Array.isArray(D?.roster))) return null;
+      if (mainOnly() || DG !== null || typeof windowsOf !== 'function' || typeof subsOf !== 'function' || !(typeof D === 'object' && Array.isArray(D?.roster))) return null;
       const seen = new Set();
       const rowOf = p => { const n = nameOf(p), ak = p.agent && CH.includes(p.agent) ? p.agent : '';   // 등록한 에이전트는 그 채널, 워커는 그 노드 화면
         return it(ak ? 'chan:' + ak : 'node:' + p.pane, p.agent ? blob(n, 20) : I.hash, esc(n), rp.has(p.pane) ? '<i class="ud" aria-label="내 차례"></i>' : '', ak ? chan === ak : pg === p.pane); };
@@ -281,7 +282,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   }).catch(() => {});
   const rankOf = v => typeof priRank === 'function' ? priRank(v) : 2.5;
   // 업무 노드를 왼쪽 채널에 올리는 것은 설정 › 노드 「채널 = 태스크」를 켠 사람만(D.task_channels) — 끈 사람은 예전처럼 업무는 트리 · /tasks 에서
-  const myNodes = () => (typeof panes !== 'undefined' ? panes : []).filter(p => !p.standing && ((typeof D !== 'undefined' && D?.task_channels) ? !p.tkdept : !p.tk) && !['primary', 'arealead', 'helper'].includes(p.kind) && (((typeof D !== 'undefined' && D?.task_channels) && p.tk) || !xHeads().some(a => a.lead === p.pane)))   // 회원 열 머리는 「에이전트」 칸에(두 번 안 나오게)
+  const myNodes = () => mainOnly() ? [] : (typeof panes !== 'undefined' ? panes : []).filter(p => !p.standing && ((typeof D !== 'undefined' && D?.task_channels) ? !p.tkdept : !p.tk) && !['primary', 'arealead', 'helper'].includes(p.kind) && (((typeof D !== 'undefined' && D?.task_channels) && p.tk) || !xHeads().some(a => a.lead === p.pane)))   // 회원 열 머리는 「에이전트」 칸에(두 번 안 나오게)
     .map((p, i) => [p, i]).sort((a, b) => rankOf(a[0].pri) - rankOf(b[0].pri) || a[1] - b[1]).map(x => x[0]);
   function rowPanes(){ try { return new Set((attnRows() || []).map(rowPane)); } catch { return new Set(myNodes().filter(p => nodeRows(p.pane).length).map(p => p.pane)); } }   // 함수 선언 — 위의 lists() 가 먼저 불려도 됨
   const rcSig = () => recent().map(r => r.id + (r.title || '')).join('|') + '#' + (typeof attnCount === 'function' ? attnCount() : 0)

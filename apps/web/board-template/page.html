@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "80e13fac8cc7";
+window.HB_VER = "c1981b642215";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -5009,6 +5009,7 @@ function nodeName(k) {
   return t;
 }
 function openNode(k, msgTs, alt) {
+  if (window.HB_MAIN_ONLY) return openChan("primary", msgTs);
   if (byPane[k]?.standing) return CH.includes(byPane[k].agent) ? openChan(byPane[k].agent) : toast("그 에이전트 채널을 찾지 못했어요");
   if (byPane[k] || parkBy[k]) {
     openAns({ p: k, page: true });
@@ -5184,6 +5185,13 @@ function nodeBody(text) {
   return { channel: mainKey(itemsFor(cur).p), text };
 }
 function chatInit(p) {
+  if (window.HB_MAIN_ONLY && ![isIbCh, isSessCh, isGptCh, humanXCh].some((f) => f(cur.chan || ""))) {
+    cur.chan = "primary";
+    cur.chatFor = p.pane;
+    CS.at = "primary";
+    CS.th = cur.th ? { k: "primary", ts: cur.th } : null;
+    return true;
+  }
   if (cur.chatFor === p.pane) return false;
   if (["cnew", "cth"].includes(window.HBV?.memo?.id)) window.HBV.memoStop?.();
   cur.chatFor = p.pane;
@@ -5231,6 +5239,7 @@ async function openCard(ts, fb, wait) {
 }
 window.HBOpenCard = openCard;
 function openChan(k, ts, noFocus) {
+  if (window.HB_MAIN_ONLY && !isIbCh(k) && !isSessCh(k) && !isGptCh(k) && !humanXCh(k)) k = "primary";
   if (isGptCh(k)) return openGpt(k);
   const ma = k !== "primary" && !CH.includes(k) && (D.areas || []).find((a) => a.key === k && a.lead && byPane[a.lead]);
   if (ma) {
@@ -5246,14 +5255,14 @@ function openChan(k, ts, noFocus) {
     return tkLoad(k, ts).then(again, again);
   }
   if (ts && inMainAt(k, ts)) {
-    const pp = panes.find((x) => x.kind !== "helper" && isMain(x) && mainKey(x) === "primary") || byPane[leadPane("primary")];
-    if (pp) {
+    const pp = panes.find((x) => x.kind !== "helper" && (!window.HB_MAIN_ONLY || x.kind === "primary") && isMain(x) && mainKey(x) === "primary") || byPane[leadPane("primary")];
+    if (pp && (!window.HB_MAIN_ONLY || pp.kind === "primary")) {
       if (current !== "tree" && current !== "timeline") show("tree", true);
       return openAns({ p: pp.pane, tab: "chat", chan: "primary", th: ts, thk: k });
     }
   }
-  const p = panes.find((x) => x.kind !== "helper" && isMain(x) && mainKey(x) === k) || (isXCh(k) ? null : byPane[leadPane(k)]) || byPane[leadPane("primary")];
-  if (!p) return toast("그 채널을 맡은 창이 없어요");
+  const p = panes.find((x) => x.kind !== "helper" && (!window.HB_MAIN_ONLY || x.kind === "primary") && isMain(x) && mainKey(x) === k) || (isXCh(k) ? null : byPane[leadPane(k)]) || byPane[leadPane("primary")];
+  if (!p || window.HB_MAIN_ONLY && k === "primary" && p.kind !== "primary") return toast("그 채널을 맡은 창이 없어요");
   if (current !== "tree" && current !== "timeline") show("tree", true);
   openAns({ p: p.pane, tab: "chat", chan: k, ...ts ? { th: ts } : {} });
   if (!ts && !noFocus) focusCompose();
@@ -5277,6 +5286,7 @@ const slLoading = /* @__PURE__ */ new Set(), slRefetched = /* @__PURE__ */ new S
 const WARN_RE = /멈춤|멈춰|멈춥|중단|삭제|지워|되돌릴 수 없|비용|결제|과금|유료|고객에게|발송/;
 function openAns(t) {
   const pk = t.p && parkBy[t.p];
+  if (window.HB_MAIN_ONLY && (t.page || t.tab === "chat") && t.p && (byPane[t.p] || pk || ghostBy[t.p])?.kind !== "primary" && ![isIbCh, isSessCh, isGptCh, humanXCh].some((f) => f(t.chan || ""))) return openChan("primary", t.th);
   if (t.list && !t.p) return window.HBInbox?.openFeed("turn");
   if (t.w) {
     const wa = byBig[t.w]?.area, c = (D.cardlist || []).find((x) => x.ref && (x.ref === t.w || (wa ? x.ref === wa + ":" + t.w : x.ref.endsWith(":" + t.w))));
@@ -5751,14 +5761,15 @@ document.addEventListener("keydown", (e) => {
 matchMedia("(max-width:640px)").addEventListener("change", () => {
   if (cur && !ans.hidden) render();
 });
-const CH = window.HB_CH || ["primary", "company", "personal", "dgit", "shop", ...AGENT_CH.map((a) => a.key)];
+const CH = window.HB_MAIN_ONLY ? ["primary"] : window.HB_CH || ["primary", "company", "personal", "dgit", "shop", ...AGENT_CH.map((a) => a.key)];
 window.HB_UIDK = (kind) => kind === "c" ? [...CH, ...AGENT_CH.map((a) => a.key)] : [...Object.keys(ARTS), ...Object.keys(D.relinks || {})];
 const isXCh = (k) => /^x_[a-z0-9]{6,40}$/.test(k), isCh = (k) => CH.includes(k) || isXCh(k);
+const humanXCh = (k) => isXCh(k) && !window.HB_MAIN_ONLY;
 const MAIN5 = ["primary", "company", "personal", "dgit", "shop"], MAIN_ONE = { company: "네", personal: "퍼", dgit: "디", shop: "포" };
 for (const a of AGENT_CH) MAIN_ONE[a.key] ??= [...String(a.name).trim()][0] || a.key[0];
 const mainOn = () => {
   try {
-    return (window.HB_CAPS?.mainline ?? !(window.HB_CH || window.HB_MEMBER)) && !(CS.mainNo && Date.now() - CS.mainNo < 6e4) && localStorage.getItem("hb-mainmerge") === "1";
+    return window.HB_MAIN_ONLY || (window.HB_CAPS?.mainline ?? !(window.HB_CH || window.HB_MEMBER)) && !(CS.mainNo && Date.now() - CS.mainNo < 6e4) && localStorage.getItem("hb-mainmerge") === "1";
   } catch (e) {
     return false;
   }
@@ -6173,6 +6184,7 @@ function mtok(u, lab) {
   return `<a class="mtok" href="art/${ai}/${pg ? "#p=" + esc(pg) : ""}" title="${esc([ATT_KIND[a.kind] || "페이지", a.folder].filter(Boolean).join(" · "))}"><i>${tkIco(a.kind)}</i><span>${esc(a.title || "아티팩트")}</span></a>`;
 }
 async function goLink(l) {
+  if (window.HB_MAIN_ONLY && ![isIbCh, isSessCh, isGptCh, humanXCh].some((f) => f(l.c))) l = { ...l, c: "primary" };
   const want = l.m || l.t;
   CS.hl = want;
   if (l.post) {
@@ -6627,7 +6639,7 @@ async function getJSON(u, again, ms) {
   }
   return j;
 }
-async function loadTopics() {
+async function loadTopics(valid = () => true) {
   if (!LIVE) {
     CS.T = D.chat?.topics || { topics: [], threads: [] };
     return;
@@ -6635,9 +6647,11 @@ async function loadTopics() {
   loadTopics.at = Date.now();
   try {
     const t = await getJSON("api/topics");
+    if (!valid()) return;
     if (t === CS.T) return false;
     CS.T = t;
   } catch (e) {
+    if (!valid()) return;
     CS.T.err = e.message;
   }
   for (const x of CS.T.threads || []) if (x.needs && answeredTh.get(x.ts) >= +(x.last?.ts || 0)) x.needs = false;
@@ -6855,7 +6869,7 @@ function optMismatch(k, x, g, why) {
   });
 }
 const rxFix = (o) => o?.messages && optFix("msgs", o);
-async function loadCh(k) {
+async function loadCh(k, valid = () => true) {
   rtSweep();
   if (isIbCh(k)) return window.HBInbox?.feedLoad(k);
   if (isGptCh(k)) {
@@ -6865,6 +6879,7 @@ async function loadCh(k) {
     }
     try {
       const j = await getJSON("api/chatlog?sid=" + encodeURIComponent(k.slice(2)));
+      if (!valid()) return;
       if (j === CS.chTop[k] && CS.ch[k]) {
         if (CS.ch[k].err) {
           const { err, errStatus, ...ok } = CS.ch[k];
@@ -6875,6 +6890,7 @@ async function loadCh(k) {
       CS.chTop[k] = j;
       CS.ch[k] = j;
     } catch (e) {
+      if (!valid()) return;
       CS.ch[k] = { ...CS.ch[k] || { messages: [] }, err: e.message, errStatus: e.status };
     }
     return;
@@ -6882,6 +6898,7 @@ async function loadCh(k) {
   if (isSessCh(k)) {
     try {
       const j = await getJSON("api/sesslog?" + sessQ(k));
+      if (!valid()) return;
       if (j === CS.chTop[k] && CS.ch[k]) {
         if (CS.ch[k].err) {
           const { err, errStatus, ...ok } = CS.ch[k];
@@ -6892,6 +6909,7 @@ async function loadCh(k) {
       CS.chTop[k] = j;
       CS.ch[k] = j;
     } catch (e) {
+      if (!valid()) return;
       if (e.status === 404) {
         delete CS.chTop[k];
         delete ETC["api/sesslog?" + sessQ(k)];
@@ -6903,6 +6921,7 @@ async function loadCh(k) {
   if (isNodeCh(k)) {
     try {
       const j = await getJSON("api/nodechat?w=" + encodeURIComponent(k.slice(2)));
+      if (!valid()) return;
       if (j === CS.chTop[k] && CS.ch[k]) {
         if (CS.ch[k].err) CS.ch[k] = holdFix(k, j);
         return;
@@ -6911,6 +6930,7 @@ async function loadCh(k) {
       CS.chTop[k] = j;
       CS.ch[k] = holdFix(k, j);
     } catch (e) {
+      if (!valid()) return;
       CS.ch[k] = { ...CS.ch[k] || { messages: [] }, err: e.message, errStatus: e.status };
     }
     return;
@@ -6922,6 +6942,7 @@ async function loadCh(k) {
   const ka = chApi(k);
   try {
     const j = await getJSON("api/chat/" + ka);
+    if (!valid()) return;
     if (k === "primary" && CS.mainAt !== ka) {
       const was = CS.mainAt;
       CS.mainAt = ka;
@@ -6945,9 +6966,10 @@ async function loadCh(k) {
     CS.chTop[k] = j;
     CS.ch[k] = CS.old[k]?.messages.length ? mergeOld(j, CS.old[k]) : j;
   } catch (e) {
+    if (!valid()) return;
     if (ka === "main" && (e.status === 404 || e.status === 400 || e.status === 410)) {
       CS.mainNo = Date.now();
-      return loadCh(k);
+      return loadCh(k, valid);
     }
     CS.ch[k] = { ...CS.ch[k] || { messages: [] }, err: e.message, errStatus: e.status };
   }
@@ -7000,7 +7022,7 @@ async function loadOlder(k) {
   CS.oldBusy[k] = false;
   if (chatOn() && CS.at === k) viewChat(true);
 }
-async function loadTh(k, ts) {
+async function loadTh(k, ts, valid = () => true) {
   rtSweep();
   if (!LIVE) {
     const t = CS.T.threads.find((x) => x.ts === ts);
@@ -7014,14 +7036,17 @@ async function loadTh(k, ts) {
         j = await getJSON(`api/chat/${k}/${ts}`, false, 12e3);
         break;
       } catch (e) {
+        if (!valid()) return;
         if (i >= 2 || e.status === 404 || e.status === 403) throw e;
         await sleep(700 * (i + 1));
       }
     }
+    if (!valid()) return;
     rxFix(j);
     CS.thr[ts] = j;
     if (j.home && CS.th?.ts === ts && CS.at === k && !isNodeCh(k)) homeGo(j.home, k, ts);
   } catch (e) {
+    if (!valid()) return;
     CS.thr[ts] = e.status === 404 || e.status === 403 ? { messages: [] } : { ...CS.thr[ts] || { messages: [] }, err: e.message, errStatus: e.status };
   }
 }
@@ -8965,12 +8990,44 @@ document.addEventListener("click", (e) => {
   cur.chatFor = null;
   render();
 }, true);
+let chatLoadSeq = 0, chatLoadEpoch = 0, chatLoadAt = null, chatLoadPaint = null;
+const chatLoadApplied = { topics: 0, channel: 0, thread: 0 };
 async function chatLoad() {
-  const b0 = [CS.T, CS.ch[CS.at], CS.th && CS.thr[CS.th.ts]];
-  const tp = evLive() && Date.now() - (loadTopics.at || 0) < 2e3 ? null : loadTopics();
-  await Promise.all([tp, loadCh(CS.at), CS.th ? loadTh(CS.th.k, CS.th.ts) : null]);
-  const same = b0[0] === CS.T && b0[1] === CS.ch[CS.at] && b0[2] === (CS.th && CS.thr[CS.th.ts]);
-  if (same && !Object.keys(CS.pmeta).length) return;
+  const seq = ++chatLoadSeq, ch = CS.at, th = CS.th;
+  const changed = chatLoadAt !== ch;
+  if (changed) {
+    chatLoadAt = ch;
+    chatLoadEpoch++;
+  }
+  const epoch = chatLoadEpoch, current2 = () => epoch === chatLoadEpoch && CS.at === ch;
+  const accept = (kind) => () => {
+    if (!current2() || seq < chatLoadApplied[kind]) return false;
+    chatLoadApplied[kind] = seq;
+    return true;
+  };
+  const state = () => [CS.T, CS.ch[ch], CS.th && CS.thr[CS.th.ts]];
+  let shown = state();
+  const refresh2 = (kind) => () => {
+    if (!current2() || seq < chatLoadApplied[kind]) return;
+    chatLoadApplied[kind] = seq;
+    const now = state(), same = now.every((x, i) => x === shown[i]);
+    if (same && !Object.keys(CS.pmeta).length && chatLoadPaint !== ch) return;
+    shown = now;
+    chatPendingFix();
+    if (chatOn()) {
+      chatLoadPaint = ch;
+      whenIdle("chat", () => {
+        if (current2() && chatOn()) {
+          chatLoadPaint = null;
+          viewChat(true);
+        }
+      });
+    }
+  };
+  const tp = !changed && evLive() && Date.now() - (loadTopics.at || 0) < 2e3 ? null : loadTopics(accept("topics"));
+  await Promise.all([tp?.then(refresh2("topics")), loadCh(ch, accept("channel")).then(refresh2("channel")), th ? loadTh(th.k, th.ts, accept("thread")).then(refresh2("thread")) : null]);
+}
+function chatPendingFix() {
   for (const [k, m] of Object.entries(CS.pmeta)) {
     const msgs = [...CS.thr[m.thread]?.messages || [], ...CS.ch[m.channel]?.messages || [], ...isNodeCh(CS.at) || isSessCh(CS.at) || isGptCh(CS.at) ? CS.ch[CS.at]?.messages || [] : []];
     if (m.media && (m.fixed || m.vts && msgs.some((x) => x.ts === m.vts))) continue;
@@ -8990,9 +9047,6 @@ async function chatLoad() {
       delete CS.pmeta[k];
     }
   }
-  if (chatOn()) whenIdle("chat", () => {
-    if (chatOn()) viewChat(true);
-  });
 }
 async function openThread(k, ts, focus, side) {
   if (CS.th?.ts !== ts) {

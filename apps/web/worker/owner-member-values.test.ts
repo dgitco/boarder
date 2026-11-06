@@ -22,7 +22,7 @@ const run = (src: string, c: Case, ret: string, extra: Record<string, unknown> =
   new Function(...ARGS, ...Object.keys(extra), src + `\n; return ${ret};`)(c.window, c.D, c.CH, c.TURN, c.AGENT_CUSTOM, ...Object.values(extra));
 
 // ── shell.js 도우미 값 ──
-const HELPERS = ["turnT", "capOn", "xHeads", "priFace"].map(n => line(shell, new RegExp(`^  const ${n} = .*$`, "m"))).join("\n");
+const HELPERS = ["turnT", "capOn", "mainOnly", "xHeads", "priFace"].map(n => line(shell, new RegExp(`^  const ${n} = .*$`, "m"))).join("\n");
 const helpers = (c: Case) => run(HELPERS, c, "{turnT, capOn, xHeads, priFace}");
 
 test("S3 · S7 · O7 차례 글: 보드 TURN 먼저, 없으면 서버 HB_MEMBER.turn, 그것도 없으면 '내 차례'(지금 주인)", () => {
@@ -82,8 +82,8 @@ test("S2 · X1 Primary 얼굴: 서버 areas primary.avatar 칸이 있으면 그�
 });
 
 test("S6 · S8 · S13 · S14: 사람 종류 대신 데이터(rolewin · role_seats · task_side · areas · BOTN)", () => {
-  assert.match(shell, /^    const RW = !RS \? /m);
-  assert.match(shell, /^    const DG = RS && TS \? /m);
+  assert.match(shell, /^    const RW = !mainOnly\(\) && !RS \? /m);
+  assert.match(shell, /^    const DG = !mainOnly\(\) && RS && TS \? /m);
   assert.match(shell, /^    \+ '#' \+ \(\(typeof D === 'object' && D\?\.areas\) \|\| \[\]\)\.map\(/m);
   assert.match(shell, /const botn = typeof BOTN === 'string' && BOTN \? BOTN : 'Primary';/);
   assert.doesNotMatch(shell, /window\.HB_MEMBER \? '내 차례' : '내 차례'/);
