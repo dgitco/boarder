@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "26e229d318aa";
+window.HB_VER = "af3d28264279";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -752,9 +752,10 @@ html.mlock body{position:fixed;left:0;right:0;width:100%}
 .toast{white-space:pre-line;position:fixed;left:0;right:0;margin:0 auto;width:max-content;bottom:max(20px,env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:8px;font-size:13px;z-index:40;max-width:min(480px,calc(100% - 32px))}
 
 @media (max-width:640px){.toast{left:16px;right:16px;width:auto;max-width:none}}
-.toast.nvt{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 14px;z-index:70}.toast.nvt[hidden]{display:none}
+.toast.nvt{display:flex;align-items:center;gap:10px;white-space:normal;box-sizing:border-box;padding:6px 6px 6px 14px;z-index:70}.toast.nvt[hidden]{display:none}
 body:has(#ans:not([hidden])) .toast.nvt{top:calc(var(--vvt,0px) + max(60px,env(safe-area-inset-top,0px) + 52px));bottom:auto!important}   
-.toast.nvt .nvgo{background:var(--bg);color:var(--ink);border-radius:8px;padding:5px 10px;font-weight:600;font-size:13px}.toast.nvt .nvx{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:inherit;opacity:.7}
+.toast.nvt > span{flex:1;min-width:0;line-height:20px;overflow-wrap:anywhere}
+.toast.nvt .bxs-btn{flex:none;color:var(--ink)}.toast.nvt .nvx{width:30px;padding:0;color:inherit;opacity:.7}
 
 .ans.modal{width:min(720px,calc(100% - 32px));max-height:min(840px,calc(100% - 48px))}
 .ab{padding:24px 28px 12px;gap:20px}
@@ -1656,6 +1657,8 @@ textarea.tkon::selection{background:color-mix(in srgb,var(--accent) 26%,transpar
 .empty.loading .g-spin{width:18px;height:18px;border-width:2px}
 .empty .retry{margin-left:6px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--soft);width:26px;height:26px;padding:0;display:inline-grid;place-items:center;vertical-align:middle;cursor:pointer}
 .empty .retry:hover{color:var(--ink);border-color:var(--muted)}
+.empty.rderr{display:flex;align-items:center;justify-content:center;gap:6px;color:var(--soft);font-size:13px}
+.empty.rderr .retry{margin-left:0}
 
 .chat{position:relative}
 .hbnet{position:absolute;left:0;right:0;z-index:2}
@@ -2191,7 +2194,7 @@ html.hb-unkeep .inbr:first-child:has(> .ibun) .rtools{right:132px}
     <div class="hr">
       <button class="hpill acc" id="h-attn" type="button" hidden></button>
       <button class="hpill" id="h-stall" type="button" hidden></button>
-      <button class="hpill acc" id="h-new" type="button" hidden>새 판 · 눌러서 새로고침</button>
+      <button class="hpill acc" id="h-new" type="button" hidden>업데이트가 나왔어요</button>
       <span class="stamp stale" id="stamp" hidden></span>   
       <div class="hrt">   
         <button class="huddle" id="h-call" type="button" data-vcall="" aria-label="Primary와 통화" title="Primary와 통화(아무것도 안 열려 있어도)"><svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><path d="M6.6 3.2 4.9 3.5c-.8.2-1.4.9-1.3 1.7.5 5.6 5 10.1 10.6 10.6.8.1 1.5-.5 1.7-1.3l.3-1.7c.1-.6-.2-1.1-.7-1.4l-2-.9c-.5-.2-1.1-.1-1.4.3l-.7.8c-1.7-.8-3.1-2.2-3.9-3.9l.8-.7c.4-.4.5-.9.3-1.4l-.9-2c-.3-.5-.8-.8-1.4-.7z" fill="currentColor"/></svg><span class="hcl">Primary과 통화</span></button>   
@@ -5289,14 +5292,14 @@ function nvShow() {
     el.id = "hb-newver";
     el.className = "toast nvt";
     el.setAttribute("role", "status");
-    el.innerHTML = '<span>새 판이 나왔어요</span><button type="button" class="nvgo" data-nvgo>새로고침</button><button type="button" class="nvx" data-nvx aria-label="닫기" title="닫기"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>';
+    el.innerHTML = '<span>업데이트가 나왔어요</span><button type="button" class="bxs-btn sm" data-nvgo>새로고침</button><button type="button" class="bxs-btn sm ghost nvx" data-nvx aria-label="닫기" title="닫기"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>';
     el.addEventListener("click", (e) => {
       if (e.target.closest("[data-nvgo]")) {
         if (!reloadKeep()) {
           const sp = el.querySelector("span");
           sp.textContent = "새로고침하지 못했어요";
           setTimeout(() => {
-            sp.textContent = "새 판이 나왔어요";
+            sp.textContent = "업데이트가 나왔어요";
           }, 4e3);
         }
       } else if (e.target.closest("[data-nvx]")) {
@@ -6718,6 +6721,7 @@ function optMismatch(k, x, g, why) {
 }
 const rxFix = (o) => o?.messages && optFix("msgs", o);
 async function loadCh(k) {
+  rtSweep();
   if (isIbCh(k)) return window.HBInbox?.feedLoad(k);
   if (isGptCh(k)) {
     if (k === "q:new") {
@@ -6862,6 +6866,7 @@ async function loadOlder(k) {
   if (chatOn() && CS.at === k) viewChat(true);
 }
 async function loadTh(k, ts) {
+  rtSweep();
   if (!LIVE) {
     const t = CS.T.threads.find((x) => x.ts === ts);
     CS.thr[ts] = (D.chat?.threads || {})[ts] || { messages: t ? [{ ts, who: t.who, name: t.name, text: t.text, buttons: [], reactions: [] }, ...t.replies ? [{ ...t.last, buttons: [], reactions: [] }] : []] : [], owner: t?.owner };
@@ -7943,7 +7948,7 @@ filePick.addEventListener("change", () => {
   addFiles(filePick.dataset.to, filePick.files);
   filePick.value = "";
 });
-const RETRY = '<button class="retry" data-chretry aria-label="다시 시도" title="다시 시도"><svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 6.5A6.25 6.25 0 1 0 16.25 11M15.75 3v3.75H12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
+const RETRY = `<button class="retry" data-chretry aria-label="다시 불러오기" title="다시 불러오기">${LU("rotate-cw", 14)}</button>`;
 const errShown = /* @__PURE__ */ new Set();
 setInterval(() => errShown.clear(), 6e4);
 const errOnce = (k) => {
@@ -7954,15 +7959,60 @@ const errOnce = (k) => {
     if (!window.HB_NET) toast(ERR, 3600, true, { where: "read " + k.slice(0, 60), kind: e?.errStatus ? "http" : void 0, status: e?.errStatus ?? null, err: e?.err || "" });
   });
 };
-const readErr = (k) => {
+function rtc() {
+  return rtc.s ||= { n: /* @__PURE__ */ new Map(), t: 0, due: 0, busy: false };
+}
+function rtSweep() {
+  const s = rtc();
+  for (const k of s.n.keys()) {
+    const e = k.startsWith("th:") ? CS.thr[k.slice(3)] : CS.ch[k.slice(3)];
+    if (!e?.err) s.n.delete(k);
+  }
+}
+const RT_GAP = [2e3, 5e3, 12e3, 6e4];
+const errKeys = () => [...Object.entries(CS.thr).filter(([, v]) => v?.err).map(([k]) => "th:" + k), ...Object.entries(CS.ch).filter(([, v]) => v?.err).map(([k]) => "ch:" + k)];
+const rtGiveUp = (k) => (rtc().n.get(k) || 0) >= RT_GAP.length - 1;
+function autoRetry() {
+  const s = rtc();
+  if (s.busy || window.HB_NET) return;
+  const ks = errKeys();
+  if (!ks.length) return;
+  const gap = RT_GAP[Math.min(Math.min(...ks.map((k) => s.n.get(k) || 0)), RT_GAP.length - 1)];
+  if (s.t && s.due <= Date.now() + gap) return;
+  clearTimeout(s.t);
+  s.due = Date.now() + gap;
+  s.t = setTimeout(async () => {
+    s.t = 0;
+    if (window.HB_NET) return;
+    if (document.hidden) return autoRetry();
+    s.busy = true;
+    try {
+      await retryReads(true);
+    } finally {
+      s.busy = false;
+    }
+    autoRetry();
+  }, gap);
+}
+const readErr = (k, has, what = "글을") => {
   if (window.HB_NET) return "";
   errOnce(k || "read");
-  return `<div class="empty">${RETRY}</div>`;
+  autoRetry();
+  if (!rtGiveUp(k)) return has ? "" : LOADING;
+  return `<div class="empty rderr" role="status"><span>${what} 불러오지 못했어요</span>${RETRY}</div>`;
 };
-async function retryReads() {
+async function retryReads(auto) {
   const bad = Object.entries(CS.thr).filter(([, t]) => t?.err).map(([ts]) => ts), chBad = Object.entries(CS.ch).filter(([, c]) => c?.err).map(([k]) => k);
-  if (!bad.length && !chBad.length) return;
+  if (!bad.length && !chBad.length) {
+    rtSweep();
+    return;
+  }
   await Promise.all([...bad.map((ts) => loadTh(CS.th?.ts === ts && CS.th.k || isIbCh(CS.at) && window.HBInbox?.chanOf?.(ts) || CS.at, ts)), ...chBad.map((k) => loadCh(k))]);
+  rtSweep();
+  if (auto) {
+    const n = rtc().n, now = new Set(errKeys());
+    for (const k of [...bad.map((ts) => "th:" + ts), ...chBad.map((c) => "ch:" + c)]) if (now.has(k)) n.set(k, (n.get(k) || 0) + 1);
+  }
   if (chatOn()) viewChat(true);
   else if (cur && !ans.hidden && !sending) render();
 }
@@ -8282,7 +8332,7 @@ function thHTML() {
   const fnew = rest.length && !(root && isRead({ ts, latest: rest.at(-1)?.ts })) ? window.HBInbox?.firstNew?.(ts, rest) : null;
   const thName = tt2 ? tt2.title : on && on !== AREA_NAME[k] ? on : "";
   return `<aside class="cth" aria-label="스레드"><div class="thgrip" data-thgrip role="separator" aria-orientation="vertical" tabindex="0" aria-label="스레드 너비" title="끌어서 너비 바꾸기 · 두 번 누르면 기본"></div><div class="chd"><span class="t">스레드</span>${thName ? `<span class="d">${esc(thName)}</span>` : ""}${huddle({ ch: k, th: CS.th.ts })}${LIVE ? `<button class="thsave" data-msave="${CS.th.ts}" aria-pressed="${sv}" aria-label="${sv ? "스레드 저장 풀기" : "스레드 저장"}" title="${sv ? "저장 풀기" : "스레드 저장"}">${sv ? ICON.saved : ICON.save}</button>` : ""}<button class="xbtn" data-cclose aria-label="닫기">${ICON.x}</button></div>
-    ${fwrap("cthfeed", "", `${root ? `<div class="croot">${msgHTML(root, k, true)}</div>` : t.loading ? LOADING : t.err ? window.HB_NET ? "" : `<div class="empty loading" role="status"><span style="display:inline-flex;align-items:center;gap:6px">스레드를 불러오지 못했어요${RETRY}</span></div>` : emptyHTML({ ic: "search", t: "없는 스레드예요", p: "지워졌거나 주소가 바뀌었어요.", sk: "", sm: true })}${rest.length ? `<div class="cnt">답글 ${rest.length}개</div>` : ""}${rest.map((m) => (m.ts === fnew ? '<div class="thnew" role="separator" aria-label="여기부터 새 답"><span>새 답</span></div>' : "") + msgHTML(m, k, true)).join("")}${root && t.err ? readErr(t.err) : ""}${pendFor("t" + ts)}`)}
+    ${fwrap("cthfeed", "", `${root ? `<div class="croot">${msgHTML(root, k, true)}</div>` : t.loading ? LOADING : t.err ? readErr("th:" + ts, false, "스레드를") : emptyHTML({ ic: "search", t: "없는 스레드예요", p: "지워졌거나 주소가 바뀌었어요.", sk: "", sm: true })}${rest.length ? `<div class="cnt">답글 ${rest.length}개</div>` : ""}${rest.map((m) => (m.ts === fnew ? '<div class="thnew" role="separator" aria-label="여기부터 새 답"><span>새 답</span></div>' : "") + msgHTML(m, k, true)).join("")}${root && t.err ? readErr("th:" + ts, true, "새 답글을") : ""}${pendFor("t" + ts)}`)}
     ${comp("cth", "스레드에 답하기", `Enter 보내기 · ${owner ? esc(ownerName(owner)) + " 입력으로" : esc(BOTN) + " 입력으로"} 들어가요 · Slack 스레드에도`)}</aside>`;
 }
 const THW = "hb-thw";
@@ -11082,7 +11132,7 @@ function artApi(f, q) {
     return reply(200, { lines: c && document.body.classList.contains("meet") ? c.log.filter((m) => m.who === "me" && (m.ts || 0) >= since).map((m) => m.text).slice(-12) : [] });
   }
   const tok = id && !body && ARTS[id]?.kind === "canvas" && /^api\/arttok\/[A-Za-z0-9]{16,40}$/.test(path);
-  const answer = id && !body && ARTS[id]?.kind === "canvas" && /^api\/answer\/[\w-]{6,64}$/.test(path);
+  const answer = id && !body && ARTS[id]?.kind === "canvas" && /^api\/answer\/[\w-]{6,64}(?:\?final=1)?$/.test(path);
   if (!ok && !tok && !answer || !LIVE) return reply(403, { error: "안 되는 길" });
   fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-HB": "1" }, body: JSON.stringify(body) } : { cache: "no-store" }).then((r) => r.json().catch(() => ({})).then((j) => {
     if (path === "api/artthumb" && r.ok && j.ok !== false && ARTS[id]) {

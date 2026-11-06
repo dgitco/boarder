@@ -480,6 +480,7 @@ html.bx .bx-gap{display:block;flex:none;height:14px}
 .bx-tip{display:none}
 @media (min-width:861px){
   html.bx .bx-sb .bx-sba .bx-it[aria-current="page"] > svg{color:var(--ink)}
+  html.bx .bx-sb .bx-it > span:not(.n) + .n{margin-left:-6px}
   html.bx.bx-rail:not(.bx-newsb){--bx-sbw:264px!important}
   /* 안 B 아이콘 막대: 폭만 72 — 패딩 · 줄 높이 · 아이콘 자리는 목록과 같고 이름만 숨김(화면 읽기용으로는 남김), 마우스를 올리면 .bx-tip */
   html.bx.bx-newsb.bx-rail .bx-sb .top .tr{display:none}

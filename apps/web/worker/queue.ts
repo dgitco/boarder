@@ -118,6 +118,10 @@ export async function ownerAnswerOf(env: QEnv, email: string, rid: string): Prom
   return null;
 }
 
+export async function finalOf(env: QEnv, rid: string): Promise<{ state: string; final: true }> {
+  return { state: RID.test(rid) && (await ridSeen(env.DB, rid)) ? "ok" : "unknown", final: true };
+}
+
 /** GET /api/rid/:rid — 「확인 필요」 글이 서버에 이미 들어갔나(done · busy · none). 스위치가 꺼져 있으면 404(화면은 「모름」 — 다시 안 보내고 오류로) */
 export async function look(c: C, email: string) {
   if (!(await f7On(c.env.DB, "write_queue"))) return c.json({ error: "꺼짐" }, 404);

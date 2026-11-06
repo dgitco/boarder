@@ -641,6 +641,11 @@ test("켬: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS
   { const MBf = await import("./member-board.ts"); MBf.loadForget(OWNER); MBf.loadForget(MEMBER); }   // 회원 보드 읽기 캐시는 메일 열쇠(400ms) — 앞 준비(t)에서 읽은 값을 비움
   assert.equal(vals(await page2(OWNER)).css, false, "총괄 판이 있으면 회원 틀 CSS 안 넣음");
   assert.equal(vals(await page2(MEMBER)).css, true, "회원은 그대로");
+  await ledger.setFlag(t2.D1, "owner_unified", false); await ledger.f7On(t2.D1, "__reset__");   // 꺼진 값을 isolate 캐시에
+  t2.db.prepare("UPDATE f7_flag SET on_at = ? WHERE name = 'owner_unified'").run(Date.now());   // 캐시는 두고 D1 만 켬
+  MB.loadForget(OWNER);
+  const realNow = Date.now; Date.now = () => realNow() + 11_000;   // 캐시를 10초 넘게 낡게
+  try { assert.equal(vals(await page2(OWNER)).css, false, "낡은 스위치 캐시에서도 하네스 판을 읽음(회원 틀 CSS 없음)"); } finally { Date.now = realNow; }
 });
 
 let harnessCmds: [string, string, any][] = [];

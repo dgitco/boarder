@@ -49,7 +49,7 @@
   addEventListener('hbside', () => { if (X.ready && JSON.stringify(scTabs()) !== X.tbSig) drawHome(true); });
   const keepDone = () => { try { localStorage.setItem(DK, JSON.stringify(Object.fromEntries(X.done))); } catch {} };
   const root = document.createElement('div'); root.id = 'bxx'; document.body.append(root);
-  root.innerHTML = `<h1 class="xpct">피드</h1><div class="xv" data-v="home"></div><div class="xv" data-v="thread" hidden></div><div class="xv" data-v="save" hidden></div><div class="xv" data-v="me" hidden></div>
+  root.innerHTML = `<div class="xpct"><h1>피드</h1><span class="xpcf"></span><button type="button" class="xpm" data-xpm aria-label="보기 고르기" aria-haspopup="menu" aria-expanded="false" hidden><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M17 12h.01"/><path d="M12 12h.01"/><path d="M7 12h.01"/></svg></button></div><div class="xv" data-v="home"></div><div class="xv" data-v="thread" hidden></div><div class="xv" data-v="save" hidden></div><div class="xv" data-v="me" hidden></div>
     <nav class="xglass" aria-label="아래 내비">${['home', 'dm', 'nodes', 'save', 'me'].map(k => `<button type="button" class="xt" data-xtab="${k}" aria-label="${{home: '피드', dm: '에이전트 DM', nodes: '노드', save: '저장됨', me: '프로필'}[k]}"></button>`).join('')}</nav>
     <button type="button" class="xfab" data-xtab-fab aria-label="새 글">${ji('plus', false)}</button><div class="xtoast" role="status" hidden></div>`;
   const V = k => root.querySelector(`.xv[data-v="${k}"]`), PC = matchMedia('(min-width: 861px)');
@@ -179,7 +179,10 @@
     const sl = v.querySelector('.xsel'); if (sl) sl.textContent = `${NAMES()[X.sel] || X.sel} ▾`;
     if (!X.ready){ const f = v.querySelector('.xfeed'); if (!f.querySelector('.xspin')) f.innerHTML = SPIN; return; }
     const st = v.scrollTop, an = anchorOf(v);
-    { const fl = v.querySelector('.xfl'); fl.style.display = tbs.length < 2 ? 'none' : ''; fl.innerHTML = tbs.length < 2 ? '' : tbs.map(t => `<button type="button" role="tab" aria-selected="${X.fl === t.id}" data-xfl="${E(t.id)}">${E(t.label)}</button>`).join(''); }   // 개수 없음, 기본 전체
+    { const fl = v.querySelector('.xfl'); fl.style.display = tbs.length < 2 ? 'none' : ''; fl.innerHTML = tbs.length < 2 ? '' : tbs.map(t => `<button type="button" role="tab" aria-selected="${X.fl === t.id}" data-xfl="${E(t.id)}">${E(t.label)}</button>`).join(''); }
+    const pm = root.querySelector('[data-xpm]'); pm.hidden = tbs.length < 2; root.classList.toggle('xhaspm', !pm.hidden);
+    root.querySelector('.xpcf').textContent = X.fl === 'all' ? '' : '· ' + (tbs.find(t => t.id === X.fl)?.label || '');
+    if (PM && (pm.hidden || PM.tabs !== X.tbSig)) pmClose();
     const pg = pageOf(it), more = pg.length < it.length;
     { const fd = v.querySelector('.xfeed'), back = keepThumb(fd);
       fd.innerHTML = pg.length ? pg.map(unit).join('') + (more ? `<div class="xmore">${SPIN}</div>` : '') : `<p class="xempty">${X.fl === 'all' ? '글이 없어요' : `${E(tbs.find(t => t.id === X.fl)?.label || '')}에 글이 없어요`}</p>`; back(); }
@@ -331,6 +334,35 @@
     else if (Math.abs(y - p) > 8){ root.classList.toggle('xlow', y > p); lastY.set(v, y); } }, {capture: true, passive: true});
   // 답 칸은 화면 아래 고정 — 키보드가 뜨면 그 위로(보이는 영역 아래 끝 기준)
   { const vv = window.visualViewport; if (vv){ const kb = () => { const h = Math.max(0, innerHeight - vv.height - vv.offsetTop); root.style.setProperty('--xkb', h > 60 ? h + 'px' : '0px'); }; vv.addEventListener('resize', kb); vv.addEventListener('scroll', kb); } }
+  const MSV = d => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const MIC = {all: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/>', chk: '<path d="M20 6 9 17l-5-5"/>'};
+  let PM = null;
+  function pmClose(focus){ if (!PM) return; const w = PM; PM = null; w.host.remove(); w.scrim?.remove(); w.btn.setAttribute('aria-expanded', 'false'); if (focus && w.btn.isConnected) w.btn.focus(); removeEventListener('resize', pmClose); }
+  function pmOpen(btn){
+    pmClose(); if (!PC.matches || scTabs().length < 2) return;
+    const phone = matchMedia('(hover: none)').matches, host = document.createElement('div'); let scrim = null, box = host;
+    const html = `<div class="iblab">보기</div>` + scTabs().map(t => `<button type="button" role="menuitemradio" aria-checked="${X.fl === t.id}" data-xpf="${E(t.id)}">${MSV(MIC.all)}<span>${E(t.label)}</span>${X.fl === t.id ? `<i class="ibr">${MSV(MIC.chk)}</i>` : ''}</button>`).join('');
+    if (phone){ scrim = document.createElement('div'); scrim.className = 'sscrim'; host.className = 'msheet ibsheet xpmenu'; host.setAttribute('role', 'dialog'); host.setAttribute('aria-label', '보기 고르기'); host.innerHTML = '<div class="grab"></div><div class="sl" role="menu"></div>'; box = host.querySelector('.sl'); document.body.append(scrim, host); }
+    else { host.className = 'ibdd xpmenu'; host.setAttribute('role', 'menu'); host.setAttribute('aria-label', '보기 고르기'); document.body.append(host); const r = btn.getBoundingClientRect(); host.style.top = r.bottom + 6 + 'px'; host.style.right = Math.max(8, innerWidth - r.right) + 'px'; }
+    box.innerHTML = html; PM = {btn, host, scrim, tabs: JSON.stringify(scTabs())}; btn.setAttribute('aria-expanded', 'true'); (box.querySelector('[aria-checked="true"]') || box.querySelector('button'))?.focus(); addEventListener('resize', pmClose);
+  }
+  function setFl(k){ X.fl = k; X.unKeep.clear(); X.page = 10; try { localStorage.setItem(FLK, X.fl); } catch {} V('home').scrollTop = 0; return drawHome(true); }
+  document.addEventListener('click', e => {   // ⋯ 열고 닫기 · 항목 고르기 · 밖을 누르면 닫기(메뉴는 body 에 붙어 root 손잡이 밖)
+    const t = e.target, b = t.closest?.('[data-xpm]');
+    if (b){ e.stopPropagation(); e.preventDefault(); return PM ? pmClose() : pmOpen(b); }
+    if (!PM) return;
+    const it = t.closest?.('[data-xpf]'); if (it && PM.host.contains(it)){ e.stopPropagation(); pmClose(true); return setFl(it.dataset.xpf); }
+    if (!PM.host.contains(t)) pmClose();
+  }, true);
+  document.addEventListener('keydown', e => {
+    if (!PM || e.isComposing) return;
+    if (!R.classList.contains('bx-x') || !PM.btn.isConnected){ pmClose(); return; }   // 꺼진 피드의 메뉴가 다른 화면 키를 먹지 않게
+    const bs = [...PM.host.querySelectorAll('button[role^="menuitem"]')], i = bs.indexOf(document.activeElement), eat = () => { e.preventDefault(); e.stopPropagation(); };
+    if (e.key === 'ArrowDown'){ eat(); bs[(i + 1) % bs.length]?.focus(); }
+    else if (e.key === 'ArrowUp'){ eat(); bs[(i - 1 + bs.length) % bs.length]?.focus(); }
+    else if (e.key === 'Escape'){ eat(); pmClose(true); }
+    else if (e.key === 'Tab') pmClose();
+  }, true);
   // ── 누름
   root.addEventListener('click', e => {
     const t = e.target, q = s => t.closest(s);
@@ -338,7 +370,7 @@
       if (k === 'dm') return void (location.href = '/es');
       return show(k); }
     if (q('[data-xtab-fab]')) return compose();
-    { const fl = q('[data-xfl]'); if (fl){ X.fl = fl.dataset.xfl; X.unKeep.clear(); X.page = 10; try { localStorage.setItem(FLK, X.fl); } catch {} V('home').scrollTop = 0; return drawHome(true); } }
+    { const fl = q('[data-xfl]'); if (fl) return setFl(fl.dataset.xfl); }
     { const xa2 = q('[data-xart]'), al = t.closest('a[href]'), am = al && /\/(?:canvas|art)\/(hb[1-9A-HJ-NP-Za-km-z]{22})/.exec(al.getAttribute('href') || ''), id = xa2?.dataset.xart || am?.[1];
       if (id){ e.preventDefault(); e.stopPropagation(); return openCanvas(id); } }
     if (q('[data-xfind]')) return void document.querySelector('.bx-sb [data-go="find"], .bx-dr [data-go="find"]')?.click();
@@ -440,7 +472,7 @@
     for (const b of root.querySelectorAll('.xt')) b.innerHTML = ji(b.dataset.xtab, b.classList.contains('on')) + badge(b.dataset.xtab);
   }
   try { window.HBInbox?.on?.(() => sched()); } catch {}
-  const feedOff = () => { if (!R.classList.contains('bx-x')) return; R.classList.remove('bx-x', 'xnodes'); if (location.pathname === '/feed') history.pushState(null, '', '/' + location.hash); dispatchEvent(new Event('hbside')); };
+  const feedOff = () => { pmClose(); if (!R.classList.contains('bx-x')) return; R.classList.remove('bx-x', 'xnodes'); if (location.pathname === '/feed') history.pushState(null, '', '/' + location.hash); dispatchEvent(new Event('hbside')); };
   try { new MutationObserver(() => { if (typeof ans !== 'undefined' && !ans.hidden && R.classList.contains('bx-x') && !R.classList.contains('xnodes')) feedOff(); }).observe(ans, {attributes: true, attributeFilter: ['hidden']}); } catch {}   // 찾기 · 알림 · 사이드바가 대화를 열면 그 화면을 가리지 않게
   const feedOn = () => { try { if (typeof ans !== 'undefined' && !ans.hidden) window.closeAns?.(); } catch {} R.classList.add('bx-x'); if (location.pathname !== '/feed') history.pushState(null, '', '/feed'); show('home'); dispatchEvent(new Event('hbside')); };
   window.BXFeed = {on: feedOn, off: feedOff, refresh: () => refresh(true)};

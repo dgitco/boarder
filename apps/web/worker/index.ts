@@ -754,10 +754,11 @@ const prepOn = (env: Env) => ledger.f7On(env.DB, "owner_unified_prep");
 const settingsKey = async (env: Env, email: string) => !isOwner(env, email) ? String(email).trim().toLowerCase() : await prepOn(env) ? W.canon(env) : null;
 const unifiedOn = async (env: Env, email: string) => isOwner(env, email) && W.unifiedIn(await ledger.f7All(env.DB), env, email);
 const unifiedAll = async (env: Env) => (await ledger.f7All(env.DB)).has("owner_unified");
+const canonKey = (env: Env) => { const k = W.canon(env); memberBoard.setHarnessKey(k); return k; };
 /** 회원 길 사람 열쇠: 회원 = 그 메일, 주인 = owner_unified 가 켜졌을 때만 canon(꺼지면 null — 예전 주인 길) */
-const boardWho = async (env: Env, email: string) => !isOwner(env, email) ? String(email).trim().toLowerCase() : await unifiedOn(env, email) ? W.canon(env) : null;
+const boardWho = async (env: Env, email: string) => !isOwner(env, email) ? String(email).trim().toLowerCase() : await unifiedOn(env, email) ? canonKey(env) : null;
 /** 기기(scope full)의 보드 열쇠: 회원 기기 = 그 메일(초대 안), 주인 기기 = 전체 owner_unified 가 켜졌을 때만 canon(꺼지면 null — 예전 주인 기기 거절) */
-const deviceWho = async (env: Env, owner: string) => isOwner(env, owner) ? (await unifiedAll(env) ? W.canon(env) : null) : await member(env, owner) ? owner.toLowerCase() : null;
+const deviceWho = async (env: Env, owner: string) => isOwner(env, owner) ? (await unifiedAll(env) ? canonKey(env) : null) : await member(env, owner) ? owner.toLowerCase() : null;
 /** 회원 줄 열쇠(늘 있음): 회원 길이면 그 열쇠, 꺼진 주인은 예전처럼 로그인 메일 */
 const boardMe = async (env: Env, email: string) => (await boardWho(env, email)) ?? String(email).trim().toLowerCase();
 async function cliDevice(c: Context<{ Bindings: Env }>) {
@@ -2681,6 +2682,7 @@ app.all("*", async c => {
       if (c.req.method === "GET" || c.req.method === "HEAD") {
         const ans = /^\/api\/answer\/([\w-]{1,64})$/.exec(url.pathname);
         if (ans) {   // 그 rid 의 쓰기가 됐는지(rid 칸) — 늘 ok 이던 것(X1)
+          if (url.searchParams.get("final") === "1") { try { return c.json({ ok: true, ...await queue.finalOf(c.env, ans[1]) }, 200, { "cache-control": "no-store" }); } catch { return queue.retrySafe(c); } }
           if (!(await ledger.f7On(c.env.DB, "write_queue"))) return c.json({ ok: true, state: "ok" });   // rid 칸이 없으면 예전처럼
           try { const a = await queue.answerOf(c.env, ownU ? s.user.email : me, ans[1]); return a ? c.json({ ok: true, ...a }, 200, { "cache-control": "no-store" }) : c.json({ state: "unknown" }, 404, { "cache-control": "no-store" }); }
           catch { return queue.retrySafe(c); }   // rid 칸을 못 부름 = 모름(화면은 같은 rid 로)
@@ -2882,6 +2884,9 @@ app.all("*", async c => {
   // 주인 GET /api/answer/:rid — Worker 가 직접 D1 에 쓴 rid(f7_rid) · 남은 답이 4xx 인 것만 여기서. 다리가 받은 글(202 queued 등) · 모르는 rid · 칸 오류는 예전처럼 다리(_jobs)로
   if (c.req.method === "GET" && chOf(c) === "owner") {
     const am = /^\/api\/answer\/([\w-]{1,64})$/.exec(url.pathname);
+    if (am && url.searchParams.get("final") === "1") {
+      try { return c.json({ ok: true, ...await queue.finalOf(c.env, am[1]) }, 200, { "cache-control": "no-store", "x-f7": "final" }); } catch { return queue.retrySafe(c); }
+    }
     if (am && await ledger.f7On(c.env.DB, "write_queue")) {
       const a = await queue.ownerAnswerOf(c.env, s.user.email, am[1]).catch(() => null);
       if (a) return c.json({ ok: true, ...a }, 200, { "cache-control": "no-store", "x-f7": "queue" });
