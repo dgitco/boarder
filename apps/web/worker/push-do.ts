@@ -23,7 +23,8 @@ export type MemberPushApi = {
 async function rows(db: D1Database) {
   const [c, u] = await db.batch([
     db.prepare("SELECT ts, area, kind, title, label, shape, state, replaced_by, dup_of, ref, posted_at FROM wl_cards"),
-    db.prepare("SELECT id, chan, thread, text, at FROM wl_talk_msg WHERE who = 'agent' AND deleted_at IS NULL AND text LIKE ?").bind(P.URGENT + "%"),
+    // 머리 글은 바인드가 아니라 글자로 — 이주 0092 부분 색인 wl_talk_msg_urgent 조건과 똑같아야 그 색인을 탐(URGENT 에 따옴표 없음)
+    db.prepare(`SELECT id, chan, thread, text, at FROM wl_talk_msg WHERE who = 'agent' AND deleted_at IS NULL AND text LIKE '${P.URGENT}%'`),
   ]);
   return [new Map((c.results as P.Card[]).map(r => [r.ts, r])), new Map((u.results as P.Urg[]).map(r => [P.urgKey(r), r]))] as const;
 }
