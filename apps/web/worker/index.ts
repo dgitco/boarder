@@ -507,6 +507,22 @@ app.post("/api/relay/write", async c => {
   if (st === 200) c.executionCtx.waitUntil(live.bumpLedger(c.env));
   return c.json(body, st as 200 | 400 | 503);
 });
+app.post("/api/relay/artnote", async c => {
+  c.header("x-artnote-route", "1");   // 이 길이 답했다는 표시 — 없으면(새 길 배포 전 Worker) 부른 쪽이 예전 길로
+  const tok = (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!((c.env.LEDGER_TOKEN && sameToken(tok, c.env.LEDGER_TOKEN)) || relayOk(c))) return c.json({ error: "no" }, 403);
+  const b = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
+  const who = String(b.who ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+  if (!who) return c.json({ ok: false, error: "쓰는 사람 없음" }, 400);
+  const rid = queue.ridOfBody(b);
+  let r: [number, object] | null;
+  try { r = await ownerWrite.artnote(c.env, b, rid, who); }
+  catch { return rid ? queue.retrySafe(c) : c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503); }
+  if (!r) return queue.retrySafe(c);   // 색인 없음 — 쓰기 전이라 다시 보내도 됨
+  if (r[0] < 400) c.executionCtx.waitUntil(live.bumpLedger(c.env));
+  return c.json(r[1], r[0] as 200);
+});
 app.post("/api/relay/upload/:action", async c => {
   if (!relayOk(c)) return c.json({ error: "no" }, 403);
   const raw = await memberFiles.readCapped(c.req.raw, 16 * 1024);

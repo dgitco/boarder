@@ -12,22 +12,22 @@ async function notes(db: D1Database, art: string) {   // artnotes.notes 와 같�
   return r.results;
 }
 
-export async function artnote(env: Env, body: { art?: unknown; del?: unknown; target?: unknown; page?: unknown; text?: unknown }, rid = ""): Promise<[number, object] | null> {
+export async function artnote(env: Env, body: { art?: unknown; del?: unknown; target?: unknown; page?: unknown; text?: unknown }, rid = "", who = "owner"): Promise<[number, object] | null> {
   const art = String(body.art || "");
   const ix = await files.index(env); if (!ix) return null;
   if (!/^[A-Za-z0-9]{16,40}$/.test(art) || !ix.arts[art]) return [404, { ok: false, error: "없는 아티팩트" }];
   if (body.del) {
     const id = Number(body.del); if (!Number.isInteger(id)) return [400, { ok: false, error: "빈 댓글" }];
     await ridBatch(env.DB, rid, [
-      env.DB.prepare("UPDATE wl_art_note SET deleted_at = ? WHERE id = ? AND art = ? AND who = 'owner' AND deleted_at IS NULL").bind(now(), id, art),
+      env.DB.prepare("UPDATE wl_art_note SET deleted_at = ? WHERE id = ? AND art = ? AND who = ? AND deleted_at IS NULL").bind(now(), id, art, who),
       env.DB.prepare("INSERT INTO wl_change(tbl, pk, op, at, origin) SELECT 'art_note', json_array(?), 'up', ?, 'web' WHERE changes() > 0").bind(id, Date.now())]);
   } else {
     const text = String(body.text || "").trim().slice(0, MAX_TEXT), target = String(body.target || "").slice(0, 200);
     if (!text || !target) return [400, { ok: false, error: "빈 댓글" }];
     // id 는 D1 이 정함(정본이 하나라 사본과 겹치지 않음) — 한 문장 안에서 max+1, 바뀜 기록은 같은 트랜잭션에서 그 id 로
     await ridBatch(env.DB, rid, [
-      env.DB.prepare("INSERT INTO wl_art_note(id, art, target, page, who, text, at) SELECT coalesce(max(id), 0) + 1, ?, ?, ?, 'owner', ?, ? FROM wl_art_note")
-        .bind(art, target, String(body.page || "").slice(0, 200), text, now()),
+      env.DB.prepare("INSERT INTO wl_art_note(id, art, target, page, who, text, at) SELECT coalesce(max(id), 0) + 1, ?, ?, ?, ?, ?, ? FROM wl_art_note")
+        .bind(art, target, String(body.page || "").slice(0, 200), who, text, now()),
       env.DB.prepare("INSERT INTO wl_change(tbl, pk, op, at, origin) VALUES ('art_note', json_array((SELECT max(id) FROM wl_art_note)), 'up', ?, 'web')").bind(Date.now())]);
   }
   return [200, { ok: true, notes: await notes(env.DB, art) }];
