@@ -184,6 +184,6 @@ test("오른쪽 판 단추: aria-pressed 줄이 주석 뒤로 안 들어감", ()
   const c = line.indexOf("//");
   assert.ok(c < 0 || c > line.indexOf("db.setAttribute('aria-pressed', 'false')"), "주석보다 앞");
 });
-test("토스트: 주인은 main 글자 그대로, 회원만 메인 봇 이름", () => {
-  assert.match(board, /toast\(window\.HB_MEMBER \? `그 채널을 못 찾아 \$\{BOTN\} 채팅을 열어요` : ['"]그 채널을 못 찾아 Primary 로 열어요['"]\)/);
+test("토스트: 주인 꼴(다섯 열)은 main 글자 그대로, 회원 꼴(노드 트리)만 메인 봇 이름", () => {
+  assert.match(board, /toast\(nodeTree\(\) \? `그 채널을 못 찾아 \$\{BOTN\} 채팅을 열어요` : ['"]그 채널을 못 찾아 Primary 로 열어요['"]\)/);
 });

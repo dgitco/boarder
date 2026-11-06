@@ -467,13 +467,13 @@ test("켬: 에이전트 채널 이름 표(HB_AGENTS) — 주인 cfg 채널 표�
   const m = /window\.HB_AGENTS = (\[[^\n]*?\]);/.exec(pg.text); assert.ok(m, pg.text.slice(0, 400));
   assert.deepEqual(JSON.parse(m![1]), [{ key: "harness_lead", name: "harness_lead", lead: null }]);
   assert.ok(!/HB_AGENTS/.test((await t.req("GET", "/", undefined, await t.human(MEMBER))).text), "회원 화면엔 없음");
-  // board.html: HB_CH 여도 HB_AGENTS 가 있으면 그 표로 AGENT_CH(사이드바 「에이전트」 칸 · 채널 이름), 없으면 예전(회원 빈 표 · 주인 D.agents)
   const html = readFileSync(new URL("../board-template/page.html", import.meta.url), "utf8");
   const line = html.split("\n").find(l => l.startsWith("const AGENT_CH = "))!; assert.ok(line);
   const run = (window: unknown, D: unknown) => new Function("window", "D", "AREA_NAME", line.replace(/^const /, "") + "; return AGENT_CH;")(window, D, { primary: "Primary", company: "회사 리드" });
   const ag = [{ key: "harness_lead", name: "하네스 리드", lead: "%12" }];
   assert.deepEqual(run({ HB_CH: ["primary", "harness_lead"], HB_AGENTS: ag }, {}), ag, "켠 주인");
-  assert.deepEqual(run({ HB_CH: ["primary"] }, { agents: ag }), [], "회원은 그대로 빈 표");
+  assert.deepEqual(run({ HB_CH: ["primary"] }, {}), [], "회원은 그대로 빈 표(member-board 데이터엔 agents 가 없음)");
+  assert.deepEqual(run({ HB_CH: ["primary", "harness_lead"], HB_AGENTS: [{ key: "harness_lead", name: "harness_lead", lead: null }] }, { agents: ag }), ag, "켠 주인: 하네스가 올린 이름(D.agents)이 키 대신");
   assert.deepEqual(run({}, { agents: ag }), ag, "끈 주인은 D.agents 그대로");
 });
 

@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "7d9556f263e3";
+window.HB_VER = "7a6d77dfb1b8";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -14,7 +14,7 @@ window.HB_DTAG = "__BX_DTAG__";
   };
   const mOn = () => {
     try {
-      return !window.HB_CH && localStorage.getItem("hb-mainmerge") === "1";
+      return (window.HB_CAPS?.mainline ?? !window.HB_CH) && localStorage.getItem("hb-mainmerge") === "1";
     } catch (e) {
       return false;
     }
@@ -3093,7 +3093,7 @@ function applyAgentNames() {
   }
 }
 function agentCustomLoad() {
-  if (window.HB_CH || agentCustomAt) return;
+  if (agentCustomAt) return;
   agentCustomAt = Date.now();
   fetch("api/me/agent-faces", { credentials: "include" }).then((r) => r.ok ? r.json() : null).then((j) => {
     if (!j?.faces) return;
@@ -3136,7 +3136,7 @@ function moodOf(p) {
 }
 function blobP(p, size, name) {
   const n = name || nameOf(p), m = moodOf(p), ex = window.HB_EXPR || {};
-  const f = faceOf(n) || (window.HB_CH ? faceOk(p?.avatar) : null);
+  const f = faceOf(n) || faceOk(p?.avatar);
   if (f && (!window.HB_BLOB_ANIM || m === "idle" || f.photo)) return window.HB_BLOB ? `<span class="bl" aria-hidden="true">${faceSvg(f, size)}</span>` : "";
   if (!window.HB_BLOB_ANIM || m === "idle") return blob(n, size);
   const sd = f ? f.seed : seedOf(n);
@@ -3175,7 +3175,7 @@ const ICON = {
 const vcallBtn = (pane, name) => LIVE ? `<button class="vcall" data-vcall="${pane}" aria-label="${esc(jo(name, "와/과"))} 음성 통화" title="음성 통화">${ICON.phone}</button>` : "";
 const BOTN = String(window.HB_MEMBER?.bot || "").trim() || "Primary";
 const asPrimary = (t) => String(t ?? "").replace(/Primary/g, BOTN);
-if (window.HB_MEMBER) {
+{
   const hc = document.getElementById("h-call");
   if (hc) {
     const t = window.jo(BOTN, "와/과") + " 통화";
@@ -3192,12 +3192,13 @@ const meAvatar = () => {
   const m = window.BX_ME;
   return m && window.BXBot?.live && (m.seed || /^[0-9a-f]{32}$/.test(m.photo || "")) ? `<span class="av bv${m.photo ? "" : " live"}"><span class="bl" aria-hidden="true">${window.BXBot.live(m, 28)}</span></span>` : "";
 };
-const avatar = (name, txt) => (seedOf(name) === "Owner" || window.HB_MEMBER && String(name || "").trim() === ME_NAME) && meAvatar() || (window.HB_BLOB ? `<span class="av bv">${blob(name)}</span>` : `<span class="av">${esc(txt)}</span>`);
-const FLAG = '<svg class="flag" width="14" height="14" viewBox="0 0 16 16" aria-label="' + (window.HB_MEMBER ? "내 차례" : "내 차례") + '"><path fill="currentColor" d="M3 1.75a.75.75 0 0 1 .75.75v.3c1.9-.9 3.6-.4 5 .1 1.3.5 2.4.9 3.9.2a.6.6 0 0 1 .85.55v6.6a.6.6 0 0 1-.35.55c-2 .9-3.5.4-4.9-.1-1.3-.5-2.6-.9-4.5 0v4.8a.75.75 0 0 1-1.5 0V2.5A.75.75 0 0 1 3 1.75z"/></svg>';
+const avatar = (name, txt) => (seedOf(name) === "Owner" || String(name || "").trim() === ME_NAME) && meAvatar() || (window.HB_BLOB ? `<span class="av bv">${blob(name)}</span>` : `<span class="av">${esc(txt)}</span>`);
+const ME_NAME = window.HB_MEMBER?.name || "Owner", TURN = String(window.HB_MEMBER?.turn || "").trim() || (window.HB_MEMBER ? "내 차례" : "내 차례");
+const FLAG = '<svg class="flag" width="14" height="14" viewBox="0 0 16 16" aria-label="' + TURN + '"><path fill="currentColor" d="M3 1.75a.75.75 0 0 1 .75.75v.3c1.9-.9 3.6-.4 5 .1 1.3.5 2.4.9 3.9.2a.6.6 0 0 1 .85.55v6.6a.6.6 0 0 1-.35.55c-2 .9-3.5.4-4.9-.1-1.3-.5-2.6-.9-4.5 0v4.8a.75.75 0 0 1-1.5 0V2.5A.75.75 0 0 1 3 1.75z"/></svg>';
 const CLOCK = '<svg class="clock" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.5V8l2.3 1.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
-const ME_NAME = window.HB_MEMBER?.name || "Owner", TURN = window.HB_MEMBER ? "내 차례" : "내 차례";
 const AREA_NAME = { primary: BOTN, company: "회사 리드", personal: "퍼스널 리드", dgit: "DGit 리드", shop: "가게 리드" };
-const AGENT_CH = (window.HB_CH ? Array.isArray(window.HB_AGENTS) ? window.HB_AGENTS : [] : Array.isArray(D.agents) ? D.agents : []).filter((a) => /^[a-z][a-z0-9_]{1,30}$/.test(a?.key || "") && !(a.key in AREA_NAME) && a.name);
+const nodeTree = () => (D.tree_shape || (window.HB_CH ? "stack" : "cols")) === "stack";
+const AGENT_CH = (Array.isArray(D.agents) && D.agents.length ? D.agents : Array.isArray(window.HB_AGENTS) ? window.HB_AGENTS : []).filter((a) => /^[a-z][a-z0-9_]{1,30}$/.test(a?.key || "") && !(a.key in AREA_NAME) && a.name);
 for (const a of AGENT_CH) AREA_NAME[a.key] = String(a.name);
 const WORD_KO = {
   billing: "빌링",
@@ -3260,9 +3261,10 @@ const WORD_KO = {
   flags: "플래그"
 };
 const human = (t) => /[가-힣]/.test(t) && !/[a-z]{3,}-[a-z]/i.test(t) ? t : String(t).split(/[-_\s]+/).filter(Boolean).map((w) => WORD_KO[w.toLowerCase()] || w).join(" ");
-const AREA_KO = { primary: window.HB_MEMBER ? BOTN : "프라이머리 창", unsorted: "분류 안 됨", company: "회사", personal: "퍼스널", dgit: "DGit", shop: "가게" };
+const AREA_KO = { primary: nodeTree() ? BOTN : "프라이머리 창", unsorted: "분류 안 됨", company: "회사", personal: "퍼스널", dgit: "DGit", shop: "가게" };
 let MHEAD = /* @__PURE__ */ new Set();
-let AREAS = window.HB_CH ? window.HB_CH.filter((k) => k !== "primary") : ["company", "personal", "dgit", "shop"];
+const AREA4 = ["company", "personal", "dgit", "shop"];
+let AREAS = nodeTree() ? [] : [...AREA4];
 const leadPane = (k) => D.areas.find((a) => a.key === k)?.lead ?? [...Array.isArray(D.agents) ? D.agents : [], ...AGENT_CH].find((a) => a?.key === k)?.lead ?? void 0;
 const ago = (m) => m == null ? "" : m < 60 ? `${m}분` : m < 1440 ? `${Math.floor(m / 60)}시간${m % 60 ? " " + m % 60 + "분" : ""}` : `${Math.floor(m / 1440)}일`;
 const OWNER_WAIT = "";
@@ -3332,7 +3334,7 @@ const nameOf = (p) => p.kind === "primary" ? AREA_NAME.primary : p.kind === "are
 const tidy = (t) => t.replace(/^Owner 할 일(\([^)]*\))?:\s*/, "").replace(/\s*\([^)]*\)/g, "").trim();
 const asker = (d) => d.srcpane && byPane[d.srcpane]?.area === d.area ? d.srcpane : leadPane(d.area);
 const agentKeys = () => ["primary", "company", "personal", "dgit", "shop", ...AGENT_CH.map((a) => a.key)];
-window.HBAgentFaces = () => window.HB_CH ? null : agentKeys().map((k, i) => ({ pane: k, key: k, name: AREA_NAME[k] || k, avatar: AGENT_CUSTOM[k] || (k === "primary" ? { seed: "primary" } : agentFace(i)), custom: !!AGENT_CUSTOM[k] }));
+window.HBAgentFaces = () => nodeTree() ? null : agentKeys().map((k, i) => ({ pane: k, key: k, name: AREA_NAME[k] || k, avatar: AGENT_CUSTOM[k] || (k === "primary" ? { seed: "primary" } : agentFace(i)), custom: !!AGENT_CUSTOM[k] }));
 window.HBAgentFaceSet = (k, f) => {
   const g = f && faceOk(f);
   if (g) AGENT_CUSTOM[k] = g;
@@ -3341,11 +3343,12 @@ window.HBAgentFaceSet = (k, f) => {
   if (typeof viewDraw === "function") viewDraw();
   window.dispatchEvent(new Event("hb-chats"));
 };
+const areaFace = (k) => faceOk((D.areas || []).find((a) => a?.key === k)?.avatar);
 function agentFaces() {
   const put = (names, f) => {
     for (const n of names) if (n && !FACE[String(n).trim()]) FACE[String(n).trim()] = f;
   };
-  if (window.HB_CH) {
+  if (nodeTree()) {
     let i = 0;
     for (const a of D.areas || []) {
       const nm = a.key === "primary" ? AREA_NAME.primary : String(a.lead_name || a.name || "").trim();
@@ -3361,13 +3364,14 @@ function agentFaces() {
   agentCustomLoad();
   FACE = /* @__PURE__ */ Object.create(null);
   agentKeys().forEach((k, i) => {
-    if (k === "primary" && !AGENT_CUSTOM[k]) return;
-    const f = AGENT_CUSTOM[k] || agentFace(i), ag = AGENT_CH.find((a) => a.key === k);
+    const af = areaFace(k);
+    if (k === "primary" && !AGENT_CUSTOM[k] && !af) return;
+    const f = AGENT_CUSTOM[k] || af || agentFace(i), ag = AGENT_CH.find((a) => a.key === k);
     put([AREA_NAME[k], AREA_SEED[k], ag?.name, ag?.lead_name, ...panes.filter((p) => k === "primary" ? p.kind === "primary" : p.kind === "arealead" && p.area === k || ag && p.pane === ag.lead && p.kind !== "helper").map((p) => nameOf(p))], f);
   });
 }
 function compute() {
-  if (window.HB_CH) {
+  if (nodeTree()) {
     AREAS = (D.areas || []).filter((a) => a.key !== "primary" && a.lead).map((a) => a.key);
     MHEAD = new Set((D.areas || []).filter((a) => a.key !== "primary" && a.lead).map((a) => a.lead));
     for (const a of D.areas || []) if (a.key !== "primary") {
@@ -3379,9 +3383,22 @@ function compute() {
       const f = faceOk(a.avatar);
       if (f) FACE[a.key === "primary" ? AREA_NAME.primary : String(a.lead_name || a.name || "").trim()] = f;
     }
+  } else {
+    const ex = (D.areas || []).filter((a) => a && a.key !== "primary" && !AREA4.includes(a.key) && a.lead), nx = [...AREA4, ...ex.map((a) => a.key)];
+    if (nx.join() !== AREAS.join()) AREAS = nx;
+    if (ex.length || MHEAD.size) MHEAD = new Set(ex.map((a) => a.lead));
+    for (const a of ex) {
+      AREA_NAME[a.key] = a.lead_name || a.name;
+      AREA_KO[a.key] = a.name;
+    }
+    for (const a of D.areas || []) if (AREA4.includes(a?.key) && typeof a.lead_name === "string" && a.lead_name.trim()) {
+      const v = a.lead_name.trim().slice(0, 60);
+      if (a.key in AREA_DEF) AREA_DEF[a.key] = v;
+      AREA_NAME[a.key] = AGENT_NAME[a.key] || v;
+    }
   }
   panes = D.panes.map((p) => ({ ...p, ...look(p) }));
-  if (window.HB_CH) for (const p of panes) {
+  for (const p of panes) {
     const f = faceOk(p.avatar);
     if (!f) continue;
     p.avatar = f;
@@ -3605,7 +3622,7 @@ const rowPane = (r) => r.item?.to || r.item?.todo && (asks.find((a) => a.todo?.t
 const nodeRows = (pane) => (attnRows() || []).filter((r) => rowPane(r) === pane);
 function attnCount() {
   const all = (attnRows() || []).length;
-  if (!window.HB_MEMBER) return all;
+  if (Array.isArray(D.attn) || !window.HB_MEMBER) return all;
   const t = window.HBInbox?.counts?.().turn;
   return typeof t === "number" ? t : all;
 }
@@ -3717,7 +3734,7 @@ document.addEventListener("click", (e) => {
   }
 });
 (() => {
-  if (!window.HB_MEMBER) return;
+  if (!nodeTree()) return;
   document.body.classList.add("hbm");
   let st = null, auto = null;
   const PRIM = () => leadPane("primary");
@@ -3934,7 +3951,7 @@ function viewTree() {
   const sl = $("#v-tree .areas")?.scrollLeft || viewTree.ax || 0;
   viewTree.ax = 0;
   const peers = undefined || "";
-  const tidy2 = !!(window.HB_CH && D.tree_tidy), seatK = seatKeys();
+  const tidy2 = !!(nodeTree() && D.tree_tidy), seatK = seatKeys();
   const shownA = tidy2 ? AREAS.filter((k) => seatK.has(k)) : AREAS, xA = tidy2 ? AREAS.filter((k) => !seatK.has(k)) : [];
   const unQ = tidy2 ? big.filter((b) => b.park && b.area === "unsorted") : [], unN = tidy2 ? deepOf("unsorted").length + unQ.length : 0;
   const xN = xA.reduce((n, k) => n + 1 + deepOf(k).length + bigOf(leadPane(k)).length, 0) + unN, xOpen = opened.has("xcols");
@@ -3946,7 +3963,7 @@ function viewTree() {
   const xCols = xN ? `<div class="xcols"><button type="button" class="lfold xfold" data-x="xcols" aria-expanded="${xOpen}">${xOpen ? "그 밖의 창 접기" : `그 밖의 창 ${xN}`}</button>${xOpen ? `<div class="areas xareas">${xA.map(colOf).join("")}${unCol}</div>` : ""}</div>` : "";
   const grpName = window.HBGroupName?.() || "부서";
   const grp = tidy2 && shownA.length ? `<div class="mprim mgrp"><div class="node grp" aria-label="${esc(grpName)} · 부서 ${shownA.length}"><span class="n"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3.4l1.6 1.6h6A1.5 1.5 0 0 1 17 8.1v6.4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>${esc(grpName)}</span><span class="s"><span>부서 ${shownA.length}</span></span></div></div><div class="drop"></div>` : "";
-  const mtree = !!(window.HB_CH && (shownA.length || tidy2)), primCol = `${node(prim)}${tree(windowsOf("primary"))}${hang(prim.pane)}`;
+  const mtree = !!(nodeTree() && (shownA.length || tidy2)), primCol = `${node(prim)}${tree(windowsOf("primary"))}${hang(prim.pane)}`;
   const keepAv = window.HBKeepAv($("#v-tree"));
   $("#v-tree").innerHTML = `<div class="canvas${peers ? " orgs" : ""}${peers && !AREAS.length ? " solo" : ""}"><div class="tree">
     <div class="rootwrap">${meNode()}</div><div class="drop"></div>${mtree ? `
@@ -3968,6 +3985,7 @@ function viewTree() {
     }
   };
   if (ar && mtree) spread(ar, shownA.length);
+  else if (ar && shownA.length > AREA4.length) spread(ar, 1 + shownA.length);
   spread($("#v-tree .xareas"), xA.length + (unCol ? 1 : 0));
   hvSync();
 }
@@ -4032,7 +4050,7 @@ function viewLaneList() {
     const idle = all.filter((x) => x.st.k === "idle");
     body = act.map(row).join("") + (idle.length ? `<button class="lfold" data-x="lidle">${opened.has("lidle") ? "쉬는 창 접기" : `쉬는 창 ${idle.length}개`}</button>${opened.has("lidle") ? idle.map(row).join("") : ""}` : "");
   } else {
-    body = ["primary", ...AREAS, ...D.tree_tidy && (D.areas || []).some((a) => a.key === "unsorted") ? ["unsorted"] : []].map((k) => `<div class="agrp"><h3>${esc(k === "primary" ? window.HB_MEMBER ? BOTN : "primary · 프라이머리 창" : AREA_KO[k])}</h3>${all.filter((x) => x.p.area === k).sort((a, b) => order[a.st.k] - order[b.st.k] || b.st.m - a.st.m).map(row).join("")}</div>`).join("");
+    body = ["primary", ...AREAS, ...D.tree_tidy && (D.areas || []).some((a) => a.key === "unsorted") ? ["unsorted"] : []].map((k) => `<div class="agrp"><h3>${esc(k === "primary" ? nodeTree() ? BOTN : "primary · 프라이머리 창" : AREA_KO[k])}</h3>${all.filter((x) => x.p.area === k).sort((a, b) => order[a.st.k] - order[b.st.k] || b.st.m - a.st.m).map(row).join("")}</div>`).join("");
   }
   const chips = big.map((b) => `<button class="chip" ${parkHit(b)}>${CLOCK}${esc(b.title)} <b>${esc(AREA_KO[b.area] || "")}</b></button>`).join("");
   $("#v-lanes").innerHTML = `<div class="lbar"><span class="seg">${[["wait", "오래 기다린 순"], ["area", "영역별"]].map(([k, t]) => `<button data-lsort="${k}" aria-pressed="${laneSort === k}">${t}</button>`).join("")}</span>
@@ -4316,7 +4334,7 @@ function render() {
     if (caret && ans.contains(document.getElementById(caret.id))) caretBack(caret);
   }
 }
-const hdrRenameKind = () => !cur ? "" : window.HB_MEMBER ? isNodeCh(cur.chan) ? "node" : cur.chan === "primary" ? "bot" : "" : !window.HB_CH && cur.chan in AREA_NAME && /^[a-z][a-z0-9_]{1,30}$/.test(cur.chan) ? "agent" : "";
+const hdrRenameKind = () => !cur ? "" : nodeTree() ? isNodeCh(cur.chan) ? "node" : cur.chan === "primary" ? "bot" : "" : cur.chan in AREA_NAME && /^[a-z][a-z0-9_]{1,30}$/.test(cur.chan) ? "agent" : "";
 const hmenuItems = (p) => (undefined || "") + (hdrRenameKind() ? '<button type="button" role="menuitem" data-hrename><span>이름 변경</span></button>' : "");
 function hrenameOpen() {
   document.querySelector("#ans .hren")?.remove();
@@ -4973,7 +4991,7 @@ async function openCard(ts, fb, wait) {
 window.HBOpenCard = openCard;
 function openChan(k, ts, noFocus) {
   if (isGptCh(k)) return openGpt(k);
-  const ma = window.HB_CH && k !== "primary" && (D.areas || []).find((a) => a.key === k && a.lead && byPane[a.lead]);
+  const ma = k !== "primary" && !CH.includes(k) && (D.areas || []).find((a) => a.key === k && a.lead && byPane[a.lead]);
   if (ma) {
     if (current !== "tree" && current !== "timeline") show("tree", true);
     openAns({ p: ma.lead, page: true, ...ts ? { th: ts } : {} });
@@ -5467,7 +5485,7 @@ const isXCh = (k) => /^x_[a-z0-9]{6,40}$/.test(k), isCh = (k) => CH.includes(k) 
 const MAIN5 = ["primary", "company", "personal", "dgit", "shop"], MAIN_ONE = { primary: "프", company: "네", personal: "퍼", dgit: "디", shop: "포" };
 const mainOn = () => {
   try {
-    return !window.HB_CH && !window.HB_MEMBER && !CS.mainNo && localStorage.getItem("hb-mainmerge") === "1";
+    return (window.HB_CAPS?.mainline ?? !(window.HB_CH || window.HB_MEMBER)) && !CS.mainNo && localStorage.getItem("hb-mainmerge") === "1";
   } catch (e) {
     return false;
   }
@@ -7216,7 +7234,7 @@ function menList(kind, q) {
   const hit = (n) => !q || String(n).toLowerCase().includes(q);
   if (kind === ":") return emoList(q);
   const L = kind === "@" ? [
-    { a: "bxm:@primary", n: BOTN, s: window.HB_MEMBER ? "메인 봇" : "Primary", i: blob(BOTN, 20) },
+    { a: "bxm:@primary", n: BOTN, s: nodeTree() ? "메인 봇" : "Primary", i: blob(BOTN, 20) },
     ...CH.filter((k) => k !== "primary").map((k) => ({ a: "bxm:@lead:" + k, n: AREA_NAME[k], s: "영역 리드", i: blob(AREA_NAME[k], 20) })),
     ...menNodes().map((p) => ({ a: "bxm:@pane:" + p.pane, n: nameOf(p), s: "노드 에이전트", i: blob(nameOf(p), 20) }))
   ] : menNodes().map((p) => ({ a: "bxm:#pane:" + p.pane, n: nameOf(p), s: AREA_NAME[p.area] || "", i: `<i class="mh">${ICON.hash}</i>` }));
@@ -7966,7 +7984,7 @@ function gptHTML(k) {
 }
 async function gptSend(ta, text) {
   let k = CS.at;
-  if ((CS.att.cnew || []).length && (window.HB_MEMBER || !LIVE)) {
+  if ((CS.att.cnew || []).length && (!(window.HB_CAPS?.session_files ?? !window.HB_MEMBER) || !LIVE)) {
     toast("여기에는 글만 보낼 수 있어요");
     return;
   }
@@ -10649,7 +10667,7 @@ window.HBV_onScreen = (cmd) => {
   }
   if (a === "open_channel" || a === "open_thread") {
     const c = isCh(cmd.channel) ? cmd.channel : "primary";
-    if (cmd.channel && !isCh(cmd.channel)) toast(window.HB_MEMBER ? `그 채널을 못 찾아 ${BOTN} 채팅을 열어요` : "그 채널을 못 찾아 Primary 로 열어요");
+    if (cmd.channel && !isCh(cmd.channel)) toast(nodeTree() ? `그 채널을 못 찾아 ${BOTN} 채팅을 열어요` : "그 채널을 못 찾아 Primary 로 열어요");
     scrLeaveCanvas();
     return a === "open_thread" && SCR_TS.test(cmd.thread || "") ? goLink({ c, t: cmd.thread, m: "" }) : openChan(c);
   }
@@ -11216,7 +11234,7 @@ function pushSheet(force) {
   card.focus({ preventScroll: true });
 }
 async function pushInit() {
-  if (!LIVE || window.HB_MEMBER && !window.HB_MEMBER.push) return;
+  if (!LIVE || !(window.HB_CAPS?.push ?? !(window.HB_MEMBER && !window.HB_MEMBER.push))) return;
   if (!("serviceWorker" in navigator)) {
     $("#h-push").hidden = false;
     return pushSheet();
@@ -11465,7 +11483,7 @@ setInterval(() => {
     const n = String(ch || "").replace(/^n:/, "");
     const fd = typeof D === "object" && D?.front_door;
     if (fd?.name && String(ch || "").startsWith("n:") && ((fd.pairs || []).some((p) => p?.name === n) || (fd.aliases || []).includes(n))) return fd.name;
-    if (n === "primary" && window.HB_MEMBER) return fd?.name || window.HB_MEMBER?.bot || "메인 봇";
+    if (n === "primary" && (typeof D === "object" && D?.tree_shape || (window.HB_MEMBER ? "stack" : "cols")) === "stack") return fd?.name || window.HB_MEMBER?.bot || "메인 봇";
     return n;
   };
   const S = { unread: [], drafts: [], saved: [], turn: [], doneOn: false, ok: false, err: false, busy: null, again: false };
