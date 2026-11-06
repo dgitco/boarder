@@ -230,7 +230,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const rc = recent().map(r => `<button type="button" class="bx-it" data-art="${esc(r.id)}" title="${esc(r.title || r.id)}"><i class="ki k-${esc(r.kind || 'doc')}"></i><span>${esc(r.title || r.id)}</span></button>`).join('');
     const pins = (SB.pins || []).map(p => `<button type="button" class="bx-it" data-sidepin="${esc(p.id)}" title="${esc(p.title || p.id)}">${I.canvas}<span>${esc(p.title || p.id)}</span></button>`).join('');
     const hid = new Set(Array.isArray(SB.hide) ? SB.hide : []), top1 = (k, icon, label) => hid.has(k) ? '' : it(k, icon, label, '', top === k);
-    const head = top1('node', I.node, '노드') + top1('canvas', I.canvas, '캔버스') + top1('feed', I.feed, '피드') + (window.BXStatus?.side?.(it, top) || '') + pins;
+    const head = top1('node', I.node, '조직도') + top1('canvas', I.canvas, '캔버스') + top1('feed', I.feed, '피드') + (window.BXStatus?.side?.(it, top) || '') + pins;
     const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = TS ? (tks ? sec('nd', '태스크', tks) : '') : nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
     const part = {ib: sec('ib', '모아 보기', ib), nd: DG !== null ? '' : chs, ch: DG !== null ? `<div class="bx-dgs">${DG}</div>` : ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
     const body = '<div class="bx-sbsc">' + head + sideOrder(agentsFirst).map(k => part[k] || '').join('') + '</div>';
@@ -242,7 +242,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const sbA = '<div class="bx-sbsc bx-sba">' + fl('feed', aTop === 'feed' ? IA.houseOn : IA.house, '피드')
       + (hid.has('feed') ? '' : `<button type="button" class="bx-it" data-go="feed" data-xnew>${IA.pen}<span>새 글</span></button>`) + it('find', IA.search, '찾기')
       + '<i class="bx-gap" aria-hidden="true"></i>' + ib + '<i class="bx-gap" aria-hidden="true"></i>'
-      + it('agents', IA.bot, '에이전트', '', agOn) + fl('node', aTop === 'node' ? IA.nodeOn : IA.node, '노드') + fl('canvas', I.canvas, '캔버스')
+      + it('agents', IA.bot, '에이전트', '', agOn) + fl('node', aTop === 'node' ? IA.nodeOn : IA.node, '조직도') + fl('canvas', I.canvas, '캔버스')
       + (window.BXStatus?.side?.(it, aTop) || '') + pins + '</div>';
     const org = (() => {
       if (DG !== null || typeof windowsOf !== 'function' || typeof subsOf !== 'function' || !(typeof D === 'object' && Array.isArray(D?.roster))) return null;

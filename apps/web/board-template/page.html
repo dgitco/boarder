@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "190a097413d5";
+window.HB_VER = "80e13fac8cc7";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -513,6 +513,15 @@ body.ndrag #v-tree .tree .node:not(.dropon):not(.dropbefore):not(.dropafter){opa
 .node.wait .s span{white-space:normal}
 .node.wait .s .clock{margin-top:2px}
 .hit{position:absolute;inset:0;border-radius:inherit}
+
+.node .tkr{display:flex;flex-direction:column;gap:5px;margin-top:6px;position:relative;z-index:1;min-width:0}
+.node .tkr .tk{display:flex;align-items:flex-start;gap:6px;font-size:12.5px;font-weight:500;color:inherit;text-decoration:none;min-width:0;pointer-events:auto}
+.node .tkr .tk:hover .tt{text-decoration:underline}
+.node .tkr .tk svg{flex:none;margin-top:1px;color:var(--muted)}.node .tkr .tk.blk svg{color:var(--danger)}
+.node .tkr .tt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node .tkr .tk.blk .tt{white-space:normal}
+.node .tkr .tw{display:block;font-weight:400;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .tkr .tkm{font-size:12px;color:var(--muted);pointer-events:none}
 
 .npri{display:grid;place-items:center;width:22px;height:22px;padding:0;border:0;border-radius:6px;background:none;cursor:pointer;pointer-events:auto;color:var(--muted);flex:none}   
 .npri svg{width:15px;height:15px;display:block}
@@ -3335,7 +3344,7 @@ function blobP(p, size, name) {
   return `<span class="bl mood-${m}" title="${esc(sd)}" aria-hidden="true">${m === "blocked" ? window.HB_BLOB(sd, o) : window.HB_BLOB_ANIM(sd, o)}</span>`;
 }
 const chh = (size) => `<span class="chh">${LU("hash", size)}</span>`;
-const nodeIc = (p, size) => ["primary", "arealead", "helper"].includes(p.kind) || MHEAD.has(p.pane) && faceOk(p.avatar) ? blobP(p, size) : chh(size);
+const nodeIc = (p, size) => ["primary", "arealead", "helper"].includes(p.kind) || p.standing || p.agent || MHEAD.has(p.pane) && faceOk(p.avatar) ? blobP(p, size) : chh(size);
 const ICON = {
   link: '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
   x: '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 5 5 15M5 5l10 10"/></svg>',
@@ -3899,12 +3908,45 @@ function right(p, pri) {
   const n = (wait ? 20 : 0) + (flag ? 20 : 0) + (pri ? 26 : 0);
   return { html: n ? `<span class="rt">${parts.join("")}</span>` : "", pad: n };
 }
+let TK = { at: 0, list: [] }, tkBusy = false;
+async function taskPull() {
+  if (!LIVE || tkBusy) return;
+  tkBusy = true;
+  try {
+    const r = await fetch("api/me/task", { cache: "no-store" }), j = r.ok ? await r.json() : null, l = Array.isArray(j?.tasks) ? j.tasks : TK.list;
+    const ch = JSON.stringify(l) !== JSON.stringify(TK.list);
+    TK = { at: Date.now(), list: l };
+    if (ch && current === "tree") render();
+  } catch (e) {
+    TK.at = Date.now();
+  } finally {
+    tkBusy = false;
+  }
+}
+const TK_SLASH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-label="막힘"><circle cx="12" cy="12" r="10"/><line x1="9" y1="15" x2="15" y2="9"/></svg>';
+const TK_RUN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-label="진행"><path d="M21 12a9 9 0 1 1-6.2-8.56"/></svg>';
+const tkWhy = (s) => nsbText(String(s || "").replace(/^(blocked\s+by|막힘)\s*:?\s*/i, "").replace(/^owner\b/i, "Owner"));
+const tasksOf = (p) => {
+  if (!TK.list.length || !p) return [];
+  const ks = new Set([nameOf(p), p.win, p.pane].filter(Boolean));
+  return TK.list.filter((t) => ks.has(t.agent));
+};
+function taskRows(p) {
+  const ts = tasksOf(p);
+  if (!ts.length) return "";
+  const vis = ts.slice(0, 3), more = ts.length - vis.length;
+  return `<div class="tkr">${vis.map((t) => {
+    const r = (t.refs || []).find((x) => x.ts), blk = t.state === "blocked", why = blk ? tkWhy(t.status) : "";
+    const inner = `${blk ? TK_SLASH : TK_RUN}<span class="tt">${esc(t.title)}${why ? `<span class="tw">${esc(why)}</span>` : ""}</span>`, tip = esc("#" + t.no + " " + t.title + " — " + t.status);
+    return r ? `<a class="tk${blk ? " blk" : ""}" href="#chat/${encodeURIComponent(r.chan || "primary")}/${r.ts}" title="${tip}">${inner}</a>` : `<span class="tk${blk ? " blk" : ""}" title="${tip}">${inner}</span>`;
+  }).join("")}${more > 0 ? `<span class="tkm">그 밖에 ${more}</span>` : ""}</div>`;
+}
 function node(p, label) {
-  const r = right(p, p.kind === "lead" && !label ? priChip(nameOf(p), p.pri) : "");
+  const r = right(p, p.kind === "lead" && !label ? priChip(nameOf(p), p.pri) : ""), tks = taskRows(p);
   return `<div class="node${need(p) ? " need" : ""}${p.busy ? " busy" : ""}${p.stall && !need(p) ? " stall" : ""}" style="--rt:${r.pad}px">
     <button class="hit" data-p="${p.pane}" aria-label="${esc(label || nameOf(p))}"></button>
-    <span class="n">${nodeIc(p, 18)}${esc(label || nameOf(p))}${waitChip(p)}${taskChips(p)}</span>
-    <span class="s"><i class="g g-${p.g}"></i><span>${esc(asPrimary(p.s))}</span></span>${r.html}${p.standing ? "" : vcallBtn(p.pane, label || nameOf(p))}</div>`;
+    <span class="n">${tks && !["primary", "arealead", "helper"].includes(p.kind) ? blobP(p, 18) : nodeIc(p, 18)}${esc(label || nameOf(p))}${waitChip(p)}${taskChips(p)}</span>
+    <span class="s"><i class="g g-${p.g}"></i><span>${esc(asPrimary(p.s))}</span></span>${tks}${r.html}${p.standing ? "" : vcallBtn(p.pane, label || nameOf(p))}</div>`;
 }
 const parkHit = (w) => w.park ? `data-p="${esc(w.park.pane || "park-" + w.park.id)}"` : `data-w="${esc(w.id)}"`;
 const waitNode = (w) => `<div class="node wait${w.park?.stale ? " stale" : ""}"${w.park ? ' style="--rt:26px"' : ""}><button class="hit" ${parkHit(w)} aria-label="${esc(w.title)}"></button>${w.park ? `<span class="rt">${priChip(w.park.name || w.title, w.park.pri)}</span>` : ""}
@@ -4134,6 +4176,7 @@ document.addEventListener("click", (e) => {
 })();
 const noNodes = () => !MHEAD.size && !["primary", ...AREAS, "unsorted"].some((k) => windowsOf(k).length || waitList(byPane[leadPane(k)]?.pane).vis.length);
 function viewTree() {
+  if (LIVE && Date.now() - TK.at > 3e4) taskPull();
   const prim = byPane[leadPane("primary")];
   const hang = (pane) => {
     const { vis, more } = waitList(pane);
@@ -4164,7 +4207,7 @@ function viewTree() {
   $("#v-tree").innerHTML = `<div class="canvas${peers ? " orgs" : ""}${peers && !AREAS.length ? " solo" : ""}"><div class="tree">
     <div class="rootwrap">${meNode()}</div><div class="drop"></div>${mtree ? `
     <div class="mprim">${primCol}</div><div class="drop"></div>${grp}` : ""}
-    <div class="areas">${mtree || scA ? "" : `<div class="col">${primCol}</div>`}${shownA.map(colOf).join("")}</div>${xCols}</div>${peers}${noNodes() && !peers ? emptyHTML({ ic: "node", t: "아직 노드가 없어요", p: "기기에서 AI 창에 일을 맡기면 그 일이 노드로 여기 떠요.", fill: true }) : ""}</div>`;
+    <div class="areas">${mtree || scA ? "" : `<div class="col">${primCol}</div>`}${shownA.map(colOf).join("")}</div>${xCols}</div>${peers}${noNodes() && !peers ? emptyHTML({ ic: "node", t: "아직 에이전트가 없어요", p: "기기에서 AI 창에 일을 맡기면 그 에이전트가 여기 떠요.", fill: true }) : ""}</div>`;
   keepAv();
   const ar = $("#v-tree .areas");
   if (ar && sl) ar.scrollLeft = sl;
@@ -9895,6 +9938,7 @@ function evOpen() {
       (window.HBInbox?.soon || window.HBInbox?.load)?.();
     }
     if (j.todo && p.todo !== j.todo && chatOn() && isNodeCh(cur.chan)) todoPull(cur.chan.slice(2), true);
+    if (j.task && p.task !== j.task) taskPull();
     if (p.x !== j.x) {
       undefined;
       if (isXCh(CS.at) && chatOn()) chatLoad();

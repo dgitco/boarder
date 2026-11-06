@@ -55,7 +55,7 @@ test("피드 화면 PC 사이드바만 안 A 목록(섹션 머리 없음), 다�
   assert.match(shell, /const drH = `<div class="top">\$\{logo\}<span class="tr">\$\{fb\}<\/span><\/div>` \+ body \+ foot;/);
   const sbA = shell.match(/const sbA = [\s\S]*?\+ '<\/div>';/)![0];
   assert.doesNotMatch(sbA, /sec\(/, "PC 목록에 섹션 머리 없음");
-  const order = ["'피드'", "새 글", "'찾기'", "+ ib +", "'에이전트'", "'노드'", "'캔버스'"].map(s => sbA.indexOf(s));
+  const order = ["'피드'", "새 글", "'찾기'", "+ ib +", "'에이전트'", "'조직도'", "'캔버스'"].map(s => sbA.indexOf(s));
   assert.ok(order.every(i => i >= 0), "줄이 다 있음");
   assert.deepEqual([...order].sort((a, b) => a - b), order, "피드 → 새 글 → 찾기 → 모아 보기 → 에이전트 → 노드 → 캔버스");
 });

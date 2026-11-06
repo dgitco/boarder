@@ -97,6 +97,7 @@ import * as memberVoice from "./member-voice";
 import { boardHead, HEAD_RE, withHead } from "./board-head";
 import * as memberInbox from "./member-inbox";
 import * as nodeTodo from "./node-todo";
+import * as taskDb from "./task";
 import * as memberFiles from "./member-files";
 import { importedWindow, queueToImported } from "./member-imported";
 import { ownWindow, primarySend, LOST_LINE } from "./primary-send";
@@ -1037,6 +1038,23 @@ app.post("/api/device/todos", async c => {
   if (!(await member(c.env, d.owner))) return c.json({ ok: false, error: "기기 토큰" }, 401);
   if (+(c.req.header("content-length") || 0) > 256_000) return c.json({ ok: false, error: "너무 커요" }, 413);
   return todoReply(c, d.owner, await c.req.json().catch(() => null), true);
+});
+app.post("/api/device/task", async c => {
+  const d = await deviceOf(c, { harness: true }); if (!d) return c.json({ ok: false, error: "기기 토큰" }, 401);
+  if (!(await member(c.env, d.owner))) return c.json({ ok: false, error: "기기 토큰" }, 401);
+  if (+(c.req.header("content-length") || 0) > 64_000) return c.json({ ok: false, error: "너무 커요" }, 413);
+  const me = todoOwner(c.env, d.owner), b = await c.req.json().catch(() => null);
+  try {
+    const [st, o] = await taskDb.op(c.env.DB, me, b);
+    if (st === 200 && b && typeof b === "object" && ((b as { op?: unknown }).op === "new" || (b as { op?: unknown }).op === "set")) { quiet(c.req.raw); c.executionCtx.waitUntil(live.bump(c.env, me, { task: "~" + Date.now() })); }
+    else quiet(c.req.raw);
+    return c.json(o, st as 200, { "cache-control": "no-store" });
+  } catch (e) { console.error("할 일 정본", e); return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503); }
+});
+app.get("/api/me/task", async c => {
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  try { return c.json({ ok: true, tasks: await taskDb.forTree(c.env.DB, todoOwner(c.env, s.user.email)) }, 200, { "cache-control": "no-store" }); }
+  catch (e) { console.error("할 일 정본 읽기", e); return c.json({ ok: true, tasks: [] }, 200, { "cache-control": "no-store" }); }   // 표가 아직 없는 D1(마이그레이션 전)이면 빈 목록 — 트리는 지금 화면 그대로
 });
 app.get("/api/todos", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
