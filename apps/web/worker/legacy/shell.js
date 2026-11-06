@@ -289,8 +289,20 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     + '#' + (rp => myNodes().map(p => p.pane + nameOf(p) + (rp.has(p.pane) ? '*' : '')).join('|'))(rowPanes()) + (cur?.page ? '@' + cur.p : '') + '#' + chats().map(c => c.sid + c.title).join('|') + (!ans.hidden && cur?.chan?.startsWith('q:') ? '@' + cur.chan : '')
     + '#' + (window.BXStatus?.sig?.() || '') + ((typeof D === 'object' && Array.isArray(D?.task_side)) ? '#' + D.task_side.map(t => t.pane + t.issue + t.name + t.state + (t.done ? 'd' : '') + (t.dept || '')).join('|') : '') + ((typeof D === 'object' && Array.isArray(D?.role_seats)) ? '#' + D.role_seats.join('|') : '')
     + '#' + ((typeof D === 'object' && D?.areas) || []).map(a => a.key + ':' + a.lead + ':' + (AREA_NAME[a.key] || a.lead_name || '')).join('|');
-  const loadChats = () => { fetch('api/chats', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.chats)){ window.HB_CHATS = j.chats; if (on()) lists(); } }).catch(() => {}); };
-  loadChats(); setInterval(loadChats, 20000); window.addEventListener('hb-chats', () => { if (on()) lists(); setTimeout(loadChats, 1500); });
+  let chatsRun = null, chatsNext = false, chatsHidden = false, chatsSoon = 0;
+  const loadChats = () => {
+    if (document.hidden){ chatsHidden = true; return; }
+    chatsHidden = false;
+    if (chatsRun){ chatsNext = true; return chatsRun; }
+    const ac = new AbortController(), deadline = setTimeout(() => ac.abort(), 8000);   // 멈춘 요청이 다음 갱신까지 붙잡지 않게
+    return chatsRun = fetch('api/chats', {credentials: 'include', signal: ac.signal}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.chats)){ window.HB_CHATS = j.chats; if (on()) lists(); } }).catch(() => {}).finally(() => {
+      clearTimeout(deadline); chatsRun = null;
+      if (chatsNext){ chatsNext = false; loadChats(); }
+    });
+  };
+  loadChats(); setInterval(loadChats, 20000);
+  window.addEventListener('hb-chats', () => { if (on()) lists(); if (!chatsSoon) chatsSoon = setTimeout(() => { chatsSoon = 0; loadChats(); }, 1500); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && chatsHidden) loadChats(); });   // 숨겨서 건너뛴 읽기만 한 번 따라잡음
   setInterval(() => { if (on() && lists.sig !== rcSig()) lists(); }, 3000);
   function setCol(v){ SB.col = v; saveSB(); R.classList.toggle('bx-col', !!v); lists(); }
   R.classList.toggle('bx-col', !!SB.col);
