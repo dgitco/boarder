@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "7a6d77dfb1b8";
+window.HB_VER = "5ac076ed730a";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -5483,6 +5483,7 @@ matchMedia("(max-width:640px)").addEventListener("change", () => {
 const CH = window.HB_CH || ["primary", "company", "personal", "dgit", "shop", ...AGENT_CH.map((a) => a.key)];
 const isXCh = (k) => /^x_[a-z0-9]{6,40}$/.test(k), isCh = (k) => CH.includes(k) || isXCh(k);
 const MAIN5 = ["primary", "company", "personal", "dgit", "shop"], MAIN_ONE = { primary: "프", company: "네", personal: "퍼", dgit: "디", shop: "포" };
+for (const a of AGENT_CH) MAIN_ONE[a.key] ??= [...String(a.name).trim()][0] || a.key[0];
 const mainOn = () => {
   try {
     return (window.HB_CAPS?.mainline ?? !(window.HB_CH || window.HB_MEMBER)) && !CS.mainNo && localStorage.getItem("hb-mainmerge") === "1";

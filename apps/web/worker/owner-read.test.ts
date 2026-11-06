@@ -163,6 +163,7 @@ test("#메인 합쳐 보기(/api/chat/main): 다섯 채널 뿌리 글을 시간�
   m.run("1703390101.000200", "primary", "1703390101.000100", "agent", "a", null, "메인 답(줄기엔 안 옴)", 1703390101.0002);
   m.run("1703390102.000100", "dgit", null, "agent", "a", null, "디지트 글", 1703390102.0001);
   m.run("1703390103.000100", "harness", null, "agent", "a", null, "에이전트 채널 글(줄기엔 안 옴)", 1703390103.0001);
+  m.run("1703390103.000200", "harness", null, "owner", null, null, "에이전트 채널에 Owner 가 연 스레드(줄기에 옴)", 1703390103.0002);
   m.run("1703390104.000100", "shop", null, "agent", "a", null, "가게 글", 1703390104.0001);
   const { d1, n } = fakeD1(db);
   type O = { status: number; body: { channel: string; more: boolean; cursor: string; messages: { ts: string; ch?: string; replies: number }[] } };
@@ -170,7 +171,7 @@ test("#메인 합쳐 보기(/api/chat/main): 다섯 채널 뿌리 글을 시간�
   const rMain = n.round; n.round = 0;
   assert.equal(o.status, 200);
   assert.equal(o.body.channel, "main");
-  assert.deepEqual(o.body.messages.map(x => [x.ts, x.ch]), [["1703390100.000100", "company"], ["1703390101.000100", "primary"], ["1703390102.000100", "dgit"], ["1703390104.000100", "shop"]]);
+  assert.deepEqual(o.body.messages.map(x => [x.ts, x.ch]), [["1703390100.000100", "company"], ["1703390101.000100", "primary"], ["1703390102.000100", "dgit"], ["1703390103.000200", "harness"], ["1703390104.000100", "shop"]]);
   assert.equal(o.body.messages[1].replies, 1, "답 수는 채널 보기와 같음");
   const one = await OR.build(d1, cfg, OR.route("/api/chat/primary")!, NOW) as O;
   assert.equal(n.round, rMain, "왕복 수 = 채널 하나 읽기와 같음");

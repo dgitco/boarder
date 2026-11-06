@@ -155,3 +155,60 @@ test("#메인 줄기 실행 계획: 영역 채널 두 조각이 색인을 씀(�
   for (const d of ms) assert.match(d, /^SEARCH m USING (COVERING )?INDEX wl_talk_msg_(chan|who) /, d);
   assert.equal(ms.filter(d => /wl_talk_msg_who \(chan=\? AND thread=\? AND who=\? AND at>\?\)/.test(d)).length, 4, plan.join("\n"));
 });
+
+const AG: OR.Cfg = { channels: { ...CFG.channels, harness: "C9", ops_bot: "C10" } };
+function seedAgents(db: DatabaseSync) {
+  seed(db);
+  for (const [k, sc] of [["harness", "C9"], ["ops_bot", "C10"]]) db.prepare("INSERT INTO wl_talk_chan(id, name, slack_channel) VALUES (?, ?, ?)").run(k, k, sc);
+  const m = db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cli')");
+  m.run("1703390003.000100", "harness", null, "agent", "lead", null, "켜기 전 에이전트 채널 에이전트 글", 1703390003.0001);
+  m.run("1703390004.000100", "harness", null, "owner", null, null, "켜기 전 에이전트 채널 Owner 글", 1703390004.0001);
+  m.run("1703390207.000100", "harness", null, "agent", "lead", null, "켠 뒤 에이전트 채널 에이전트 글", 1703390207.0001);
+  m.run("1703390208.000100", "harness", null, "owner", null, null, "켠 뒤 에이전트 채널 Owner 글", 1703390208.0001);
+  m.run("1703390209.000100", "harness", "1703390207.000100", "owner", null, null, "에이전트 뿌리에 Owner 답(뿌리가 아님)", 1703390209.0001);
+  m.run("1703390210.000100", "ops_bot", null, "agent", "bot", null, "다른 에이전트 채널 에이전트 글", 1703390210.0001);
+  m.run("1703390211.000100", "ops_bot", null, "owner", null, null, "다른 에이전트 채널 Owner 글", 1703390211.0001);
+}
+
+test("#메인 줄기 · 에이전트 채널: Owner 뿌리는 보임(켜기 전 · 뒤 모두) · 에이전트 뿌리 · 답글은 안 보임 · ch = 그 채널", async () => {
+  for (const on of [true, false]) {
+    const { db, d1, n } = d1Of(); seedAgents(db);
+    if (on) db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?, 'mainmerge_at', ?, ?)").run(OWNER, String(ON * 1000), ON * 1000);
+    const o = await OR.build(d1, AG, OR.route("/api/chat/main")!, NOW, true, false, [OWNER]) as O;
+    const ag = o.body.messages.filter(x => x.ch === "harness" || x.ch === "ops_bot").map(x => [x.ts, x.ch]);
+    assert.deepEqual(ag, [["1703390004.000100", "harness"], ["1703390208.000100", "harness"], ["1703390211.000100", "ops_bot"]], on ? "켬" : "켠 시각 없음");
+    const r = n.round; n.round = 0;
+    await OR.build(d1, AG, OR.route("/api/chat/primary")!, NOW, true, false, [OWNER]);
+    assert.equal(r, n.round, "왕복 수 = 채널 하나 읽기와 같음");
+    const h = await OR.build(d1, AG, OR.route("/api/chat/harness")!, NOW, true, false, [OWNER]) as O;
+    assert.deepEqual(tsOf(h), ["1703390003.000100", "1703390004.000100", "1703390207.000100", "1703390208.000100"], "에이전트 채널 하나 보기는 거름 없음 · ch 없음");
+    assert.ok(h.body.messages.every(x => x.ch === undefined));
+  }
+  const { db, d1 } = d1Of(); seedAgents(db);
+  const old = await OR.build(d1, AG, OR.route("/api/chat/main?before=1703390208.000100")!, NOW, true, false, [OWNER]) as O;
+  assert.ok(tsOf(old).includes("1703390004.000100") && !tsOf(old).includes("1703390208.000100") && !tsOf(old).includes("1703390003.000100"), "옛 글 쪽(커서)도 같은 거름");
+});
+
+test("#메인 줄기 · 에이전트 채널 실행 계획: Owner 뿌리 조각이 wl_talk_msg_who 를 탐 · 채널마다 101줄까지 · 묶는 값은 조각마다 하나", async () => {
+  const { db, d1, n } = d1Of(); seedAgents(db);
+  db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?, 'mainmerge_at', ?, ?)").run(OWNER, String(ON * 1000), ON * 1000);
+  const m = db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source) VALUES (?, ?, NULL, ?, NULL, NULL, 'x', ?, 'cli')");
+  for (let i = 0; i < 300; i++) m.run(`1703392${String(i).padStart(3, "0")}.000100`, "harness", "agent", 1703392000 + i);   // 에이전트 글 300개
+  for (let i = 0; i < 150; i++) m.run(`1703393${String(i).padStart(3, "0")}.000100`, "ops_bot", "owner", 1703393000 + i);
+  db.exec("ANALYZE");
+  const o = await OR.build(d1, AG, OR.route("/api/chat/main?before=1703399999.000100")!, NOW, true, false, [OWNER]) as O;
+  assert.ok(!tsOf(o).some(t => t.startsWith("1703392")), "에이전트 뿌리는 안 옴");
+  assert.equal(o.body.messages.filter(x => x.ch === "ops_bot").length, 100, "한 쪽 100 · 채널 조각 101줄 상한");
+  const plan = db.prepare("EXPLAIN QUERY PLAN " + n.sql[0]).all(...(n.args[0] as never[])).map(r => String((r as { detail: string }).detail));
+  const ms = plan.filter(d => /^(SCAN|SEARCH) m\b/.test(d));
+  assert.equal(ms.length, 11, plan.join("\n"));   // primary 하나 + 영역 넷 × 두 조각 + 에이전트 채널 둘
+  for (const d of ms) assert.match(d, /^SEARCH m USING (COVERING )?INDEX wl_talk_msg_(chan|who) /, d);
+  assert.equal(ms.filter(d => /wl_talk_msg_who \(chan=\? AND thread=\? AND who=\?/.test(d)).length, 6, plan.join("\n"));   // 영역 넷 켠 뒤 + 에이전트 둘
+  assert.equal(n.args[0].length, 1 + 3 + 11, "묶는 값: 주인 메일 · 커서 셋 · 조각마다 채널 하나(D1 100개 상한)");
+  assert.equal((n.sql[0].match(/LIMIT 101/g) || []).length, 12, "조각마다 101 + 바깥 101");
+});
+
+test("화면: 에이전트 채널 글의 영역 글자 = 그 채널 이름 첫 글자(기본 다섯 글자는 그대로)", () => {
+  assert.match(board, /for \(const a of AGENT_CH\) MAIN_ONE\[a\.key\] \?\?= \[\.\.\.String\(a\.name\)\.trim\(\)\]\[0\]/);
+  assert.ok(board.indexOf("const AGENT_CH =") < board.indexOf("MAIN_ONE[a.key]"), "AGENT_CH 가 먼저 정해짐");
+});

@@ -213,14 +213,25 @@ const D1_COMPOUND = 5;
 const unionAll = (ts: string[]): string => ts.length <= D1_COMPOUND ? ts.join(" UNION ALL ")
   : unionAll(Array.from({ length: Math.ceil(ts.length / D1_COMPOUND) }, (_, i) => `SELECT * FROM (${ts.slice(i * D1_COMPOUND, (i + 1) * D1_COMPOUND).join(" UNION ALL ")})`));
 async function channel(db: D1Database, cfg: Cfg, key: string, before: string | undefined, now: number, owners: string[] = []): Promise<Out> {
-  const rep = cfg.rep || REP, bf = new Set(cfg.board_files || []), own = cfg.owners || {};
   const cur = before ? " AND m.at < coalesce((SELECT at FROM wl_talk_msg WHERE id = ? OR slack_ts = ? LIMIT 1), CAST(? AS REAL))" : "", bv = before ? [before, before, before] : [];
-  const one = (agents = "") => `SELECT ${COLS}, m.at AS _at, ? AS _k FROM wl_talk_msg m WHERE chan=(SELECT id FROM wl_talk_chan WHERE slack_channel = ?) AND thread IS NULL AND ${LIVE_ROOT}${cur}${agents} ORDER BY at DESC LIMIT ?`;
-  const keys = key === MAIN ? CHANNELS.filter(k => has(cfg.channels, k)) : [key];
-  const parts = keys.flatMap(k => keys.length === 1 || k === "primary" ? [[k, ""]] : [[k, " AND m.who = 'owner' AND m.at >= (SELECT t FROM cut)"], [k, " AND m.at < (SELECT t FROM cut)"]]);
-  const q = keys.length === 1 ? one() : `WITH cut(t) AS (SELECT coalesce((SELECT min(at) / 1000.0 FROM user_pref WHERE owner IN ${IN} AND k = 'mainmerge_at'), 1e300)) `
-    + `SELECT * FROM (${unionAll(parts.map(([, w]) => `SELECT * FROM (${one(w)})`))}) ORDER BY _at DESC LIMIT ?`;
-  const rows = (await db.prepare(q).bind(...(keys.length === 1 ? [] : [JSON.stringify(owners.map(x => x.toLowerCase()))]), ...parts.flatMap(([k]) => [k, cfg.channels[k], ...bv, PAGE + 1]), ...(keys.length === 1 ? [] : [PAGE + 1])).all<R>()).results;
+  const one = () => `SELECT ${COLS}, m.at AS _at, ? AS _k FROM wl_talk_msg m WHERE chan=(SELECT id FROM wl_talk_chan WHERE slack_channel = ?) AND thread IS NULL AND ${LIVE_ROOT}${cur} ORDER BY at DESC LIMIT ?`;
+  if (key !== MAIN) {
+    const rows0 = (await db.prepare(one()).bind(key, cfg.channels[key], ...bv, PAGE + 1).all<R>()).results;
+    return channelOut(db, cfg, key, rows0, now);
+  }
+  const keys = channelsOf(cfg).filter(k => has(cfg.channels, k));
+  const AREA = " AND m.who = 'owner' AND m.at >= (SELECT t FROM cut)", OLD = " AND m.at < (SELECT t FROM cut)", OWNER = " AND m.who = 'owner'";
+  const parts = keys.flatMap(k => k === "primary" ? [[k, ""]] : CHANNELS.includes(k) ? [[k, AREA], [k, OLD]] : [[k, OWNER]]);
+  const piece = (k: string, w: string) => `SELECT ${COLS}, m.at AS _at, '${k}' AS _k FROM wl_talk_msg m WHERE chan=(SELECT id FROM wl_talk_chan WHERE slack_channel = ?) AND thread IS NULL AND ${LIVE_ROOT}`
+    + `${before ? " AND m.at < (SELECT t FROM bf)" : ""}${w} ORDER BY at DESC LIMIT ${PAGE + 1}`;
+  const q = `WITH cut(t) AS (SELECT coalesce((SELECT min(at) / 1000.0 FROM user_pref WHERE owner IN ${IN} AND k = 'mainmerge_at'), 1e300))`
+    + (before ? ", bf(t) AS (SELECT coalesce((SELECT at FROM wl_talk_msg WHERE id = ? OR slack_ts = ? LIMIT 1), CAST(? AS REAL)))" : "")
+    + ` SELECT * FROM (${unionAll(parts.map(([k, w]) => `SELECT * FROM (${piece(k, w)})`))}) ORDER BY _at DESC LIMIT ${PAGE + 1}`;
+  const rows = (await db.prepare(q).bind(JSON.stringify(owners.map(x => x.toLowerCase())), ...bv, ...parts.map(([k]) => cfg.channels[k])).all<R>()).results;
+  return channelOut(db, cfg, key, rows, now);
+}
+async function channelOut(db: D1Database, cfg: Cfg, key: string, rows: R[], now: number): Promise<Out> {
+  const rep = cfg.rep || REP, bf = new Set(cfg.board_files || []), own = cfg.owners || {};
   const chOf = new Map(rows.map(r => [String(r.slack_ts || r.id), String(r._k)]));
   const page = rows.slice(0, PAGE), more = rows.length > PAGE;
   const ids = page.map(r => r.id);
