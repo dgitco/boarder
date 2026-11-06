@@ -711,14 +711,15 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       if (k !== 'agents') agClose();
       if (k === 'art'){ const aid = () => ARTS[a] ? a : window.artId?.('#art/' + (HBR.uKey?.('a', a) || a));
         if (MVv() !== a){ if (await linkUntil(aid)){ if (gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ if (!ans.hidden) closeAns(); const id = aid(); openArt(id); if (id !== a){ history.replaceState(history.state, '', '#art/' + id); moved = true; } } } else if (gen === G){ pre0(); linkFail(); } } }
-      else if (k === 'chat' && CH.includes(a)){
+      else if (k === 'chat' && a && (CH.includes(a) || isXCh(a) || mainOnly())){
         if (b && typeof window.HBOpenCard === 'function' && !(chatMode() && (cur.chan === a || (cur.chan === 'primary' && CS.th?.k === a)) && CS.th?.ts === b)){   // 합친 #메인 안에 이미 연 그 스레드면 그대로
           const ready = await linkUntil(() => typeof panes !== 'undefined' && panes.length); if (!ready && gen === G) linkFail();
           if (ready && gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ ibClose(); S.ret = null;
             await window.HBOpenCard(b, {c: a, t: b});
             if (gen === G){ const w = want(); if (w && !HBR.same(w, HBR.hash())) history.replaceState(history.state, '', w); moved = true; } }
         }
-        else if (!(chatMode() && cur.chan === a)){ ibClose(); openChan(a, b || undefined); }
+        else if (!(chatMode() && cur.chan === a)){ ibClose(); await openChan(a, b || undefined);
+          if (gen === G && mainOnly() && cur?.chan === 'primary' && a !== 'primary') { const w = want(); if (w) history.replaceState(history.state, '', w); moved = true; } }
         else if ((CS.th?.ts || '') !== (b || '')){ if (b) await th0(a, b); else { CS.th = null; viewChat(true); } }
       }
       else if (k === 'chat' && a){ moved = true; history.replaceState(history.state, '', '#' + (S.ib || current)); }   // 없는 채널 = 열 화면이 없음 → 지금 보기 주소로 바꿈(쌓지 않음 — 뒤로 가기가 이 주소로 돌아와 갇히지 않게)

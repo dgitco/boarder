@@ -81,3 +81,14 @@ test("주인 읽음 표시(seen) POST 는 「방금 씀」 쿠키를 안 붙이�
   const post = await t.send("/api/chat", JSON.stringify({ text: "안녕" }), { "content-type": "application/json" });
   assert.ok((post.headers.get("set-cookie") || "").includes("bx_w="), "글에 bx_w 없음");
 });
+
+test("주인 미리보기 API: 실제 인증·같은사이트 문을 거쳐 저장, 원본·다리 경로 보존", async () => {
+ const t=setup(),original=new Uint8Array([1,2,3,4]);
+ const a=await (await t.upload(original,"photo.png")).json() as {id:string};
+ const png=new Uint8Array([137,80,78,71,13,10,26,10,1,2,3,4]);
+ const r=await t.send("/api/upload/preview",png,{"content-type":"image/png","x-file-id":a.id});assert.equal(r.status,200,await r.text());
+ const small=await t.get(`/api/file/${a.id}?thumb=1`);assert.deepEqual(new Uint8Array(await small.arrayBuffer()),png);
+ const full=await t.get(`/api/file/${a.id}?dl`);assert.deepEqual(new Uint8Array(await full.arrayBuffer()),original);
+ assert.equal(t.calls.length,0);
+ const denied=await t.send("/api/upload/preview",png,{"content-type":"image/png","x-file-id":a.id,"sec-fetch-site":"cross-site","origin":"https://evil.test"});assert.equal(denied.status,403);
+});

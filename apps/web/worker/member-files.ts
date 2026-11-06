@@ -121,8 +121,39 @@ async function stableId(env: Env, me: string, key: string, gen: boolean) {
 const genOn = (env: Env) => f7On(env.DB, uid.GEN_FLAG).catch(() => false);   // 새 파일 id 를 UUID v7 · 키 mfiles/<uuid>/<이름> 으로(스위치 켠 뒤). 읽기는 늘 두 꼴 다
 const targetOf = (id: string, name: string) => OLD.test(id) ? `mfiles/${id}` : `mfiles/${id}/${keyName(name)}`;
 const idOf = (target: string) => /^mfiles\/([0-9a-f]{32}|[0-9a-f-]{36})(?:\/|$)/.exec(target)?.[1] || "";
+export const PREVIEW_MAX = 200 * 1024;
+const previewKey = (id: string) => `mfile-previews/${id}`;
+/** Optional sidecar, one immutable preview per owned original. It has its own bounded daily allowance. */
+async function previewUpload(c: C, me: string) {
+  const id = (c.req.header("x-file-id") || "").toLowerCase();
+  if (!FID.test(id)) return c.json({ error: "없는 파일" }, 404);
+  const original = await headId(c.env.RESULTS, id);
+  if (!original || fileOwner(original) !== me) return c.json({ error: "없는 파일" }, 404);
+  if (!/^image\/(jpeg|png|webp)$/.test(original.httpMetadata?.contentType || "")) return c.json({ error: "미리보기를 만들지 않는 형식" }, 415);
+  const key = previewKey(id);
+  if (await c.env.RESULTS.head(key)) return c.json({ ok: true });
+  const bytes = await readCapped(c.req.raw, PREVIEW_MAX);
+  if (bytes === "big") return c.json({ error: "미리보기는200KB까지예요" }, 413);
+  if (!bytes?.length) return c.json({ error: "빈 미리보기" }, 400);
+  const mime = c.req.header("content-type") || "";
+  const magic = mime === "image/webp" ? bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === "RIFF" && String.fromCharCode(...bytes.slice(8, 12)) === "WEBP"
+    : mime === "image/png" ? bytes.length >= 8 && [137,80,78,71,13,10,26,10].every((x, i) => bytes[i] === x)
+    : mime === "image/jpeg" && bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+  if (!magic) return c.json({ error: "미리보기 형식이 달라요" }, 415);
+  const quota = await quotaTake(c.env.DB, me, "previews", bytes.length, DAY_FILES, DAY_FILES * PREVIEW_MAX).catch(() => null);
+  if (quota !== true) return quota === null ? c.json({ error: "미리보기 한도를 확인하지 못했어요" }, 503) : tooMany(c, "미리보기");
+  try {
+    const stored = await c.env.RESULTS.put(key, bytes, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: mime }, customMetadata: { ...ownerMeta(me), name: fileName(original) } });
+    if (!stored) await quotaGive(c.env.DB, me, "previews", bytes.length);
+  } catch {
+    await quotaGive(c.env.DB, me, "previews", bytes.length);
+    return c.json({ error: "미리보기를 저장하지 못했어요" }, 503);
+  }
+  return c.json({ ok: true });
+}
 /** POST /api/upload[/part|complete|abort] — JSON 제어만. 본문은 서명한 R2 주소로 간다. */
 export async function upload(c: C, me: string) {
+  if (new URL(c.req.url).pathname === "/api/upload/preview") return previewUpload(c, me);
   if (new URL(c.req.url).pathname === "/api/upload") return legacyUpload(c, me);
   if (!(c.req.header("content-type") || "").includes("application/json")) return c.json({ ok: false, error: "직접 올리기 제어 JSON이 필요해요" }, 415);
   const raw = await readCapped(c.req.raw, 16 * 1024);
@@ -252,18 +283,18 @@ function fileName(o: { customMetadata?: Record<string, string> }) {
   return n;
 }
 /** GET /api/file/:id — 올린 사람만(남의 것은 없는 것과 같게 404). ?dl = 내려받기 */
-export async function fileGet(c: C, me: string | readonly string[], id: string, dl: boolean) {   // me = 올린 사람 하나, 또는 같은 사람의 메일 여럿(owner_unified 로 회원 길에 든 주인 — 메일 넷)
+export async function fileGet(c: C, me: string | readonly string[], id: string, dl: boolean, preview = false) {   // me = 올린 사람 하나, 또는 같은 사람의 메일 여럿(owner_unified 로 회원 길에 든 주인 — 메일 넷)
   id = id.toLowerCase();
   if (!FID.test(id)) return c.json({ error: "없는 파일" }, 404);
-  return cachedServe(c, id, dl, owner => typeof me === "string" ? owner === me : me.includes(owner), () => c.json({ error: "없는 파일" }, 404));
+  return cachedServe(c, id, dl, owner => typeof me === "string" ? owner === me : me.includes(owner), () => c.json({ error: "없는 파일" }, 404), preview && !dl);
 }
 export async function signedGet(c: C, id: string) {
   id = id.toLowerCase();
   if (!(await linkOk(c.env.BETTER_AUTH_SECRET, id, c.req.query("e") || "", c.req.query("t") || ""))) return c.text("link expired or invalid\n", 403);
   return cachedServe(c, id, false, () => true, () => c.text("not found\n", 404));
 }
-async function cachedServe(c: C, id: string, dl: boolean, allow: (owner: string) => boolean, nf: () => Response) {
-  const key = new Request(new URL(`/f/${id}${dl ? "?dl" : ""}`, c.req.url).toString()), cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+async function cachedServe(c: C, id: string, dl: boolean, allow: (owner: string) => boolean, nf: () => Response, preview = false): Promise<Response> {
+  const key = new Request(new URL(`/f/${id}${preview ? "?preview" : dl ? "?dl" : ""}`, c.req.url).toString()), cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
   const hit = await cache?.match(key).catch(() => undefined);
   const own = hit?.headers.get("x-bx-owner");
   if (hit && own !== null && own !== undefined) {
@@ -273,7 +304,17 @@ async function cachedServe(c: C, id: string, dl: boolean, allow: (owner: string)
     return new Response(hit.body, { status: hit.status, headers: h });
   }
   const rk = await fileKey(c.env.RESULTS, id); if (!rk) return nf();
-  const o = await c.env.RESULTS.get(rk);
+  let o: R2ObjectBody | null;
+  if (preview) {
+    const original = await c.env.RESULTS.head(rk);
+    if (!original || !allow(fileOwner(original))) return nf();
+    o = await c.env.RESULTS.get(previewKey(id));
+    if (!o) {
+      const fallback = await cachedServe(c, id, false, allow, nf);
+      const h = new Headers(fallback.headers); h.set("cache-control", "no-store");
+      return new Response(fallback.body, { status: fallback.status, headers: h });
+    }
+  } else o = await c.env.RESULTS.get(rk);
   if (!o) return nf();
   const owner = fileOwner(o);
   if (!allow(owner)) return nf();

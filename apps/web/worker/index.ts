@@ -2862,7 +2862,7 @@ app.all("*", async c => {
           }
           if (url.pathname === "/api/topics" || url.pathname === "/api/history") return (await ownSnapRead(c, url)) ?? queue.retrySafe(c);
         }
-        const fm = /^\/api\/file\/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, ownU ? ownerMails(c.env, s.user.email) : me, fm[1], url.searchParams.has("dl"));
+        const fm = /^\/api\/file\/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, ownU ? ownerMails(c.env, s.user.email) : me, fm[1], url.searchParams.has("dl"), url.searchParams.has("thumb"));
         if (url.pathname === "/api/sesslog") {
           const hs = await memberBoard.sessLogHarness(c.env.DB, me, url.searchParams.get("pane") || "", url.searchParams.get("name") || "", (p, n) => engineLog(c.env, p, n));
           if (hs) return c.json(hs.body, hs.status as 200, { "cache-control": "no-store" });
@@ -2891,7 +2891,7 @@ app.all("*", async c => {
           () => live.liveOf(c.env, me, true).tags().then(x => JSON.stringify([(x as { boot?: string }).boot ?? "", x.t.data ?? "", x.t.chat ?? ""])), memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || url.origin));
         if (r) return r;
       }
-      if (c.req.method === "POST" && (/^\/api\/upload(?:\/(?:init|part|complete|abort))?$/.test(url.pathname) || url.pathname === "/api/voice/stt")) {   // 파일 제어 JSON·녹음은 회원 쓰기와 같은 문
+      if (c.req.method === "POST" && (/^\/api\/upload(?:\/(?:init|part|complete|abort|preview))?$/.test(url.pathname) || url.pathname === "/api/voice/stt")) {   // 파일 제어 JSON·녹음은 회원 쓰기와 같은 문
         if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
         return url.pathname.startsWith("/api/upload") ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
       }
@@ -2939,12 +2939,12 @@ app.all("*", async c => {
   if (!["GET", "HEAD", "POST"].includes(c.req.method)) return c.json({ error: "안 되는 방법" }, 405);
   {
     const me = s.user.email.toLowerCase();
-    if (c.req.method === "POST" && (/^\/api\/upload(?:\/(?:init|part|complete|abort))?$/.test(url.pathname) || url.pathname === "/api/voice/stt")) {
+    if (c.req.method === "POST" && (/^\/api\/upload(?:\/(?:init|part|complete|abort|preview))?$/.test(url.pathname) || url.pathname === "/api/voice/stt")) {
       if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
       return url.pathname.startsWith("/api/upload") ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
     }
     const fm = c.req.method === "GET" || c.req.method === "HEAD" ? /^\/api\/file\/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$/.exec(url.pathname) : null;
-    if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));
+    if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"), url.searchParams.has("thumb"));
   }
   // 파일 붙은 글: 회원과 같이 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 다리로(창이 링크로 받아 감)
   let sent: Uint8Array | undefined, ours: string[] = [];   // ours = 아래에서 Worker 가 붙인 첨부 줄(비밀 판정에서 뺌)
@@ -3237,7 +3237,7 @@ const AGAIN = "x-bx-again", D1_BUSY = /overloaded|Too many resources consumed/i;
 app.onError(async (err, c) => {
   const u = new URL(c.req.url), m = c.req.method, msg = String((err as Error)?.message ?? err).slice(0, 300), again = c.req.raw.headers.has(AGAIN), busy = D1_BUSY.test(msg);
   console.error(JSON.stringify({ ev: "req_error", m, path: u.pathname.slice(0, 120), again, busy, msg }));
-  const upload = m === "POST" && /^\/api\/upload(?:\/(?:init|part|complete|abort))?$/.test(u.pathname);   // 올리기는 열쇠(X-Upload-Key)로 같은 파일이 하나라 다시 보내도 됨 — 아래 503 + x-retry-safe 로(화면이 조용히 다시)
+  const upload = m === "POST" && /^\/api\/upload(?:\/(?:init|part|complete|abort|preview))?$/.test(u.pathname);   // 올리기는 열쇠(X-Upload-Key)로 같은 파일이 하나라 다시 보내도 됨 — 아래 503 + x-retry-safe 로(화면이 조용히 다시)
   if (m !== "GET" && m !== "HEAD" && !upload) return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 500, { "cache-control": "no-store" });
   if (!again && !busy && !upload && !u.pathname.startsWith("/api/auth/")) {
     await new Promise(ok => setTimeout(ok, 150 + Math.floor(Math.random() * 200)));

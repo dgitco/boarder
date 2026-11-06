@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "0f900c4f660f";
+window.HB_VER = "c17c81c9f019";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -5944,7 +5944,8 @@ function imgSrc(u) {
     return "";
   }
 }
-const inImg = (src, name) => `<img class="inimg" src="${esc(src)}" alt="${esc(name)}" loading="lazy" data-media data-kind="i" data-src="${esc(src)}" data-name="${esc(name)}" onerror="const a=document.createElement('a');a.href=this.dataset.src;a.target='_blank';a.rel='noopener';a.textContent=this.dataset.name;this.replaceWith(a)">`;
+const imagePreviewSrc = (src) => /^api\/file\/[^/?]+$/.test(src) ? src + "?thumb=1" : src;
+const inImg = (src, name) => `<img class="inimg" src="${esc(imagePreviewSrc(src))}"${imagePreviewSrc(src) !== src ? ` data-original="${esc(src)}"` : ""} alt="${esc(name)}" loading="lazy" data-media data-kind="i" data-src="${esc(src)}" data-name="${esc(name)}" onerror="if(this.dataset.original){const u=this.dataset.original;delete this.dataset.original;this.src=u;return;}const a=document.createElement('a');a.href=this.dataset.src;a.target='_blank';a.rel='noopener';a.textContent=this.dataset.name;this.replaceWith(a)">`;
 const imgName = (u) => decodeURIComponent((u.split("?")[0].split("/").pop() || "그림").replace(/^[0-9a-f]{16}-/, ""));
 const noPh = (h) => String(h).replace(/[\uE000-\uE007]/g, "");
 const upImgs = (t) => {
@@ -7326,7 +7327,7 @@ function filesHTML(fs, extra) {
   const media = (f) => typeof f === "object" && LIVE && (f.img || isVideo(f));
   const docs = (fs || []).filter((f) => !media(f)), mv = (fs || []).filter(media);
   const docH = docs.map((f) => typeof f === "string" ? `<span class="fchip">${ICON.file}<span>${esc(f)}</span></span>` : LIVE ? fcardHTML(f) : `<a class="fchip">${ICON.file}<span>${esc(f.name)}</span></a>`).join("");
-  const medH = ex.concat(mv.map((f) => f.img ? `<img src="api/file/${esc(f.id)}" alt="${esc(f.name)}"${imgBox(f)} loading="lazy" data-media data-kind="i" data-src="api/file/${esc(f.id)}?dl" data-name="${esc(f.name)}">` : `<button type="button" class="mvid" data-media data-kind="v" data-src="api/file/${esc(f.id)}?dl" data-name="${esc(f.name)}" aria-label="영상 ${esc(f.name)} 보기"><video src="api/file/${esc(f.id)}?dl#t=0.1" preload="metadata" muted playsinline tabindex="-1"></video><span class="mplay">${VNI.play}</span></button>`));
+  const medH = ex.concat(mv.map((f) => f.img ? `<img src="api/file/${esc(f.id)}?thumb=1" data-original="api/file/${esc(f.id)}" onerror="this.onerror=null;this.src=this.dataset.original" alt="${esc(f.name)}"${imgBox(f)} loading="lazy" data-media data-kind="i" data-src="api/file/${esc(f.id)}?dl" data-name="${esc(f.name)}">` : `<button type="button" class="mvid" data-media data-kind="v" data-src="api/file/${esc(f.id)}?dl" data-name="${esc(f.name)}" aria-label="영상 ${esc(f.name)} 보기"><video src="api/file/${esc(f.id)}?dl#t=0.1" preload="metadata" muted playsinline tabindex="-1"></video><span class="mplay">${VNI.play}</span></button>`));
   return (docH ? `<div class="mfiles mdocs">${docH}</div>` : "") + (medH.length ? `<div class="mfiles mmedia${medH.length > 1 ? " grid" : ""}">${medH.join("")}</div>` : "");
 }
 const VN_BARS = 40;
@@ -7880,7 +7881,65 @@ const uploadModule = async () => {
     throw error;
   }
 };
+async function makeImagePreview(file) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size <= 200 * 1024 || file.size > 25 * 1024 * 1024) return Promise.resolve(null);
+  if (file.type === "image/webp") {
+    const h = new Uint8Array(await file.slice(0, 32).arrayBuffer());
+    if (String.fromCharCode(...h.slice(12, 16)) === "VP8X" && h[20] & 2) return null;
+  }
+  return new Promise((resolve) => {
+    const image = new Image(), url = URL.createObjectURL(file);
+    let canvas, done = false;
+    const finish = (blob2) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      image.onload = image.onerror = null;
+      image.src = "";
+      URL.revokeObjectURL(url);
+      if (canvas) canvas.width = canvas.height = 0;
+      resolve(blob2 && blob2.size <= 200 * 1024 && blob2.size < file.size && /^(image\/webp|image\/jpeg|image\/png)$/.test(blob2.type) ? blob2 : null);
+    };
+    const timer = setTimeout(() => finish(null), 4e3);
+    image.onerror = () => finish(null);
+    image.onload = async () => {
+      try {
+        const w = image.naturalWidth, h = image.naturalHeight;
+        if (!w || !h || w * h > 4e7) return finish(null);
+        const scale = Math.min(1, 1024 / Math.max(w, h));
+        canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(w * scale));
+        canvas.height = Math.max(1, Math.round(h * scale));
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+        const encode = (type, quality) => new Promise((r) => canvas.toBlob(r, type, quality));
+        let blob2 = await encode("image/webp", 0.8);
+        if (done) return;
+        if (blob2?.type !== "image/webp" && file.type === "image/jpeg") blob2 = await encode("image/jpeg", 0.8);
+        if (blob2?.type === "image/webp" && blob2.size > 200 * 1024) blob2 = await encode("image/webp", 0.6);
+        finish(blob2);
+      } catch {
+        finish(null);
+      }
+    };
+    image.src = url;
+  });
+}
+async function storeImagePreview(a, signal) {
+  const blob2 = await a.preview;
+  if (!blob2 || signal?.aborted || a.previewStored) return;
+  const controller = new AbortController(), cancel = () => controller.abort(), timer = setTimeout(cancel, 4e3);
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    const r = await fetch("api/upload/preview", { method: "POST", headers: { "X-HB": "1", "X-File-Id": a.id, "Content-Type": blob2.type }, body: blob2, signal: controller.signal });
+    a.previewStored = r.ok;
+  } catch {
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+  }
+}
 async function directAttachment(a, signal) {
+  a.preview ||= makeImagePreview(a.f).catch(() => null);
   const { uploadDirect } = await uploadModule();
   const control = async (action, body) => {
     for (let tries = 0; ; tries++) {
@@ -7931,6 +7990,8 @@ async function directAttachment(a, signal) {
   });
   a.id = j.id;
   a.err = false;
+  a.previewDone ||= storeImagePreview(a, signal).catch(() => {
+  });
   return j.id;
 }
 function preUp(id, a) {

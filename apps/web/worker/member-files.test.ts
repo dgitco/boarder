@@ -19,18 +19,19 @@ function setup(gen = true) {   // gen = 새 파일 id UUID v7 스위치(write_ui
   const app = new Hono();
   app.post("/api/upload/:action?", c => F.upload(c as never, c.req.header("x-test-user")!));
   app.post("/api/voice/stt", c => F.stt(c as never, c.req.header("x-test-user") || A));
-  app.get("/api/file/:id", c => F.fileGet(c as never, c.req.header("x-test-user")!, c.req.param("id"), c.req.query("dl") !== undefined));
+  app.get("/api/file/:id", c => F.fileGet(c as never, c.req.header("x-test-user")!, c.req.param("id"), c.req.query("dl") !== undefined, c.req.query("thumb") !== undefined));
   app.get("/f/:id", c => F.signedGet(c as never, c.req.param("id")));
   app.get("/f/:id/:name", c => F.signedGet(c as never, c.req.param("id")));   // index.ts 의 이름 꼬리 길과 같게(아래 시험이 index.ts 에 그 길이 있는지 봄)
+  const pending: Promise<unknown>[] = [];
   const rawCall = (method: string, path: string, h: Record<string, string> = {}, body?: BodyInit) =>
-    app.fetch(new Request("https://b.example" + path, { method, headers: h, body, ...(body instanceof ReadableStream ? { duplex: "half" } : {}) } as RequestInit), env);
+    app.fetch(new Request("https://b.example" + path, { method, headers: h, body, ...(body instanceof ReadableStream ? { duplex: "half" } : {}) } as RequestInit), env, { waitUntil(p: Promise<unknown>) { pending.push(p); }, passThroughOnException() {} });
   const call = async (method: string, path: string, h: Record<string, string> = {}, body?: BodyInit) => {
     const r = await rawCall(method, path, h, body); return { status: r.status, h: r.headers, t: await r.text() };
   };
   const control = (who: string, suffix: string, body: any) => rawCall('POST', '/api/upload' + suffix, { 'x-test-user': who, 'content-type': 'application/json' }, JSON.stringify(body));
   const init = (who: string, body: any) => control(who, '/init', body);
   const upload = (who: string, name: string, mime: string, body: string | Uint8Array = "내용", key = '') => uploadFile((suffix, b) => control(who, suffix, b), env as never, body, { name, mime, key });
-  return { env, call, sq, ai, init, upload, control, rawCall };
+  return { env, call, sq, ai, init, upload, control, rawCall, pending };
 }
 const up = async (s: ReturnType<typeof setup>, who: string, name: string, type: string, body = "내용") =>
   await (await s.upload(who, name, type, body)).json() as { ok: boolean; id: string; name: string };
@@ -304,4 +305,80 @@ test("스위치 꺼짐: 새 파일은 예전 꼴(32자 id · mfiles/<id>) — �
   assert.ok(await (s.env.RESULTS as any).head(`mfiles/${a.id}`));
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "내용");
   await L.setFlag((await import("./file-direct-test-helper.ts")).fileD1().DB, "x_reset", false);
+});
+
+const PREVIEW_PNG = new Uint8Array([137,80,78,71,13,10,26,10,1,2,3,4]);
+const preview = (s: ReturnType<typeof setup>, owner: string, id: string, body: Uint8Array = PREVIEW_PNG, mime = "image/png") =>
+  s.rawCall("POST", "/api/upload/preview", {"x-test-user": owner, "x-file-id": id, "content-type": mime}, body as BodyInit);
+
+test("사진 미리보기: 직접/옛 업로드와 두 id 꼴, 원본·받기·서명 링크 보존", async () => {
+  for (const gen of [true, false]) for (const legacy of [true, false]) {
+    const s = setup(gen), bytes = new TextEncoder().encode("original-image-unchanged");
+    const uploaded = legacy ? await s.rawCall("POST", "/api/upload", {"x-test-user": A, "content-type":"image/jpeg", "x-file-name":"photo.jpg"}, bytes)
+      : await s.upload(A, "photo.jpg", "image/jpeg", bytes);
+    const a = await uploaded.json() as {id:string};
+    assert.equal((await preview(s, A, a.id)).status, 200);
+    const small = await s.rawCall("GET", `/api/file/${a.id}?thumb=1`, {"x-test-user":A});
+    assert.equal(small.headers.get("content-type"), "image/png");
+    assert.deepEqual(new Uint8Array(await small.arrayBuffer()), PREVIEW_PNG);
+    for (const path of [`/api/file/${a.id}`, `/api/file/${a.id}?dl`, `/api/file/${a.id}?thumb=1&dl`]) {
+      assert.deepEqual(new Uint8Array(await (await s.rawCall("GET", path, {"x-test-user":A})).arrayBuffer()), bytes);
+    }
+    const link = await F.fileLink(SECRET, "https://b.example", a.id);
+    assert.deepEqual(new Uint8Array(await (await s.rawCall("GET", link.replace("https://b.example", ""))).arrayBuffer()), bytes);
+    assert.equal((await s.call("GET", `/api/file/${a.id}?thumb=1`, {"x-test-user":B})).status, 404);
+    assert.equal((await preview(s,B,a.id)).status,404);
+  }
+});
+
+test("미리보기 없음은 원본·no-store, 나중에 미리보기가 생기면 바로 보임", async () => {
+ const s=setup(),a=await up(s,A,"p.png","image/png","original");
+ const before=await s.call("GET",`/api/file/${a.id}?thumb=1`,{"x-test-user":A});
+ assert.equal(before.t,"original");assert.equal(before.h.get("cache-control"),"no-store");
+ assert.equal((await preview(s,A,a.id)).status,200);
+ const after=await s.rawCall("GET",`/api/file/${a.id}?thumb=1`,{"x-test-user":A});
+ assert.deepEqual(new Uint8Array(await after.arrayBuffer()),PREVIEW_PNG);
+});
+
+test("미리보기 형식·200KB·소유권·하루 한도, GIF/HEIC/문서에는 저장하지 않음", async () => {
+ const s=setup(),a=await up(s,A,"p.png","image/png");
+ assert.equal((await preview(s,A,a.id,new Uint8Array(0))).status,400);
+ assert.equal((await preview(s,A,a.id,new Uint8Array(F.PREVIEW_MAX+1))).status,413);
+ assert.equal((await preview(s,A,a.id,new TextEncoder().encode("<svg/>"),"image/png")).status,415);
+ for(const mime of ["image/gif","image/heic","application/pdf"]){const o=await up(s,A,"other",mime);assert.equal((await preview(s,A,o.id)).status,415);}
+ const day=new Date().toISOString().slice(0,10);
+ s.sq.prepare("INSERT INTO user_pref(owner,k,v,at) VALUES(?,?,?,?)").run(A,`q:previews:${day}`,JSON.stringify({n:200,b:200*F.PREVIEW_MAX}),Date.now());
+ assert.equal((await preview(s,A,a.id)).status,429);
+ assert.equal((await s.call("GET",`/api/file/${a.id}`,{"x-test-user":A})).status,200);
+});
+
+test("미리보기 재시도는 덮어쓰지 않고 한도 한 번, R2 실패는 환불", async () => {
+ const s=setup(),a=await up(s,A,"p.png","image/png"), day=new Date().toISOString().slice(0,10);
+ const originalPut=s.env.RESULTS.put.bind(s.env.RESULTS);
+ s.env.RESULTS.put=(async(key,...args)=>{if(key.startsWith("mfile-previews/"))throw new Error("test failure");return originalPut(key,...args as [any,any]);}) as typeof s.env.RESULTS.put;
+ assert.equal((await preview(s,A,a.id)).status,503);
+ let q=()=>JSON.parse((s.sq.prepare("SELECT v FROM user_pref WHERE owner=? AND k=?").get(A,`q:previews:${day}`) as {v:string}).v);
+ assert.equal(q().n,0);s.env.RESULTS.put=originalPut;
+ assert.equal((await preview(s,A,a.id)).status,200);
+ assert.equal((await preview(s,A,a.id,new Uint8Array([255,216,255,0]),"image/jpeg")).status,200);
+ assert.equal(q().n,1);assert.equal(q().b,PREVIEW_PNG.length);
+ const got=await s.rawCall("GET",`/api/file/${a.id}?thumb=1`,{"x-test-user":A});assert.deepEqual(new Uint8Array(await got.arrayBuffer()),PREVIEW_PNG);
+});
+
+test("동시 미리보기 둘은 한 객체·한도 하나, 원본과 미리보기 캐시를 분리해 권한 대조", async () => {
+ const s=setup(),a=await up(s,A,"p.png","image/png","original");
+ const previous=(globalThis as any).caches, cache=new Map<string,Response>();
+ (globalThis as any).caches={default:{match:async(r:Request)=>cache.get(r.url)?.clone(),put:async(r:Request,v:Response)=>{cache.set(r.url,new Response(await v.arrayBuffer(),{status:v.status,headers:v.headers}));}}};
+ try {
+  assert.equal((await s.call("GET",`/api/file/${a.id}?thumb=1`,{"x-test-user":A})).t,"original");
+  await Promise.all(s.pending);
+  const rr=await Promise.all([preview(s,A,a.id),preview(s,A,a.id)]);assert.deepEqual(rr.map(r=>r.status),[200,200]);
+  const day=new Date().toISOString().slice(0,10),q=JSON.parse((s.sq.prepare("SELECT v FROM user_pref WHERE owner=? AND k=?").get(A,`q:previews:${day}`) as {v:string}).v);assert.equal(q.n,1);
+  const got=await s.rawCall("GET",`/api/file/${a.id}?thumb=1`,{"x-test-user":A});assert.deepEqual(new Uint8Array(await got.arrayBuffer()),PREVIEW_PNG);
+  await Promise.all(s.pending);
+  const hit=await s.rawCall("GET",`/api/file/${a.id}?thumb=1`,{"x-test-user":A});assert.equal(hit.headers.get("x-bx-cache"),"hit");assert.equal(hit.headers.has("x-bx-owner"),false);await hit.arrayBuffer();
+  assert.equal((await s.call("GET",`/api/file/${a.id}?thumb=1`,{"x-test-user":B})).status,404);
+  assert.equal((await s.call("GET",`/api/file/${a.id}`,{"x-test-user":A})).t,"original");
+  assert.ok(cache.has(`https://b.example/f/${a.id}?preview`));assert.ok(cache.has(`https://b.example/f/${a.id}`));
+ } finally {(globalThis as any).caches=previous;}
 });
