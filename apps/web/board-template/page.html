@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "35ae8bbe410c";
+window.HB_VER = "7f34052871a0";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -5256,7 +5256,7 @@ let lastInput = Date.now();
 for (const t of ["pointerdown", "keydown", "wheel", "touchstart", "input"]) document.addEventListener(t, () => {
   lastInput = Date.now();
 }, { capture: true, passive: true });
-const busyNow = () => sending || !!window.HBV?.memo || !!window.HBV?.call || Object.keys(CS.pend).some((k) => /spin| acked"/.test(CS.pend[k])) || Object.values(CS.mark).some((x) => x.st === "spin");
+const busyNow = () => sending || !!MV.el?.querySelector("iframe")?.hbArtBusy || !!window.HBV?.memo || !!window.HBV?.call || Object.keys(CS.pend).some((k) => /spin| acked"/.test(CS.pend[k])) || Object.values(CS.mark).some((x) => x.st === "spin");
 const pageSc = () => {
   const w = document.querySelector(".wrap");
   return w && /auto|scroll/.test(getComputedStyle(w).overflowY) ? w : document.scrollingElement;
@@ -10897,6 +10897,33 @@ function artMsg(e) {
   if (!f) return;
   if (e.data === "hb-art-esc") {
     if (!document.body.classList.contains("meet") && !MV.el?.classList.contains("full")) mvClose();
+  } else if (e.source === f.contentWindow && typeof e.data?.hbArtBusy === "boolean") f.hbArtBusy = e.data.hbArtBusy;
+  else if (e.source === f.contentWindow && (e.data?.hbArtFailLoad === true || e.data?.hbArtFailOp && Array.isArray(e.data.hbArtFailOp.put) && Array.isArray(e.data.hbArtFailOp.del))) {
+    const id = artId(f.src);
+    if (!id || ARTS[id]?.kind !== "canvas") {
+      if (e.data.hbArtFailLoad) f.contentWindow.postMessage({ hbArtFailR: [] }, "*");
+      return;
+    }
+    const key = "hb-art-fail:" + id;
+    if (e.data.hbArtFailLoad) {
+      let entries = [];
+      try {
+        entries = JSON.parse(localStorage.getItem(key) || "[]");
+      } catch {
+      }
+      f.contentWindow.postMessage({ hbArtFailR: Array.isArray(entries) ? entries : [] }, "*");
+    } else try {
+      const { put, del } = e.data.hbArtFailOp;
+      let v = [];
+      try {
+        v = JSON.parse(localStorage.getItem(key) || "[]");
+      } catch {
+      }
+      const d = /* @__PURE__ */ new Set([...del, ...put.map((x) => x?.body?.rid)]);
+      v = [...(Array.isArray(v) ? v : []).filter((x) => !d.has(x?.body?.rid)), ...put].slice(-50);
+      localStorage.setItem(key, JSON.stringify(v));
+    } catch {
+    }
   } else if (e.source === f.contentWindow && e.data?.hbApi) artApi(f, e.data.hbApi);
   else if (e.source === f.contentWindow && e.data?.hbMeetAt && document.body.classList.contains("meet")) {
     const at = e.data.hbMeetAt;
@@ -10937,7 +10964,8 @@ function artApi(f, q) {
     return reply(200, { lines: c && document.body.classList.contains("meet") ? c.log.filter((m) => m.who === "me" && (m.ts || 0) >= since).map((m) => m.text).slice(-12) : [] });
   }
   const tok = id && !body && ARTS[id]?.kind === "canvas" && /^api\/arttok\/[A-Za-z0-9]{16,40}$/.test(path);
-  if (!ok && !tok || !LIVE) return reply(403, { error: "안 되는 길" });
+  const answer = id && !body && ARTS[id]?.kind === "canvas" && /^api\/answer\/[\w-]{6,64}$/.test(path);
+  if (!ok && !tok && !answer || !LIVE) return reply(403, { error: "안 되는 길" });
   fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json", "X-HB": "1" }, body: JSON.stringify(body) } : { cache: "no-store" }).then((r) => r.json().catch(() => ({})).then((j) => {
     if (path === "api/artthumb" && r.ok && j.ok !== false && ARTS[id]) {
       ARTS[id] = { ...ARTS[id], thumb: String(j.thumb ?? body.board) };

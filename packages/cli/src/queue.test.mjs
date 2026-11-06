@@ -335,3 +335,21 @@ test('log(선택 동사): 커스텀 엔진은 어댑터 log 로 { id, name } —
   await assert.rejects(E.run('log', { id: 'ew_team01' }, { ...cfg, caps: { fake: ['send', 'state'] } }), e => e.code === 5);
   await assert.rejects(E.run('log', { id: 'ew_team01', engine: 'tmux' }, { ...cfg, tmux: process.execPath }), e => e.code === 5);
 });
+
+test('queue:false 커스텀 엔진(서버 주인 하네스): 턴 중 창에도 줄 없이 바로 넣음 · 바쁨(입력 중) 2 는 줄에 안 두고 돌려줌(서버 줄 몫) — 그 밖 엔진은 그대로 줄', async () => {
+  reset(); world({ ew_team01: { state: 'busy', session_id: SID } });
+  const f = path.join(B, 'engine.json'), old = fs.readFileSync(f, 'utf8'), c = JSON.parse(old);
+  c.custom.fake.queue = false; fs.writeFileSync(f, JSON.stringify(c));
+  try {
+    assert.equal(E.queues({ id: 'ew_team01' }), false);
+    const r = await send('ew_team01', '[보드 · 예시 팀장 · 스레드 1793000000.000030] 바로 넣기');
+    assert.notEqual(r.queued, true);
+    assert.deepEqual(sent('ew_team01').map(x => x.text), ['[보드 · 예시 팀장 · 스레드 1793000000.000030] 바로 넣기']);
+    setState('ew_team01', 'typing');
+    await assert.rejects(send('ew_team01', '[보드 · 예시 팀장] 입력 중일 때'), e => e.code === 2);
+    assert.deepEqual(queued('ew_team01'), [], '데몬 줄엔 아무것도 안 둠');
+  } finally { fs.writeFileSync(f, old); }
+  setState('ew_team01', 'busy');
+  assert.equal(E.queues({ id: 'ew_team01' }), true, 'queue 칸이 없으면 줄(회원 기기 그대로)');
+  assert.equal((await send('ew_team01', '[보드 · 예시 팀장] 보통 글')).queued, true);
+});

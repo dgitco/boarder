@@ -119,7 +119,7 @@ export async function handle(msg) {
   const { verb, args = {} } = msg;
   if (/^rtc_/.test(verb)) return V.handle(verb, args, voiceDeps);
   if (REMOTE_VERBS.includes(verb)) return remoteVerb(verb, args);
-  if (verb === 'send' && args.text && !args.test && args.id && !args.owner) return boardSend(args);
+  if (verb === 'send' && args.text && !args.test && args.id && !args.owner && E.queues(args)) return boardSend(args);
   if (verb === 'list') return { windows: await E.listAll() };
   if (verb === 'close') { const w = (await E.listAll()).find(x => x.id === args.id); if (w) await saveSession({ ...w, cwd: w.spec?.cwd ? w.spec.cwd.replace(/^~(?=$|\/)/, os.homedir()) : w.cwd }); }
   if (verb === 'open' && args.spec) args.spec = { ...args.spec, cwd: args.spec.cwd || path.join(E.engineHome(), 'work') };
@@ -143,7 +143,11 @@ async function answerDialog(w, st) {
   return null;
 }
 
-export async function runDaemon() {
+export function stopOnSignals({ resend = true, stop = () => V.stopAll() } = {}) {
+  for (const s of ['SIGTERM', 'SIGINT']) process.once(s, () => { Promise.resolve().then(stop).catch(() => {}).finally(() => { if (resend) process.kill(process.pid, s); }); });
+}
+
+export async function runDaemon({ hostStops = false } = {}) {
   if (typeof globalThis.WebSocket !== 'function') { console.error('boarder engine needs Node 22 or newer (built-in WebSocket).'); process.exit(1); }
   const dev = loadDevice();
   if (!dev?.token) { console.error('not signed in — run `boarder setup --yes` first'); process.exit(REVOKED_EXIT); }
@@ -156,8 +160,7 @@ export async function runDaemon() {
   } catch {}
   writeFileSync(pidf, String(process.pid), { mode: 0o600 });
   setInterval(() => V.reap(), 15000).unref();   // 끊긴 통화 닫기
-  // 데몬이 멈추면 통화 codex app-server 도 같이 닫고, 같은 신호로 다시 끝냄(서비스 관리자가 보는 끝남 꼴은 그대로)
-  for (const s of ['SIGTERM', 'SIGINT']) process.once(s, () => { V.stopAll().finally(() => process.kill(process.pid, s)); });
+  stopOnSignals({ resend: !hostStops });
   const url = `${server().replace(/^http/, 'ws')}/api/device/engine`;
   let backoff = 1000, revoked = false, fails = 0, takenOver = false;
   const last = new Map();

@@ -113,7 +113,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const tipOff = () => { tip.hidden = true; };
   const dr = mk('nav', 'bx-dr'); dr.setAttribute('aria-label', '메뉴'); dr.setAttribute('role', 'dialog'); dr.setAttribute('aria-modal', 'true');
   const menu = mk('button', 'bx-menu bx-glass', I.menu); menu.type = 'button'; menu.setAttribute('aria-label', '메뉴');
-  const cmb = mk('button', 'bx-chatmenu', lu('chevron-left', 22)); cmb.type = 'button'; cmb.setAttribute('aria-label', '목록');
+  const cmb = mk('button', 'bx-chatmenu', lu('menu', 20)); cmb.type = 'button'; cmb.setAttribute('aria-label', '메뉴');
   cmb.addEventListener('click', () => openDr());
   const seg = mk('div', 'bx-seg', '');
   seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', '트리 보기');
@@ -291,7 +291,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   setInterval(() => { if (on() && lists.sig !== rcSig()) lists(); }, 3000);
   function setCol(v){ SB.col = v; saveSB(); R.classList.toggle('bx-col', !!v); lists(); }
   R.classList.toggle('bx-col', !!SB.col);
-  const chatMode = () => !!S.chat && !ans.hidden && !!cur && !!cur.chan;
+  const chatMode = () => !!S.chat && !ans.hidden && !!cur && (!!cur.chan || (cur.tab === 'chat' && !PC.matches));
   const FEED = k => (k === 'unread' || k === 'saved' || k === 'drafts' || k === 'turn') && !!window.HBInbox?.openFeed;
   const ibChat = () => chatMode() && /^i:(unread|saved|drafts|turn)$/.test(cur.chan) ? cur.chan.slice(2) : '';
   document.addEventListener('click', e => {
@@ -373,7 +373,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   new MutationObserver(() => {
     const open = !ans.hidden;
     if (open && S.ag) agClose();   // 찾기 · 알림 · 글 링크가 대화를 열면 에이전트 화면은 닫힘(뒤로 가면 주소 #agents 로 다시 열림)
-    if (open && !S.chat && cur?.tab === 'chat' && cur.chan){ S.chat = cur.chan; if (!/^i:/.test(cur.chan)) S.last = cur.chan; }
+    if (open && !S.chat && cur?.tab === 'chat' && (cur.chan || cur.p)){ S.chat = cur.chan || 'p:' + cur.p; if (cur.chan && !/^i:/.test(cur.chan)) S.last = cur.chan; }
     if (!open && wasOpen && S.chat){ S.chat = null; const back = S.ret; S.ret = null; if (back && !(applying && HBR.hash().startsWith('#chat/'))) return ibOpen(back, true); }
     if (!open) S.chat = null;
     wasOpen = open; sync();
@@ -937,7 +937,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   }
 
   PC.addEventListener('change', () => { place(); sync(); });
-  if (!ans.hidden && cur && cur.tab === 'chat' && cur.chan){ S.chat = S.last = cur.chan; wasOpen = true; }
+  if (!ans.hidden && cur?.tab === 'chat' && (cur.chan || cur.p)){ S.chat = cur.chan || 'p:' + cur.p; if (cur.chan) S.last = cur.chan; wasOpen = true; }
   place(); sync();
   const h0 = String(window.HB_HASH0 || '');
   if (on() && (ROUTE.test(h0) || IBK.includes(ibKey(h0)))){

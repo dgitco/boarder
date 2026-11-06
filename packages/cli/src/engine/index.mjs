@@ -83,8 +83,10 @@ export function pick(cfg, want) {
   if (ok(cfg.default)) return cfg.default;
   return a.tmux ? 'tmux' : Object.keys(a).find(n => n !== 'herdr') || (a.herdr ? 'herdr' : null);
 }
+const engineName = (args, cfg) => args.engine || (args.id && cfg.windows?.[args.id]) || (args.handle?.engine) || pick(cfg);
+export const queues = (args = {}, cfg = loadCfg()) => cfg.custom?.[engineName(args, cfg)]?.queue !== false;
 export async function run(verb, args = {}, cfg = loadCfg()) {
-  const name = args.engine || (args.id && cfg.windows?.[args.id]) || (args.handle?.engine) || pick(cfg);
+  const name = engineName(args, cfg);
   const a = adapters(cfg)[name];
   if (!a) throw new EngineError(1, name ? `engine ${name} is not available here` : 'no engine on this machine — run `boarder engine setup`');
   const caps = cfg.caps?.[name];

@@ -337,7 +337,7 @@ html.bx .cth > .chd .d,html.bx .cth > .chd .thsave,html.bx .cth > .chd [data-vca
   html.bx .cth > .chd .thsave[aria-pressed="true"]{color:var(--accent)}
   html.bx .cth > .chd .thsave svg{width:20px;height:20px}   /* 왼쪽 ‹ · 채팅 ⋯ 와 같은 20px */
 }
-@media (min-width:861px){html.bx #ans .cth > .chd [data-cclose],html.bx .cth > .chd [data-cclose]{margin-left:auto!important}}
+@media (min-width:861px){html.bx #ans .cth > .chd [data-cclose],html.bx .cth > .chd [data-cclose]{order:-1;margin-left:-6px!important}html.bx .cth > .chd [data-cclose] svg{display:none}html.bx .cth > .chd [data-cclose]::before{content:"";width:20px;height:20px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12.5 4.5L7 10l5.5 5.5'/%3E%3C/svg%3E") center/20px no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12.5 4.5L7 10l5.5 5.5'/%3E%3C/svg%3E") center/20px no-repeat}}
 html.bx .bx-dock-h{border-bottom:0!important}
 html.bx .bx-dock-h .s{display:none}
 html.bx #theme{display:none!important}
