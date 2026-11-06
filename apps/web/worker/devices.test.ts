@@ -47,3 +47,11 @@ test("기기 목록: 메일 여럿이면 그 메일들 기기 모두(주인 메�
   assert.deepEqual((await D.listDevices(db, "m@example.com", now)).map(d => d.id), ["mem"]);
   assert.deepEqual((await D.listDevices(db, "owner-c@example.com", now)).map(d => d.id), []);
 });
+test("이력은 마지막 이력 줄에서 4분 30초마다 — 1분마다 올려도 5번에 한 번, 5분 감시 타이머는 늘 쌓음 · 최신 값은 늘 바뀜", async () => {
+  const db = d1(), t0 = 1_790_000_000_000, n = (id: string) => (db.raw.prepare("SELECT count(*) n FROM device_metric_hist WHERE device_id = ?").get(id) as { n: number }).n;
+  for (let i = 0; i < 15; i++) await D.putMetrics(db, { id: "m1", owner: "m@example.com" }, { mem: { total_mb: 100, avail_mb: i } }, t0 + i * 60_000);
+  assert.equal(n("m1"), 3, "1분 × 15 = 이력 3줄(0 · 5 · 10분)");
+  assert.equal(JSON.parse((db.raw.prepare("SELECT data FROM device_metric WHERE device_id = 'm1'").get() as { data: string }).data).mem.avail_mb, 14, "최신 값은 마지막 것");
+  for (let i = 0; i < 4; i++) await D.putMetrics(db, { id: "w1", owner: "m@example.com" }, { mem: { total_mb: 100, avail_mb: i } }, t0 + i * 280_000);
+  assert.equal(n("w1"), 4, "5분(흔들림 -20초) 타이머는 매번");
+});

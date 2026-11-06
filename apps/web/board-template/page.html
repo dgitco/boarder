@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "293a9c58a7f0";
+window.HB_VER = "c1a52008fbf7";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -4820,13 +4820,15 @@ function nodeName(k) {
   for (let i = 0; i < 6 && t && !knownNode(t) && D.renames?.[t]; i++) t = D.renames[t];
   return t;
 }
-function openNode(k, msgTs) {
+function openNode(k, msgTs, alt) {
   if (byPane[k]?.standing) return CH.includes(byPane[k].agent) ? openChan(byPane[k].agent) : toast("그 에이전트 채널을 찾지 못했어요");
   if (byPane[k] || parkBy[k]) {
     openAns({ p: k, page: true });
     return nodeFlash(msgTs);
   }
-  const t = nodeName(k), lv = t && liveNode(t);
+  let t = nodeName(k);
+  if ((!t || /^%\d+$/.test(t)) && alt) t = nodeName(alt);
+  const lv = t && liveNode(t);
   if (lv) {
     openAns({ p: lv.pane, page: true });
     return nodeFlash(msgTs);
@@ -6325,7 +6327,7 @@ function inl(p) {
     const tl = /^https?:\/\//.test(u) && boardLink(u);
     if (/^https?:\/\//.test(u) && imgSrc(relinkU(u))) put(inImg(imgSrc(relinkU(u)), unent(l || imgName(u))));
     else if (tl || /^https?:\/\//.test(u) && cardTs(u)) put(mtok(u, unent(l || "")));
-    else if (/^[@#]/.test(l) && menIn(u)) put(`<a class="mention" href="${esc(u)}" ${menIn(u)}>${esc(unent(l))}</a>`);
+    else if (/^[@#]/.test(l) && menIn(u)) put(`<a class="mention" href="${esc(u)}" ${menIn(u, unent(l))}>${esc(unent(l))}</a>`);
     else if (ai) put(mtok(relinkU(u)));
     else if (/^https?:\/\//.test(u) && bxPlace(u)) put(placeTok(u, bxPlace(u)));
     else if (/^https?:\/\//.test(u)) put(`<a href="${esc(relinkU(u))}" target="_blank" rel="noopener">${esc(unent(l || relinkU(u)))}</a>`);
@@ -6955,7 +6957,7 @@ const dlvTo = (d) => d?.to || d?.pane && ((p) => p ? nodeTitle(p) : "")(byPane[d
 const ACK = { got: ["check", "창에 전달됨"], wait: ["clock", "기다리는 중"], done: ["check", "창에 전달됨"] };
 const ackHTML = (m) => {
   const a = m.who === "owner" && !m.deleted && (ACK[m.ack] || ["check", "서버에 보냄"]);
-  return a ? `<span class="ackst ${m.ack || "sent"}" role="img" aria-label="${a[1]}" title="${a[1]}">${LU(a[0], 13)}</span>` : "";
+  return a ? `<span class="ackst ${m.ack || "srv"}" role="img" aria-label="${a[1]}" title="${a[1]}">${LU(a[0], 13)}</span>` : "";
 };
 const dlvHTML = (m) => m.dlv?.ok !== false || !dlvTo(m.dlv) || m.deleted ? "" : `<div class="dlv" title="이 글을 받은 창">→ ${esc(dlvTo(m.dlv))} · 못 넣음</div>`;
 const edTag = (html, on) => on ? /<\/p>\s*$/.test(html) ? html.replace(/<\/p>\s*$/, ' <span class="edt">(수정됨)</span></p>') : html + ' <span class="edt">(수정됨)</span>' : html;
@@ -7290,7 +7292,7 @@ function menOut(a, n) {
   const u = BX_URL + (m[2] === "primary" ? "chat/primary" : m[3] ? "chat/" + m[3] : "nodes/" + encodeURIComponent(nm && !/^%\d+$/.test(nm) ? nm : m[4]));
   return `<${u}|${m[1]}${String(n || "").replace(/ /g, " ").replace(/[<>|]/g, "")}>`;
 }
-function menIn(u) {
+function menIn(u, l) {
   if (!String(u).startsWith(BX_URL)) return "";
   let h = u.slice(BX_URL.length);
   if (h[0] !== "#") {
@@ -7302,7 +7304,8 @@ function menIn(u) {
   m = /^#node\/([^/?#]+)$/.exec(h);
   if (!m) return "";
   try {
-    return `data-bxp="${esc(decodeURIComponent(m[1]))}"`;
+    const k = decodeURIComponent(m[1]), nm = /^%\d+$/.test(k) ? String(l || "").replace(/^[@#]/, "").trim() : "";
+    return `data-bxp="${esc(k)}"` + (nm ? ` data-bxn="${esc(nm)}"` : "");
   } catch (e) {
     return "";
   }
@@ -7435,7 +7438,7 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   e.stopPropagation();
   if (a.dataset.bxch) return openChan(a.dataset.bxch);
-  openNode(a.dataset.bxp, a.dataset.bxm);
+  openNode(a.dataset.bxp, a.dataset.bxm, a.dataset.bxn);
 }, true);
 function tkWant(u) {
   const tl = boardLink(u);

@@ -275,3 +275,49 @@ test("가림 빠짐 없음: 주소 · status · source · 제어 문자 낀 비�
   const t0 = Date.now(); assert.equal(cleanTask({ id: "R2", quote: "-----BEGIN A PRIVATE KEY-----".repeat(36000) }, t0)?.id, "R2");
   assert.ok(Date.now() - t0 < 2000, "큰 글을 통째로 가림에 넣지 않음");
 });
+test("판 값(board): 올린 사람만 받음 · 덧칸은 그 요청에 x 로 · 정해 둔 칸만 · 비밀 꼴 가림 · 안 주면 그대로 · 크면 board:false", async () => {
+  const { me, dev } = await setup();
+  const board = { repo: "acme/web", junk: "버림", extra: { R1: { now: "지금 하는 일", ev: { k: "머지 · 운영 확인 전", cnt: "진행", why: "근거" }, dec: [{ id: "c1", t: "정할 것", k: "결정" }], evil: 1 }, "../x": { now: "버림" } },
+    decisions: [{ id: "c2", t: "토큰 sk-ant-api03-" + "a".repeat(40), k: "결정" }], merged: [{ n: 7, t: "PR", at: 1_790_000_000, w: "우리 쪽" }, { n: -1, t: "버림" }],
+    devices: { at: 1_790_000_000, gate: 2, list: [{ n: "기기", l: 50, m: 10 }] } };
+  const r = await (await dev("tok-a", "POST", "/api/device/taskboard", { tasks: [T("R1"), T("R2")], board })).json();
+  assert.equal(r.board, true);
+  const a = await (await me(A, "GET", "/api/me/taskboard")).json();
+  assert.equal(a.board.repo, "acme/web"); assert.equal(a.board.junk, undefined); assert.equal(a.board.extra, undefined, "덧칸은 목록 board 에 따로 안 실음");
+  assert.deepEqual(a.board.merged, [{ n: 7, t: "PR", at: 1_790_000_000_000, w: "우리 쪽" }], "망가진 줄은 버림 · 초는 ms 로");
+  assert.doesNotMatch(JSON.stringify(a.board), /sk-ant-api03-a{40}/, "비밀 꼴은 가림");
+  const r1 = a.tasks.find((t: { id: string }) => t.id === "R1"), r2 = a.tasks.find((t: { id: string }) => t.id === "R2");
+  assert.deepEqual(r1.x, { now: "지금 하는 일", ev: { k: "머지 · 운영 확인 전", why: "근거", cnt: "진행" }, dec: [{ id: "c1", t: "정할 것", k: "결정" }] });
+  assert.equal(r2.x, undefined);
+  const d = await (await me(A, "GET", "/api/me/taskboard/R1")).json();
+  assert.equal(d.repo, "acme/web"); assert.equal(d.task.x.now, "지금 하는 일");
+  await dev("tok-b", "POST", "/api/device/taskboard", { tasks: [T("R1")] });
+  const b = await (await me(B, "GET", "/api/me/taskboard")).json();
+  assert.equal(b.board, null); assert.equal(b.tasks[0].x, undefined);
+  // 안 주면 그대로 · 크면 안 받고 그대로
+  await dev("tok-a", "POST", "/api/device/taskboard", { tasks: [T("R3")] });
+  assert.equal((await (await me(A, "GET", "/api/me/taskboard")).json()).board.repo, "acme/web");
+  const big = { ops: Array.from({ length: 200 }, (_, i) => ({ at: 1_790_000_000 + i, x: "가".repeat(200) })), merged: Array.from({ length: 1000 }, (_, i) => ({ n: i + 1, t: "가".repeat(200), g: "가".repeat(60) })) };
+  assert.ok(Buffer.byteLength(JSON.stringify({ board: big })) < 1_000_000, "몸 상한(1MB) 안");
+  const rb = await (await dev("tok-a", "POST", "/api/device/taskboard", { board: big })).json();
+  assert.equal(rb.board, false, "정리 뒤 900KB 넘음");
+  assert.equal((await (await me(A, "GET", "/api/me/taskboard")).json()).board.repo, "acme/web", "크면 덮어쓰지 않음");
+});
+test("판 값 말 칸은 쓰기 도구와 같은 서버 거르개(log-filter)도 지남 — 한국어 비밀번호 · 주민 꼴 가림, PEM 든 칸만 버림 · 판은 받음 · 세부는 그 요청 덧칸만(점 든 id 도)", async () => {
+  const { me, dev } = await setup();
+  const pem = "-----BEGIN RSA PRIVATE KEY-----\n" + "A".repeat(64);   // 끝 줄 없이 잘린 PEM — redact 는 못 잡고 log-filter 가 거절하는 꼴
+  const board = { repo: "acme/web", extra: { "R1.a": { now: "비밀번호: hunter2pass 로 접속", last: { who: "민지", text: "주민번호 900101-1234567 확인" }, ev: { k: "진행", why: pem } }, R2: { now: "다른 요청" } },
+    asks: [{ t: "확인", x: "계좌 110-123-456789 입금 확인" }], ops: [{ at: 1_790_000_000, x: pem }] };
+  const r = await (await dev("tok-a", "POST", "/api/device/taskboard", { tasks: [T("R1.a"), T("R2")], board })).json();
+  assert.equal(r.board, true, "칸 하나가 거절 꼴이어도 판은 받음");
+  const a = await (await me(A, "GET", "/api/me/taskboard")).json(), all = JSON.stringify(a);
+  assert.doesNotMatch(all, /hunter2pass|900101-1234567|110-123-456789|BEGIN RSA/, all);
+  const x = a.tasks.find((t: { id: string }) => t.id === "R1.a").x;
+  assert.match(x.now, /\[가림\]/); assert.match(x.last.text, /\[가림\]/); assert.equal(x.ev.why, undefined, "잘린 PEM 든 근거 칸은 버림"); assert.equal(x.ev.k, "진행");
+  assert.equal(a.board.ops, undefined, "잘린 PEM 뿐인 운영 줄은 버림"); assert.match(a.board.asks[0].x, /\[가림\]/);
+  const d = await (await me(A, "GET", "/api/me/taskboard/R1.a")).json();
+  assert.equal(d.repo, "acme/web"); assert.deepEqual(d.task.x, x, "세부 = 목록과 같은 덧칸(점 든 id)");
+  const d2 = await (await me(A, "GET", "/api/me/taskboard/R2")).json();
+  assert.equal(d2.task.x.now, "다른 요청");
+  assert.equal((await (await me(B, "GET", "/api/me/taskboard/R2")).json()).ok, false, "남의 요청 세부는 없음");
+});

@@ -1,6 +1,6 @@
 type DB = D1Database;
 export const METRICS_MAX_BYTES = 16_384;
-const MIN_GAP_MS = 20_000;          // 기기 하나가 너무 자주 올리면 이력은 안 쌓음(최신 값만 바꿈)
+const MIN_GAP_MS = 270_000;
 const HIST_MS = 48 * 3600_000;
 const AGENTS = ["claude", "codex", "cursor", "gemini"] as const;
 
@@ -67,8 +67,8 @@ export function cleanMetrics(raw: unknown) {
 
 export async function putMetrics(db: DB, dev: { id: string; owner: string }, raw: unknown, now = Date.now()) {
   const m = cleanMetrics(raw), data = JSON.stringify(m);
-  const last = await db.prepare("SELECT at FROM device_metric WHERE device_id = ?").bind(dev.id).first<{ at: number }>();
-  const hist = !last || now - last.at >= MIN_GAP_MS;
+  const last = await db.prepare("SELECT max(at) at FROM device_metric_hist WHERE device_id = ?").bind(dev.id).first<{ at: number | null }>();   // 색인(device_id, at)으로 한 줄
+  const hist = !last?.at || now - last.at >= MIN_GAP_MS;
   const agents = Object.values(m.agents).reduce((a, b) => a + b, 0);
   await db.batch([
     db.prepare("INSERT INTO device_metric(device_id, owner, at, data) VALUES (?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET owner = excluded.owner, at = excluded.at, data = excluded.data").bind(dev.id, dev.owner, now, data),

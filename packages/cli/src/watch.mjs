@@ -70,6 +70,8 @@ const agents = () => countAgents(run('ps', ['-A', '-o', 'pid=,ppid=,args=']));
 
 // ── Claude 계정: 메일 표시만. 주인 기기 한도 읽기는 ee/owner-usage.mjs(호스팅 전용, 공개 판에 없음)
 const ownerMod = await import('./ee/owner-usage.mjs').catch(e => { if (e?.code === 'ERR_MODULE_NOT_FOUND') return null; throw e; });
+let lastOwn = null;   // 아직 안 물어봤으면 null
+export const followMetricsMs = () => lastOwn && ownerMod ? INTERVAL_S * 1000 : 60_000;
 function claudeDirs(own) {
   const h = home(), out = [];
   if (!own || !ownerMod) { const d = process.env.CLAUDE_CONFIG_DIR || path.join(h, '.claude'); return existsSync(path.join(h, '.claude.json')) || existsSync(path.join(d, '.claude.json')) ? [d] : []; }   // 남의 기기: 로그인 표시(.claude.json 메일)만 — 자격 파일 있는지도 안 봄
@@ -118,7 +120,7 @@ export async function sendMetrics({ print = false, interactive = false } = {}) {
   if (!d?.token) { const e = new Error('not signed in — run `boarder setup` first'); e.code = 'NO_DEVICE'; throw e; }
   // 이 기기가 주인 기기(감시만)인지는 서버가 정함 — 모르면 남의 기기로(자격 안 읽음)
   let own = false;
-  try { const me = await fetch(`${server()}/api/device/me`, { headers: { authorization: `Bearer ${d.token}` }, signal: AbortSignal.timeout(15000) }); if (me.ok) { const j = await me.json(); own = j.scope === 'watch' || j.owner === true; } } catch {}
+  try { const me = await fetch(`${server()}/api/device/me`, { headers: { authorization: `Bearer ${d.token}` }, signal: AbortSignal.timeout(15000) }); if (me.ok) { const j = await me.json(); own = j.scope === 'watch' || j.owner === true; lastOwn = own; } } catch {}
   const m = await collect({ interactive, own });
   if (print) console.log(JSON.stringify(m, null, 2));
   const r = await fetch(`${server()}/api/device/metrics`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${d.token}` }, body: JSON.stringify(m), signal: AbortSignal.timeout(20000) });

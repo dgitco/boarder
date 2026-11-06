@@ -39,7 +39,7 @@ export async function devBoard(db: D1Database, mails: string[], hidden: string[]
     return {
       id: d.id, name: d.name || eng?.host || "이름 없는 기기", scope: d.scope, hidden: hid.has(d.id), seen_at: seen || null, online: !!seen && now - seen < 10 * 60_000,
       os: x?.host?.os || eng?.os || "", cli: x?.host?.cli || eng?.cli || "", metrics_at: m?.at ?? null,
-      load: x ? { cpu: x.cpu?.pct ?? null, load1: x.cpu?.load1 ?? null, cores: x.cpu?.cores ?? null, mem_total_mb: x.mem?.total_mb ?? null, mem_avail_mb: x.mem?.avail_mb ?? null, disk_pct: x.disk?.pct ?? null, agents: x.agents || {} } : null,
+      load: x ? { cpu: x.cpu?.pct ?? null, load1: x.cpu?.load1 ?? null, load5: x.cpu?.load5 ?? null, cores: x.cpu?.cores ?? null, mem_total_mb: x.mem?.total_mb ?? null, mem_avail_mb: x.mem?.avail_mb ?? null, disk_pct: x.disk?.pct ?? null, agents: x.agents || {} } : null,
       accounts: Array.isArray(x?.accounts) ? x!.accounts.slice(0, 8) : [], codex: x?.codex || null,
       windows: (wins.get(d.id) || []).slice(0, 120),
     };

@@ -4,6 +4,7 @@
 //   받는 칸은 정해 두고 그 밖은 버림 · 글자 수 상한 · 제어 문자 지움. 화면은 글을 HTML 로 그리지 않음(status.js 가 이스케이프).
 import type { Hono } from "hono";
 import { redact } from "../session/redact";
+import { filterText } from "../mcp/log-filter";
 import { featOn } from "./feature";
 import { jsonCapped, sameSite, type SC, type Who } from "./routes";
 
@@ -47,7 +48,7 @@ const utf8 = (s: string) => new TextEncoder().encode(s).length;
 /** 보관 기간 지우기(매일 정기 작업): 오래 안 올라온 요청 · 오래된 줄(전달 못 한 말 포함) · 옛 횟수 줄 */
 export async function sweepTaskBoard(db: D1Database, now = Date.now()) {
   const cut = now - LIMITS.keepDays * DAY_MS;
-  await db.batch([db.prepare("DELETE FROM task_board WHERE at < ?").bind(cut), db.prepare("DELETE FROM task_board_convo WHERE got_at < ?").bind(cut), db.prepare("DELETE FROM task_board_use WHERE day < ?").bind(dayOf(cut))]);
+  await db.batch([db.prepare("DELETE FROM task_board WHERE at < ?").bind(cut), db.prepare("DELETE FROM task_board_convo WHERE got_at < ?").bind(cut), db.prepare("DELETE FROM task_board_use WHERE day < ?").bind(dayOf(cut)), db.prepare("DELETE FROM user_pref WHERE k = 'taskboard:board' AND at < ?").bind(cut)]);
 }
 
 export function cleanTask(raw: unknown, now: number) {
@@ -71,6 +72,43 @@ export function cleanLine(raw: unknown) {
   const src_ref = safe1(l.src_ref, 200) || null, who = safe1(l.who, 60), source = safe1(l.source, 40);
   const k = line1(l.k, 120) || line1(l.src_ref, 200) || `${at}:${who}:${text.slice(0, 60)}`;
   return { task_id, k: k.slice(0, 200), layer: l.layer === "agent" ? "agent" : "human", who, mine: l.mine === true ? 1 : 0, at, source, text, src_ref };
+}
+
+export const BOARD_MAX = 900_000;
+const num = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : null;
+const int = (v: unknown, max = 1e7) => Number.isInteger(v) && Number(v) >= 0 && Number(v) < max ? Number(v) : null;
+const arr = (v: unknown, k: number) => (Array.isArray(v) ? v : []).slice(0, k).map(x => x && typeof x === "object" && !Array.isArray(x) ? x as Record<string, unknown> : null).filter((x): x is Record<string, unknown> => !!x);
+const dropEmpty = <T extends Record<string, unknown>>(o: T) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== "" && v !== null && v !== undefined && !(Array.isArray(v) && !v.length))) as Partial<T>;
+const talk1 = (v: unknown, n: number) => { const s = safe1(v, n); if (!s) return ""; const f = filterText(s); return "reject" in f ? "" : f.text; };
+const DEC_ID = /^[\w.:-]{1,40}$/;
+const decs = (v: unknown, k: number) => arr(v, k).map(d => dropEmpty({ id: DEC_ID.test(str(d.id, 40)) ? str(d.id, 40) : "", t: talk1(d.t, 300), k: safe1(d.k, 20) })).filter(d => d.t);
+const prPair = (v: unknown, k: number) => (Array.isArray(v) ? v : []).slice(0, k).map(a => Array.isArray(a) ? a : [a]).filter(a => int(a[0])).map(a => [int(a[0]), safe1(a[1], 160), a[2] === true]);
+export function cleanBoard(raw: unknown) {
+  const b = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null; if (!b) return null;
+  const extra: Record<string, unknown> = {};
+  const ex = b.extra && typeof b.extra === "object" && !Array.isArray(b.extra) ? b.extra as Record<string, unknown> : {};
+  for (const [id, v0] of Object.entries(ex).slice(0, 2000)) {
+    if (!ID.test(id) || !v0 || typeof v0 !== "object" || Array.isArray(v0)) continue;
+    const v = v0 as Record<string, unknown>, ev = v.ev && typeof v.ev === "object" && !Array.isArray(v.ev) ? v.ev as Record<string, unknown> : null, last = v.last && typeof v.last === "object" && !Array.isArray(v.last) ? v.last as Record<string, unknown> : null;
+    extra[id] = dropEmpty({
+      now: talk1(v.now, 300), next1: talk1(v.next1, 300), moved_at: msOf(v.moved_at), split_of: ID.test(str(v.split_of, 40)) ? str(v.split_of, 40) : "", confidence: safe1(v.confidence, 10),
+      ev: ev ? dropEmpty({ k: safe1(ev.k, 30), c: safe1(ev.c, 20), why: talk1(ev.why, 400), who: safe1(ev.who, 60), cnt: safe1(ev.cnt, 20), nopr: ev.nopr === true || null }) : null,
+      dec: decs(v.dec, 10), last: last ? dropEmpty({ who: safe1(last.who, 60), text: talk1(last.text, 300), at: msOf(last.at) }) : null,
+    });
+  }
+  const dv = b.devices && typeof b.devices === "object" && !Array.isArray(b.devices) ? b.devices as Record<string, unknown> : null;
+  return dropEmpty({
+    repo: /^[\w.-]{1,50}\/[\w.-]{1,60}$/.test(str(b.repo, 120)) ? str(b.repo, 120) : "",
+    gen_at: msOf(b.gen_at), cards_n: int(b.cards_n), cards_at: msOf(b.cards_at), extra,
+    decisions: decs(b.decisions, 30),
+    devices: dv ? dropEmpty({ at: msOf(dv.at), gate: int(dv.gate), queue: int(dv.queue), list: arr(dv.list, 20).map(d => ({ n: safe1(d.n, 30), l: num(d.l), m: num(d.m), e: d.e === true })).filter(d => d.n) }) : null,
+    merged: arr(b.merged, 1000).filter(x => int(x.n)).map(x => dropEmpty({ n: int(x.n), t: safe1(x.t, 200), at: msOf(x.at), g: safe1(x.g, 60), w: safe1(x.w, 20), draft: x.draft === true || null, stack: x.stack === true || null })),
+    open: arr(b.open, 500).filter(x => int(x.n)).map(x => dropEmpty({ n: int(x.n), t: safe1(x.t, 200), at: msOf(x.at), g: safe1(x.g, 60), w: safe1(x.w, 20), draft: x.draft === true || null, stack: x.stack === true || null })),
+    windows: arr(b.windows, 200).map(x => dropEmpty({ win: safe1(x.win, 80), k: safe1(x.k, 20), msg: talk1(x.msg, 300), at: msOf(x.at) })).filter(x => x.msg || x.win),
+    depts: arr(b.depts, 500).filter(x => str(x.n, 40)).map(x => dropEmpty({ n: str(x.n, 40), t: safe1(x.t, 200), d: safe1(x.d, 20), s: safe1(x.s, 20), w: safe1(x.w, 80), lk: safe1(x.lk, 40), lm: talk1(x.lm, 300), la: msOf(x.la), m: prPair(x.m, 30), o: prPair(x.o, 30), big: x.big === true || null, act: x.act === true || null })),
+    asks: arr(b.asks, 100).map(x => dropEmpty({ t: talk1(x.t, 200), x: talk1(x.x, 400) })).filter(x => x.t),
+    ops: arr(b.ops, 200).map(x => dropEmpty({ at: msOf(x.at), x: talk1(x.x, 200) })).filter(x => x.x),
+  });
 }
 
 const J = <T>(s: unknown, d: T): T => { try { return s ? JSON.parse(String(s)) as T : d; } catch { return d; } };
@@ -138,9 +176,15 @@ export function mountTaskBoard(host: Hono<any>, o: { who: Who; device: (c: SC) =
     let added = 0;
     for (let i = 0; i < st.length; i += 50) await DB.batch(st.slice(i, i + 50));   // 요청 먼저(대화 줄은 요청이 있어야 들어감)
     for (let i = 0; i < ls.length; i += 50) added += (await DB.batch(ls.slice(i, i + 50))).reduce((a, x) => a + Number(x.meta?.changes || 0), 0);
+    let board: boolean | undefined;
+    if (b.board !== undefined) {
+      const bd = cleanBoard(b.board), js = bd ? JSON.stringify(bd) : "";
+      board = !!bd && utf8(js) <= BOARD_MAX;
+      if (board) await DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v, at = excluded.at").bind(own, "taskboard:board", js, now).run();
+    }
     await useAdd(DB, own, now, { pushes: 1, lines: added, last_at: now }).run();
     // dropped = 망가진 요청 · 줄 + 안 들어간 줄(없는 요청 · 같은 열쇠의 다른 글). 같은 줄 다시 올리기는 안 셈
-    return c.json({ ok: true, tasks: tasks.length, lines: lines.length, added, dropped: badTasks + cv.length - repeats - added });
+    return c.json({ ok: true, tasks: tasks.length, lines: lines.length, added, dropped: badTasks + cv.length - repeats - added, ...(board === undefined ? {} : { board }) });
   });
   // 보더에서 「말하기」로 쓴 줄 — 그 요청을 올린 기기만 가져감(가져감 표시를 남겨 다른 회차 · 기기가 또 받지 않음). 전한 뒤 ack, ack 가 없으면 LEASE_MS 뒤 다시 나감
   app.get("/api/device/taskboard/said", async c => {
@@ -167,14 +211,17 @@ export function mountTaskBoard(host: Hono<any>, o: { who: Who; device: (c: SC) =
   app.get("/api/me/taskboard", async c => {
     const g = await gate(c); if ("err" in g) return g.err;
     const DB = c.env.DB;
-    const [rows, cnt, use] = await DB.batch([
+    const [rows, cnt, use, bdr] = await DB.batch([
       DB.prepare("SELECT id, title, quote, status, state, dept, assignee, area, done_text, next_text, q, prs, tasks, logs, requested_at, updated_at, completed_at, at FROM task_board WHERE owner = ? ORDER BY updated_at DESC LIMIT 1000").bind(g.me),
       DB.prepare("SELECT task_id, count(*) n, max(at) last, sum(pending) wait FROM task_board_convo WHERE owner = ? GROUP BY task_id").bind(g.me),
       DB.prepare("SELECT last_at FROM task_board_use WHERE owner = ?").bind(g.me),
+      DB.prepare("SELECT v FROM user_pref WHERE owner = ? AND k = 'taskboard:board'").bind(g.me),
     ]);
     const by = new Map((cnt.results as { task_id: string; n: number; last: number; wait: number }[]).map(r => [r.task_id, r]));
     const at = Math.max(0, ...(rows.results as Row[]).map(r => r.at), (use.results[0] as { last_at?: number } | undefined)?.last_at || 0);   // 마지막으로 올라온 때 = 요청이든 대화 줄이든 기기가 올린 때(사람의 말하기는 안 셈)
-    return c.json({ ok: true, at: at || null, tasks: (rows.results as Row[]).map(r => out(r, { quote: r.quote.slice(0, 300), logs: undefined, lines: by.get(r.id)?.n || 0, last_line: by.get(r.id)?.last || null })) }, 200, { "cache-control": "no-store" });
+    const bd = J<Record<string, unknown> | null>((bdr.results[0] as { v?: string } | undefined)?.v, null), ex = (bd?.extra || {}) as Record<string, unknown>;
+    if (bd) delete bd.extra;
+    return c.json({ ok: true, at: at || null, board: bd, tasks: (rows.results as Row[]).map(r => out(r, { quote: r.quote.slice(0, 300), logs: undefined, lines: by.get(r.id)?.n || 0, last_line: by.get(r.id)?.last || null, ...(ex[r.id] ? { x: ex[r.id] } : {}) })) }, 200, { "cache-control": "no-store" });
   });
   app.get("/api/me/taskboard/:id", async c => {
     const g = await gate(c); if ("err" in g) return g.err;
@@ -182,7 +229,9 @@ export function mountTaskBoard(host: Hono<any>, o: { who: Who; device: (c: SC) =
     const r = await c.env.DB.prepare("SELECT * FROM task_board WHERE owner = ? AND id = ?").bind(g.me, id).first<Row>();
     if (!r) return c.json({ ok: false, error: "없는 태스크예요" }, 404);
     const lines = (await c.env.DB.prepare("SELECT k, layer, who, mine, at, source, text, pending FROM (SELECT * FROM task_board_convo WHERE owner = ? AND task_id = ? ORDER BY at DESC LIMIT 2000) ORDER BY at, k").bind(g.me, id).all()).results;
-    return c.json({ ok: true, task: out(r), convo: lines.map(l => ({ ...l, k: redact(String(l.k)) })) }, 200, { "cache-control": "no-store" });
+    const bx = await c.env.DB.prepare("SELECT json_extract(v, '$.repo') repo, json_extract(v, ?) x FROM user_pref WHERE owner = ? AND k = 'taskboard:board'").bind(`$.extra."${id}"`, g.me).first<{ repo: string | null; x: string | null }>();
+    const x = J<Record<string, unknown> | null>(bx?.x, null);
+    return c.json({ ok: true, task: out(r, x ? { x } : {}), repo: bx?.repo || null, convo: lines.map(l => ({ ...l, k: redact(String(l.k)) })) }, 200, { "cache-control": "no-store" });
   });
   // 「말하기」: 그 요청 대화에 내 줄(사람 겹) — 올리는 쪽이 가져가 에이전트에게 전함(전하기 전까지 pending)
   app.post("/api/me/taskboard/:id/say", async c => {

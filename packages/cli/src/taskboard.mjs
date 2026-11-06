@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { loadDevice, server } from './config.mjs';
 
 export const TASKBOARD_HELP = `Task status page (only when the account turned it on in Settings › Features)
-  boarder taskboard push <file.json>   upload {"tasks":[…],"convo":[…],"remove":[…]} (split into parts when large)
+  boarder taskboard push <file.json>   upload {"tasks":[…],"convo":[…],"remove":[…],"board":{…}} (split into parts when large; board goes whole in its own last part, 900 KB max)
   boarder taskboard said               print what people said on the page, for tasks this machine uploaded (JSON). Lines you got are held for 5 minutes, then come back unless acked.
                                        When you push such a line back as convo, keep the same k — otherwise it shows twice.
   boarder taskboard ack <file.json>    mark lines delivered ([{"task_id","k"}…] — the output of said works as is)`;
@@ -29,7 +29,12 @@ export function chunks(b) {
       cur()[k].push(x); cur().n += sz;
     }
   }
-  return out.filter(c => c.tasks.length || c.convo.length || c.remove.length).map(({ n, ...c }) => c);
+  const parts = out.filter(c => c.tasks.length || c.convo.length || c.remove.length).map(({ n, ...c }) => c);
+  if (b && b.board !== undefined) {
+    if (Buffer.byteLength(JSON.stringify(b.board)) > LIM.bytes) throw Object.assign(new Error(`board is larger than ${LIM.bytes} bytes — trim the lists (merged · open · depts)`), { code: 'BOARD_TOO_BIG' });
+    parts.push({ board: b.board });
+  }
+  return parts;
 }
 export async function taskboardCommand(sub, pos) {
   if (sub === 'push') {

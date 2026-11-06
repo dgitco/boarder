@@ -107,14 +107,74 @@ test("태스크 찾기 칸: 30초 새로 읽기 · 상태 칩 · 기간 단추�
   await (b.body().querySelector("[data-sf]") as El).fire("click"); await (b.body().querySelector("[data-span]") as El).fire("click");
   assert.equal(b.body().querySelector("[data-q]"), q, "칩을 눌러도 같은 칸"); assert.deepEqual(b.list(), ["R1"]);
 });
-test("기기 찾기 칸: 글자 · 30초 새로 읽기에 칸 · 포커스 그대로", async () => {
-  const b = await boot({ devboard: true }, { "api/me/devboard": () => ({ ok: true, at: Date.now(), devices: [{ id: "d1", name: "내 맥", windows: [{ key: "w", title: "한글 창", repo: "", acct: "", state: "working" }, { key: "x", title: "다른 창", repo: "", acct: "", state: "idle" }] }] }) });
+test("태스크 현황: 끝 · 안 함은 기본 보기 · 「모두」에서 숨김(지우지 않음), 「끝 n」 칩을 눌렀을 때만 보임", async () => {
+  const b = await boot({ taskboard: true }, { "api/me/taskboard": () => ({ ok: true, at: Date.now(), tasks: [TASK("R1"), TASK("R2", { status: "끝", state: "done" }), TASK("R3", { status: "안 함", state: "cancelled" })] }) });
+  b.ctx.BXStatus.open("tasks"); await flush();
+  assert.deepEqual(b.list(), ["R1"], "기본 보기");
+  const chip = (f: string) => b.body().querySelectorAll("[data-sf]").find(e => e.dataset.sf === f) as El;
+  assert.ok(chip("끝").textContent.includes("2"), "끝 칩에 숫자");
+  await chip("모두").fire("click"); assert.deepEqual(b.list(), ["R1"], "모두도 끝난 것 뺌");
+  await chip("끝").fire("click"); assert.deepEqual(b.list().sort(), ["R2", "R3"], "끝 칩 = 끝 · 안 함");
+});
+test("오늘 요약: 요청 총수는 끝 · 안 함을 포함한다고 밝힘, 모두 목록은 계속 숨김", async () => {
+  const requested_at = new Date().setHours(12, 0, 0, 0);
+  const b = await boot({ taskboard: true }, { "api/me/taskboard": () => ({ ok: true, at: Date.now(), tasks: [
+    TASK("R1", { requested_at }), TASK("R2", { requested_at, status: "끝", state: "done" }), TASK("R3", { requested_at, status: "안 함", state: "cancelled" }),
+  ] }) });
+  b.ctx.BXStatus.open("tasks"); await flush();
+  await (b.body().querySelectorAll("[data-day]").find(e => e.dataset.day === "0") as El).fire("click");
+  const total = b.body().querySelectorAll("[data-tf]").find(e => e.dataset.tf === "모두") as El;
+  assert.equal(total.querySelector("b")!.textContent, "3", "접수 총수 유지");
+  assert.match(total.querySelector("small")!.textContent, /요청 · 끝 포함/);
+  assert.ok(total.textContent.includes("안 함 · 멈춤 1"), "안 함 수도 유지");
+  await total.fire("click"); assert.deepEqual(b.list(), ["R1"], "모두 목록은 끝 · 안 함 숨김 유지");
+});
+test("카드 오래됨: 목록 숨김과 같은 완료 기준, 근거 상태가 있으면 state보다 먼저", async () => {
+  const updated_at = Date.now() - 4 * 3600_000;
+  const b = await boot({ taskboard: true }, { "api/me/taskboard": () => ({ ok: true, at: Date.now(), tasks: [
+    TASK("R1", { updated_at, state: "done", x: { ev: { k: "운영 나감 · 확인 전", cnt: "진행" } } }),
+    TASK("R2", { updated_at, state: "cancelled", x: { ev: { k: "PR 열림", cnt: "진행" } } }),
+    TASK("R3", { updated_at, x: { ev: { k: "끝", cnt: "진행" } } }),
+    TASK("R4", { updated_at, x: { ev: { k: "끝", cnt: "끝" } } }),
+    TASK("R5", { updated_at, x: { ev: { k: "안 함", cnt: "안 함" } } }),
+    TASK("R6", { updated_at, state: "done" }), TASK("R7", { updated_at, state: "cancelled" }),
+  ] }) });
+  b.ctx.BXStatus.open("tasks"); await flush();
+  assert.deepEqual(b.list().sort(), ["R1", "R2"]);
+  for (const card of b.body().querySelectorAll("[data-tk]")) {
+    assert.ok(card.classList.contains("stale"), card.dataset.tk + "는 근거상 진행이므로 오래됨");
+    assert.ok(card.textContent.includes("4시간째 조용"));
+  }
+  await (b.body().querySelectorAll("[data-sf]").find(e => e.dataset.sf === "끝") as El).fire("click");
+  assert.deepEqual(b.list().sort(), ["R3", "R4", "R5", "R6", "R7"]);
+  for (const card of b.body().querySelectorAll("[data-tk]")) {
+    assert.equal(card.classList.contains("stale"), false, card.dataset.tk + "는 목록상 완료이므로 오래됨 아님");
+    assert.equal(card.textContent.includes("째 조용"), false);
+  }
+});
+test("기기 세션 현황: 캔버스 꼴 — 기기마다 판 하나 · 창 표(창 | 맡은 업무 | 상태 | 계정 | 자리) · 맡은 업무는 창 이름의 #번호 · 숨기기", async () => {
+  const old = Date.now() - 40 * 60_000;
+  const b = await boot({ devboard: true }, {
+    "api/me/devboard": () => ({ ok: true, at: Date.now(), devices: [
+      { id: "d1", name: "내 맥", seen_at: Date.now(), load: { load5: 3.2, cores: 10, mem_total_mb: 16384, mem_avail_mb: 4096 }, accounts: [{ acct: "a", p5: 10, p7: 96 }],
+        windows: [{ key: "w", title: "#12 #34 · 한글 창", repo: "", acct: "a", state: "working", engine: "tmux" }, { key: "x", title: "다른 창", repo: "", acct: "", state: "idle" }] },
+      { id: "d2", name: "옛 기기", seen_at: old, load: { load1: 1, cores: 4 }, windows: [{ key: "y", title: "창", state: "idle" }] },
+    ] }),
+  });
   b.ctx.BXStatus.open("devices"); await flush();
-  const q = b.body().querySelector("[data-q]") as El; q.focus();
-  q.value = "한"; await q.fire("input", { isComposing: true });
-  assert.equal(b.body().querySelector("[data-q]"), q); assert.equal(q.selCalls, 0);
-  assert.ok(b.body().textContent.includes("한글 창")); assert.ok(!b.body().textContent.includes("다른 창"));
-  await b.tick(30_000); assert.equal(b.body().querySelector("[data-q]"), q); assert.equal(b.ctx.document.activeElement, q); assert.equal(q.focusCalls, 1);
+  const secs = b.body().querySelectorAll(".bx-fb");
+  assert.equal(secs.length, 2, "기기마다 판 하나");
+  const rows = secs[0].querySelectorAll("tr").slice(1).map(r => r.els.map(td => td.textContent));
+  assert.deepEqual(rows[0], ["#12 #34 · 한글 창", "#12 #34", "일하는 중", "a", "tmux"]);
+  assert.deepEqual(rows[1].slice(1, 3), ["업무 번호 없음", "쉼"]);
+  assert.ok(secs[0].textContent.includes("부하(5분)3.2/ 코어 10"), secs[0].textContent);
+  assert.ok(secs[0].textContent.includes("메모리75%16GB"), "메모리 = 100 - 남음/전체");
+  assert.ok(secs[0].textContent.includes("남은 4%"), "주간 남은 % = 100 - 주간 %");
+  assert.ok(secs[1].classList.contains("stale") && secs[1].textContent.includes("오래됨"), "25분 넘게 소식 없음 = 오래됨");
+  assert.equal(b.body().querySelector("[data-q]"), null, "캔버스처럼 찾기 칸 없음");
+  assert.ok(b.timers.some(([ms]) => ms === 15_000), "15초마다 다시 읽음(1분 안 갱신)"); assert.match(b.body().textContent, /마지막 갱신 \d\d:\d\d:\d\d/);
+  await (secs[0].querySelector("[data-hide]") as El).fire("click"); await flush();
+  assert.ok(b.calls.includes("POST api/me/devboard/hide"), "숨기기 = 이 기기 보이기 끔");
 });
 test("말하기 칸: 15초 새로 읽기가 쓰는 중인 칸을 안 바꿈 — 값 · 커서 · 포커스 그대로, 대화는 새로 그려짐", async () => {
   const b = await openDet(), ta = b.ta(); ta.focus(); ta.value = "앞부분 뒷부분"; ta.setSelectionRange(3, 3); const sel = ta.selCalls;

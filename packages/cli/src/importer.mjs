@@ -628,12 +628,12 @@ export async function importCommand(flags) {
   if (flags.follow && stopped()) return console.log('import is stopped on this machine — run `boarder import` once to turn it back on');
   const opt = { days: Number(flags.days) || 7, print: !!flags.print, gh: !flags['no-gh'] };
   if (!flags.follow) return importOnce({ ...opt, setup: !!flags.setup });
-  let last = 0, first = true, watched = 0;
+  let last = 0, first = true, watched = 0, metricsMs = 60_000;
   for (;;) {
     if (stopped()) return console.log('import stopped');   // boarder import --stop
     try {
-      // 기기 상태(설정 › 기기)도 이 서비스가 5분마다 — 보기 전용 기본엔 따로 타이머가 없음
-      if (Date.now() - watched > 300_000) { watched = Date.now(); try { const W = await import('./watch.mjs'); await W.sendMetrics(); } catch (e) { if (e.code === 'NO_DEVICE' || e.code === 'REVOKED') throw e; } }
+      // 기기 상태(설정 › 기기 · 기기 세션 현황)도 이 서비스가 — 회원 기기 1분 · 주인 기기 5분(watch.mjs followMetricsMs, 서버가 정한 주인 여부로). 보기 전용 기본엔 따로 타이머가 없음
+      if (Date.now() - watched > metricsMs) { watched = Date.now(); try { const W = await import('./watch.mjs'); try { await W.sendMetrics(); } finally { metricsMs = W.followMetricsMs(); } } catch (e) { if (e.code === 'NO_DEVICE' || e.code === 'REVOKED') throw e; } }
       const n = await drainOnce();
       if (first || n || Date.now() - last > 60_000) { await importOnce({ ...opt, setup: first && !!flags.setup, quiet: !first, print: false, background: true, skipSame: !first && !n }); last = Date.now(); first = false; }
     } catch (e) { if (e.code === 'NO_DEVICE' || e.code === 'REVOKED') throw e; console.error(e.message); }

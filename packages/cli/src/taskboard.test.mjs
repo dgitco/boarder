@@ -20,3 +20,11 @@ test('도움말: said 의 k 를 다시 올릴 때 그대로 쓰라는 안내', a
   const { TASKBOARD_HELP } = await import('./taskboard.mjs');
   assert.match(TASKBOARD_HELP, /same k/);
 });
+test('판 값(board)은 나누지 않고 맨 끝 한 번 — 너무 크면 보내기 전에 멈춤', () => {
+  const tasks = Array.from({ length: 300 }, (_, i) => ({ id: 'R' + i, title: '가' }));
+  const cs = chunks({ tasks, board: { decisions: [{ t: '결정' }] } });
+  assert.deepEqual(cs.at(-1), { board: { decisions: [{ t: '결정' }] } }); assert.ok(cs.slice(0, -1).every(c => !('board' in c)));
+  assert.deepEqual(chunks({ board: {} }), [{ board: {} }]);
+  assert.throws(() => chunks({ board: { ops: [{ x: '가'.repeat(400_000) }] } }), /larger than/);
+});
+
