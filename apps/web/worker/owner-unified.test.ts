@@ -828,3 +828,90 @@ test("켬: /ea(퍼스널 비서)는 관리 권한이면 같은 틀에 BX_EA_MODE
   assert.deepEqual(t.bridge, []);
 });
 
+
+const MASK_FILE = "a".repeat(32), MASK_OTHER = "b".repeat(32), MASK_NONE = "c".repeat(32);
+const maskedAttachment = (id = MASK_FILE) => `📎 image.png: https://example.test/f/${id}?e=1794000000&«가림»`;
+function maskedR2(t: Awaited<ReturnType<typeof setup>>, owner: string) {
+  const heads: string[] = [];
+  t.env.RESULTS.head = async (key: string) => { heads.push(key); return key === `mfiles/${MASK_FILE}` ? { customMetadata: { owner: encodeURIComponent(owner), owner_encoding: "uri" } } : key === `mfiles/${MASK_OTHER}` ? { customMetadata: { owner: "other@example.test" } } : null; };
+  return heads;
+}
+
+test("가려진 첨부: 실제 Worker 주인 채널·스레드, 통합 켬/끔 모두 복구·D1 원문 유지·R2 id당 한 번", async () => {
+  const F = await import("./member-files.ts");
+  for (const unified of [false, true]) {
+    const t = await setup(), h = await t.human(OWNER), heads = maskedR2(t, OWNER2), root = "1793950000.000101", at = Date.now() / 1000;
+    await t.flag("read_chat", true); if (unified) await t.flag("owner_unified", true);
+    t.db.prepare("INSERT INTO wl_talk_chan(id,name,slack_channel) VALUES ('primary','primary','C1')").run();
+    const text = [maskedAttachment(), maskedAttachment(MASK_OTHER), maskedAttachment(MASK_NONE)].join("\n");
+    t.db.prepare("INSERT INTO wl_talk_msg(id,chan,who,text,at,source) VALUES (?,'primary','owner',?,?,'web')").run(root, text, at);
+    for (const path of ["/api/chat/primary", `/api/chat/primary/${root}`]) {
+      heads.length = 0;
+      const r = await t.req("GET", path, undefined, h); assert.equal(r.status, 200, r.text);
+      const m = r.j.messages.find((m: any) => m.ts === root); assert.ok(m, r.text);
+      const u = new URL(m.text.split("\n")[0].split(": ")[1]);
+      assert.ok(await F.linkOk(SECRET, MASK_FILE, u.searchParams.get("e")!, u.searchParams.get("t")!));
+      assert.equal(m.text.split("\n")[1], maskedAttachment(MASK_OTHER)); assert.equal(m.text.split("\n")[2], maskedAttachment(MASK_NONE));
+      assert.equal(heads.length, 3); assert.equal(m.src, m.text);
+    }
+    assert.equal(t.db.prepare("SELECT text FROM wl_talk_msg WHERE id=?").get(root)!.text, text);
+  }
+});
+
+test("가려진 첨부: agent raw가 Owner 표시를 흉내 내도 저장된 글쓴이가 다르면 재서명 안 함", async () => {
+  const t = await setup(), h = await t.human(OWNER), heads = maskedR2(t, OWNER);
+  await t.flag("owner_unified", true);
+  t.db.prepare("INSERT INTO wl_talk_chan(id,name,slack_channel) VALUES ('primary','primary','C1')").run();
+  t.db.prepare("INSERT INTO wl_talk_msg(id,chan,who,text,raw,at,source) VALUES (?,'primary','agent',?,?,?,'cli')")
+    .run("1793950000.000102", maskedAttachment(), JSON.stringify({ user: "U0000000000" }), Date.now() / 1000);
+  const r = await t.req("GET", "/api/chat/primary", undefined, h);
+  assert.equal(r.status, 200, r.text); assert.equal(r.j.messages[0].text, maskedAttachment()); assert.equal(heads.length, 0);
+});
+
+test("가려진 첨부: 실제 회원 채널·스레드·피드·저장 글, 내 파일만 복구하고 같은 ETag는 304", async () => {
+  const t = await setup(), h = await t.human(MEMBER), heads = maskedR2(t, MEMBER), at = Date.now() - 1000;
+  const text = [maskedAttachment(), maskedAttachment(MASK_OTHER)].join("\n");
+  const id = Number(t.db.prepare("INSERT INTO board_log(owner,win,kind,text,thread,at) VALUES (?,'나','me',?,'primary',?)").run(MEMBER, text, at).lastInsertRowid), ts = MB.tsOf(at, id);
+  t.db.prepare("INSERT INTO member_saved(owner,kind,ref,at) VALUES (?,'log',?,?)").run(MEMBER, String(id), at);
+  for (const path of ["/api/chat/primary", `/api/chat/primary/${ts}`, "/api/inbox"]) {
+    heads.length = 0; const r = await t.req("GET", path, undefined, h); assert.equal(r.status, 200, r.text);
+    const m = path === "/api/inbox" ? r.j.saved[0] : r.j.messages.find((m: any) => m.ts === ts);
+    assert.match(m.text, /&t=[0-9a-f]{32}/); assert.ok(m.text.includes(maskedAttachment(MASK_OTHER))); assert.equal(heads.length, 2);
+    const same = await t.req("GET", path, undefined, { ...h, "if-none-match": r.h.get("etag")! }); assert.equal(same.status, 304, same.text);
+  }
+  heads.length = 0;
+  const feed = await t.req("POST", "/api/feed/threads", { items: [{ k: "primary", ts }] }, h);
+  assert.equal(feed.status, 200, feed.text); assert.match(feed.j.threads[ts].root.text, /&t=[0-9a-f]{32}/); assert.equal(heads.length, 2);
+  assert.equal(t.db.prepare("SELECT text FROM board_log WHERE id=?").get(id)!.text, text);
+});
+
+test("가려진 첨부: 주인 노드 채팅·전달 상자·저장 글도 복구, 저장된 agent 글의 파일은 복구 안 함", async () => {
+  const t = await setup(), h = await t.human(OWNER), heads = maskedR2(t, OWNER2), at = Date.now() / 1000;
+  const root = `${Math.floor(at - 20)}.000103`, box = `${Math.floor(at - 10)}.000104`, agent = `${Math.floor(at - 5)}.000105`;
+  await t.flag("owner_unified", true);
+  // 다른 시험의 노드 색인과 구분되는 cfg tag.
+  const cf = JSON.parse(CFG); cf.dm_node_roots = true;
+  const snaps = t.env.SNAP;
+  t.env.SNAP = { ...snaps, get: (name: string) => {
+    const cell = snaps.get(name);
+    return { ...cell, get: async (key: string) => key === "cfg" ? { body: JSON.stringify(cf), etag: '"masked-node-cfg"', at: Date.now(), checked: Date.now() } : cell.get(key) };
+  } };
+  t.db.prepare("INSERT INTO wl_talk_chan(id,name,slack_channel) VALUES ('primary','primary','C1')").run();
+  const add = t.db.prepare("INSERT INTO wl_talk_msg(id,chan,who,text,at,source,ref) VALUES (?,'primary',?,?,?, ?,?)");
+  add.run(root, "owner", maskedAttachment(), at - 20, "web", null);
+  t.db.prepare("UPDATE wl_talk_msg SET slack_ts=? WHERE id=?").run(`${Math.floor(at - 20)}.009999`, root);
+  t.db.prepare("INSERT INTO wl_log(at,pane,win,kind,msg,ref) VALUES (?,'owner','첨부 시험','진행','[음성] 먼저 기록된 장부',?)").run(at - 30, root);
+  add.run(box, "agent", "옮긴 글", at - 10, "node-move", root);
+  add.run(agent, "agent", maskedAttachment(), at - 5, "cli", null);
+  t.db.prepare("INSERT INTO wl_card_home(ts,chan,pane,node,at) VALUES (?,'primary','%77','첨부 시험',?)").run(root, at);
+  for (const ts of [root, agent]) t.db.prepare("INSERT INTO wl_talk_saved(who,msg,chan,thread,at) VALUES ('owner',?,'primary','',?)").run(ts, at);
+  const nc = await t.req("GET", "/api/nodechat?w=" + encodeURIComponent("첨부 시험"), undefined, h);
+  assert.equal(nc.status, 200, nc.text); assert.match(nc.j.messages[0].text, /&t=[0-9a-f]{32}/);
+  heads.length = 0;
+  const ch = await t.req("GET", "/api/chat/primary", undefined, h); assert.equal(ch.status, 200, ch.text);
+  assert.match(ch.j.messages.find((m: any) => m.ts === box).fwd.text, /&t=[0-9a-f]{32}/);
+  assert.equal(heads.length, 1, "채널 본문과 전달 상자가 같은 R2 결과 공유");
+  const ib = await t.req("GET", "/api/inbox", undefined, h); assert.equal(ib.status, 200, ib.text);
+  assert.match(ib.j.saved.find((m: any) => m.ts === root).text, /&t=[0-9a-f]{32}/);
+  assert.ok(ib.j.saved.find((m: any) => m.ts === agent).text.includes("«가림»"));
+});

@@ -47,7 +47,9 @@ import blobJs from "./legacy/blobatar.js?raw";
 import botPickJs from "./legacy/botpick.js?raw";
 import eaJs from "./legacy/ea.js?raw";
 import eaCss from "./legacy/ea.css?raw";
-import xJs from "./legacy/x.js?raw";
+import xJs0 from "./legacy/x.js?raw";
+import tqJs from "./legacy/tq.js?raw";
+const xJs = tqJs + "\n;" + xJs0;
 import xCss from "./legacy/x.css?raw";
 import statusJs from "./legacy/status.js?raw";   // 상태 페이지(태스크 현황 · 기기 세션 현황) — 설정 › 기능에서 켠 사람만 사이드바 「피드」 밑에
 import statusCss from "./legacy/status.css?raw";
@@ -504,14 +506,14 @@ app.post("/api/relay/upload/:action", async c => {
   if (!relayOk(c)) return c.json({ error: "no" }, 403);
   const raw = await memberFiles.readCapped(c.req.raw, 16 * 1024);
   if (raw === "big") return c.json({ error: "너무 큼" }, 413);
-  let b: any; try { b = JSON.parse(new TextDecoder().decode(raw || new Uint8Array())); } catch { return c.json({ error: "JSON" }, 400); }
-  if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ error: "JSON" }, 400);
+  let b: any; try { b = JSON.parse(new TextDecoder().decode(raw || new Uint8Array())); } catch { return c.json({ error: "JSON", code: "direct_upload_rejected" }, 400); }
+  if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ error: "JSON", code: "direct_upload_rejected" }, 400);
   const owner = "relay:files", action = c.req.param("action");
   try {
     if (action === "init") {
-      if (typeof b.key !== "string" || !files.okKey(b.key)) return c.json({ error: "키" }, 400);
+      if (typeof b.key !== "string" || !files.okKey(b.key)) return c.json({ error: "키", code: "direct_upload_rejected" }, 400);
       const metadata = Object.fromEntries(["sha256", "name", "mtime"].map(k => [k, String(b.metadata?.[k] || "").slice(0, k === "name" ? files.NAME_MAX : 100)]));
-      if (metadata.sha256 && !/^[0-9a-f]{64}$/.test(metadata.sha256)) return c.json({ error: "sha256" }, 400);
+      if (metadata.sha256 && !/^[0-9a-f]{64}$/.test(metadata.sha256)) return c.json({ error: "sha256", code: "direct_upload_rejected" }, 400);
       return c.json({ ok: true, ...await directUploads.begin(c.env, owner, { target: b.key, size: b.size, mime: String(b.mime || "application/octet-stream").slice(0, 100), metadata }) });
     }
     if (action === "read") {
@@ -776,6 +778,7 @@ app.post("/api/agent/:tool", async c => {
 const b64url = (u: Uint8Array) => btoa(String.fromCharCode(...u)).replace(/[+/=]/g, m => ({ "+": "-", "/": "_", "=": "" } as Record<string, string>)[m]);
 const rand = (n = 32) => b64url(crypto.getRandomValues(new Uint8Array(n)));
 const UC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";   // 헷갈리는 0 · O · 1 · I 뺌
+const confirmCode = () => { const s = [...crypto.getRandomValues(new Uint8Array(8))].map(x => UC[x % UC.length]).join(""); return `${s.slice(0, 4)}-${s.slice(4)}`; };   // 32글자 × 8자리, 틀린 입력 5번까지
 const userCode = () => { const s = [...crypto.getRandomValues(new Uint8Array(8))].map(x => UC[x % UC.length]).join(""); return `${s.slice(0, 4)}-${s.slice(4)}`; };
 const CTRL_ALL = /[\x00-\x1f\x7f-\x9f]/g;
 const clean = (v: unknown, n: number) => String(v ?? "").replace(CTRL_ALL, "").trim().slice(0, n);
@@ -885,17 +888,25 @@ app.post("/api/device/approve-by-device", async c => {
   return c.json({ ok: true, name: r.name });
 });
 app.post("/api/device/token", async c => {
-  const { device_code, code, code_verifier } = await c.req.json<{ device_code?: string; code?: string; code_verifier?: string }>().catch(() => ({} as { device_code?: string; code?: string; code_verifier?: string }));
+  const { device_code, code, code_verifier, confirm } = await c.req.json<{ device_code?: string; code?: string; code_verifier?: string; confirm?: string }>().catch(() => ({} as { device_code?: string; code?: string; code_verifier?: string; confirm?: string }));
   if (!/^[A-Za-z0-9_-]{30,60}$/.test(device_code || "")) return c.json({ error: "unknown" }, 400);
   const h = await sha(device_code!), now = Date.now();
-  const r = await c.env.DB.prepare("SELECT user_code, name, tools, expires_at, state, owner, challenge, grant_hash FROM device_code WHERE code_hash = ?").bind(h).first<{ user_code: string; name: string; tools: string; expires_at: number; state: string; owner: string; challenge: string | null; grant_hash: string | null }>();
+  const r = await c.env.DB.prepare("SELECT user_code, name, tools, expires_at, state, owner, challenge, grant_hash, confirm_hash, confirm_tries FROM device_code WHERE code_hash = ?").bind(h).first<{ user_code: string; name: string; tools: string; expires_at: number; state: string; owner: string; challenge: string | null; grant_hash: string | null; confirm_hash: string | null; confirm_tries: number }>();
   if (!r) return c.json({ error: "unknown" }, 400);
   if (r.state === "denied") return c.json({ state: "denied" }, 403);
   if (r.state === "issued") return c.json({ error: "used" }, 400);
   if (r.state === "pending") return r.expires_at < now ? c.json({ error: "expired" }, 410) : c.json({ state: "pending" });
   if (!(await member(c.env, r.owner))) return c.json({ state: "denied" }, 403);
   if (r.challenge) {   // 로컬 콜백 길: 허용한 브라우저가 127.0.0.1 로 넘긴 grant + 이 CLI 만 아는 verifier(PKCE S256)
-    if (!/^[A-Za-z0-9_-]{40,60}$/.test(code || "") || !r.grant_hash || !sameToken(await sha(code!), r.grant_hash)) return c.json({ state: "pending" });
+    //   다른 기기(휴대폰 · 다른 컴퓨터)에서 허용해 127.0.0.1 로 못 넘어온 때는 그 화면의 확인 코드를 사람이 터미널에 넣음(confirm) — 남이 보낸 링크를 누른 사람의 기기로는
+    //   grant 가 안 가는 것(로컬 길의 뜻)은 그대로: 확인 코드는 허용한 사람 화면에만 보이고 그 사람이 직접 터미널에 넣어야 함. 틀린 입력 5번이면 이 길만 막힘
+    const cf = String(confirm || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (cf) {
+      if (r.expires_at < now) return c.json({ error: "expired" }, 410);
+      const t = await c.env.DB.prepare("UPDATE device_code SET confirm_tries = confirm_tries + 1 WHERE code_hash = ? AND confirm_hash IS NOT NULL AND confirm_tries < 5 RETURNING confirm_tries").bind(h).first<{ confirm_tries: number }>();
+      if (!t || !r.confirm_hash) return c.json({ error: "confirm", left: 0 }, 400);
+      if (!sameToken(await sha(cf), r.confirm_hash)) return c.json({ error: "confirm", left: Math.max(0, 5 - t.confirm_tries) }, 400);
+    } else if (!/^[A-Za-z0-9_-]{40,60}$/.test(code || "") || !r.grant_hash || !sameToken(await sha(code!), r.grant_hash)) return c.json({ state: "pending" });
     const ch = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(code_verifier || ""))));
     if (!code_verifier || !sameToken(ch, r.challenge)) return c.json({ error: "verifier" }, 400);
   }
@@ -933,22 +944,22 @@ app.post("/api/device/approve", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const b = await c.req.json<{ user_code?: string; allow?: boolean }>().catch(() => ({} as { user_code?: string; allow?: boolean }));
   const uc = clean(b.user_code, 9).toUpperCase(), now = Date.now();
-  const grant = b.allow ? rand(32) : null;
-  const u = await c.env.DB.prepare("UPDATE device_code SET state = ?, owner = ?, grant_hash = ?, approved_by = 'browser' WHERE user_code = ? AND state = 'pending' AND expires_at > ?").bind(b.allow ? "approved" : "denied", s.user.email.toLowerCase(), grant ? await sha(grant) : null, uc, now).run();
+  const grant = b.allow ? rand(32) : null, confirm = b.allow ? confirmCode() : null;   // confirm: 127.0.0.1 로 못 넘어가는 기기(휴대폰)에서 보여 주고 터미널에 넣는 코드(로컬 길만 씀)
+  const u = await c.env.DB.prepare("UPDATE device_code SET state = ?, owner = ?, grant_hash = ?, confirm_hash = ?, approved_by = 'browser' WHERE user_code = ? AND state = 'pending' AND expires_at > ?").bind(b.allow ? "approved" : "denied", s.user.email.toLowerCase(), grant ? await sha(grant) : null, confirm ? await sha(confirm.replace("-", "")) : null, uc, now).run();
   if (u.meta.changes) {
     await c.env.DB.prepare("UPDATE board_card SET state = 'closed', done = ? WHERE id = (SELECT card_id FROM device_code WHERE user_code = ?) AND owner = ? AND state = 'open'").bind(b.allow ? "브라우저에서 허용함" : "브라우저에서 거절함", uc, s.user.email.toLowerCase()).run().catch(() => {});
     const r = await c.env.DB.prepare("SELECT callback, cb_state FROM device_code WHERE user_code = ?").bind(uc).first<{ callback: string | null; cb_state: string | null }>();
     // 로컬 콜백 길: 브라우저가 그 기기의 127.0.0.1 로 grant 를 넘김(거절도 알려 CLI 가 바로 멈춤)
-    if (r?.callback) return c.json({ ok: true, redirect: `${r.callback}?state=${encodeURIComponent(r.cb_state || "")}&${grant ? `code=${grant}` : "error=denied"}` });
+    if (r?.callback) return c.json({ ok: true, redirect: `${r.callback}?state=${encodeURIComponent(r.cb_state || "")}&${grant ? `code=${grant}` : "error=denied"}`, ...(confirm ? { confirm } : {}) });
     return c.json({ ok: true });
   }
   const r = await c.env.DB.prepare("SELECT state, expires_at, owner, callback, cb_state FROM device_code WHERE user_code = ?").bind(uc).first<{ state: string; expires_at: number; owner: string | null; callback: string | null; cb_state: string | null }>();
   if (r && r.owner === s.user.email.toLowerCase() && r.expires_at > now && r.state === (b.allow ? "approved" : "denied")) {
     if (!r.callback) return c.json({ ok: true });
     if (!b.allow) return c.json({ ok: true, redirect: `${r.callback}?state=${encodeURIComponent(r.cb_state || "")}&error=denied` });
-    const g = rand(32);
-    const u2 = await c.env.DB.prepare("UPDATE device_code SET grant_hash = ? WHERE user_code = ? AND state = 'approved' AND owner = ?").bind(await sha(g), uc, r.owner).run();
-    if (u2.meta.changes) return c.json({ ok: true, redirect: `${r.callback}?state=${encodeURIComponent(r.cb_state || "")}&code=${g}` });
+    const g = rand(32), cf = confirmCode();
+    const u2 = await c.env.DB.prepare("UPDATE device_code SET grant_hash = ?, confirm_hash = ?, confirm_tries = 0 WHERE user_code = ? AND state = 'approved' AND owner = ?").bind(await sha(g), await sha(cf.replace("-", "")), uc, r.owner).run();
+    if (u2.meta.changes) return c.json({ ok: true, redirect: `${r.callback}?state=${encodeURIComponent(r.cb_state || "")}&code=${g}`, confirm: cf });
   }
   return c.json({ error: !r ? "unknown" : r.state !== "pending" ? "done" : "expired" }, 400);
 });
@@ -2443,7 +2454,7 @@ async function ownerD1(c: Context<{ Bindings: Env }>, rd: ownerRead.Route, owner
   const ag = await ledgerAges(c.env).catch(() => null);
   const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;   // 주인 길과 같음(자주 쓰는 반응만 복제본)
   const get = ag ? async () => ag.cfg : () => snap(c.env).get("cfg");
-  const res = await ownerRead.respond(rdb, get, rd, c.req.header("if-none-match"), rd.kind === "inbox", owners);
+  const res = await ownerRead.respond(rdb, get, rd, c.req.header("if-none-match"), rd.kind === "inbox", owners, memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || new URL(c.req.url).origin));
   if (res) { if (ag) for (const [k, v] of Object.entries(ag.h)) res.headers.set(k, v); return res; }
   const cfg = await ownerRead.cfgOf(get).catch(() => null);
   // #메인(main)은 cfg.channels 키가 아니라 합쳐 읽는 길 — 못 만들었으면 404 가 아니라 503 다시 읽기(끈 주인 길은 여기서 다리로 넘김)
@@ -2721,6 +2732,7 @@ app.all("*", async c => {
     if (url.pathname === "/" && (c.req.method === "GET" || c.req.method === "HEAD"))
       return c.html(landingPage(c.env.PUBLIC_URL, snippet(c.env), undefined, undefined, c.env.SOURCE_URL), 200, { ...NOFRAME, "cache-control": "private, no-cache", vary: "cookie" });
     const page = await c.env.ASSETS.fetch(new Request(new URL("/", url), c.req.raw));   // 로그인 화면(React)에도 PostHog
+    if (url.pathname === "/connect/finish") return page;   // 커넥터 돌아오기 로그인: 주소에 공급자 code · state 가 있어 PostHog(현재 주소)에 안 실음
     return new HTMLRewriter().on("head", { element: e => { e.append(snippet(c.env), { html: true }); } }).transform(page);
   }
   if (url.pathname === "/login" && c.req.method === "GET") return c.redirect("/", 302);   // 이미 들어온 사람이 랜딩의 「로그인」을 누르면 보드로
@@ -2790,7 +2802,7 @@ app.all("*", async c => {
         if (sl) return sl;
         const r = await memberBoard.get(c.env.DB, me, await myBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"),
           async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name, c.executionCtx,
-          () => live.liveOf(c.env, me, true).tags().then(x => JSON.stringify([(x as { boot?: string }).boot ?? "", x.t.data ?? "", x.t.chat ?? ""])));
+          () => live.liveOf(c.env, me, true).tags().then(x => JSON.stringify([(x as { boot?: string }).boot ?? "", x.t.data ?? "", x.t.chat ?? ""])), memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || url.origin));
         if (r) return r;
       }
       if (c.req.method === "POST" && (/^\/api\/upload(?:\/(?:init|part|complete|abort))?$/.test(url.pathname) || url.pathname === "/api/voice/stt")) {   // 파일 제어 JSON·녹음은 회원 쓰기와 같은 문
@@ -2811,7 +2823,7 @@ app.all("*", async c => {
         if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
         if (ownU) return c.json({ threads: {} }, 200, { "cache-control": "no-store" });
         const b = await c.req.json<unknown>().catch(() => null);
-        try { const [st, o] = await memberBoard.feedThreads(c.env.DB, me, b, { email: s.user.email }); return c.json(o, st as 200, { "cache-control": "no-store" }); }
+        try { const [st, o] = await memberBoard.feedThreads(c.env.DB, me, b, { email: s.user.email, fileRead: memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || url.origin) }); return c.json(o, st as 200, { "cache-control": "no-store" }); }
         catch { return queue.retrySafe(c); }   // 읽기만이라 다시 보내도 됨
       }
       if (c.req.method === "POST") {
@@ -2869,7 +2881,7 @@ app.all("*", async c => {
     if (b && typeof b === "object" && !Array.isArray(b) && "_pre" in b) { delete b._pre; sent = new TextEncoder().encode(JSON.stringify(b)); }
     if (b && typeof b === "object" && !Array.isArray(b) && chOf(c) === "owner" && c.req.header("x-hb") === "1" && await ledger.f7On(c.env.DB, ownerChat.FLAG)) {
       const cfg = await ownerRead.cfgOf(() => snap(c.env).get("cfg")).catch(() => null);
-      const p = cfg ? ownerChat.plain(b, Object.keys(cfg.channels || {}), ours) : null;
+      const p = cfg ? ownerChat.plain(b, Object.keys(cfg.channels || {}), ours, cfg.node_index?.pane_win) : null;
       let w: ownerChat.Wrote | null = null;
       if (p) {
         try { w = await ownerChat.write(c.env.DB, p); }
@@ -2969,7 +2981,7 @@ app.all("*", async c => {
     const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;
     const ag = await ledgerAges(c.env).catch(() => null);
     const stuck = !ag || ag.syncAge > 60_000; hit(c.req.raw, "ledger", !stuck);
-    const res = stuck ? null : await ownerRead.respond(rdb, ag ? async () => ag.cfg : () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st, ownerMails(c.env, s.user.email));
+    const res = stuck ? null : await ownerRead.respond(rdb, ag ? async () => ag.cfg : () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st, ownerMails(c.env, s.user.email), memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || url.origin));
     if (res) { if (ag) for (const [k, v] of Object.entries(ag.h)) res.headers.set(k, v); return res; }
   }
   const headers: Record<string, string> = {};

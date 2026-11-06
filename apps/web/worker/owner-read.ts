@@ -1,5 +1,7 @@
+import type { FileRead } from "./member-files";
 
-export type Cfg = { dm_node_roots?: boolean; channels: Record<string, string>; rep?: string; owners?: Record<string, string>; board_files?: string[]; drafts?: Record<string, { text?: string; at?: number }>; node_topics?: Record<string, { ts?: string; ch?: string }[]> };
+
+export type Cfg = { node_index?: { pane_win?: Record<string, string> }; dm_node_roots?: boolean; channels: Record<string, string>; rep?: string; owners?: Record<string, string>; board_files?: string[]; drafts?: Record<string, { text?: string; at?: number }>; node_topics?: Record<string, { ts?: string; ch?: string }[]> };
 export type Route = { group: "chat" | "cards" | "art"; kind: "channel" | "thread" | "nodechat" | "frequent" | "inbox" | "artnotes" | "alias"; a?: string; b?: string };
 type R = Record<string, any>;
 type Out = { status: number; body: unknown };
@@ -201,6 +203,13 @@ function norm(m: R, rep: string, bf: Set<string>) {
   } as R;
 }
 
+// 화면의 who는 raw/board 파일에 따라 달라질 수 있어, 저장된 글쓴이로만 재서명한다.
+async function readOwnFiles(row: R, message: R, read?: FileRead) {
+  if (!read || !message || row.who !== "owner" || row.deleted_at) return message;
+  for (const k of ["text", "src"]) if (typeof message[k] === "string") message[k] = await read(message[k], "owner");
+  return message;
+}
+
 // ── 고른 단추(chat.mark_picks · db_picks · db_marks) ──
 const PICK = new RegExp(`^${WS}*고름:${WS}*\\*?([\\s\\S]+?)\\*?${WS}*$`);
 function markPicks(msgs: R[], picked: Map<string, string[]>) {
@@ -262,12 +271,12 @@ function cardMarks(msgs: R[], rows: R[]) {
 const D1_COMPOUND = 5;
 const unionAll = (ts: string[]): string => ts.length <= D1_COMPOUND ? ts.join(" UNION ALL ")
   : unionAll(Array.from({ length: Math.ceil(ts.length / D1_COMPOUND) }, (_, i) => `SELECT * FROM (${ts.slice(i * D1_COMPOUND, (i + 1) * D1_COMPOUND).join(" UNION ALL ")})`));
-async function channel(db: D1Database, cfg: Cfg, key: string, before: string | undefined, now: number, owners: string[] = []): Promise<Out> {
+async function channel(db: D1Database, cfg: Cfg, key: string, before: string | undefined, now: number, owners: string[] = [], read?: FileRead): Promise<Out> {
   const cur = before ? " AND m.at < coalesce((SELECT at FROM wl_talk_msg WHERE id = ? OR slack_ts = ? LIMIT 1), CAST(? AS REAL))" : "", bv = before ? [before, before, before] : [];
   const one = () => `SELECT ${COLS}, m.at AS _at, ? AS _k FROM wl_talk_msg m WHERE chan=(SELECT id FROM wl_talk_chan WHERE slack_channel = ?) AND thread IS NULL AND ${LIVE_ROOT}${cur} ORDER BY at DESC LIMIT ?`;
   if (key !== MAIN) {
     const rows0 = (await db.prepare(one()).bind(key, cfg.channels[key], ...bv, PAGE + 1).all<R>()).results;
-    return channelOut(db, cfg, key, rows0, now);
+    return channelOut(db, cfg, key, rows0, now, read);
   }
   const keys = channelsOf(cfg).filter(k => has(cfg.channels, k));
   const AREA = " AND m.who = 'owner' AND m.at >= (SELECT t FROM cut)", OLD = " AND m.at < (SELECT t FROM cut)", OWNER = " AND m.who = 'owner'";
@@ -278,9 +287,9 @@ async function channel(db: D1Database, cfg: Cfg, key: string, before: string | u
     + (before ? ", bf(t) AS (SELECT coalesce((SELECT at FROM wl_talk_msg WHERE id = ? OR slack_ts = ? LIMIT 1), CAST(? AS REAL)))" : "")
     + ` SELECT * FROM (${unionAll(parts.map(([k, w]) => `SELECT * FROM (${piece(k, w)})`))}) ORDER BY _at DESC LIMIT ${PAGE + 1}`;
   const rows = (await db.prepare(q).bind(JSON.stringify(owners.map(x => x.toLowerCase())), ...bv, ...parts.map(([k]) => cfg.channels[k])).all<R>()).results;
-  return channelOut(db, cfg, key, rows, now);
+  return channelOut(db, cfg, key, rows, now, read);
 }
-async function channelOut(db: D1Database, cfg: Cfg, key: string, rows: R[], now: number): Promise<Out> {
+async function channelOut(db: D1Database, cfg: Cfg, key: string, rows: R[], now: number, read?: FileRead): Promise<Out> {
   const rep = cfg.rep || REP, bf = new Set(cfg.board_files || []), own = cfg.owners || {};
   const chOf = new Map(rows.map(r => [String(r.slack_ts || r.id), String(r._k)]));
   const page = rows.slice(0, PAGE), more = rows.length > PAGE;
@@ -289,13 +298,16 @@ async function channelOut(db: D1Database, cfg: Cfg, key: string, rows: R[], now:
   const pre = page.map(r => ({ ts: r.slack_ts || r.id, replies: 1, buttons: r.deleted_at ? [] : buttonsOf(T(r.blocks) ? loads(r.blocks) : null), deleted: !!r.deleted_at }));
   // 읽히는 id(aliasOf)는 같은 batch 에 안 넣고 나란히 — 표가 아직 없어도(이주 전) 글 읽기가 안 깨지게, 왕복 수는 그대로
   const [rs, al] = await Promise.all([db.batch<R>([...exStmts(db, ids), ...marksStmts(db, pre), cardsStmt(db, pre.map(m => m.ts)),
-    db.prepare(`SELECT ts, node FROM wl_card_home WHERE node IS NOT NULL AND node != '' AND ts IN ${IN}`).bind(JSON.stringify(pre.map(m => m.ts)))]),   // 노드 일 카드 뿌리(server.node_card_roots)
+    db.prepare(`SELECT ts, node FROM wl_card_home WHERE node IS NOT NULL AND node != '' AND ts IN ${IN}`).bind(JSON.stringify(pre.map(m => m.ts))),   // 노드 일 카드 뿌리(server.node_card_roots)
+    db.prepare(`SELECT DISTINCT thread AS ref FROM wl_talk_msg WHERE thread IN ${IN} AND source = 'node-move' AND ref = thread`).bind(JSON.stringify(pre.map(m => m.ts)))]),
     aliasOf(db, ids, now)]);
   const alTs = new Map(page.filter(r => al.has(r.id)).map(r => [String(r.slack_ts || r.id), al.get(r.id)!]));
   const ex = exOf(rs.slice(0, 4));
   const msgs = page.map(r => asSlack(r, ex));
+  const source = new Map(page.map(r => [String(r.slack_ts || r.id), r]));
   const out: R[] = [...msgs].sort((a, b) => parseFloat(a.ts) - parseFloat(b.ts)).filter(seenByPeople)
     .map(m => ({ ...norm(m, rep, bf), owner: has(own, m.ts) ? own[m.ts] : null, ...(key === MAIN ? { ch: chOf.get(String(m.ts)) || "primary" } : {}), ...(alTs.has(String(m.ts)) ? { alias: alTs.get(String(m.ts)) } : {}) }));   // 합친 줄기 글 = 진짜 채널(화면이 반응 · 스레드 · 답을 그 채널로, 노드 채팅과 같은 칸)
+  if (read) await Promise.all(out.map(m => readOwnFiles(source.get(String(m.ts))!, m, read)));
   // db_marks: 읽지 않음은 답 있는 뿌리만(물은 것은 모든 뿌리라 여기서 거름), 단추 카드는 꼴이 같으니 그대로
   const withReplies = new Set(out.filter(m => T(m.replies) && !T(m.ledger)).map(m => m.ts));
   const rs0 = { ...rs[4], results: rs[4].results.filter(r => withReplies.has(r.th)) } as D1Result<R>;
@@ -303,8 +315,9 @@ async function channelOut(db: D1Database, cfg: Cfg, key: string, rows: R[], now:
   cardMarks(out, rs[7].results);
   const nodeTs = new Set(Object.values(cfg.node_topics || {}).flatMap(xs => Array.isArray(xs) ? xs.map(x => x?.ts) : []).filter(Boolean));
   for (const r of rs[8].results) if (!isChannelWindow(String(r.node))) nodeTs.add(r.ts);
-  const shown = cfg.dm_node_roots ? out : out.filter(m => !nodeTs.has(m.ts));
-  await Promise.all([dlvNames(db, shown), fwdMarks(db, cfg, shown), splitMarks(db, shown)]);   // 서로 다른 칸만 채움 — 차례로 기다리면 태평양 왕복만 늚
+  const movedFromDm = new Set(rs[9].results.map(r => String(r.ref)));
+  const shown = cfg.dm_node_roots ? out : out.filter(m => !nodeTs.has(m.ts) || movedFromDm.has(m.ts));
+  await Promise.all([dlvNames(db, shown), fwdMarks(db, cfg, shown, read), splitMarks(db, shown)]);   // 서로 다른 칸만 채움 — 차례로 기다리면 태평양 왕복만 늚
   return { status: 200, body: { channel: key, messages: shown, more, cursor: msgs.length ? msgs[msgs.length - 1].ts : null, read_at: Math.floor(now), stale_min: 0 } };
 }
 
@@ -325,7 +338,7 @@ function ledgerMsg(at: number, msg: string) {   // chat.ledger_msg
 const repliesStmt = (db: D1Database, ts: string) => db.prepare(`SELECT ${COLS}, CASE WHEN m.thread IS NULL THEN 0 ELSE (SELECT count(*) FROM wl_talk_msg x WHERE x.thread = m.thread AND (x.at < m.at OR (x.at = m.at AND x.id <= m.id))) END AS _n FROM wl_talk_msg m WHERE ((m.id=? AND ${LIVE_ROOT}) OR (m.thread=? AND m.deleted_at IS NULL)) ORDER BY (m.thread IS NOT NULL), m.at`).bind(ts, ts);
 const ownerStmt = (db: D1Database, ts: string) => db.prepare("SELECT at, msg FROM wl_log WHERE pane = 'owner' AND ref = ? ORDER BY id").bind(ts);
 
-async function threads(db: D1Database, cfg: Cfg, list: { key: string; ts: string }[]) {
+async function threads(db: D1Database, cfg: Cfg, list: { key: string; ts: string }[], read?: FileRead) {
   const rep = cfg.rep || REP, bf = new Set(cfg.board_files || []), own = cfg.owners || {};
   if (!list.length) return [];
   const r1 = await db.batch<R>(list.flatMap(x => [repliesStmt(db, x.ts), ownerStmt(db, x.ts)]));
@@ -352,6 +365,10 @@ async function threads(db: D1Database, cfg: Cfg, list: { key: string; ts: string
     cardMarks(out, r2[5].results);
     return { channel: x.key, root: x.ts, owner: has(own, x.ts) ? own[x.ts] : null, messages: out, raw: msgs };
   });
+  if (read) await Promise.all(res.map(async (t, i) => {
+    const source = new Map(rowsOf[i].map((r, j) => [t.raw[j].ts, r]));
+    await Promise.all(t.messages.filter(m => !m.ledger).map(m => readOwnFiles(source.get(m.ts)!, m, read)));
+  }));
   await dlvNames(db, res.flatMap(t => t.messages));
   return res;
 }
@@ -427,7 +444,7 @@ function pyUnquote(s: string) {   // urllib.parse.unquote(UTF-8, 깨진 것은 U
 }
 
 const STATES: Record<string, string> = { "시작": "진행 중", "진행": "진행 중", "막힘": "막힘", "결정": "내 차례", "끝": "끝" };
-async function fwdMarks(db: D1Database, cfg: Cfg, out: R[]) {
+async function fwdMarks(db: D1Database, cfg: Cfg, out: R[], read?: FileRead) {
   const ts = out.map(m => m.ts).filter(T);
   if (!ts.length) return;
   const boxes = (await db.prepare(`SELECT id, slack_ts, ref, at FROM wl_talk_msg WHERE source = 'node-move' AND ref IS NOT NULL AND (id IN ${IN} OR slack_ts IN ${IN})`)
@@ -447,7 +464,7 @@ async function fwdMarks(db: D1Database, cfg: Cfg, out: R[]) {
     const n = norm(asSlack(o, ex), cfg.rep || REP, new Set(cfg.board_files || []));
     const node = String(h.node);
     m.fwd = { node, pane: String(h.pane || ""), chan: String(o.chan), ts: String(o.id), reply: T(o.thread) && o.thread !== o.id, who: n.who, name: n.name,
-      text: String(o.text || "").replace(NODE_HEAD, ""), at: Number(o.at), moved: Number(b.at), state: st.get(node) || "", files: n.files || [] };
+      text: read && o.who === "owner" ? await read(String(o.text || "").replace(NODE_HEAD, ""), "owner") : String(o.text || "").replace(NODE_HEAD, ""), at: Number(o.at), moved: Number(b.at), state: st.get(node) || "", files: n.files || [] };
   }
 }
 async function nodeStates(db: D1Database, nodes: string[]) {
@@ -486,7 +503,7 @@ async function movedMarks(db: D1Database, msgs: R[]) {
   for (const m of msgs) { const g = got.get(m.ts); if (g) m.moved = { chan: String(g.chan), at: Number(g.at) }; }
 }
 
-async function nodechat(db: D1Database, cfg: Cfg, raw: string, now: number, cache: boolean): Promise<Out> {
+async function nodechat(db: D1Database, cfg: Cfg, raw: string, now: number, cache: boolean, read?: FileRead): Promise<Out> {
   const w = pyUnquote(raw).replace(/[\x00-\x1f\x7f]/g, " ");
   const t = titleOf(cut(strip(w).split(new RegExp(`${WS}+`)).filter(Boolean).join(" "), 80));
   if (!t) return { status: 400, body: { error: "노드 이름" } };
@@ -502,14 +519,15 @@ async function nodechat(db: D1Database, cfg: Cfg, raw: string, now: number, cach
   const co = new Map<string, string>();
   if (need.length) for (const r of (await db.prepare(`SELECT slack_ts, chan FROM wl_talk_msg WHERE slack_ts IN ${IN} AND (thread IS NULL OR thread = '' OR thread = slack_ts)`).bind(JSON.stringify(need)).all<R>()).results) co.set(r.slack_ts, r.chan);
   const list = xs.map(x => ({ key: x.ch || co.get(x.ts) || "primary", ts: x.ts })).filter(x => has(cfg.channels, x.key));   // 모르는 채널 = be.channel KeyError → 건너뜀
-  const ths = await threads(db, cfg, list);
+  const ths = await threads(db, cfg, list, read);
   const msgs: R[] = [];
   for (const [i, x] of list.entries()) {
     const ms = ths[i].messages as R[];
     let root: R | null | undefined = ms.find(m => m.ts === x.ts);
     if (!root) {   // chat.root: 같은 replies 의 첫 글
       const raw = ths[i].raw as R[];
-      root = raw.length ? { ...norm(raw[0], cfg.rep || REP, new Set(cfg.board_files || [])), owner: has(cfg.owners, x.ts) ? cfg.owners![x.ts] : null, replies: raw.length - 1, latest: raw[raw.length - 1].ts } : null;
+      const first = raw.length ? ms.find(m => !m.ledger && m.ts === raw[0].ts) : null;
+      root = first ? { ...first, owner: has(cfg.owners, x.ts) ? cfg.owners![x.ts] : null, replies: raw.length - 1, latest: raw[raw.length - 1].ts } : null;
     }
     if (root) {
       const reps = ms.filter(m => m.ts !== x.ts);
@@ -597,7 +615,7 @@ function unreadThreads(db: D1Database, q0: () => D1PreparedStatement) {
 }
 
 // state = 초안 정본이 D1 owner_state(스위치 write_state) — 「올렸음」 줄이 없거나 못 풀면 cfg 초안(server.py 파일)
-async function inbox(db: D1Database, cfg: Cfg, now: number, state = false): Promise<Out> {
+async function inbox(db: D1Database, cfg: Cfg, now: number, state = false, read?: FileRead): Promise<Out> {
   const lim = 200, ulim = 1000, cutAt = now - 3 * 86400;   // 읽지 않음 상한 = inbox.UNREAD_LIMIT(목록 = 뱃지 = 사이드바 수)
   // 스레드 읽지 않음 줄은 바뀜 번호(talk_ver, 0083 트리거)가 같으면 isolate 맡김(답글 줄 전부를 훑는 질의 — 한 번 약 1만 6천 행)
   const q0 = () =>
@@ -654,8 +672,8 @@ async function inbox(db: D1Database, cfg: Cfg, now: number, state = false): Prom
   }
   for (const r of rs[1].results) unread.push({ kind: "post", mine: false, chan: r.chan, thread: "", ts: r.mid, who: r.who, author: or(r.author, ""), pane: or(r.pane, ""), text: plain(r.text), root: "", at: r.at, n: 1 });
   unread.sort((a, b) => b.at - a.at);
-  const saved = rs[2].results.map(r => ({ chan: r.chan, thread: or(r.th, ""), ts: r.msg, who: or(r.who, ""), author: or(r.author, ""), pane: or(r.pane, ""),
-    text: T(r.gone) || r.who === null ? "지운 글" : plain(r.text), root: T(r.th) ? plain(r.root, 80) : "", at: or(r.at, r.sat), saved_at: r.sat }));
+  const saved = await Promise.all(rs[2].results.map(async r => ({ chan: r.chan, thread: or(r.th, ""), ts: r.msg, who: or(r.who, ""), author: or(r.author, ""), pane: or(r.pane, ""),
+    text: T(r.gone) || r.who === null ? "지운 글" : plain(read && r.who === "owner" ? await read(String(r.text || ""), "owner") : r.text), root: T(r.th) ? plain(r.root, 80) : "", at: or(r.at, r.sat), saved_at: r.sat })));
   const savedIds = rs[3].results.map(r => r.msg as string);
   const pre = preOf(rs[4].results);
   let d = cfg.drafts || {};
@@ -695,20 +713,20 @@ async function artnotes(db: D1Database, art: string): Promise<Out> {   // artnot
 
 // 답 하나 만들기. cfg 가 필요한 길(채팅 · 노드 · 모아 보기)인데 없으면 null(→ 다리로)
 // owners = 주인 메일들(#메인 줄기가 가장 이른 켠 시각을 user_pref 에서 찾음 — 없으면 거름 없이 전부)
-export async function build(db: D1Database, cfg: Cfg | null, rt: Route, now = Date.now() / 1000, cache = true, state = false, owners: string[] = []): Promise<Out | null> {
+export async function build(db: D1Database, cfg: Cfg | null, rt: Route, now = Date.now() / 1000, cache = true, state = false, owners: string[] = [], read?: FileRead): Promise<Out | null> {
   if (rt.kind === "frequent") return frequent(db);
   if (rt.kind === "artnotes") return artnotes(db, rt.a!);
   if (!cfg || !cfg.channels) return null;
-  if (rt.kind === "inbox") return inbox(db, cfg, now, state);
+  if (rt.kind === "inbox") return inbox(db, cfg, now, state, read);
   if (rt.kind === "alias") { const f = await aliasFind(db, Object.fromEntries(channelsOf(cfg).filter(k => has(cfg.channels, k)).map(k => [k, cfg.channels[k]])), rt.a!, now);
     return f ? { status: 200, body: f } : { status: 404, body: { error: "없는 글이에요" } }; }
-  if (rt.kind === "channel" && rt.a === MAIN) return CHANNELS.some(k => has(cfg.channels, k)) ? channel(db, cfg, MAIN, rt.b, now, owners) : null;
+  if (rt.kind === "channel" && rt.a === MAIN) return CHANNELS.some(k => has(cfg.channels, k)) ? channel(db, cfg, MAIN, rt.b, now, owners, read) : null;
   if (!has(cfg.channels, rt.a || "") && rt.kind !== "nodechat") return null;
-  if (rt.kind === "channel") return channel(db, cfg, rt.a!, rt.b, now);
-  if (rt.kind === "thread") { const [t] = await threads(db, cfg, [{ key: rt.a!, ts: rt.b! }]); const { raw: _r, ...body } = t; void _r;
+  if (rt.kind === "channel") return channel(db, cfg, rt.a!, rt.b, now, [], read);
+  if (rt.kind === "thread") { const [t] = await threads(db, cfg, [{ key: rt.a!, ts: rt.b! }], read); const { raw: _r, ...body } = t; void _r;
     const home = await nodeHome(db, cfg, rt.b!);   // 집이 노드 채널인 글(J1) — 화면이 가운데를 그 노드로(server.node_home)
     return { status: 200, body: home ? { ...body, home } : body }; }
-  return nodechat(db, cfg, rt.a!, now, cache);
+  return nodechat(db, cfg, rt.a!, now, cache, read);
 }
 
 /** 주인 채널 목록(board.html CH 와 같은 차례): 기본 다섯 + cfg 에 등록한 에이전트 채널. owner_unified 로 회원 길에 든 주인 화면의 HB_CH(회원은 ["primary"]) */
@@ -728,9 +746,9 @@ async function etagOf(b: string) { return '"' + [...new Uint8Array(await crypto.
 
 // 화면에 보낼 답(보드 _send 와 같은 머리: ETag · 같으면 빈 304 · no-store). 못 만들면 null(→ 다리로)
 // state = 모아 보기 초안을 D1 owner_state 에서(write_state) — 같은 batch 에서 읽음
-export async function respond(db: D1Database, get: () => Promise<{ body: string; etag: string } | null>, rt: Route, inm?: string, state = false, owners: string[] = []) {
+export async function respond(db: D1Database, get: () => Promise<{ body: string; etag: string } | null>, rt: Route, inm?: string, state = false, owners: string[] = [], read?: FileRead) {
   let o: Out | null;
-  try { o = await build(db, await cfgOf(get), rt, undefined, true, state, owners); } catch (e) { console.error("owner-read D1 오류 → 다리", JSON.stringify({ kind: rt.kind, a: rt.a ?? "", err: String(e).slice(0, 160) })); return null; }
+  try { o = await build(db, await cfgOf(get), rt, undefined, true, state, owners, read); } catch (e) { console.error("owner-read D1 오류 → 다리", JSON.stringify({ kind: rt.kind, a: rt.a ?? "", err: String(e).slice(0, 160) })); return null; }
   if (!o) return null;
   const b = JSON.stringify(o.body), h: Record<string, string> = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "d1" };
   if (o.status === 200) { const { read_at: _v, ...same } = o.body as R; h.etag = await etagOf(JSON.stringify(same)); if (inm && inm.replace(/^W\//, "") === h.etag) return new Response(null, { status: 304, headers: { etag: h.etag, "cache-control": "no-store", "x-f7": "d1" } }); }

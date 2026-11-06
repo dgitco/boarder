@@ -16,7 +16,8 @@ export function SignIn({ onDone }: { onDone: () => void }) {
   const [m, setM] = useState<{ code: boolean; google: boolean; home: string } | null>(null), [gErr, setGErr] = useState<AuthErrorCode | undefined>();
   const q = new URLSearchParams(location.search);
   // 구글에서 돌아온 실패: 초대 안 된 메일이면 그 안내, 아니면 구글 실패(better-auth 가 error= 를 붙임)
-  const back = q.getAll("error"), backErr: AuthErrorCode | undefined = !back.length ? undefined : back.includes("unable_to_create_user") ? "invite_required" : "google_failed";
+  // 커넥터 돌아오기(/connect/finish)의 error= 는 공급자 답이라 구글 로그인 실패로 안 읽음
+  const back = location.pathname === "/connect/finish" ? [] : q.getAll("error"), backErr: AuthErrorCode | undefined = !back.length ? undefined : back.includes("unable_to_create_user") ? "invite_required" : "google_failed";
   useEffect(() => { fetch("/api/login/methods").then(r => r.json() as Promise<{ code: boolean; google: boolean; home: string }>).then(setM).catch(() => setM({ code: true, google: false, home: location.origin })); }, []);
   async function google(): Promise<AuthResult | void> {
     const home = m?.home || location.origin;

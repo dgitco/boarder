@@ -97,7 +97,7 @@ export async function handle(c: C, me: string, kind: Kind, action: string, std =
   }
   let body: Record<string, any>;
   try { body = JSON.parse(raw + decoder.decode()); if (!body || typeof body !== 'object' || Array.isArray(body)) throw Error(); }
-  catch { return c.json({ ok: false, error: 'JSON 아님' }, 400); }
+  catch { return c.json({ ok: false, error: 'JSON 아님', code: 'direct_upload_rejected' }, 400); }
   try { return c.json(await act(c.env, me, kind, action, body, std)); }
   catch (e) { const err = (action === "init" ? uploads.initializationError(e) : e) as Error & { status?: number; code?: string }; if (!err.status) console.error('이미지 직접 올리기', err); return c.json({ ok: false, error: err.status ? err.message : '일시적인 오류가 발생했어요', ...(err.code ? { code: err.code } : {}) }, (err.status || 503) as 400); }
 }

@@ -28,6 +28,8 @@ export function initializationError(error: unknown) {
     }
     cause = value.cause;
   }
+  const e = error as { status?: number; code?: string };
+  if (e && typeof e === "object" && e.status && e.status >= 400 && e.status < 500 && !e.code) e.code = "direct_upload_rejected";
   return error;
 }
 // Content-Length를 서명해 거짓 크기 선언으로 큰 몸통을 저장하지 못하게 한다. 브라우저가 Blob의 길이를 자동으로 붙인다.

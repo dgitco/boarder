@@ -203,6 +203,29 @@ async function listen(want) {
   await new Promise((ok, no) => { srv.once('error', no); srv.listen(0, '127.0.0.1', ok); });
   return { port: srv.address().port, got, close: () => srv.close() };
 }
+// 확인 코드 입력(터미널일 때만): 맞으면 { approved: 토큰 답 }, 틀리면 남은 횟수와 함께 다시 물음. stop() 은 입력을 닫아 setup 을 붙잡지 않게
+function confirmPrompt(srv, deviceCode, verifier, until) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return { got: new Promise(() => {}), stop: () => {} };
+  let rl = null, stopped = false;
+  const got = (async () => {
+    rl = (await import('node:readline/promises')).createInterface({ input: process.stdin, output: process.stdout });
+    rl.on('SIGINT', () => { rl.close(); process.exit(130); });
+    console.log('Approving on another device (phone · other computer)? After 「허용」 it shows a code — type it here.');
+    while (!stopped && Date.now() < until) {
+      let line; try { line = await rl.question('Code from the approve page: '); } catch { break; }
+      const cf = String(line || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!cf) continue;
+      const p = await fetch(`${srv}/api/device/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device_code: deviceCode, confirm: cf, code_verifier: verifier }), signal: AbortSignal.timeout(20000) }).catch(() => null);
+      const j = p ? await p.json().catch(() => ({})) : {};
+      if (j.state === 'approved') return { approved: j };
+      if (j.state === 'denied') return { error: 'denied', state: null };
+      console.log(j.error === 'confirm' ? (j.left ? `That code doesn't match — ${j.left} tries left.` : 'Too many wrong codes — open the link on this computer instead, or run `boarder setup --yes` again.') : `Not approved yet (${j.error || j.state || 'no answer'}) — press 「허용」 first, then type the code.`);
+      if (j.error === 'confirm' && !j.left) break;
+    }
+    return new Promise(() => {});
+  })();
+  return { got, stop: () => { stopped = true; try { rl?.close(); } catch {} } };
+}
 async function login(srv, tools, { browser, deviceAuth, email }) {
   const { randomBytes, createHash } = await import('node:crypto');
   const state = b64u(randomBytes(24));
@@ -224,7 +247,9 @@ async function login(srv, tools, { browser, deviceAuth, email }) {
     console.log(`(Press 「허용」 there — nothing to type. If the browser didn't open, open that link. Waiting up to ${Math.round(c.expires_in / 60)} minutes…)\n`);
     if (!openBrowser(c.verify_url)) console.log('Could not open a browser here — open the link above yourself.');
     let tm; const timer = new Promise(res => { tm = setTimeout(() => res({ error: 'expired' }), Math.max(0, until - Date.now())); });
-    const got = await Promise.race([local.got, timer]); clearTimeout(tm); local.close();
+    const typed = confirmPrompt(srv, c.device_code, verifier, until);
+    const got = await Promise.race([local.got, timer, typed.got]); clearTimeout(tm); local.close(); typed.stop();
+    if (got.approved) return save(got.approved);
     if (got.error === 'denied') throw new Error('The sign-in was declined in the browser. Run `boarder setup --yes` again if that was a mistake.');
     if (got.error) throw new Error('The request expired before it was approved. Run `boarder setup --yes` again.');
     if (got.state !== state) throw new Error('The browser answered for a different request — run `boarder setup --yes` again.');

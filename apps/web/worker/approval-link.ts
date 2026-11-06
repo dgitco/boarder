@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { RULE_KEYS } from "./install";
 import { BUNDLE_KEYS } from "./harness-bundles";
 import { readKeys } from "./who";
+import { linkOwnerMail, wrongAccount } from "./link-account";
 // 주인 열쇠 옮기는 동안(who.ts readKeys) '' · canon 둘 다 — 늘 「owner IN (?, ?)」 에 둘(회원은 같은 메일 두 번)
 const kp = (env: unknown, k: string) => { const r = readKeys(env as { ALLOW_EMAILS?: string }, k); return [r[0], r[r.length - 1]]; };
 
@@ -110,18 +111,23 @@ export function mountApprovalLink(host: Hono<any>, h: Hooks) {
     return c.json({ ok: true, id: (await sha(token)).slice(0, 16), url: `${c.env.PUBLIC_URL.replace(/\/+$/, "")}/a/${token}`, summary: made.summary, expires_in: TTL / 1000 }, 200, NOSTORE);
   });
 
-  // 확인 화면 — 소비하지 않음. 글은 저장된 인자로 다시 만듦(그 사이 연결이 지워졌으면 그대로 안내)
-  app.get("/a/:token", async c => {
+  app.get("/a/:token", async (c, next) => {
     const token = c.req.param("token");
     if (!TOKEN.test(token)) return page("<h2>링크가 맞지 않아요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 404);
+    if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return page("<h2>사람이 여는 링크예요</h2><p class=sub>브라우저에서 열어요.</p>", 401);   // 기기 토큰 머리는 사람이 아님
     const me = await h.human(c);
-    if (!me) return page(`<h2>먼저 로그인해요</h2><p class=sub>보더에 로그인한 브라우저에서 이 링크를 다시 열어요.</p><p><a href="${esc(c.env.PUBLIC_URL)}">보더 열기</a></p>`, 401);
-    const r = await c.env.DB.prepare("SELECT device_id, device_name, action, params, used_at, expires_at FROM approval_link WHERE hash = ? AND owner IN (?, ?)").bind(await sha(token), ...kp(c.env, h.key(c.env, me))).first<{ device_id: string; device_name: string; action: string; params: string; used_at: number | null; expires_at: number }>();
-    if (!r) return page("<h2>링크가 맞지 않아요</h2><p class=sub>이 계정으로 만든 링크가 아니에요.</p>", 404);
+    if (!me) return next();
+    const hash = await sha(token);
+    const r = await c.env.DB.prepare("SELECT device_id, device_name, action, params, used_at, expires_at FROM approval_link WHERE hash = ? AND owner IN (?, ?)").bind(hash, ...kp(c.env, h.key(c.env, me))).first<{ device_id: string; device_name: string; action: string; params: string; used_at: number | null; expires_at: number }>();
+    if (!r) {
+      const o = await c.env.DB.prepare("SELECT used_at, expires_at FROM approval_link WHERE hash = ?").bind(hash).first<{ used_at: number | null; expires_at: number }>();
+      if (o && !o.used_at && o.expires_at >= Date.now()) return page(wrongAccount((await linkOwnerMail(c.env.DB, "approval_link", hash)) || "", me, "승인 링크"), 403);
+      return page("<h2>링크가 맞지 않아요</h2><p class=sub>없거나 이미 쓰였거나 만료된 링크예요.</p>", 404);
+    }
     if (r.used_at || r.expires_at < Date.now()) return page("<h2>이미 쓰였거나 만료된 링크예요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 410);
     let made: Act | string = "행동을 읽지 못했어요"; try { if (Object.hasOwn(ACTIONS, r.action)) made = await ACTIONS[r.action].make(JSON.parse(r.params), c.env.DB, me, { id: r.device_id, owner: me, name: r.device_name }, xOf(h, c.env, me)); } catch {}
     if (typeof made === "string") return page(`<h2>할 수 없는 요청이에요</h2><p class=sub>${esc(made)}</p>`, 409);
-    return page(`<h2>승인 요청</h2><p>기기 「${esc(r.device_name)}」 이 요청했어요: <b>${esc(made.summary)}</b></p><p class=sub>내가 시킨 일이 아니면 닫아요.</p><p><button id=go>계속</button></p><p id=msg class=sub></p>
+    return page(`<h2>승인 요청</h2><p>기기 「${esc(r.device_name)}」 이 요청했어요: <b>${esc(made.summary)}</b></p><p class=sub>보더 계정 ${esc(me)}</p><p class=sub>내가 시킨 일이 아니면 닫아요.</p><p><button id=go>계속</button></p><p id=msg class=sub></p>
 <script>
 const msg=document.getElementById('msg'),b=document.getElementById('go'),T=${JSON.stringify(token)},H={'content-type':'application/json','x-hb':'1'};
 b.onclick=async()=>{b.disabled=true;msg.textContent='처리하는 중';

@@ -2,6 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import vm from "node:vm";
+import { spawnSync } from "node:child_process";
+import { register } from "node:module";
+register("./test-hooks.mjs", import.meta.url);
+const OC = await import("./owner-chat.ts");
+const OW = await import("./owner-write.ts");
+const SCHEMA = (await import("./ledger-schema.ts")).default;
 import { DatabaseSync } from "node:sqlite";
 import * as OR from "./owner-read.ts";
 import { uiPrefStmts } from "./ui-pref.ts";
@@ -77,7 +83,7 @@ function d1Of() {
     async first() { n.round++; return this.rows()[0] ?? null; },
     async run() { n.round++; db.prepare(sql).run(...(args as never[])); return { success: true, meta: {} }; },
   });
-  const d1 = { prepare: (sql: string) => stmt(sql), async batch(sts: ReturnType<typeof stmt>[]) { n.round++; return sts.map(x => ({ results: x.rows(), success: true, meta: {} })); } };
+  const d1 = { prepare: (sql: string) => stmt(sql), async batch(sts: ReturnType<typeof stmt>[]) { n.round++; db.exec("BEGIN"); try { const rs = sts.map(x => ({ results: x.rows(), success: true, meta: {} })); db.exec("COMMIT"); return rs; } catch (e) { db.exec("ROLLBACK"); throw e; } } };
   return { db, d1: d1 as unknown as D1Database, n };
 }
 const OWNER = "owner@x.co", ON = 1703390100, NOW = 1703400000;
@@ -125,7 +131,7 @@ test("#메인 줄기: 주인 메일 넷 중 가장 이른 켠 시각 — 어느 
   p.run("b2@x.co", String((ON + 150) * 1000), (ON + 150) * 1000); p.run(OWNER, String(ON * 1000), ON * 1000);
   const want = ["1703390001.000100", "1703390002.000100", "1703390203.000100", "1703390205.000100"];
   for (const ms of [[OWNER, "b2@x.co"], ["b2@x.co", OWNER, "b3@x.co"]]) assert.deepEqual(tsOf(await OR.build(d1, CFG, OR.route("/api/chat/main")!, NOW, true, false, ms) as O), want, ms.join());
-  assert.match(index, /ownerRead\.respond\([^\n]*ownerMails\(c\.env, s\.user\.email\)\)/, "Worker 는 주인 메일 넷을 넘김");
+  assert.match(index, /ownerRead\.respond\([^\n]*ownerMails\(c\.env, s\.user\.email\)[,)]/, "Worker 는 주인 메일 넷을 넘김");
 });
 
 test("설정 쓰기(화면 · 기기 CLI 같은 길 uiPrefStmts): 같은 값이면 at 그대로 · 껐다 켜도 #메인 처음 켠 시각 그대로", async () => {
@@ -212,3 +218,74 @@ test("화면: 에이전트 채널 글의 영역 글자 = 그 채널 이름 첫 �
   assert.match(board, /for \(const a of AGENT_CH\) MAIN_ONE\[a\.key\] \?\?= \[\.\.\.String\(a\.name\)\.trim\(\)\]\[0\]/);
   assert.ok(board.indexOf("const AGENT_CH =") < board.indexOf("MAIN_ONE[a.key]"), "AGENT_CH 가 먼저 정해짐");
 });
+
+test("노드 창에 넘긴 Owner 뿌리 글(카드 집 = 노드)은 그 채널 · #메인에 그대로, 넘긴 에이전트 카드 · 노드 채널에서 쓴 글은 예전처럼 뺌", async () => {
+  const { db, d1 } = d1Of(); seed(db);
+  const m = db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cli')");
+  m.run("1703390301.000100", "primary", null, "owner", null, null, "Owner 가 쓰고 총괄이 노드에 넘긴 글", 1703390301.0001);
+  db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source, ref) VALUES (?, 'primary', ?, 'agent', 'chief', NULL, '→ #보더 최적화로 옮김', ?, 'node-move', ?)").run("1703390301.500100", "1703390301.000100", 1703390301.5, "1703390301.000100");   // move_root 전달 상자(원글 스레드 안)
+  m.run("1703390302.000100", "primary", null, "agent", "chief", null, "노드 일 카드(에이전트)", 1703390302.0001);
+  m.run("1703390303.000100", "primary", null, "owner", null, null, "노드 채널에서 Owner 가 쓴 글", 1703390303.0001);
+  const h = db.prepare("INSERT INTO wl_card_home(ts, chan, node, at) VALUES (?, 'primary', ?, ?)");
+  h.run("1703390301.000100", "보더 최적화", 1703390301000); h.run("1703390302.000100", "보더 최적화", 1703390302000); h.run("1703390303.000100", "보더 최적화", 1703390303000);
+  const cfg: OR.Cfg = { ...CFG, node_topics: { "보더 최적화": [{ ts: "1703390303.000100" }] } } as OR.Cfg;
+  for (const path of ["/api/chat/primary", "/api/chat/main"]) {
+    const ts = tsOf(await OR.build(d1, cfg, OR.route(path)!, NOW, false, false, [OWNER]) as O);
+    assert.ok(ts.includes("1703390301.000100"), path + " Owner 가 쓴 넘긴 글 보임");
+    assert.ok(!ts.includes("1703390302.000100"), path + " 에이전트 노드 카드는 안 보임");
+    assert.ok(!ts.includes("1703390303.000100"), path + " 노드 채널에서 쓴 글은 안 보임");
+  }
+});
+
+test("노드 채널에서 쓴 Owner 뿌리(받은 판 pane 있음)는 node_topics 최근 20개에서 밀려나고 카드 집이 있어도 안 보임", async () => {
+  const { db, d1 } = d1Of(); seed(db);
+  db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source) VALUES (?, 'primary', NULL, 'owner', NULL, '%777', '노드 채널에서 쓴 옛 글', ?, 'boarder')").run("1703390401.000100", 1703390401.0001);
+  db.prepare("INSERT INTO wl_card_home(ts, chan, node, at) VALUES (?, 'primary', '보더 최적화', ?)").run("1703390401.000100", 1703390402);
+  const cfg: OR.Cfg = { ...CFG, node_topics: { "보더 최적화": Array.from({ length: 20 }, (_, i) => ({ ts: `1703390${500 + i}.000100` })) } } as OR.Cfg;
+  for (const path of ["/api/chat/primary", "/api/chat/main"]) assert.ok(!tsOf(await OR.build(d1, cfg, OR.route(path)!, NOW, false, false, [OWNER]) as O).includes("1703390401.000100"), path);
+});
+
+test("받은 판이 빈 노드 글(넣기 전 · 실패 · @멘션 · 갈래)도 전달 상자가 없으면 안 보임 — 넘김 판정은 상자로만", async () => {
+  const { db, d1 } = d1Of(); seed(db);
+  db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source) VALUES (?, 'primary', NULL, 'owner', NULL, NULL, '노드에서 @멘션으로 연 글', ?, 'boarder')").run("1703390601.000100", 1703390601.0001);
+  db.prepare("INSERT INTO wl_card_home(ts, chan, node, at) VALUES (?, 'primary', '보더 최적화', ?)").run("1703390601.000100", 1703390602);
+  for (const path of ["/api/chat/primary", "/api/chat/main"]) assert.ok(!tsOf(await OR.build(d1, CFG, OR.route(path)!, NOW, false, false, [OWNER]) as O).includes("1703390601.000100"), path);
+});
+
+type OriginFixture = { messages: Record<string, any>[]; homes: Record<string, any>[]; posted: string[]; boxes: string[]; node_topics: OR.Cfg["node_topics"] };
+function pythonOrigin(modes: object[], rows?: object): OriginFixture {
+  const r = spawnSync("python3", [new URL("../../../harness/engine/board/node_origin_fixture.py", import.meta.url).pathname], {
+    input: JSON.stringify(modes), encoding: "utf8", env: { ...process.env, TMUX_PANE: "", ...(rows ? { NODE_ORIGIN_ROWS: JSON.stringify(rows) } : {}) },
+  });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+  return JSON.parse(r.stdout);
+}
+function loadOrigin(db: DatabaseSync, f: OriginFixture) {
+  for (const m of f.messages) db.prepare(`INSERT INTO wl_talk_msg(${Object.keys(m).join(",")}) VALUES (${Object.keys(m).map(() => "?").join(",")})`).run(...(Object.values(m) as never[]));
+  for (const h of f.homes) db.prepare("INSERT INTO wl_card_home(ts,chan,pane,node,at) VALUES (:ts,:chan,:pane,:node,:at)").run(h);
+}
+test("Worker: 노드 집 쓰기 실패는 원글·rid·할 일도 함께 되돌림", async () => {
+  const { db, d1 } = d1Of(); seed(db);
+  db.prepare("INSERT INTO owner_job_beat(id,at) VALUES (1,?)").run(NOW * 1000);
+  db.exec("CREATE TRIGGER origin_fail BEFORE INSERT ON wl_card_home BEGIN SELECT RAISE(ABORT,'origin test'); END");
+  const p = OC.plain({ rid: "origin-fail-001", channel: "primary", text: "글", pane: "%777" }, ["primary"], [], { "%777": "원래 노드" })!;
+  await assert.rejects(OC.write(d1, p, NOW * 1000), /origin test/);
+  assert.equal(db.prepare("SELECT count(*) n FROM wl_talk_msg WHERE text='글'").get()!.n, 0);
+  assert.equal(db.prepare("SELECT count(*) n FROM owner_job").get()!.n, 0);
+  assert.equal(db.prepare("SELECT count(*) n FROM f7_rid").get()!.n, 0);
+});
+test("전달 상자 일반 삭제 뒤에도 DM 원글 보임 · 뿌리 상자는 전달 카드로 남음(리뷰 3차 대조군)", async () => {
+  for (const rootBox of [false, true]) {
+    const { db, d1 } = d1Of(); seed(db);
+    const ts = "1703390801.000100", box = "1703390802.000100";
+    db.prepare("INSERT INTO wl_talk_msg(id,chan,who,text,at,source) VALUES (?,'primary','owner','DM 글',?,'boarder')").run(ts, 1703390801);
+    db.prepare("INSERT INTO wl_card_home(ts,chan,node,at) VALUES (?,'primary','원래 노드',?)").run(ts, 1703390801);
+    db.prepare("INSERT INTO wl_talk_msg(id,chan,thread,who,text,at,source,ref,deleted_at) VALUES (?,'primary',?,'agent','전달',?,'node-move',?,?)").run(box, rootBox ? null : ts, 1703390802, ts, rootBox ? null : 1703390803);
+    for (const path of ["/api/chat/primary", "/api/chat/main"]) {
+      const out = await OR.build(d1, CFG, OR.route(path)!, NOW, false, false, [OWNER]) as O;
+      assert.ok(tsOf(out).includes(rootBox ? box : ts), path);
+    }
+  }
+});
+
+

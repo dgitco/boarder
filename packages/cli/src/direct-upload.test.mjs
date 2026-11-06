@@ -34,13 +34,19 @@ test('명시적 취소는 서버 정리,500MiB 넘는 선언은 요청 없이 �
 
 test('새 업로더는 init 지원 없음·설정 누락에만 옛 길로, 세션 시작 뒤에는 전환 안 함', async () => {
  const blob=new Blob(['abc']);let fallbacks=0;
- for(const error of [404,405,415,501].map(status=>({status})).concat([{status:503,code:'direct_upload_unavailable'}])) {
+ for(const error of [400,404,405,410,415,501].map(status=>({status})).concat([{status:503,code:'direct_upload_unavailable'}])) {
   const result=await uploadDirect(blob,{control:async()=>{throw error;},legacy:async()=>{fallbacks++;return {id:'legacy'};}});
   assert.equal(result.id,'legacy');
  }
- assert.equal(fallbacks,5);
+ assert.equal(fallbacks,7);
  for(const error of [{status:401},{status:403},{status:413},{status:503},new TypeError('network')]) {
   await assert.rejects(uploadDirect(blob,{control:async()=>{throw error;},legacy:async()=>{throw Error('fallback 금지');}}), e=>e===error);
  }
  await assert.rejects(uploadDirect(blob,{session:{id:'started',size:3,parts:1,partSize:3},control:async()=>{throw {status:404};},legacy:async()=>{throw Error('fallback 금지');}}),e=>e.status===404);
+});
+
+test('code 있는 400(새 Worker 입력 오류)은 옛 길로 안 감 — 옛 Worker 의 code 없는 400 만', async () => {
+ const blob=new Blob(['abc']);
+ await assert.rejects(uploadDirect(blob,{control:async()=>{throw {status:400,code:'direct_upload_rejected'};},legacy:async()=>{throw Error('fallback 금지');}}),e=>e.status===400);
+ const r=await uploadDirect(blob,{control:async()=>{throw {status:400};},legacy:async()=>({id:'legacy'})}); assert.equal(r.id,'legacy');
 });

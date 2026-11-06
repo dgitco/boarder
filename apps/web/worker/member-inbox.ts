@@ -7,9 +7,9 @@ import { editRef } from "./task-convo";
 import { shows } from "./inbox-rules";
 import { verCache } from "./ver-cache";
 export const SEEN = verCache("member_seen_ver", "SELECT v FROM member_seen_ver WHERE owner = ?", "SELECT pane, at FROM member_seen WHERE owner = ?");
-import { draftFiles } from "./member-files";
+import { maskedFileReader, readMemberFiles, draftFiles } from "./member-files";
 
-type Env = { DB: D1Database; RESULTS: R2Bucket };
+type Env = { DB: D1Database; RESULTS: R2Bucket; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string; ALLOW_EMAILS?: string };
 type C = Context<{ Bindings: Env }>;
 type R = Record<string, any>;
 
@@ -238,7 +238,9 @@ export async function route(c: C, me: string, url: URL, body?: R | null): Promis
   const p = url.pathname, db = c.env.DB, J = (o: R, st = 200) => c.json(o, st as 200, { "cache-control": "no-store" });
   if (c.req.method === "GET") {
     if (p === "/api/inbox") {
-      const b = JSON.stringify(await inbox(db, me, c.executionCtx)), t = await etag(b), h = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", etag: t };
+      const o = await inbox(db, me, c.executionCtx);
+      await readMemberFiles(o, maskedFileReader(c.env, c.env.PUBLIC_URL || url.origin), me);
+      const b = JSON.stringify(o), t = await etag(b), h = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", etag: t };
       return (c.req.header("if-none-match") || "").replace(/^W\//, "") === t ? new Response(null, { status: 304, headers: h }) : new Response(b, { headers: h });
     }
     if (p === "/api/drafts") return J(await draftMap(db, me));

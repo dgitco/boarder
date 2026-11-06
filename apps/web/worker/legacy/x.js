@@ -45,7 +45,7 @@
   const OWN_SC = [{id: 'all', label: '전체'}, {id: 'company', label: '회사'}, {id: 'personal', label: '퍼스널'}, {id: 'shop', label: '가게'}];
   const scTabs = () => { try { return (window.HB_CAPS?.area_tabs ?? !window.HB_CH) ? OWN_SC : []; } catch { return []; } };
   const inSc = (t, k) => { try { return t === 'all' || k === t; } catch { return true; } };
-  const X = {fl: flLoad(), tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map(), pend: new Map(), kids: new Map(), ready: false, page: 10, shown: null, shownFl: '', paintAt: 0, unKeep: new Set()};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
+  const X = {fl: flLoad(), tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map(), pend: new Map(), kids: new Map(), ready: false, page: 10, shown: null, shownFl: '', paintAt: 0, unKeep: new Set(), gotFor: new Map()};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
   addEventListener('hbside', () => { if (X.ready && JSON.stringify(scTabs()) !== X.tbSig) drawHome(true); });
   const keepDone = () => { try { localStorage.setItem(DK, JSON.stringify(Object.fromEntries(X.done))); } catch {} };
   const root = document.createElement('div'); root.id = 'bxx'; document.body.append(root);
@@ -57,7 +57,7 @@
   // ── 데이터: 채널 글(뿌리) · 스레드 · 물음 · 읽지 않음 · 저장
   // m.ch 가 다른 글 = #메인 한 줄기(board.html mainOn)로 primary 목록에 섞여 온 다른 채널 글 — 피드는 채널마다 따로 읽으니 겹치지 않게 뺌
   const roots = () => { const out = []; for (const k of chs()){ const ms = cs().ch?.[k]?.messages || []; for (const m of ms) if (!m.deleted && !(m.thread && m.thread !== m.ts) && !(m.ch && m.ch !== k)) out.push({k, m}); for (const q of pendLeft(X.pend.get('new:' + k) || [], ms)) out.push({k, m: q}); }
-    const have = new Set(out.map(x => x.m.ts)); for (const [t, {k}] of wantRoots()){ if (have.has(t)) continue; const m = (cs().thr?.[t]?.messages || []).find(y => y.ts === t); if (m && !m.deleted && !(m.thread && m.thread !== m.ts)){ out.push({k, m}); have.add(t); } }
+    const have = new Set(out.map(x => x.m.ts)); for (const [t, {k, at}] of wantRoots()){ if (have.has(t)) continue; const T = cs().thr?.[t], m = (T?.messages || []).find(y => y.ts === t); if (m && !m.deleted && !(m.thread && m.thread !== m.ts)){ out.push({k, m}); have.add(t); } else if (!T || (T.err && T.errStatus !== 404 && T.errStatus !== 403)){ out.push({k, m: {ts: t, ph: true, latest: at ? String(at) : ''}}); have.add(t); } }   /* 받기 전 · 일시 오류 = 자리 칸(다시 받음), 없는 스레드(404 · 403)만 뺌 */
     return out; };
   const upRoot = t0 => { let t = t0; for (let i = 0; i < 6; i++){ const m = (cs().thr?.[t]?.messages || []).find(y => y.ts === t); if (!m?.thread || m.thread === t) break; t = m.thread; } if (t !== t0){ if (!X.kids.has(t)) X.kids.set(t, new Set()); X.kids.get(t).add(t0); } return t; };   // 답글에 달린 글은 뿌리 스레드 목록에 안 나옴(서버는 thread = 뿌리만 돌려줌) — thr 이 그 조각을 합침
   const wantRoots = () => { const w = new Map(), add = (t, k, at) => { if (!t || /^[ingq]:/.test(k || 'primary')) return; t = upRoot(t); const o = w.get(t); w.set(t, {k: o?.k || k || 'primary', at: Math.max(o?.at || 0, +at || 0)}); };
@@ -88,7 +88,7 @@
       const rr = rest(k, m), lastAt = Math.max(+m.ts || 0, +m.latest || 0, rr.length ? +rr[rr.length - 1].ts : 0);
       if (dk.size) for (const y of [m, ...rr]) if (now - +y.ts < 86400 && (!dx || +y.ts > +dx.dm.ts) && artIds(y).some(id => dk.has(id))) dx = {k, m, dm: y};
       const dAt = X.done.get(m.ts); if (dAt && lastAt * 1000 > dAt){ X.done.delete(m.ts); keepDone(); }
-      const ask = cr.has(m.ts) || !!askIn(k, m);
+      const ask = cr.has(m.ts) || !!askIn(k, m) || (!!m.ph && rk.has(m.ts));
       it.push({k, m, ask, un: un.has(m.ts), at: lastAt, rank: rk.has(m.ts) ? rk.get(m.ts) : 1e6});
     }
     if (dx && dx.dm === dx.m){ const o = it.find(y => y.m === dx.m); if (o) Object.assign(o, {ask: true, rank: -1}); }   // 덱 글이 뿌리면 그 칸을 맨 위로(두 번 안 나옴)
@@ -134,6 +134,7 @@
       + `<span class="xav">${av(who(m), sz)}</span><div class="xc">${head(m, k, o.turn)}${bd.replace(/<\/p>/, part + '</p>')}${embeds(m, bd)}${goto}${o.pollHere ? '' : ''}${m.pendingX ? (m.failX ? `<div class="xfailrow"><span>보내지 못했어요</span><button type="button" data-xretry="${E(m.ts)}">다시 보내기</button><button type="button" data-xdrop="${E(m.ts)}">지우기</button></div>` : '') : acts(k, m, o.n || 0, o.done, o.sts, o.un && !o.joined)}</div></article>`;
   }
   function unit(x){
+    if (x.m.ph) return `<div class="xu xph" data-root="${E(x.m.ts)}" data-k="${E(x.k)}">${SPIN}</div>`;   // 받는 중인 자리 칸(스피너만)
     if (x.deck) return `<div class="xu ask xdeck" data-root="${E(x.dm.ts)}" data-k="${E(x.k)}">${post(x.k, x.dm, {feed: true, ask: true, turn: true, root: x.m.ts, sts: x.sts})}</div>`;   // ✓ 는 덱 글만 내림(스레드 칸 그대로), 글을 누르면 그 스레드
     const {k, m} = x, r = rest(k, m), ask = askIn(k, m), qs = qList(k, m), bundle = qs.length > 1, open = qs.filter(isAsk), n = m.replies || r.length;
     const bq = bundle ? (open[0] || null) : (ask && ask !== m ? ask : null);   // 고를 물음(뿌리 물음은 뿌리 자체에 있음)
@@ -174,7 +175,7 @@
     const v = V('home'), all = items(), it = X.fl === 'all' || !tbs.length ? all : all.filter(y => inSc(X.fl, y.k)), sig = JSON.stringify([X.fl, all.filter(y => y.ask).length]) + JSON.stringify([it.map(x => [x.m.ts, x.m.latest, x.m.replies, x.ask, x.un, (thr(x.m.ts) || []).length, x.m.picked, x.m.failX]), it.map(x => isSaved(x.m.ts))]);
     if (!force && sig === lastSig && v.firstChild) return; lastSig = sig;
     // 글 칸은 한 번만 만듦(다시 그려도 쓰던 글 · 포커스 · 한글 조합 · 첨부 · 토픽 창이 그대로) — 피드만 바꿈
-    if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd"><button type="button" class="xdrb" data-xdr aria-label="메뉴">${DR2}</button><button type="button" class="xpri" data-xpri></button><button type="button" class="xfnd" data-xfind aria-label="찾기">${FND}</button></header>${composer()}<div class="xfl" role="tablist" aria-label="거르개"></div><div class="xfeed"></div>`;
+    if (!v.querySelector('.xcmp')) v.innerHTML = `<header class="xhd xhm"><button type="button" class="xdrb" data-xdr aria-label="메뉴">${DR2}</button><button type="button" class="xpri" data-xpri></button><button type="button" class="xfnd" data-xfind aria-label="찾기">${FND}</button></header>${composer()}<div class="xfl" role="tablist" aria-label="거르개"></div><div class="xfeed"></div>`;
     { const p = v.querySelector('.xpri'), h = priHead(), s = JSON.stringify(h); if (p && p.dataset.s !== s){ p.dataset.s = s; p.innerHTML = `<span class="xpa">${h.face}</span>`; p.setAttribute('aria-label', `${h.name} 와 대화`); } }
     const sl = v.querySelector('.xsel'); if (sl) sl.textContent = `${NAMES()[X.sel] || X.sel} ▾`;
     if (!X.ready){ const f = v.querySelector('.xfeed'); if (!f.querySelector('.xspin')) f.innerHTML = SPIN; return; }
@@ -188,12 +189,13 @@
       fd.innerHTML = pg.length ? pg.map(unit).join('') + (more ? `<div class="xmore">${SPIN}</div>` : '') : `<p class="xempty">${X.fl === 'all' ? '글이 없어요' : `${E(tbs.find(t => t.id === X.fl)?.label || '')}에 글이 없어요`}</p>`; back(); }
     v.scrollTop = st; anchorTo(v, an); watchSeen(); watchMore(v, more);
     const sh = new Set(pg), next = it.filter(x => !sh.has(x)).slice(0, 10);   // 다음 10칸 댓글은 미리 받아 둠(그리기 · 읽음은 안 함)
-    for (const x of [...pg, ...next]){ const t = thr(x.m.ts), l = t && t[t.length - 1]; if (x.m.replies && (!t || (x.m.latest && l && +x.m.latest > +l.ts))) loadThr(x.k, x.m.ts); }   // 한 번 읽은 스레드도 새 답이 왔으면 다시(안 그러면 피드 댓글이 옛 글에 멈춤)
+    if (!document.hidden) for (const x of [...pg, ...next]){ if (x.m.ph){ phLoad(x.k, x.m.ts); continue; } const t = thr(x.m.ts), l = t && t[t.length - 1], lt = x.m.latest; if (x.m.replies && (!t || (lt && l && +lt > +l.ts && X.gotFor.get(x.m.ts) !== lt))) loadThr(x.k, x.m.ts, true).then(ok => { if (ok && lt) X.gotFor.set(x.m.ts, lt); }); }   // 한 번 읽은 스레드도 새 답이 왔으면 다시(안 그러면 피드 댓글이 옛 글에 멈춤)
   }
   const SPIN = '<div class="xspin" role="status" aria-label="불러오는 중"><i></i></div>';
   const keyOf = x => x.deck ? 'd:' + x.dm.ts : x.m.ts;
   function pageOf(it){
     const by = new Map(it.map(x => [keyOf(x), x]));
+    if (X.shown){ const mv = k => by.has(k) || /^d:/.test(k) ? k : upRoot(k); X.shown = [...new Set(X.shown.map(mv))]; for (const k of [...X.unKeep]){ const r = mv(k); if (r !== k){ X.unKeep.delete(k); X.unKeep.add(r); } } }   // 자리 칸이 답글 주소였으면 받은 뒤 진짜 뿌리로 — 그 자리 그대로(맨 뒤로 안 감)
     if (!X.shown || X.shownFl !== X.fl){ X.shownFl = X.fl; X.shown = it.slice(0, X.page).map(keyOf); }
     else {
       const r = X.restore; X.restore = null; const rk = r && by.has(r.k) && !X.shown.includes(r.k) ? r.k : null;   // 되돌린 칸은 그 자리로(맨 위로 안 감)
@@ -219,15 +221,23 @@
     mio.observe(t);
   }
   async function warm(){
-    const jobs = [...wantRoots()].map(([t, {k}]) => [k, t]); for (const x of items().slice(0, 12)) if (x.m.replies && !thr(x.m.ts)) jobs.push([x.k, x.m.ts]);
-    let i = 0; const one = async () => { while (i < jobs.length){ const [k, t] = jobs[i++]; await loadThr(k, t); } };
+    const jobs = []; for (const x of items().slice(0, X.page + 5)) if (x.m.ph || (x.m.replies && !thr(x.m.ts))) jobs.push([x.k, x.m.ts]);
+    let i = 0; const one = async () => { while (i < jobs.length && !document.hidden){ const [k, t] = jobs[i++]; await loadThr(k, t); } };
     await Promise.race([Promise.all(Array.from({length: 8}, one)), new Promise(r => setTimeout(r, 3500))]);
   }
   const xgrow = t => { try { G('boardGrow')(t); } catch {} };   // 보드 grow(칸 높이 · has · ↑) — 이 안에 같은 이름을 두면 L.boardGrow 가 자기 자신을 읽음
   const pending = new Set();
   // 내 차례 · 안 읽음 스레드 받기: 없거나 · 오류였거나 · 그 일의 글이 받아 둔 것보다 새로우면. 한 번에 여섯까지(나머지는 끝나는 대로 다음 그리기에서)
-  function fetchWanted(){ const now = Date.now(); X.tried ||= new Map(); for (const [t, {k, at}] of wantRoots()){ if (pending.size >= 6) break; if (pending.has(t)) continue; const T = cs().thr?.[t], ms = thr(t), last = ms?.length ? Math.max(...ms.map(m => +m.ts || 0)) : 0; if (T && !T.err && (!T.messages?.length || at <= last + .001)) continue; if (now - (X.tried.get(t) || 0) < 20000) continue; X.tried.set(t, now); loadThr(k, t); for (const kid of X.kids.get(t) || []) loadThr(k, kid); } }   // 같은 스레드는 20초에 한 번(받기가 끝날 때마다 다시 그리므로 오류면 끝없이 돌 수 있음)
-  async function loadThr(k, ts){ if (pending.has(ts)) return; pending.add(ts); try { await G('loadTh')(k, ts); } catch {} pending.delete(ts); sched(); }
+  function fetchWanted(){ if (document.hidden || !X.shown) return; const vis = new Set(X.shown), now = Date.now(); X.tried ||= new Map(); for (const [t, {k, at}] of wantRoots()){ if (pending.size >= 6) break; if (pending.has(t) || !vis.has(t)) continue; /* 보이는 쪽 칸만(나머지는 그 쪽에 들 때 drawHome 이) · 쉬는 탭은 안 받음 */ const T = cs().thr?.[t], ms = thr(t), last = ms?.length ? Math.max(...ms.map(m => +m.ts || 0)) : 0; if (T && !T.err && (!T.messages?.length || at <= last + .001)) continue; if (now - (X.tried.get(t) || 0) < 20000) continue; X.tried.set(t, now); loadThr(k, t, true); for (const kid of X.kids.get(t) || []) loadThr(k, kid, true); } }
+  const QC = window.TQ ? new window.TQ.QueryClient({defaultOptions: {queries: {staleTime: 15000, gcTime: 600000, retry: 0}}}) : null;
+  const thrGet = (k, ts) => G('loadTh')(k, ts).then(() => cs().thr?.[ts] || null);
+  async function loadThr(k, ts, fresh){ if (pending.has(ts) && !QC) return false; pending.add(ts);
+    try { if (QC){ const key = ['thr', k, ts];
+        if (fresh){ if (QC.getQueryState(key)?.fetchStatus === 'fetching') await QC.fetchQuery({queryKey: key, queryFn: () => thrGet(k, ts)}).catch(() => {});   // 받는 중이면 그 옛 응답을 같이 쓰지 않고 끝난 뒤 새로
+          await QC.invalidateQueries({queryKey: key, refetchType: 'none'}); }
+        await QC.fetchQuery({queryKey: key, queryFn: () => thrGet(k, ts)}); } else await G('loadTh')(k, ts); } catch {}
+    pending.delete(ts); sched(); const T = cs().thr?.[ts]; return !!T && !T.err; }
+  const phLoad = (k, ts) => { const now = Date.now(); X.tried ||= new Map(); if (now - (X.tried.get('ph:' + ts) || 0) < 20000) return; X.tried.set('ph:' + ts, now); loadThr(k, ts); };   // 자리 칸 받기 — 실패해도 다시 그릴 때마다 되풀이하지 않게 20초에 한 번
 
   function drawThread(){
     const v = V('thread'), t = X.th; if (!t) return;
@@ -253,12 +263,12 @@
     const stick = Date.now() < (X.stickTo || 0) || (v.scrollTop > 0 && v.scrollHeight - v.scrollTop - v.clientHeight < 80);   // 맨 아래를 보던 중이면(방금 보낸 답 포함) 새 글이 와도 아래에 붙음
     { const fd = v.querySelector('.xfeed'), back = keepThumb(fd); fd.innerHTML = h; back(); } if (stick) v.scrollTop = v.scrollHeight;
   }
-  async function openThread(k, ts){ X.th = {k, ts}; show('thread'); drawThread(); await Promise.all([loadThr(k, ts), ...[...(X.kids.get(ts) || [])].map(kid => loadThr(k, kid))]); drawThread(); }
+  async function openThread(k, ts){ X.th = {k, ts}; show('thread'); drawThread(); await Promise.all([loadThr(k, ts, true), ...[...(X.kids.get(ts) || [])].map(kid => loadThr(k, kid, true))]); drawThread(); }
 
   // ── 저장됨(X11) · 프로필(X12)
   function drawSave(){
     const v = V('save'), s = window.HBInbox?.state?.saved || [], by = new Map(roots().map(x => [x.m.ts, x]));
-    const rows = s.map(x => { const r = by.get(x.thread || x.ts) || by.get(x.ts); return r ? unit({...r, ask: false, un: false, sts: x.ts}) : `<div class="xrow" data-xopen="${E(x.thread || x.ts)}" data-k="${E(x.chan)}"><b>${E(x.author || '')}</b><span>${E(String(x.text || '').slice(0, 120))}</span></div>`; }).join('');
+    const rows = s.map(x => { const r0 = by.get(x.thread || x.ts) || by.get(x.ts), r = r0?.m.ph ? null : r0; return r ? unit({...r, ask: false, un: false, sts: x.ts}) : `<div class="xrow" data-xopen="${E(x.thread || x.ts)}" data-k="${E(x.chan)}"><b>${E(x.author || '')}</b><span>${E(String(x.text || '').slice(0, 120))}</span></div>`; }).join('');
     v.innerHTML = `<header class="xhd xbig"><b>저장됨</b></header><div class="xfeed">${rows || '<p class="xempty">저장한 글이 없어요. 글 아래 책갈피를 누르면 여기 모여요.</p>'}</div>`;
   }
   function drawMe(){
@@ -287,7 +297,7 @@
     io = new IntersectionObserver(es => { for (const e of es){ const u = e.target, r = u.dataset.root;
       if (enough(e)){ if (!X.seenT.has(r)) X.seenT.set(r, setTimeout(() => { if (u.isConnected && !u.classList.contains('ask')) readOne(u.dataset.k, r, true); else X.seenT.delete(r); }, 1000)); }
       else { clearTimeout(X.seenT.get(r)); X.seenT.delete(r); } } }, {threshold: [0, 0.1, 0.2, 0.3, 0.4, 0.5]});
-    for (const u of V('home').querySelectorAll('.xu:not(.ask)')) if (unreadSet().has(u.dataset.root)) io.observe(u);
+    for (const u of V('home').querySelectorAll('.xu:not(.ask):not(.xph)')) if (unreadSet().has(u.dataset.root)) io.observe(u);
   }
   function readOne(k, rootTs, quiet){
     X.seenT.delete(rootTs);
@@ -465,7 +475,8 @@
 
   // ── 시작: 채널 · 모아 보기 불러오기, 20초마다 다시
   async function refresh(force){   // force = 사람이 당겨서 새로고침(inbox.js #ibptr) — 본문만 바뀐 글도 보이게 다시 그리기도 강제
-    await Promise.all(chs().map(k => G('loadCh')(k).catch?.(() => {}))).catch(() => {});
+    // 채널 목록: 보드가 바뀜 알림마다 다시 받으므로 피드의 새로 고침은 같은 캐시로 60초에 한 번만(예전 20초마다 채널 9개 = 40초 26번). 첫 열기는 바로
+    await Promise.all(chs().map(k => (QC ? QC.fetchQuery({queryKey: ['ch', k], queryFn: () => Promise.resolve(G('loadCh')(k)).then(() => Date.now()), staleTime: X.ready && !force ? 60000 : 0}) : G('loadCh')(k)).catch?.(() => {}))).catch(() => {});
     try { await window.HBInbox?.load?.(); } catch {}
     if (!X.ready){ await warm(); X.ready = true; X.paintAt = Date.now(); if (X.tab === 'home') return void drawHome(true); }
     if (X.tab === 'home') drawHome(!!force); else if (X.tab === 'thread') drawThread(); else if (X.tab === 'save') drawSave();
@@ -481,6 +492,6 @@
   const tidy = () => { if (location.pathname === '/feed' && R.classList.contains('bx-x') && /^#(tree|board|timeline|arts|lanes|refs|logic)?$/.test(location.hash)) history.replaceState(history.state, '', '/feed' ); };
   addEventListener('hashchange', tidy); for (const ms of [800, 2000, 4000, 8000]) setTimeout(tidy, ms);
   const T0 = new URLSearchParams(location.search).get('tab');   // /es 막대에서 온 칸(?tab=nodes · save · me)
-  show(['nodes', 'save', 'me'].includes(T0) ? T0 : 'home'); if (T0) history.replaceState(null, '', '/feed'); refresh(); setInterval(refresh, 20000);
+  show(['nodes', 'save', 'me'].includes(T0) ? T0 : 'home'); if (T0) history.replaceState(null, '', '/feed'); refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 20000);   // 쉬는(숨긴) 탭은 안 받음 — 다시 보면 visibilitychange 가 바로 받음
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 })();

@@ -80,6 +80,7 @@ export async function accountLogin(cfg, prov, name, { deviceAuth = false, find =
   const cli = find(prov);
   if (!cli) return { code: 1, msg: `${prov} CLI not found — run \`boarder engine setup\` (installs the SDKs), then try again` };
   log(`${prov} account ${name}: opening the browser login (folder ${folder})`);
+  if (prov === 'codex' && !deviceAuth) log('To sign in on another device (phone · other computer), stop this and run it again with --device-auth.');
   const code = await run(loginSpec(prov, cli, folder, { deviceAuth, baseEnv }));
   if (code !== 0) return { code: code || 1, msg: `${prov} login did not finish (exit ${code}) — run the same command again${prov === 'codex' && !deviceAuth ? ', or add --device-auth if no browser opens' : ''}` };
   if (!(await isLoggedIn(prov, folder, { exists, run: quiet, cli, baseEnv, ttl: 0 }))) return { code: 1, msg: `${prov} account ${name}: no login found in ${folder} — run the same command again` };

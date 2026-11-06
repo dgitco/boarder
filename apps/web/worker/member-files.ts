@@ -3,6 +3,7 @@
 // 저장: R2 mfiles/<id>(customMetadata owner = 회원 메일). 보기는 올린 사람만. 창(에이전트)에는 7일 서명 링크 줄(/f/<id>)로 — 로그인 없이 curl 로 받게
 import type { Context } from "hono";
 import * as direct from "./direct-uploads";
+import { isAdmin } from "./who";
 
 type Env = direct.DirectEnv & { DB: D1Database; RESULTS: R2Bucket; AI: { run(model: string, input: unknown): Promise<unknown> }; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string };
 type C = Context<{ Bindings: Env }>;
@@ -95,8 +96,8 @@ export async function upload(c: C, me: string) {
   if (!(c.req.header("content-type") || "").includes("application/json")) return c.json({ ok: false, error: "직접 올리기 제어 JSON이 필요해요" }, 415);
   const raw = await readCapped(c.req.raw, 16 * 1024);
   if (raw === "big") return c.json({ ok: false, error: "제어 요청이 너무 커요" }, 413);
-  let b: any; try { b = JSON.parse(new TextDecoder().decode(raw || new Uint8Array())); } catch { return c.json({ ok: false, error: "bad json" }, 400); }
-  if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
+  let b: any; try { b = JSON.parse(new TextDecoder().decode(raw || new Uint8Array())); } catch { return c.json({ ok: false, error: "bad json", code: "direct_upload_rejected" }, 400); }
+  if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json", code: "direct_upload_rejected" }, 400);   // 시작 4xx 엔 늘 code(화면이 옛 Worker 400 과 구별)
   const action = new URL(c.req.url).pathname.split("/")[3] || "init", owner = `file:${me}`;
   const out = (id: string, name: string, size: number, mime: string) => ({ ok: true, id, name, size, mime });
   try {
@@ -109,7 +110,7 @@ export async function upload(c: C, me: string) {
       const name = String(b.name || "file").replace(/[\x00-\x1f\x7f"\\/]/g, "_").trim().slice(0, 120) || "file";
       const mime = String(b.mime || "application/octet-stream").slice(0, 100);
       if (/[\r\n]/.test(mime)) throw direct.uploadError(400, "잘못된 파일 형식");
-      const session = await direct.begin(c.env, owner, { target: `mfiles/${id}`, size: b.size, mime, metadata: { owner: encodeURIComponent(me), owner_encoding: "uri", name: encodeURIComponent(name), name_encoding: "uri" } });
+      const session = await direct.begin(c.env, owner, { target: `mfiles/${id}`, size: b.size, mime, metadata: { ...ownerMeta(me), name: encodeURIComponent(name), name_encoding: "uri" } });
       try {
         const state = await quotaUpload(c.env.DB, me, session.id, b.size);
         if (state !== "uploading") {
@@ -148,7 +149,7 @@ async function legacyUpload(c: C, me: string) {
   let name = "file"; try { name = decodeURIComponent(c.req.header("x-file-name") || "file"); } catch {}
   name = name.replace(/[\x00-\x1f\x7f"\\/]/g, "_").trim().slice(0, 120) || "file";
   const type = (c.req.header("content-type") || "application/octet-stream").slice(0, 100), id = kid || crypto.randomUUID().replace(/-/g, "");
-  try { await c.env.RESULTS.put(`mfiles/${id}`, buf, { httpMetadata: { contentType: type, contentDisposition: disposition("inline", name) }, customMetadata: { owner: encodeURIComponent(me), owner_encoding: "uri", name: encodeURIComponent(name), name_encoding: "uri" } }); }
+  try { await c.env.RESULTS.put(`mfiles/${id}`, buf, { httpMetadata: { contentType: type, contentDisposition: disposition("inline", name) }, customMetadata: { ...ownerMeta(me), name: encodeURIComponent(name), name_encoding: "uri" } }); }
   catch (e) { await quotaGive(c.env.DB, me, "mfiles", buf.byteLength); console.error("올리기 R2", e); return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" }); }   // 못 넣었음 — 한도는 돌려주고 다시 보내도 되는 503
   return c.json({ ok: true, id, name, size: buf.byteLength, mime: type });
 }
@@ -171,10 +172,48 @@ async function quotaUpload(db: D1Database, me: string, id: string, size: number)
   if (!receipt.charged_day) throw direct.uploadError(429, "오늘 올리기 한도를 넘었어요");
   return receipt.state;
 }
+function ownerMeta(me: string): Record<string, string> {
+  return /^[\x21-\x7e]+$/.test(me) ? { owner: me } : { owner: encodeURIComponent(me), owner_encoding: "uri" };
+}
 function fileOwner(o: { customMetadata?: Record<string,string> }) {
   const owner = o.customMetadata?.owner || "";
   if (o.customMetadata?.owner_encoding === "uri") try { return decodeURIComponent(owner); } catch { return ""; }
   return owner;
+}
+
+export type FileRead = (text: string, author: string) => Promise<string>;
+/** 응답 하나에서만 공유. 가려진 첨부도 원래 글쓴이의 파일일 때만 다시 서명한다. */
+export function maskedFileReader(env: { RESULTS: R2Bucket; BETTER_AUTH_SECRET: string; ALLOW_EMAILS?: string }, base: string): FileRead {
+  const files = new Map<string, Promise<{ owner: string; link: string } | null>>();
+  // 초마다 ETag가 바뀌지 않게 하루 단위 서명, 유효기간은 최소 6일이다.
+  const now = Math.floor(Date.now() / 86400_000) * 86400_000;
+  return async (text, author) => {
+    if (!author || !text.includes("«가림»")) return text;
+    const re = /(^📎 .{1,200}: )https?:\/\/[^\s/?#]+\/f\/([0-9a-f]{32})(?:\/[^\s?/]{1,400})?\?e=\d{9,11}&«가림»(?=\r?$)/gmu;
+    const matches = [...text.matchAll(re)];
+    const replacements = await Promise.all(matches.map(async m => {
+      const id = m[2];
+      if (!files.has(id)) files.set(id, (async () => {
+        const o = await env.RESULTS.head(`mfiles/${id}`);
+        return o ? { owner: fileOwner(o), link: await fileLink(env.BETTER_AUTH_SECRET, base, id, now) } : null;
+      })().catch(() => null));
+      const f = await files.get(id)!;
+      return f && (author === "owner" ? isAdmin(env, f.owner) : f.owner === author) ? m[1] + f.link : m[0];
+    }));
+    let i = 0;
+    return text.replace(re, () => replacements[i++]);
+  };
+}
+
+/** 회원 응답의 내 글만. who는 원문이 아니라 회원 보드가 만든 글쓴이 구분이다. */
+export async function readMemberFiles(body: unknown, read: FileRead, me: string): Promise<void> {
+  if (!body || typeof body !== "object") return;
+  if (Array.isArray(body)) { await Promise.all(body.map(x => readMemberFiles(x, read, me))); return; }
+  const m = body as Record<string, unknown>;
+  if (m.who === "owner" || m.who === "owner") {
+    for (const k of ["text", "src"]) if (typeof m[k] === "string") m[k] = await read(m[k], me);
+  }
+  await Promise.all(Object.values(m).filter(x => x && typeof x === "object").map(x => readMemberFiles(x, read, me)));
 }
 function fileName(o: { customMetadata?: Record<string, string> }) {
   const n = o.customMetadata?.name || "file";

@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "80e234900d95";
+window.HB_VER = "772842810ecb";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -2040,7 +2040,7 @@ p.mdi{padding-left:1em;text-indent:-1em}
 .inbr:hover .rtools,.inbr:focus-within .rtools,.inbr.hov .rtools{display:flex}
 .inbr .imenu{top:22px;right:16px}
 .inbr:first-child .imenu{top:46px}
-@media (hover:none){.inbr.hov .rtools{display:flex!important}.inbr .imenu{display:flex!important}.ibrows .inbr{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}}   
+@media (hover:none){.inbr.hov .rtools{display:flex!important}.inbr .imenu{display:flex!important}.ibrows .inbr,.ibq .inbr{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}}   
 .inbr .dav{width:38px;height:38px;border-radius:8px;background:var(--sunk);color:var(--muted);display:grid;place-items:center;flex:none}
 .inbx .none{padding:28px 16px;color:var(--muted);text-align:center}
 @media (max-width:640px){.inbr{padding:11px 12px;gap:10px}}
@@ -3659,9 +3659,9 @@ const KIND_KO = { choice: "결정", question: "질문", decision: "창 결정", 
 const CARD_AREA = { primary: BOTN, company: "회사", dgit: "DGit", shop: "가게", personal: "퍼스널" }, AREA_ORDER = Object.keys(CARD_AREA);
 const cardArea = (a) => a === "shopco" ? "shop" : CARD_AREA[a] ? a : "primary";
 const bigItem = (w) => ({ id: w.id, to: w.to, q: w.title, why: w.s, body: w.body, area: w.area, ref: w.ref, bth: w.bth, opts: ["창 열어 시작", "처리함", "(나중에)"], labels: { "(나중에)": "내일 아침에 다시" }, big: true });
-function cardItem(c) {
+function cardItem(c, slackByTs) {
   const w = (c.ref || c.ts).match(/^(h?w):(\d+)$/), wAsk = w && asks.find((x) => x.id === w[1] + w[2]);
-  if (/^\d/.test(c.ts)) return slackAsks().find((x) => x.cardTs === c.ts) || wAsk || null;
+  if (/^\d/.test(c.ts)) return slackByTs.get(c.ts) || wAsk || null;
   if (w) return wAsk || null;
   const m = c.ts.match(/^q:([^:]+):(.+)$/);
   if (!m) return null;
@@ -3685,8 +3685,12 @@ function doneHere(c) {
 }
 function cardRows(state = "open") {
   if (!Array.isArray(D.cardlist)) return null;
-  return D.cardlist.filter((c) => c.state === state && (state !== "open" || !doneHere(c))).map((c) => {
-    const it = state === "open" ? cardItem(c) : null;
+  const rows = D.cardlist.filter((c) => c.state === state && (state !== "open" || !doneHere(c))), slackByTs = /* @__PURE__ */ new Map();
+  if (state === "open" && rows.some((c) => /^\d/.test(c.ts))) {
+    for (const x of slackAsks()) if (!slackByTs.has(x.cardTs)) slackByTs.set(x.cardTs, x);
+  }
+  return rows.map((c) => {
+    const it = state === "open" ? cardItem(c, slackByTs) : null;
     if (it && !it.todo) it.cts = c.ts;
     return { ...c, area: cardArea(c.area), item: it };
   });
@@ -5358,8 +5362,8 @@ function reloadKeep() {
   location.reload();
   return true;
 }
-function feedAnchor(f) {
-  if (!f || atBottom(f)) return null;
+function feedAnchor(f, end) {
+  if (!f || (end ?? atBottom(f))) return null;
   const top = f.getBoundingClientRect().top, el = [...f.querySelectorAll(":scope > .msg[data-mts], :scope > .croot > .msg[data-mts], :scope > .ibi .msg[data-mts]")].find((e) => e.getBoundingClientRect().bottom > top + 4);
   return el ? { ts: el.dataset.mts, off: Math.round(el.getBoundingClientRect().top - top) } : { y: f.scrollTop };
 }
@@ -5391,10 +5395,10 @@ try {
   });
 } catch (e) {
 }
-function feedWatch(f) {
+function feedWatch(f, anchor) {
   if (!f || f._ro || !feedRO) return;
   f._ro = 1;
-  f._anc = feedAnchor(f);
+  f._anc = arguments.length > 1 ? anchor : feedAnchor(f);
   feedRO.observe(f);
 }
 let ancQ = 0;
@@ -5624,7 +5628,7 @@ matchMedia("(max-width:640px)").addEventListener("change", () => {
 });
 const CH = window.HB_CH || ["primary", "company", "personal", "dgit", "shop", ...AGENT_CH.map((a) => a.key)];
 const isXCh = (k) => /^x_[a-z0-9]{6,40}$/.test(k), isCh = (k) => CH.includes(k) || isXCh(k);
-const MAIN5 = ["primary", "company", "personal", "dgit", "shop"], MAIN_ONE = { primary: "프", company: "네", personal: "퍼", dgit: "디", shop: "포" };
+const MAIN5 = ["primary", "company", "personal", "dgit", "shop"], MAIN_ONE = { company: "네", personal: "퍼", dgit: "디", shop: "포" };
 for (const a of AGENT_CH) MAIN_ONE[a.key] ??= [...String(a.name).trim()][0] || a.key[0];
 const mainOn = () => {
   try {
@@ -5636,6 +5640,11 @@ const mainOn = () => {
 const chApi = (k) => k === "primary" && LIVE && mainOn() ? "main" : k;
 const inMain = (c) => c !== "primary" && MAIN5.includes(c) && mainOn();
 const inMainAt = (c, t) => inMain(c) || c !== "primary" && !!t && mainOn() && AGENT_CH.some((a) => a.key === c) && ((CS.ch.primary?.messages || []).some((m) => m.ts === t && m.ch === c) || (TLC[t] || []).some((m) => m.ts === t && m.who === "owner"));
+const PRI = () => AREA_NAME.primary || "Primary";
+const josa = (w, a, b) => {
+  const c = String(w).charCodeAt(String(w).length - 1);
+  return c >= 44032 && c <= 55203 && (c - 44032) % 28 ? a : b;
+};
 const CH_DESC = { primary: "Primary와 영역 리드 · Slack 원문", company: "회사 리드 · Slack 원문", personal: "퍼스널 리드 · Slack 원문", dgit: "DGit 리드 · Slack 원문", shop: "가게 리드 · Slack 원문" };
 for (const a of AGENT_CH) CH_DESC[a.key] = `${a.name} · 보더 채널`;
 const EMO = {
@@ -6468,7 +6477,7 @@ async function getJSON(u, again, ms) {
     clearTimeout(tm);
   } catch (e) {
     clearTimeout(tm);
-    throw Object.assign(new Error("몸통 못 읽음 · " + (e?.message || e)), meta());
+    throw ac?.signal.aborted ? Object.assign(new Error("시간 초과"), { timeout: true }, meta()) : Object.assign(new Error("몸통 못 읽음 · " + (e?.message || e)), meta());
   }
   let j = null;
   try {
@@ -7850,9 +7859,41 @@ function inputBox(id, ph, o = {}) {
 function comp(id, ph) {
   return inputBox(id, ph);
 }
+const chatMeasures = /* @__PURE__ */ new Map();
+let chatMeasureRAF = 0, chatMeasureRO = null, chatMeasuring = false, chatMeasureArmed = false;
+function chatMeasure(key, read) {
+  chatMeasures.set(key, read);
+  if (chatMeasureRAF || chatMeasuring || chatMeasureArmed) return;
+  chatMeasureRAF = requestAnimationFrame(() => {
+    chatMeasureRAF = 0;
+    if (window.ResizeObserver) {
+      chatMeasureRO ||= new ResizeObserver(chatMeasureFlush);
+      chatMeasureArmed = true;
+      chatMeasureRO.observe(document.body);
+    } else chatMeasureFlush();
+  });
+}
+function chatMeasureFlush() {
+  chatMeasureRO?.disconnect();
+  chatMeasureArmed = false;
+  chatMeasuring = true;
+  const reads = [...chatMeasures.values()];
+  chatMeasures.clear();
+  try {
+    const writes = reads.map((read) => read()).filter(Boolean);
+    for (const write of writes) write();
+  } finally {
+    chatMeasuring = false;
+    if (chatMeasures.size) {
+      const [key, read] = chatMeasures.entries().next().value;
+      chatMeasure(key, read);
+    }
+  }
+}
 const RM_GROW = matchMedia("(prefers-reduced-motion: reduce)");
-function grow(ta, still) {
+function grow(ta, still, sync = false) {
   if (!ta || ta.tagName !== "TEXTAREA") return;
+  const version = ta._growVersion = (ta._growVersion || 0) + 1;
   const pl = !!ta.closest(".ig"), box = ta.closest(".box, .ig"), b = box?.querySelector(".send");
   const att = !!(CS.att[ta.id] || []).length, has = !!ta.value.trim() || att, h0 = box && !pl && !still ? box.offsetHeight : 0;
   if (box && !pl) {
@@ -7863,11 +7904,29 @@ function grow(ta, still) {
   }
   const max = box?.classList.contains("big") ? Math.max(262, innerHeight * 0.6) : pl ? 190 : 262;
   ta.style.height = "auto";
-  ta.style.height = Math.min(ta.scrollHeight, max) + "px";
-  if (box && !pl && !box.classList.contains("tall") && ta.scrollHeight > 40) {
-    box.classList.add("tall");
-    ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, max) + "px";
+  if (still && ta.isConnected && !sync) {
+    const value = ta.value;
+    const measure = () => {
+      if (!ta.isConnected || ta._growVersion !== version || ta.value !== value) return;
+      const height = ta.scrollHeight;
+      return () => {
+        if (!ta.isConnected || ta._growVersion !== version || ta.value !== value) return;
+        if (box && !pl && !box.classList.contains("tall") && height > 40) {
+          box.classList.add("tall");
+          grow(ta, true, true);
+        } else ta.style.height = Math.min(height, max) + "px";
+        tkPaint(ta);
+      };
+    };
+    chatMeasure(ta, measure);
+  } else {
+    const height = ta.scrollHeight;
+    ta.style.height = Math.min(height, max) + "px";
+    if (box && !pl && !box.classList.contains("tall") && height > 40) {
+      box.classList.add("tall");
+      ta.style.height = "auto";
+      ta.style.height = Math.min(ta.scrollHeight, max) + "px";
+    }
   }
   if (b) b.disabled = !has;
   if (box && !pl && h0 && !RM_GROW.matches && box.isConnected) {
@@ -7880,7 +7939,7 @@ function grow(ta, still) {
       };
     }
   }
-  tkPaint(ta);
+  if (!still || !ta.isConnected || sync) tkPaint(ta);
 }
 function ibpxGo(px, act) {
   openThread(px.dataset.ibpxCh, px.dataset.ibpxTh, act === "ta");
@@ -8316,10 +8375,10 @@ function chanHTML() {
   const k = CS.at, c = CS.ch[k] || { messages: [], loading: true };
   const ms = chWin(k, c.messages), hid = c.messages.length - ms.length;
   const feed = c.messages.length ? (CS.oldBusy[k] || hid ? '<div class="oldspin" role="status" aria-label="옛 글 불러오는 중"><i class="g g-spin"></i></div>' : "") + ms.map((m) => msgHTML(m, k, false)).join("") : c.loading ? LOADING : c.err ? readErr("ch:" + k) : emptyHTML({ ic: "chat", t: "아직 글이 없어요", p: "아래 칸에 첫 글을 쓰면 여기서 이어져요.", sk: "msg" });
-  return `<div class="cmain"><div class="chd"><span class="t">${isSessCh(k) ? esc(sessName(k)) + " · 세션" : isNodeCh(k) ? esc(k.slice(2)) : isXCh(k) ? "↔ " + esc(undefined || "") : k === "primary" && mainOn() ? "# 메인" : "# " + k}</span><span class="d">${esc(k === "primary" && mainOn() ? "다섯 채널 글을 한 줄기로 · 새 글은 Primary 가 받아요" : CH_DESC[k] || "")}</span>${c.stale_min ? `<span class="stale" title="Slack 을 못 읽어 마지막으로 읽은 글을 보여요">수집 멈춤 ${c.stale_min}분</span>` : c.err && c.messages.length ? `<span class="stale" title="${esc(c.err)}">수집 멈춤 · 화면은 마지막으로 받은 글</span>` : ""}${isNodeCh(k) ? "" : huddle({ ch: k })}</div>
+  return `<div class="cmain"><div class="chd"><span class="t">${isSessCh(k) ? esc(sessName(k)) + " · 세션" : isNodeCh(k) ? esc(k.slice(2)) : isXCh(k) ? "↔ " + esc(undefined || "") : k === "primary" && mainOn() ? "# 메인" : "# " + k}</span><span class="d">${esc(k === "primary" && mainOn() ? `다섯 채널 글을 한 줄기로 · 새 글은 ${PRI()}${josa(PRI(), "이", "가")} 받아요` : k === "primary" ? `${PRI()}${josa(PRI(), "과", "와")} 영역 리드 · Slack 원문` : CH_DESC[k] || "")}</span>${c.stale_min ? `<span class="stale" title="Slack 을 못 읽어 마지막으로 읽은 글을 보여요">수집 멈춤 ${c.stale_min}분</span>` : c.err && c.messages.length ? `<span class="stale" title="${esc(c.err)}">수집 멈춤 · 화면은 마지막으로 받은 글</span>` : ""}${isNodeCh(k) ? "" : huddle({ ch: k })}</div>
     ${isNodeCh(k) ? `<div class="nbanner" role="status">${nodeBanner(k.slice(2))}</div>` : ""}
     ${fwrap("cfeed", "", feed + pendFor("new:" + CS.at))}
-    ${isSessCh(k) ? comp("cnew", `${sessName(k)}에 쓰기`, "Enter 보내기 · 이 세션 입력칸에 들어가요") : comp("cnew", isNodeCh(k) ? `${k.slice(2)}에 쓰기` : isXCh(k) ? `${undefined || ""}에 쓰기 · @리드 로 일 맡기기` : AGENT_CH.some((a) => a.key === k) ? `${AREA_NAME[k]}에 쓰기` : `#${k}에 쓰기`, k === "primary" ? "Enter 보내기 · Primary(낱말이 분명하면 그 영역 리드)가 받아요" : isXCh(k) ? "Enter 보내기 · 이 채널 사람에게 보여요" : `Enter 보내기 · ${esc(jo(AREA_NAME[k], "이/가"))} 받아요 · Slack #${k}에도`)}</div>`;
+    ${isSessCh(k) ? comp("cnew", `${sessName(k)}에 쓰기`, "Enter 보내기 · 이 세션 입력칸에 들어가요") : comp("cnew", isNodeCh(k) ? `${k.slice(2)}에 쓰기` : isXCh(k) ? `${undefined || ""}에 쓰기 · @리드 로 일 맡기기` : AGENT_CH.some((a) => a.key === k) ? `${AREA_NAME[k]}에 쓰기` : `#${k}에 쓰기`, k === "primary" ? `Enter 보내기 · ${PRI()}${josa(PRI(), "이", "가")} 받아요(낱말이 분명하면 그 영역 리드)` : isXCh(k) ? "Enter 보내기 · 이 채널 사람에게 보여요" : `Enter 보내기 · ${esc(jo(AREA_NAME[k], "이/가"))} 받아요 · Slack #${k}에도`)}</div>`;
 }
 function thHTML() {
   if (!CS.th || thInline()) return "";
@@ -8403,14 +8462,15 @@ const feedKey = (id) => id === "cthfeed" ? "t:" + CS.th?.ts : "chan:" + CS.at;
 const atBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 40;
 const itemTs = (el) => [...el.querySelectorAll(":scope > .msg[data-mts], :scope > .croot > .msg[data-mts], :scope > .tcard[data-at]")].map((x) => +(x.dataset.mts || x.dataset.at));
 const mineTsOf = (el) => [...el.querySelectorAll(":scope > .msg.me[data-mts], :scope > .croot > .msg.me[data-mts]")].map((x) => +x.dataset.mts);
-function feedMark(el) {
+function feedMark(el, size) {
   if (!el) return;
+  const gap = size ? size.height - size.top - size.client : el.scrollHeight - el.scrollTop - el.clientHeight;
   const btn = el.parentElement.querySelector(":scope > .tobot"), ts = itemTs(el);
   if (!btn || !ts.length) return;
   const mine = mineTsOf(el), lm = mine.length ? Math.max(...mine) : 0, others = ts.filter((t) => !mine.includes(t));
   const s = CS.seen[feedKey(el.id)] ||= { from: null, div: null }, top = Math.max(...ts);
   const newer = (base) => others.some((t) => t > Math.max(base, lm));
-  if (atBottom(el)) {
+  if (gap < 40) {
     if (s.from != null && newer(s.from)) s.div = s.from;
     s.from = null;
   } else if (s.from == null) {
@@ -8418,7 +8478,7 @@ function feedMark(el) {
     if (s.div != null && !newer(s.div)) s.div = null;
   }
   const n = s.from == null ? 0 : others.filter((t) => t > Math.max(s.from, lm)).length;
-  btn.hidden = el.scrollHeight - el.scrollTop - el.clientHeight < 200 && !n;
+  btn.hidden = gap < 200 && !n;
   btn.querySelector("b").textContent = n ? n > 99 ? "99+" : n : "";
   newSep(el, n ? s.from : s.div, lm);
 }
@@ -8529,7 +8589,15 @@ new MutationObserver(() => {
   tlFill();
   for (const ta of document.querySelectorAll("[data-mbox] textarea:not(.tkon)")) if (ta.value.includes("󠁿")) tkPaint(ta);
 }).observe(document.body, { childList: true, subtree: true });
-function viewChat(keepScroll) {
+for (const type of ["wheel", "touchmove", "pointerdown", "keydown"]) document.addEventListener(type, (e) => {
+  if (type === "keydown" && (!/^(Arrow(Up|Down)|Home|End|PageUp|PageDown| )$/.test(e.key) || e.target.closest?.("textarea, input, [contenteditable]"))) return;
+  const feeds = type === "keydown" ? document.querySelectorAll("#cfeed, #cthfeed") : [e.target.closest?.("#cfeed, #cthfeed")];
+  for (const fe of feeds) {
+    const state = fe?.closest("#mchatbox")?._chatLayout;
+    if (state) state.skip.add(fe);
+  }
+}, { passive: true, capture: true });
+function viewChat(keepScroll, threadOnly = false) {
   const el = chatOn() && $("#mchatbox");
   if (!el) return;
   if (CS.th?.ts) thLast = { k: CS.th.k, ts: CS.th.ts, side: !!CS.th.side };
@@ -8540,14 +8608,33 @@ function viewChat(keepScroll) {
   }
   saveDrafts();
   const f = $("#cfeed"), tf = $("#cthfeed");
+  const pending = el._chatLayout, at = CS.at, sig = (CS.at || "") + "|" + (CS.th?.ts || "");
   const cov0 = !!f?.closest(".thcover");
-  const keep = { f: f ? f.scrollTop : 0, fEnd: !f || (cov0 ? f._end !== false : atBottom(f)), fa: f && (cov0 ? f._anc : feedAnchor(f)), tf: tf ? tf.scrollTop : null, tfEnd: tf && atBottom(tf) };
-  const act = document.activeElement?.id, caret = caretSave(), hv = hovGet(), nMsg = [f, tf].map((x) => x ? x.querySelectorAll(":scope > .msg").length : 0).join();
-  const sig = (CS.at || "") + "|" + (CS.th?.ts || ""), sameCh = (el.dataset.sig || "").split("|")[0] === (CS.at || "");
+  const before = (fe) => fe && { height: fe.scrollHeight, top: fe.scrollTop, client: fe.clientHeight };
+  const fs = pending ? null : before(f), ts = pending ? null : before(tf);
+  const keep = pending?.at === at ? pending.keep : pending ? { f: 0, fEnd: true, fa: null, tf: null, tfEnd: true } : {
+    f: fs?.top || 0,
+    fEnd: !f || (cov0 ? f._end !== false : fs.height - fs.top - fs.client < 40),
+    fa: f && (cov0 ? f._anc : feedAnchor(f, fs.height - fs.top - fs.client < 40)),
+    tf: ts?.top ?? null,
+    tfEnd: ts && ts.height - ts.top - ts.client < 40
+  };
+  const active = document.activeElement, inheritedFocus = pending?.at === at && active === document.body && pending.focusNode && !pending.focusNode.isConnected;
+  const focusNode = inheritedFocus ? pending.focusNode : active, focusValue = inheritedFocus ? pending.focusValue : active?.value;
+  const act = inheritedFocus ? pending.act : active?.id, caret = inheritedFocus ? pending.caret : caretSave(), hv = pending ? pending.hv : hovGet(), nMsg = [f, tf].map((x) => x ? x.querySelectorAll(":scope > .msg").length : 0).join();
+  const sameCh = (el.dataset.sig || "").split("|")[0] === (CS.at || "");
   const thSwap = sameCh && el.dataset.sig !== sig;
   if ((el.dataset.sig === sig || thSwap) && (el.querySelector("#cnew") || isIbCh(CS.at) && el.querySelector("#cfeed"))) {
     const tmp = document.createElement("div");
-    const skipCh = !!(CS.th && !thInline() && matchMedia("(max-width:860px)").matches);
+    const onlyTh = threadOnly && sameCh && CS.th && !OPT.size && !Object.keys(CS.pend).length && !thInline() && !isIbCh(CS.at) && el.querySelector('#cfeed > .msg[data-mts="' + CSS.escape(CS.th.ts) + '"]');
+    const skipCh = !!(CS.th && !thInline() && (matchMedia("(max-width:860px)").matches || onlyTh));
+    if (onlyTh) for (const m of f.querySelectorAll(":scope > .msg")) {
+      const selected = m.dataset.mts === CS.th.ts;
+      if (m.classList.contains("thon") !== selected) {
+        m.classList.toggle("thon", selected);
+        delete m._src;
+      }
+    }
     tmp.innerHTML = `<div class="chat${CS.th && !thInline() ? " th" : ""}">${skipCh ? '<div class="cmain"></div>' : chanHTML()}${thHTML()}</div>`;
     if (thSwap) {
       const c0 = el.querySelector(":scope > .chat"), c1 = tmp.firstElementChild, a = el.querySelector(":scope > .chat > .cth"), b = tmp.querySelector(":scope > .chat > .cth");
@@ -8611,42 +8698,75 @@ function viewChat(keepScroll) {
       ch.classList.toggle("thcover", cov);
     }
   }
-  const nf = $("#cfeed"), ntf = $("#cthfeed"), down = CS.toBottom === true || CS.toBottom === "main", tdown = CS.toBottom === true || CS.toBottom === "th";
-  const setTop = (fe, y) => {
-    if (fe && Math.abs(fe.scrollTop - y) > 1) fe.scrollTop = y;
-  };
-  if (nf && isIbCh(CS.at)) {
-    if (!keepScroll || !f || !sameCh) setTop(nf, 0);
-    else if (keep.fa) feedRestore(nf, keep.fa);
-    else setTop(nf, keep.f);
-  } else if (nf && !nf.closest(".thcover")) {
-    if (down || !keepScroll || keep.fEnd) setTop(nf, nf.scrollHeight);
-    else if (keep.fa) feedRestore(nf, keep.fa);
-    else setTop(nf, keep.f);
-  }
-  if (ntf) setTop(ntf, !tdown && keepScroll && keep.tf != null && !keep.tfEnd ? keep.tf : ntf.scrollHeight);
+  const nf = $("#cfeed"), ntf = $("#cthfeed"), down = CS.toBottom === true || CS.toBottom === "main" || pending?.at === at && pending.down, tdown = CS.toBottom === true || CS.toBottom === "th" || pending?.sig === sig && pending.tdown;
+  const ka = CS.keepAt && CS.ch[at] ? CS.keepAt : pending?.at === at ? pending.ka : null;
+  if (ka) CS.keepAt = null;
   CS.toBottom = false;
-  if (CS.keepAt && CS.ch[CS.at]) {
-    const ka = CS.keepAt;
-    CS.keepAt = null;
-    feedRestore(nf, ka.f);
-    if (!CS.th || CS.thr[CS.th.ts]) feedRestore(ntf, ka.tf);
-  }
-  if (down || tdown || [nf, ntf].map((x) => x ? x.querySelectorAll(":scope > .msg").length : 0).join() !== nMsg) {
-    CS.hovPin = 0;
-    CS.hovAnc = null;
-  } else hovPin(hv);
-  for (const fe of [nf, ntf]) if (fe) fe.dataset.stick = atBottom(fe) && !hovOn() && !(fe === nf && isIbCh(CS.at)) ? "1" : "";
-  feedMark(nf);
-  feedMark(ntf);
-  feedWatch(nf);
-  feedWatch(ntf);
-  if (nf && isIbCh(CS.at)) window.HBInbox?.feedAfter?.(nf);
-  if (nf && !window.HB_NET && (CS.ch[CS.at]?.more || (CS.ch[CS.at]?.messages?.length || 0) > (CW[CS.at] || CW_STEP)) && !CS.oldBusy[CS.at] && nf.scrollHeight <= nf.clientHeight + 600) setTimeout(() => loadOlder(CS.at), 0);
-  if (caret) caretBack(caret);
-  else if (act && document.getElementById(act)) document.getElementById(act).focus();
+  const state = { at, sig, keep, hv, down, tdown, ka, act, caret, focusNode, focusValue, skip: pending?.skip || /* @__PURE__ */ new Set() };
+  el._chatLayout = state;
+  chatMeasure(el, () => {
+    if (!el.isConnected || document.getElementById("mchatbox") !== el || el._chatLayout !== state || el.dataset.sig !== sig || CS.at !== at) return;
+    const sizes = new Map([nf, ntf].filter(Boolean).map((fe) => [fe, { height: fe.scrollHeight, top: fe.scrollTop, client: fe.clientHeight }]));
+    const targets = /* @__PURE__ */ new Map(), anchors = /* @__PURE__ */ new Map();
+    const restore = (fe, a) => {
+      if (!fe || !a) return;
+      anchors.set(fe, a);
+      if (fe.closest(".thcover")) return;
+      const item = a.ts && fe.querySelector(`.msg[data-mts="${a.ts}"]`), size = sizes.get(fe);
+      targets.set(fe, item ? size.top + item.getBoundingClientRect().top - fe.getBoundingClientRect().top - a.off : a.y ?? size.top);
+    };
+    if (nf && isIbCh(at)) {
+      if (!keepScroll || !f || !sameCh) targets.set(nf, 0);
+      else if (keep.fa) restore(nf, keep.fa);
+      else targets.set(nf, keep.f);
+    } else if (nf && !nf.closest(".thcover")) {
+      if (down || !keepScroll || keep.fEnd) targets.set(nf, sizes.get(nf).height);
+      else if (keep.fa) restore(nf, keep.fa);
+      else targets.set(nf, keep.f);
+    }
+    if (ntf) targets.set(ntf, !tdown && keepScroll && keep.tf != null && !keep.tfEnd ? keep.tf : sizes.get(ntf).height);
+    if (ka) {
+      restore(nf, ka.f);
+      if (!CS.th || CS.thr[CS.th.ts]) restore(ntf, ka.tf);
+    }
+    for (const [fe, size] of sizes) {
+      size.oldTop = size.top;
+      if (!state.skip.has(fe) && targets.has(fe)) size.top = Math.max(0, Math.min(targets.get(fe), size.height - size.client));
+      feedWatch(fe, anchors.get(fe) || null);
+    }
+    const older = nf && !window.HB_NET && (CS.ch[at]?.more || (CS.ch[at]?.messages?.length || 0) > (CW[at] || CW_STEP)) && !CS.oldBusy[at] && sizes.get(nf).height <= sizes.get(nf).client + 600;
+    return () => {
+      if (el._chatLayout !== state || !el.isConnected || el.dataset.sig !== sig || CS.at !== at) return;
+      delete el._chatLayout;
+      for (const [fe, size] of sizes) {
+        if (!state.skip.has(fe) && targets.has(fe) && Math.abs(size.oldTop - targets.get(fe)) > 1) fe.scrollTop = targets.get(fe);
+        if (anchors.has(fe)) {
+          fe._anc = anchors.get(fe);
+          if (fe.closest(".thcover")) fe._end = false;
+        }
+      }
+      if (down || tdown || [nf, ntf].map((x) => x ? x.querySelectorAll(":scope > .msg").length : 0).join() !== nMsg) {
+        CS.hovPin = 0;
+        CS.hovAnc = null;
+      } else hovPin(hv);
+      for (const [fe, size] of sizes) {
+        if (hovOn()) size.top = fe.scrollTop;
+        fe.dataset.stick = size.height - size.top - size.client < 40 && !hovOn() && !(fe === nf && isIbCh(at)) ? "1" : "";
+        feedMark(fe, size);
+      }
+      if (nf && isIbCh(at)) window.HBInbox?.feedAfter?.(nf);
+      if (older) setTimeout(() => {
+        if (CS.at === at && chatOn()) loadOlder(at);
+      }, 0);
+      const focusSame = document.activeElement === focusNode && (!caret || focusNode.value === focusValue && focusNode.selectionStart === caret.s && focusNode.selectionEnd === caret.e);
+      if (focusSame || !focusNode?.isConnected && document.activeElement === document.body) {
+        if (caret) caretBack(caret);
+        else if (act && document.getElementById(act)) document.getElementById(act).focus();
+      }
+      hovKeep(hv);
+    };
+  });
   netDraw();
-  hovKeep(hv);
   nthrFill();
 }
 let PTR = null, HOV = null;
@@ -8755,10 +8875,11 @@ async function openThread(k, ts, focus, side) {
     chatDraft[draftKey("cth")] = "";
     dropAtt("cth");
   }
+  const at = CS.at, channel = CS.ch[at];
   CS.th = side ? { k, ts, side: true } : { k, ts };
-  viewChat(true);
+  viewChat(true, true);
   await loadTh(k, ts);
-  viewChat(true);
+  viewChat(true, CS.at === at && CS.ch[at] === channel);
   if (window.HB_MEMBER?.unit === "agent" && CS.th?.ts === ts) markRead(ts, k, true);
   if (focus) document.getElementById("cth")?.focus();
 }
@@ -11906,7 +12027,7 @@ setInterval(() => {
   };
   const KIND = { todo: "할 일", question: "결정", choice: "결정", decision: "결정", draft: "초안" };
   const asItem = (c, st) => ({
-    chan: c.channel || "primary",
+    chan: !isTs(c) && CH_OK(c.area) || c.channel || "primary",
     area: c.area || "",
     ts: c.ts,
     thread: c.thread && c.thread !== c.ts ? c.thread : null,
@@ -11917,7 +12038,9 @@ setInterval(() => {
     who: "agent",
     author: KIND[c.kind] || "결정",
     ckind: c.kind,
-    cstate: st
+    cstate: st,
+    q: !isTs(c),
+    sec: c.sec
   });
   let only = null;
   const keep = (ch, area) => {
@@ -11927,7 +12050,8 @@ setInterval(() => {
       return true;
     }
   };
-  const turnRows = () => typeof attnRows === "function" ? (attnRows() || []).filter((r) => /^\d{10}\.\d{6}$/.test(r.ts || "") && keep(r.channel, r.area)) : [];
+  const CH_OK = (a) => typeof isCh === "function" && isCh(a) ? a : "";
+  const turnRows = () => typeof attnRows === "function" ? (attnRows() || []).filter((r) => r.ts && (!window.HB_MEMBER || typeof D === "object" && Array.isArray(D.attn) || isTs(r)) && keep(r.channel, r.area)) : [];
   const isTs = (c) => /^\d{10}\.\d{6}$/.test(c.ts || "");
   const cardSet = () => {
     const open = /* @__PURE__ */ new Set(), done = /* @__PURE__ */ new Set(), add = (set, c) => {
@@ -12342,15 +12466,15 @@ setInterval(() => {
   const CHECK = '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg>';
   const XMARK = '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></svg>';
   function rtools(k, x, i) {
-    const b = [], menu = k !== "drafts" && x.ts, open = menu && CS.pop?.ts === x.ts && CS.pop.kind === "imenu";
+    const b = [], menu = k !== "drafts" && x.ts && !x.q, open = menu && CS.pop?.ts === x.ts && CS.pop.kind === "imenu";
     if (k === "unread") b.push(`<button data-iread="${i}" aria-label="읽음" title="읽음">${CHECK}</button>`);
     if (k === "drafts") b.push(
       `<button data-idrop="${i}" aria-label="지우기" title="지우기">${ICON.trash}</button>`,
       `<button data-iedit="${i}" aria-label="편집" title="편집">${ICON.pen}</button>`,
       sendable(x) ? `<button data-isend="${i}" aria-label="보내기" title="보내기">${SENDI}</button>` : ""
     );
-    if (k === "turn" && x.ckind === "todo" && x.cstate === "open" && x.ts) b.push(`<button data-itdrop="${i}" aria-label="없애기" title="없애기">${XMARK}</button>`);
-    if ((k === "saved" || k === "turn") && x.ts) {
+    if (k === "turn" && x.ckind === "todo" && x.cstate === "open" && x.ts && x.sec !== "decide") b.push(`<button data-itdrop="${i}" aria-label="없애기" title="없애기">${XMARK}</button>`);
+    if ((k === "saved" || k === "turn") && x.ts && !x.q) {
       const on2 = saved.has(x.ts), l = on2 ? "저장 풀기" : "저장";
       b.push(`<button data-msave="${esc(x.ts)}" aria-pressed="${on2}" aria-label="${l}" title="${l}">${on2 ? ERASE : ICON.save}</button>`);
     }
@@ -12658,8 +12782,8 @@ setInterval(() => {
     if (!expanded(f) || f.batch || FD[f.k] !== f) return;
     const sh = f.shown || (f.shown = /* @__PURE__ */ new Set()), xs = order(f).filter((x) => !sh.has(idOf(f.k, x))).slice(0, STEP);
     if (!xs.length) return;
-    f.batch = { ths: xs.map(thOf), ids: xs.map((x) => idOf(f.k, x)), at: Date.now() };
-    for (const x of xs) want(x.chan, thOf(x), true);
+    f.batch = { ths: xs.filter((x) => !x.q).map(thOf), ids: xs.map((x) => idOf(f.k, x)), at: Date.now() };
+    for (const x of xs) if (!x.q) want(x.chan, thOf(x), true);
     setTimeout(() => batchCheck(f), 10500);
     batchCheck(f);
   }
@@ -12733,6 +12857,7 @@ setInterval(() => {
   function itemHTML(f, x) {
     const ch = x.chan, th = thOf(x), t = CS.thr[th], ms = t?.messages || [], id = idOf(f.k, x);
     const done = f.done.has(id) ? " done" : "", ub = done ? ubOf(f, x) : "", stale = ms.length && !ready(f, x) ? " wait" : "";
+    if (x.q) return `<div class="ibi ibq${done}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibq="${esc(id)}">${row("turn", x, f.items.indexOf(x))}</div>`;
     if (!ms.length) return `<div class="ibi wait${done}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${ub}${((s) => lng(f, s, msgHTML(s, ch, false)))(stub(x, f.k === "saved" || !x.thread ? x.text : x.root || x.text, f.k === "saved" ? x.ts : ""))}${t?.err ? `<div class="iberr">${ERR}</div>` : ""}</div>`;
     const [root, ...rest] = ms, real = rest.filter((m) => !m.ledger);
     const wrap = (inner) => `<div class="ibi${done}${stale}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${ub}${inner}</div>`;
@@ -12769,6 +12894,7 @@ setInterval(() => {
   }
   async function openRow(f, x) {
     f.sel = idOf(f.k, x);
+    if (x.q) return openQ(x);
     if (f.k === "unread") {
       markDone(f, [idOf(f.k, x)]);
       CS.flash = { ts: x.ts, until: Date.now() + 2600 };
@@ -12802,6 +12928,17 @@ setInterval(() => {
     }
     if (x.chan && !x.card && window.BX_SIDE?.(x.chan)) return viewChat(true);
     return openDraft(x);
+  }
+  async function openQ(x) {
+    try {
+      const j = typeof getJSON === "function" ? await getJSON("api/push/resolve/" + encodeURIComponent(x.ts)) : null;
+      if (j?.loc?.t && typeof goLink === "function") return goLink(j.loc);
+    } catch (e) {
+    }
+    const r = (typeof attnRows === "function" && attnRows() || []).find((y) => y.ts === x.ts), p0 = r && typeof rowPane === "function" ? rowPane(r) : null;
+    const p = [p0, typeof leadPane === "function" ? leadPane(x.area || "primary") : null].find((v) => v && (byPane[v] || typeof parkBy === "object" && parkBy[v]));
+    if (p && typeof openAns === "function") return openAns({ p, page: true });
+    if (typeof toast === "function") toast("그 일의 글을 찾지 못했어요");
   }
   const plain80 = (t) => {
     const s = String(t || "").replace(/<([^|>]+)\|([^>]+)>/g, "$2").replace(/[*`]+/g, "").replace(/\s+/g, " ").trim();
@@ -12963,7 +13100,7 @@ setInterval(() => {
           if (i >= 0) {
             for (const y of ord.slice(0, i + 1)) {
               sh.add(idOf(f.k, y));
-              want(y.chan, thOf(y), true);
+              if (!y.q) want(y.chan, thOf(y), true);
             }
             redraw();
             return true;
@@ -12981,7 +13118,7 @@ setInterval(() => {
         if (rest.length) {
           for (const y of rest) {
             sh.add(idOf(f.k, y));
-            want(y.chan, thOf(y), true);
+            if (!y.q) want(y.chan, thOf(y), true);
           }
           redraw();
           return true;
@@ -13181,6 +13318,17 @@ setInterval(() => {
       e.stopPropagation();
       e.preventDefault();
     };
+    const qd = t.closest("#cfeed .ibq [data-itdrop]");
+    if (qd) {
+      stop();
+      return dropTodo(f.items[+qd.dataset.itdrop], f);
+    }
+    const qb = t.closest("#cfeed [data-ibq]");
+    if (qb) {
+      stop();
+      const x = f.items.find((z) => idOf(f.k, z) === qb.dataset.ibq);
+      return x && openRow(f, x);
+    }
     const toHead = (c) => {
       const fe = document.getElementById("cfeed"), h = fe?.querySelector(`.ibgh[data-at="g:${CSS.escape(c)}"]`);
       if (!fe || !h) return;
@@ -13339,7 +13487,7 @@ setInterval(() => {
     }
   }, true);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.isComposing && e.target.matches?.("#cfeed .ibrows .inbr") && typeof chatOn === "function" && chatOn() && isIbCh(CS.at)) {
+    if (e.key === "Enter" && !e.isComposing && e.target.matches?.("#cfeed .ibrows .inbr, #cfeed .ibq .inbr") && typeof chatOn === "function" && chatOn() && isIbCh(CS.at)) {
       e.preventDefault();
       e.target.click();
     }
@@ -13347,7 +13495,7 @@ setInterval(() => {
   let rlp = null, rlpEat = 0;
   const rowHov = (r) => {
     if (!r) HOVROW = null;
-    document.querySelectorAll("#cfeed .ibrows .inbr.hov").forEach((e) => e !== r && e.classList.remove("hov"));
+    document.querySelectorAll("#cfeed .ibrows .inbr.hov, #cfeed .ibq .inbr.hov").forEach((e) => e !== r && e.classList.remove("hov"));
   };
   document.addEventListener("touchstart", (e) => {
     if (rlp) {
@@ -13355,14 +13503,14 @@ setInterval(() => {
       rlp = null;
     }
     rlpEat = 0;
-    const r = e.touches.length === 1 && e.target.closest?.("#cfeed .ibrows .inbr");
+    const r = e.touches.length === 1 && e.target.closest?.("#cfeed .ibrows .inbr, #cfeed .ibq .inbr");
     if (!e.target.closest?.(".rtools, .imenu") && !r?.classList.contains("hov")) rowHov(null);
     if (!r || e.target.closest(".rtools, .imenu")) return;
     const t0 = e.touches[0];
     const i = r.dataset.irow;
     rlp = { x: t0.clientX, y: t0.clientY, t: setTimeout(() => {
       rlp = null;
-      const f = FD[fk(CS.at)], x = f?.items[+i], el = document.querySelector(`#cfeed .ibrows .inbr[data-irow="${i}"]`) || r;
+      const f = FD[fk(CS.at)], x = f?.items[+i], el = document.querySelector(`#cfeed .ibrows .inbr[data-irow="${i}"], #cfeed .ibq .inbr[data-irow="${i}"]`) || r;
       HOVROW = x ? idOf(f.k, x) : null;
       rowHov(el);
       el.classList.add("hov");
@@ -13393,7 +13541,7 @@ setInterval(() => {
     rlpEat = 0;
   }, true);
   document.addEventListener("contextmenu", (e) => {
-    if (e.target.closest?.("#cfeed .ibrows .inbr") && matchMedia("(hover: none)").matches) e.preventDefault();
+    if (e.target.closest?.("#cfeed .ibrows .inbr, #cfeed .ibq .inbr") && matchMedia("(hover: none)").matches) e.preventDefault();
   }, true);
   document.body.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || e.isComposing || e.defaultPrevented || !(typeof chatOn === "function" && chatOn()) || fk(CS.at) !== "unread" || !isIbCh(CS.at)) return;

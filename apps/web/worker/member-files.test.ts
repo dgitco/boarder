@@ -29,7 +29,7 @@ function setup() {
   const control = (who: string, suffix: string, body: any) => rawCall('POST', '/api/upload' + suffix, { 'x-test-user': who, 'content-type': 'application/json' }, JSON.stringify(body));
   const init = (who: string, body: any) => control(who, '/init', body);
   const upload = (who: string, name: string, mime: string, body: string | Uint8Array = "내용", key = '') => uploadFile((suffix, b) => control(who, suffix, b), env as never, body, { name, mime, key });
-  return { env, call, sq, ai, init, upload, control };
+  return { env, call, sq, ai, init, upload, control, rawCall };
 }
 const up = async (s: ReturnType<typeof setup>, who: string, name: string, type: string, body = "내용") =>
   await (await s.upload(who, name, type, body)).json() as { ok: boolean; id: string; name: string };
@@ -252,4 +252,27 @@ test('0093 이주 전에도 raw 첨부는 유지, 키가 있는 새 init은 준�
  const raw=await s.call('POST','/api/upload',{'x-test-user':A,'x-file-name':'old.json','content-type':'application/json'},'{"legacy":true}');
  assert.equal(raw.status,200);assert.equal(raw.h.get('deprecation'),'true');
  assert.equal((await s.call('GET','/api/file/'+JSON.parse(raw.t).id,{'x-test-user':A})).t,'{"legacy":true}');
+});
+
+test("주인 메일은 R2 에 원문으로(점진 배포 중 옛 Worker 가 원문과 견줘 404), 읽기는 원문 · 인코딩 둘 다", async () => {
+  const s = setup(), a = await up(s, A, "사진.png", "image/png");
+  const o = await (s.env.RESULTS as any).head(`mfiles/${a.id}`);
+  assert.equal(o.customMetadata.owner, A); assert.equal(o.customMetadata.owner_encoding, undefined);
+  assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "내용");
+  await (s.env.RESULTS as any).put(`mfiles/${a.id}`, new TextEncoder().encode("옛 판"), { customMetadata: { owner: encodeURIComponent(A), owner_encoding: "uri" } });   // 앞 판이 남긴 인코딩 꼴도 열림
+  assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "옛 판");
+  assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": B })).status, 404);
+});
+
+test("시작 입력 오류 400 엔 code 가 붙음(화면 · CLI 가 옛 길로 물러나지 않게 — 옛 Worker 의 code 없는 400 과 구별)", async () => {
+  const s = setup(), r = await s.init(A, { name: "x", mime: "text/plain", size: "3" });
+  assert.equal(r.status, 400); assert.equal(((await r.json()) as { code?: string }).code, "direct_upload_rejected");
+});
+
+test("시작 요청이 JSON 이 아니거나 객체가 아니어도 400 에 code(옛 길로 물러나 성공 · 한도 차감 막음)", async () => {
+  const s = setup();
+  for (const body of ["{", "[]", "null"]) {
+    const r = await s.rawCall("POST", "/api/upload/init", { "x-test-user": A, "content-type": "application/json" }, body);
+    assert.equal(r.status, 400); assert.equal(((await r.json()) as { code?: string }).code, "direct_upload_rejected");
+  }
 });

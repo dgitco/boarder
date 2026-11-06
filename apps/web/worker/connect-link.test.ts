@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 register("./test-hooks.mjs", import.meta.url);
+(globalThis as any).HTMLRewriter ??= class { on() { return this; } transform(r: Response) { return r; } };   // 로그인 화면(앞문 SPA)은 그대로
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
 const { default: app } = await import("./index.ts");
 (app as any).onError((e: unknown) => { console.error("시험 500:", e); return new Response("{}", { status: 500 }); });
@@ -56,7 +57,7 @@ async function setup() {
   dev.run("dev2", MEMBER, "desktop", "", await sha(DEV2), T, T, "full");
   dev.run("devMW", MEMBER, "member watch", "", await sha(DEVMW), T, T, "watch");
   dev.run("devW", OWNER, "owner mac", "", await sha(DEVW), T, T, "watch");
-  const env: any = { DB: D1, SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+  const env: any = { DB: D1, ASSETS: { fetch: async () => new Response("<!doctype html><html><head></head><body>SIGNIN</body></html>", { headers: { "content-type": "text/html" } }) }, SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
   const ctx = { waitUntil: (p: Promise<unknown>) => { p.catch(() => {}); }, passThroughOnException() {} };
   const call = async (method: string, path: string, body?: unknown, h: Record<string, string> = {}) => {
     const r = await app.fetch(new Request("https://example.test" + path, { method, headers: { "content-type": "application/json", ...h }, body: body === undefined ? undefined : JSON.stringify(body) }), env, ctx);
@@ -94,9 +95,9 @@ test("링크 만들기: 회원 full 기기만 · OAuth 서비스만 · 키 서�
 test("확인 화면은 아무것도 소비하지 않음 · 로그인 필요 · 다른 계정 404 · 기기 토큰 머리는 사람이 아님", async () => {
   const s = await setup();
   const url = new URL((await link(s)).j.url).pathname;
-  assert.equal((await s.call("GET", url)).status, 401, "로그인 안 함");
+  { const r = await s.call("GET", url); assert.equal(r.status, 200, "로그인 안 함 → 그 자리 로그인 화면"); assert.match(r.text, /SIGNIN/); }
   assert.equal((await s.call("GET", url, undefined, { cookie: (await s.human()).cookie, authorization: `Bearer ${DEV1}` })).status, 401, "토큰 머리가 붙으면 사람 아님");
-  assert.equal((await s.call("GET", url, undefined, await s.human(OTHER))).status, 404, "다른 계정");
+  { const r = await s.call("GET", url, undefined, await s.human(OTHER)); assert.equal(r.status, 403, "다른 계정"); assert.match(r.text, /m\*+@example\.test/, "어느 계정 링크인지(가림)"); assert.match(r.text, /다른 계정으로 로그인/); assert.doesNotMatch(r.text, /member@example/, "메일 전체는 안 보임"); }
   const ok = await s.call("GET", url, undefined, await s.human());
   assert.equal(ok.status, 200); assert.match(ok.text, /laptop/); assert.match(ok.text, /frame-ancestors|계속/);
   assert.equal(s.db.prepare("SELECT used_at FROM connect_link").get().used_at, null, "열기만으로 안 닳음");

@@ -9,7 +9,9 @@ const PEND = (state: string) => ({ tbl: "connection_pending" as const, pk: state
 import { accountOfIdToken } from "./identity";
 import { exposedName } from "./naming";
 import * as store from "./store";
-import { ownerIn, sameKey } from "../who";
+import { sameKey } from "../who";
+import * as W from "../who";
+import { wrongAccount } from "../link-account";
 import { API_PRESETS, apiReady, checkKey, githubApp, githubAuthUrl, githubExchange, googleAccountOf, googleApp, googleAuthUrl, googleToken, keyNames, parseAuth, slackApp, slackAuthUrl, slackExchange, type ApiSpec } from "./apis";
 
 type Env = store.Env & { PUBLIC_URL: string; ALT_URLS?: string };
@@ -59,6 +61,8 @@ const view = (r: store.Row, rd: Ready) => {
     ...(x?.oauth ? { api_oauth: true } : {}),   // 구글 로그인 API — 화면은 「키 넣기」 대신 「다시 연결」
   };
 };
+
+const escHtml = (x: string) => x.replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" } as Record<string, string>)[ch]);
 
 export function mountConnectors(host: Hono<any>, who: Who) {
   const app = host as unknown as Hono<{ Bindings: Env }>;
@@ -185,61 +189,68 @@ export function mountConnectors(host: Hono<any>, who: Who) {
     return c.json({ state: "authenticating", authUrl: a.url }, 200, { "set-cookie": `bx_oc_${a.state.slice(0, 12).replace(/[^A-Za-z0-9]/g, "x")}=${bind}; Path=/api/connectors/callback; Secure; HttpOnly; SameSite=Lax; Max-Age=600` });
   });
 
-  app.get("/api/connectors/callback", async c => {
-    const q = new URL(c.req.url).searchParams, state = q.get("state") || "";
+  // 다른 크롬 프로필 · 휴대폰(보더 로그인 없음)으로 돌아온 것: /api 밖 이 주소로 옮겨 그 자리 로그인 화면(앞문 SPA, next) → 로그인 뒤 같은 주소 → 시작한 사람이면 끝
+  app.get("/connect/finish", async (c, next) => (await who(c)) ? callback(c, new URL(c.req.url).searchParams) : next());
+  app.get("/api/connectors/callback", c => callback(c, new URL(c.req.url).searchParams));
+
+  async function callback(c: C, q: URLSearchParams) {
+    const state = q.get("state") || "";
     const back = (to: string, k: string, v: string) => c.redirect(`/${to}${to.includes("?") ? "&" : "?"}${k}=${encodeURIComponent(v)}`, 302);
-    const w = await who(c); if (!w) return c.redirect("/#settings/connectors?error=" + encodeURIComponent("보더에 로그인한 브라우저에서 다시 눌러 주세요"), 302);
-    const wk = ownerIn(c.env as { ALLOW_EMAILS?: string }, w.owner);   // 주인 열쇠 옮기는 동안 '' · canon 둘 다(who.ts)
-    const p = await c.env.DB.prepare(`DELETE FROM connection_pending WHERE state = ? AND ${wk.sql} RETURNING *`).bind(state, ...wk.args).first<{ owner: string; service: string; label: string; url: string; auth: string; back: string; bind: string; expires_at: number }>();
-    if (!p) {
-      const other = await c.env.DB.prepare("SELECT 1 AS x FROM connection_pending WHERE state = ? AND expires_at >= ?").bind(state, Date.now()).first();
-      return back("#settings/connectors", "error", other ? "이 연결을 시작한 사람이 아니에요 — 시작한 계정으로 로그인해 주세요" : "연결 시간이 지났거나 이미 끝났어요 — 설정에서 상태를 보고 필요하면 다시 눌러요");
+    const w = await who(c);
+    const peek = await c.env.DB.prepare("SELECT owner, service, label, expires_at FROM connection_pending WHERE state = ?").bind(state).first<{ owner: string; service: string; label: string; expires_at: number }>();
+    const here = !!w && (!peek || sameKey(c.env as { ALLOW_EMAILS?: string }, peek.owner, w.owner));
+    if (peek && peek.expires_at >= Date.now() && !here) {
+      if (!w) return c.redirect(`/connect/finish?${q.toString()}`, 302);
+      const svc = Object.hasOwn(TITLES, peek.service) ? TITLES[peek.service] : peek.service;
+      return c.html(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>보더 연결</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:420px;margin:12vh auto;padding:0 16px;color:#111113}button{font:inherit;padding:10px 18px;border-radius:8px;border:0;background:#111113;color:#fff;cursor:pointer}p.sub{color:#6b6b73}@media(prefers-color-scheme:dark){body{background:#111113;color:#eee}button{background:#eee;color:#111113}}</style></head><body>${wrongAccount(peek.owner || W.canon(c.env as { ALLOW_EMAILS?: string }), w.email, `${svc} 연결 링크`)}</body></html>`, 403, { "cache-control": "no-store", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" });
     }
-    if (p.expires_at < Date.now()) return back("#settings/connectors", "error", "연결 시간이 지났어요 — 다시 눌러요");
-    if (!sameKey(c.env as { ALLOW_EMAILS?: string }, p.owner, w.owner)) return back(p.back, "error", "이 연결을 시작한 사람이 아니에요");
-    if (q.get("error")) return back(p.back, "error", `${p.service}: ${q.get("error_description") || q.get("error")}`.slice(0, 200));
+    const p = await c.env.DB.prepare("DELETE FROM connection_pending WHERE state = ? RETURNING *").bind(state).first<{ owner: string; service: string; label: string; url: string; auth: string; back: string; bind: string; expires_at: number }>();
+    const done = (to: string, k: string, v: string) => here ? back(to, k, v) : c.html(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>보더 연결</title></head><body style="font:16px/1.5 system-ui,sans-serif;max-width:420px;margin:15vh auto;padding:0 16px;text-align:center"><h1 style="font-size:20px">${k === "connected" ? "연결됐어요" : "연결하지 못했어요"}</h1><p style="color:#555">${k === "connected" ? "이 창은 닫아도 돼요. 보더에서 바로 쓸 수 있어요." : escHtml(v)}</p></body></html>`, k === "connected" ? 200 : 400);
+    if (!p) return done("#settings/connectors", "error", "연결 시간이 지났거나 이미 끝났어요 — 설정에서 상태를 보고 필요하면 다시 눌러요");
+    if (p.expires_at < Date.now()) return done("#settings/connectors", "error", "연결 시간이 지났어요 — 다시 눌러요");
+    if (q.get("error")) return done(p.back, "error", `${p.service}: ${q.get("error_description") || q.get("error")}`.slice(0, 200));
     const g = await openSecret<{ google?: boolean; slack?: boolean; github?: boolean; spec?: ApiSpec; redirect_uri?: string }>(c.env, p.owner, PEND(state), p.auth);
     if (g.slack && g.spec) {
-      const app = slackApp(c.env as unknown as Record<string, unknown>, g.spec.auth); if (!app) return back(p.back, "error", "Slack 로그인 앱이 없어요");
+      const app = slackApp(c.env as unknown as Record<string, unknown>, g.spec.auth); if (!app) return done(p.back, "error", "Slack 로그인 앱이 없어요");
       try {
         const t = await slackExchange(app, q.get("code") || "", g.redirect_uri!);
-        const id = await store.upsert(c.env, w.owner, { service: p.service, label: p.label, kind: "api", url: g.spec.baseUrl,
+        const id = await store.upsert(c.env, p.owner, { service: p.service, label: p.label, kind: "api", url: g.spec.baseUrl,
           auth: { api: g.spec, key: t.access_token, refresh_token: t.refresh_token, expires_at: t.expires_at }, account: t.account });
-        return back(p.back, "connected", id);
-      } catch (e) { return back(p.back, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200)); }
+        return done(p.back, "connected", id);
+      } catch (e) { return done(p.back, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200)); }
     }
     if (g.github && g.spec) {
-      const app = githubApp(c.env as unknown as Record<string, unknown>, g.spec.auth); if (!app) return back(p.back, "error", "GitHub 앱이 없어요");
+      const app = githubApp(c.env as unknown as Record<string, unknown>, g.spec.auth); if (!app) return done(p.back, "error", "GitHub 앱이 없어요");
       try {
         const t = await githubExchange(app, q.get("code") || "", g.redirect_uri!);
-        const id = await store.upsert(c.env, w.owner, { service: p.service, label: p.label, kind: "api", url: g.spec.baseUrl,
+        const id = await store.upsert(c.env, p.owner, { service: p.service, label: p.label, kind: "api", url: g.spec.baseUrl,
           auth: { api: g.spec, key: t.access_token, refresh_token: t.refresh_token, expires_at: t.expires_at }, account: t.account });
-        return back(p.back, "connected", id);
-      } catch (e) { return back(p.back, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200)); }
+        return done(p.back, "connected", id);
+      } catch (e) { return done(p.back, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200)); }
     }
     if (g.google && g.spec) {   // 구글 로그인 API: 코드 → 토큰(그 API 의 구글 앱), 계정은 그 API 에 물음
-      const app = googleApp(c.env as unknown as Record<string, unknown>, g.spec.auth); if (!app) return back(p.back, "error", "구글 로그인 앱이 없어요");
+      const app = googleApp(c.env as unknown as Record<string, unknown>, g.spec.auth); if (!app) return done(p.back, "error", "구글 로그인 앱이 없어요");
       try {
         const t = await googleToken(app, { grant_type: "authorization_code", code: q.get("code") || "", redirect_uri: g.redirect_uri! });
-        const id = await store.upsert(c.env, w.owner, { service: p.service, label: p.label, kind: "api", url: g.spec.baseUrl,
+        const id = await store.upsert(c.env, p.owner, { service: p.service, label: p.label, kind: "api", url: g.spec.baseUrl,
           auth: { api: g.spec, key: t.access_token, refresh_token: t.refresh_token, expires_at: t.expires_at }, account: await googleAccountOf(g.spec, t.access_token) });
-        return back(p.back, "connected", id);
-      } catch (e) { return back(p.back, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200)); }
+        return done(p.back, "connected", id);
+      } catch (e) { return done(p.back, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200)); }
     }
     const a = g as unknown as { verifier: string; client_id: string; client_secret?: string; hosted?: boolean; token_endpoint: string; revocation_endpoint?: string; redirect_uri: string; resource: string };
     const client = a.hosted ? (hostedApp(c.env as unknown as Record<string, unknown>, p.service) || { client_id: a.client_id }) : a;
     try {
       const t = await exchange(a.token_endpoint, q.get("code") || "", a.verifier, a.redirect_uri, a.resource, client);
-      const id = await store.upsert(c.env, w.owner, {
+      const id = await store.upsert(c.env, p.owner, {
         service: p.service, label: p.label, kind: "oauth", url: p.url,
         auth: { access_token: t.access_token, refresh_token: t.refresh_token, expires_at: t.expires_at, client_id: a.client_id, client_secret: a.hosted ? undefined : a.client_secret, hosted: a.hosted, token_endpoint: a.token_endpoint, revocation_endpoint: a.revocation_endpoint, resource: a.resource },
         account: t.id_token ? accountOfIdToken(t.id_token) || "" : "",   // 어느 계정으로 들어왔는지(OpenID 면 여기서, 아니면 아래 「나는 누구」 도구)
       });
-      const row = await store.get(c.env, w.owner, id);
+      const row = await store.get(c.env, p.owner, id);
       if (row) c.executionCtx.waitUntil(store.tools(c.env, row, true).then(() => store.probeAccount(c.env, row)).catch(() => {}));   // 도구 목록 미리 · 계정 칸
-      return back(p.back, "connected", id);
-    } catch (e) { return back(p.back, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200)); }
-  });
+      return done(p.back, "connected", id);
+    } catch (e) { return done(p.back, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200)); }
+  }
 
   app.get("/api/connections/:id/tools", async c => {
     const m = await me(c); if (m.err) return m.err;

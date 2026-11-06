@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 register("./test-hooks.mjs", import.meta.url);
+(globalThis as any).HTMLRewriter ??= class { on() { return this; } transform(r: Response) { return r; } };   // 로그인 화면(앞문 SPA)은 그대로
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
 const { default: app } = await import("./index.ts");
 (app as any).onError((e: unknown) => { console.error("시험 500:", e); return new Response("{}", { status: 500 }); });
@@ -56,7 +57,7 @@ async function setup() {
   dev.run("dev2", MEMBER, "desktop", "", await sha(DEV2), T, T, "full");
   dev.run("devMW", MEMBER, "member watch", "", await sha(DEVMW), T, T, "watch");
   dev.run("devW", OWNER, "owner mac", "", await sha(DEVW), T, T, "watch");
-  const env: any = { DB: D1, SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test", ENGINE: { idFromName: (n: string) => n, get: () => ({ revoke: async () => 0 }) }, CONNECTOR_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64") };
+  const env: any = { DB: D1, ASSETS: { fetch: async () => new Response("<!doctype html><html><head></head><body>SIGNIN</body></html>", { headers: { "content-type": "text/html" } }) }, SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test", ENGINE: { idFromName: (n: string) => n, get: () => ({ revoke: async () => 0 }) }, CONNECTOR_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64") };
   const ctx = { waitUntil: (p: Promise<unknown>) => { p.catch(() => {}); }, passThroughOnException() {} };
   const call = async (method: string, path: string, body?: unknown, h: Record<string, string> = {}) => {
     const r = await app.fetch(new Request("https://example.test" + path, { method, headers: { "content-type": "application/json", ...h }, body: body === undefined ? undefined : JSON.stringify(body) }), env, ctx);
@@ -102,9 +103,9 @@ test("신청: 목록에 있는 행동 · 검사된 인자만 · 내 연결/기�
 test("확인 화면은 소비하지 않음 · 로그인 필요 · 다른 계정 404 · 소비는 한 번 · 사람 세션만 · 풀기", async () => {
   const s = await setup(); addConn(s);
   const token = tokenOf((await ask(s, "connection.read-only", { id: CONN, on: false })).j.url), path = "/a/" + token;
-  assert.equal((await s.call("GET", path)).status, 401);
+  { const r = await s.call("GET", path); assert.equal(r.status, 200, "로그인 안 함 → 그 자리 로그인 화면"); assert.match(r.text, /SIGNIN/); }
   assert.equal((await s.call("GET", path, undefined, { cookie: (await s.human()).cookie, authorization: `Bearer ${DEV1}` })).status, 401);
-  assert.equal((await s.call("GET", path, undefined, await s.human(OTHER))).status, 404);
+  { const r = await s.call("GET", path, undefined, await s.human(OTHER)); assert.equal(r.status, 403); assert.match(r.text, /다른 계정으로 로그인/); }
   const page = await s.call("GET", path, undefined, await s.human()); assert.equal(page.status, 200); assert.match(page.text, /읽기 전용 해제/);
   assert.equal(s.db.prepare("SELECT used_at FROM approval_link").get().used_at, null);
   assert.equal((await s.call("POST", "/api/approval/consume", { token }, { cookie: (await s.human()).cookie })).status, 403, "x-hb 없음");

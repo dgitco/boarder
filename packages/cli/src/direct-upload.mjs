@@ -22,14 +22,14 @@ async function putPart(url, headers, body, signal, progress) {
   });
 }
 export function legacyUploadAllowed(error) {
-  return [404,405,415,501].includes(error?.status) || error?.status === 503 && error?.code === 'direct_upload_unavailable';
+  return [404,405,410,415,501].includes(error?.status) || error?.status === 503 && error?.code === 'direct_upload_unavailable';
 }
 // 이 모듈은 CLI와 보드에서 함께 쓴다. 제어 요청의 인증은 R2 PUT으로 넘기지 않는다.
 export async function uploadDirect(blob, { control, init, session, progress = () => {}, signal, legacy } = {}) {
   if (!blob || !Number.isSafeInteger(blob.size) || blob.size < 0 || blob.size > 500 * 1024 * 1024) throw new Error('500MB 이하의 파일을 골라 주세요');
   if (!session) {
     try { session = await control('init', init); }
-    catch (e) { if (legacy && legacyUploadAllowed(e) && !signal?.aborted) return legacy(); throw e; }
+    catch (e) { if (legacy && (legacyUploadAllowed(e) || e?.status === 400 && !e?.code) && !signal?.aborted) return legacy(); throw e; }
   }
   if (session.done) return session;
   session.uploaded ||= [];

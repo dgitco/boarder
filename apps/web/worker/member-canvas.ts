@@ -473,7 +473,7 @@ export function mountMemberCanvas(app: Hono<{ Bindings: Env }>, h: CanvasHooks) 
       catch (e) {
         const err = (route === "/api/me/canvas" ? uploads.initializationError(e) : e) as Error & { status?: number; code?: string };
         if (err.status === 503 && err.code === "direct_upload_unavailable") return c.json({ error: err.message, code: err.code }, 503);
-        if (err.status && err.status >= 400 && err.status < 500) return c.json({ error: err.message }, err.status as 400);
+        if (err.status && err.status >= 400 && err.status < 500) return c.json({ error: err.message, ...(err.code ? { code: err.code } : {}) }, err.status as 400);   // code 를 남김 — 클라이언트가 옛 Worker 의 code 없는 400 과 구별
         throw e;
       }
     });

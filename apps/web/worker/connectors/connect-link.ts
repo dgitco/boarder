@@ -3,6 +3,7 @@ import { API_PRESETS } from "./apis";
 import { PRESETS } from "./presets";
 import { oauthApi, titleOf } from "./connect-card";
 import { readKeys } from "../who";
+import { linkOwnerMail, wrongAccount } from "../link-account";
 // 주인 열쇠 옮기는 동안(who.ts readKeys) '' · canon 둘 다 — 늘 「owner IN (?, ?)」 에 둘(회원은 같은 메일 두 번)
 const kp = (env: unknown, k: string) => { const r = readKeys(env as { ALLOW_EMAILS?: string }, k); return [r[0], r[r.length - 1]]; };
 
@@ -67,16 +68,21 @@ export function mountConnectLink(host: Hono<any>, h: Hooks) {
     return c.json({ state: conn ? "connected" : r.used_at ? "opened" : r.expires_at < Date.now() ? "expired" : "waiting", service: r.service }, 200, NOSTORE);
   });
 
-  // 확인 화면 — 아무것도 소비하지 않음(미리보기가 열어도 안전). 로그인 안 했으면 로그인 안내
-  app.get("/c/:token", async c => {
+  app.get("/c/:token", async (c, next) => {
     const token = c.req.param("token");
     if (!TOKEN.test(token)) return page("<h2>링크가 맞지 않아요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 404);
+    if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return page("<h2>사람이 여는 링크예요</h2><p class=sub>브라우저에서 열어요.</p>", 401);   // 기기 토큰 머리는 사람이 아님
     const me = await h.human(c);
-    if (!me) return page(`<h2>먼저 로그인해요</h2><p class=sub>보더에 로그인한 브라우저에서 이 링크를 다시 열어요.</p><p><a href="${esc(c.env.PUBLIC_URL)}">보더 열기</a></p>`, 401);
-    const r = await c.env.DB.prepare("SELECT device_name, service, label, used_at, expires_at FROM connect_link WHERE hash = ? AND owner IN (?, ?)").bind(await sha(token), ...kp(c.env, h.key(c.env, me))).first<{ device_name: string; service: string; label: string; used_at: number | null; expires_at: number }>();
-    if (!r) return page("<h2>링크가 맞지 않아요</h2><p class=sub>이 계정으로 만든 링크가 아니에요. 링크를 만든 계정으로 로그인했는지 봐요.</p>", 404);
+    if (!me) return next();
+    const hash = await sha(token);
+    const r = await c.env.DB.prepare("SELECT device_name, service, label, used_at, expires_at FROM connect_link WHERE hash = ? AND owner IN (?, ?)").bind(hash, ...kp(c.env, h.key(c.env, me))).first<{ device_name: string; service: string; label: string; used_at: number | null; expires_at: number }>();
+    if (!r) {
+      const o = await c.env.DB.prepare("SELECT used_at, expires_at FROM connect_link WHERE hash = ?").bind(hash).first<{ used_at: number | null; expires_at: number }>();
+      if (o && !o.used_at && o.expires_at >= Date.now()) return page(wrongAccount((await linkOwnerMail(c.env.DB, "connect_link", hash)) || "", me, "연결 링크"), 403);
+      return page("<h2>링크가 맞지 않아요</h2><p class=sub>없거나 이미 쓰였거나 만료된 링크예요. 에이전트에게 새 링크를 부탁해요.</p>", 404);
+    }
     if (r.used_at || r.expires_at < Date.now()) return page("<h2>이미 쓰였거나 만료된 링크예요</h2><p class=sub>에이전트에게 새 링크를 부탁해요.</p>", 410);
-    return page(`<h2>${esc(titleOf(r.service))} 연결</h2><p>기기 「${esc(r.device_name)}」 이 ${esc(titleOf(r.service))}${r.label ? ` (${esc(r.label)})` : ""} 연결을 요청했어요. 내가 시킨 일이 아니면 닫아요.</p><p><button id=go>계속</button></p><p id=msg class=sub></p>
+    return page(`<h2>${esc(titleOf(r.service))} 연결</h2><p>기기 「${esc(r.device_name)}」 이 ${esc(titleOf(r.service))}${r.label ? ` (${esc(r.label)})` : ""} 연결을 요청했어요. 보더 계정 <b>${esc(me)}</b> 에 붙어요. 내가 시킨 일이 아니면 닫아요.</p><p><button id=go>계속</button></p><p id=msg class=sub></p>
 <script>
 const msg=document.getElementById('msg'),b=document.getElementById('go');
 b.onclick=async()=>{b.disabled=true;msg.textContent='연결 화면으로 가는 중';

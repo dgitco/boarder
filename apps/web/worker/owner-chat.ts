@@ -54,9 +54,9 @@ export function maybeSecret(text: string, ours: string[] = []) {
   return CHUNK.test(rest);
 }
 
-export type Plain = { rid: string; chan: string; thread: string; text: string; pane: string; body: Record<string, unknown> };
+export type Plain = { rid: string; chan: string; thread: string; text: string; pane: string; node: string; body: Record<string, unknown> };
 /** 이 몸통이 D1 먼저로 쓸 「보통 글」인가 — 아니면 null(예전 길). channels = cfg 스냅숏의 채널 키 */
-export function plain(b: Record<string, unknown>, channels: string[], ours: string[] = []): Plain | null {
+export function plain(b: Record<string, unknown>, channels: string[], ours: string[] = [], paneWin: Record<string, string> = {}): Plain | null {
   for (const k of OTHER_KEYS) if (b[k] !== undefined && b[k] !== null && b[k] !== "" && b[k] !== false && !(Array.isArray(b[k]) && !(b[k] as unknown[]).length)) return null;
   const rid = String(b.rid ?? ""), chan = String(b.channel ?? ""), thread = String(b.thread ?? ""), ts = String(b.ts ?? "");
   if (!RID.test(rid) || !/^[\w-]{1,64}$/.test(rid) || !channels.includes(chan) || (thread && !TS.test(thread)) || (ts && ts !== thread)) return null;
@@ -66,7 +66,10 @@ export function plain(b: Record<string, unknown>, channels: string[], ours: stri
   if (b.edit !== undefined || b._pre !== undefined) return null;   // 빈 고치기(edit: "")도 예전 길 · _pre 는 Worker 만 붙임
   const pane = String(b.pane ?? "");
   if (pane && !/^%\d+$/.test(pane)) return null;   // 쉬는 노드 자리 판(g:) 은 다시 열기가 끼어 예전 길
-  return { rid, chan, thread, text, pane, body: b };
+  // 노드 뿌리는 글과 카드 집을 한 batch 에 씀. 스냅숏에 노드가 없으면 서버 길에서 작성 위치를 정함.
+  const node = pane && !thread ? String(paneWin[pane] || "").replace(/^\d+\s+/, "").trim() : "";
+  if (pane && !thread && (!node || node.startsWith("#") || /(^|\s)(총괄|primary|리드)$|^총괄|^Primary/i.test(node) || /^[a-z0-9-]+$/.test(node))) return null;
+  return { rid, chan, thread, text, pane, node, body: b };
 }
 
 const newId = (now: number) => { const us = now * 1000 + Math.floor(Math.random() * 1000); return `${Math.floor(us / 1e6)}.${String(us % 1e6).padStart(6, "0")}`; };
@@ -96,6 +99,8 @@ export async function write(db: D1Database, p: Plain, now = Date.now()): Promise
       await db.batch([
         ridRow(db, p.rid),
         db.prepare("INSERT INTO f7_rid(rid, at) VALUES (?, ?)").bind(preKey(p.rid, mid, root), now),
+        // pull은 200줄 경계에서 잘릴 수 있음. 로컬에 원글이 오기 전에 집이 먼저 와야 이동을 거절함.
+        ...(p.node && !thread ? [db.prepare("INSERT INTO wl_card_home(ts, chan, pane, node, at) VALUES (?, ?, ?, ?, ?)").bind(mid, p.chan, p.pane, p.node, at)] : []),
         db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, user, pane, text, blocks, at, source, ref) VALUES (?, ?, ?, 'owner', ?, NULL, NULL, ?, ?, ?, 'boarder', NULL)")
           .bind(mid, p.chan, thread, AUTHOR, p.text, blocks, at),
         db.prepare("INSERT INTO wl_talk_mirror(msg, op, payload, state, at) VALUES (?, 'post', ?, 'off', ?)")

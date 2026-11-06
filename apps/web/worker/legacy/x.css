@@ -14,8 +14,9 @@ html.bx-x #hb-newver{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 @media (min-width:700px){#bxx .xv{border-color:var(--xline)}}
 #bxx .xv[hidden]{display:none}
 #bxx .xpct{display:none}   /* PC 카드 밖 제목(아래 min-width:861 칸) — 폰에선 안 그림 */
-#bxx .xhd{position:sticky;top:0;z-index:3;margin:0;box-sizing:border-box;flex-wrap:nowrap;height:calc(52px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 16px 0;display:flex;align-items:center;justify-content:center;gap:10px;background:var(--xbg);border-bottom:.5px solid transparent;transition:border-color .15s}
-#bxx .xv.xs .xhd{border-bottom-color:var(--xline)}   /* 줄은 내렸을 때만 */
+#bxx .xhd{position:sticky;top:0;z-index:3;margin:0;box-sizing:border-box;flex-wrap:nowrap;height:calc(52px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 16px 0;display:flex;align-items:center;justify-content:center;gap:10px;background:var(--xbg);border-bottom:.5px solid transparent;transition:border-color .15s,transform .2s ease}
+#bxx .xv.xs .xhd:not(.xhm){border-bottom-color:var(--xline)}
+#bxx.xlow .xhd.xhm{transform:translateY(-100%)}
 #bxx .xdrb{position:absolute;left:8px;bottom:6px;width:40px;height:40px;display:grid;place-items:center;color:var(--xink);background:none;border:0;padding:0;cursor:pointer}
 #bxx .xfnd{position:absolute;right:8px;bottom:6px;width:40px;height:40px;display:grid;place-items:center;color:var(--xink);background:none;border:0;padding:0;cursor:pointer}
 @media (min-width:861px){#bxx .xdrb{display:none}}
@@ -57,7 +58,7 @@ html.bx-x #hb-newver{bottom:calc(96px + env(safe-area-inset-bottom,0px))!importa
 #bxx .xp.xr > .xc{display:contents}#bxx .xp.xr > .xc > *{grid-column:1/-1}#bxx .xp.xr > .xc > .xh{grid-column:2;grid-row:1;align-self:center}
 #bxx .xp.xr .xbd{margin-top:4px}
 /* 댓글 둘(물음 + 마지막 답): 줄기가 첫 댓글을 지나 다음 댓글로. 마지막 답은 결론 한 단락, 넘치면 세 줄(나머지는 눌러서 스레드) */
-#bxx .xfl{position:sticky;top:calc(52px + env(safe-area-inset-top,0px));z-index:2;display:flex;gap:6px;padding:8px 12px;background:var(--xbg);border-bottom:.5px solid var(--xline)}
+#bxx .xfl{position:relative;z-index:2;display:flex;gap:6px;padding:8px 12px;background:var(--xbg);border-bottom:.5px solid var(--xline)}
 #bxx .xfl button{height:32px;padding:0 14px;border-radius:16px;border:0;background:var(--xsunk);color:var(--xsoft);font:inherit;font-size:14px;font-weight:500;cursor:pointer}
 #bxx .xfl button[aria-selected="true"]{background:var(--xink);color:var(--xbg);font-weight:600}
 #bxx .xcmp{border-bottom:0}
@@ -161,7 +162,6 @@ html.xnodes:has(#ans:not([hidden])) #bxx .xglass,html.xnodes:has(#mview:not([hid
   #bxx .xv{top:14px;border:1px solid var(--xline);border-bottom:0;border-radius:24px 24px 0 0}
   #bxx .xv[data-v="home"]{top:60px}
   #bxx .xv[data-v="home"] > .xhd{display:none}
-  #bxx .xv[data-v="home"] .xfl{top:0}
   #bxx.xhaspm .xv[data-v="home"] .xfl{display:none}
   #bxx .xpct{display:flex;align-items:center;position:absolute;top:0;left:0;right:0;max-width:640px;height:60px;margin:0 auto;padding:0 8px;box-sizing:border-box;font-size:16px;font-weight:650;letter-spacing:-.01em;color:var(--xink)}
   #bxx .xpct h1{margin:0;font:inherit}
@@ -177,3 +177,6 @@ html.xnodes:has(#ans:not([hidden])) #bxx .xglass,html.xnodes:has(#mview:not([hid
 #bxx a.atm,#bxx a.atm:visited{color:var(--xname)}#bxx a.atm .atmt b{color:var(--xname)}
 
 #bxx .xspin{display:grid;place-items:center;padding:56px 0}#bxx .xmore .xspin{padding:22px 0}#bxx .xspin i{width:22px;height:22px;border-radius:50%;border:2px solid var(--xline);border-top-color:var(--xmut);animation:xsp .8s linear infinite}@keyframes xsp{to{transform:rotate(360deg)}}   /* 피드 첫 로딩 · 다음 쪽(스피너만) */
+/* 보이는 줄만 그리기(P18): 화면 밖 칸은 브라우저가 그리기 · 배치를 건너뜀(보인 칸 고정 · 쪽 넘김 그대로, 높이는 한 번 그린 값을 기억) */
+#bxx .xfeed > .xu{content-visibility:auto;contain-intrinsic-size:auto 320px}
+#bxx .xfeed > .xu.xph{min-height:96px}

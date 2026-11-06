@@ -1,3 +1,4 @@
+import { readMemberFiles, type FileRead } from "./member-files";
 
 import { tokenRows } from "./agent-token-cache";
 import { mapStmts, mapPlain, noVerTable } from "./map-cache";
@@ -946,7 +947,7 @@ export const FEED_ROOTS_SQL = [
   "SELECT 'bot', NULL, NULL, NULL, NULL, name, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM member_bot WHERE owner = ?1",
   "SELECT 'who', NULL, NULL, NULL, NULL, name, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM \"user\" WHERE email = ?3",   // 내 이름(GET 의 who — index.ts 가 user 표에서 읽는 것과 같은 줄)
 ].join(" UNION ALL ");
-export async function feedThreads(db: D1Database, me: string, body: unknown, opt: { email?: string; who?: string | null } = {}): Promise<[number, R]> {   // email = 로그인 메일(user 표 열쇠, 없으면 me) · who = 내 이름을 이미 알면(없으면 user 표)
+export async function feedThreads(db: D1Database, me: string, body: unknown, opt: { email?: string; who?: string | null; fileRead?: FileRead } = {}): Promise<[number, R]> {   // email = 로그인 메일(user 표 열쇠, 없으면 me) · who = 내 이름을 이미 알면(없으면 user 표)
   const items = body && typeof body === "object" && !Array.isArray(body) ? (body as R).items : null;
   if (!Array.isArray(items)) return [400, { error: "items 가 없어요" }];
   if (items.length > FEED_MAX) return [400, { error: `한 번에 ${FEED_MAX}개까지예요` }];
@@ -976,6 +977,7 @@ export async function feedThreads(db: D1Database, me: string, body: unknown, opt
     const pr = ls.find(r => r.win === ME);   // 내 Primary 글(primaryRoot) = 'p:<ts>' 스레드 답, 2000 까지(primaryReplies 와 같음)
     put(ts, pr ? primaryThreadMsgs(pr, (by.get(primaryThread(ts)) || []).slice(0, 2000), mainName, my, ts) : [msg(ls[0], my, mainName)]);   // 봇 · 보더 Primary 글은 GET 처럼 그 글 하나(답 없음)
   }
+  if (opt.fileRead) await readMemberFiles(threads, opt.fileRead, me);
   return [200, { threads }];
 }
 export async function paneRows(db: D1Database, me: string, pane: string) {
@@ -1081,7 +1083,8 @@ export async function chatLog(db: D1Database, me: string, sid: string, now = Dat
 // 회원 GET — 보드 화면 길만. null = 이 길은 회원 보드 것이 아님(→ 403)
 export async function etag(b: string) { return '"m' + [...new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(b)))].slice(0, 8).map(x => x.toString(16).padStart(2, "0")).join("") + '"'; }
 const ETAG_PATHS = /^\/api\/(chat\/|nodechat$|topics$|inbox$)/;
-export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null, tv?: (() => Promise<string | null>) | null): Promise<Response | null> {
+export async function get(db: D1Database, me: string, bot: { name?: string } | null, url: URL, emoji: () => Promise<{ body: string; etag: string } | null>, inm?: string, who?: string | null | (() => Promise<string | null | undefined>), ctx?: Ctx | null, tv?: (() => Promise<string | null>) | null, fileRead?: FileRead): Promise<Response | null> {
+  if (!/^\/api\/(chat\/|nodechat$|chatlog$|sesslog$)/.test(url.pathname)) fileRead = undefined;
   inm = inm?.replace(/^W\//, "");
   const boardPath = url.pathname === "/api/data" || url.pathname === "/api/topics";
   const cache = null as Cache | null;
@@ -1105,10 +1108,14 @@ export async function get(db: D1Database, me: string, bot: { name?: string } | n
     }
   }
   // 304도 완전한 200 몸통을 저장할 수 있게 조건부 응답은 계산 뒤에 적용함.
-  const r = await getInner(db, me, bot, url, emoji, boardPath ? undefined : inm, who, ctx, tv, key ? ver!.v : undefined);   // 번호 열쇠로 저장할 답은 같은 번호를 읽은 뒤의 판으로만(loadRead ver)
+  const r = await getInner(db, me, bot, url, emoji, boardPath || fileRead ? undefined : inm, who, ctx, tv, key ? ver!.v : undefined);   // 번호 열쇠로 저장할 답은 같은 번호를 읽은 뒤의 판으로만(loadRead ver)
   if (!r || r.status !== 200) return r;
-  if (!boardPath && (r.headers.has("etag") || !ETAG_PATHS.test(url.pathname) || !(r.headers.get("content-type") || "").startsWith("application/json"))) return r;
-  const txt = await r.text(), t = r.headers.get("etag") || await etag(txt.replace(/"read_at":\d+,?/g, ""));
+  if (!fileRead && !boardPath && (r.headers.has("etag") || !ETAG_PATHS.test(url.pathname) || !(r.headers.get("content-type") || "").startsWith("application/json"))) return r;
+  let txt = await r.text();
+  if (fileRead && (r.headers.get("content-type") || "").startsWith("application/json")) {
+    const body = JSON.parse(txt); await readMemberFiles(body, fileRead, me); txt = JSON.stringify(body);
+  }
+  const t = (!fileRead && r.headers.get("etag")) || await etag(txt.replace(/"read_at":\d+,?/g, ""));
   const h = new Headers(r.headers); h.set("etag", t);
   if (cache && key && ctx) {
     const stored = new Headers(h); stored.set("cache-control", "public, max-age=30"); stored.set("x-boarder-cached-at", String(now));
