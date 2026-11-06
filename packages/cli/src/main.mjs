@@ -150,13 +150,18 @@ async function readStdin(ms = 3000) {
   try { for await (const d of process.stdin) out += d; } catch {}
   clearTimeout(t); return out;
 }
-async function postReply(plan) {
+async function postReply(plan, strict = false) {
   const w = await windowToken({ timeoutMs: 4000 });   // 훅 한도(setup 의 Stop 20초) 안에 — 매달린 망이어도 4 + 6초
   const [tool, args] = plan;
-  const r = await fetch(`${server()}/api/agent/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${w.token}` }, body: JSON.stringify(args), signal: AbortSignal.timeout(6000) });
-  return r.ok;
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(`${server()}/api/agent/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${w.token}` }, body: JSON.stringify(args), signal: AbortSignal.timeout(6000) });
+    // SDK 답은 명시적으로 거절된 일시 실패만 한 번 더. 망 끊김은 이미 게시됐을 수 있어 재전송하지 않음.
+    if (strict && attempt === 0 && (r.status === 429 || r.status === 503)) { await r.body?.cancel(); continue; }
+    if (strict && !r.ok) throw new Error(`보더 답 게시 실패 (${r.status})`);
+    return r.ok;
+  }
 }
-async function turnHook(kind, arg) {
+async function turnHook(kind, arg, strict = false) {
   const T = await import('./turn.mjs');
   if (!loadDevice()?.token && !process.env.BOARDER_TOKEN) return;
   if (kind === 'codex-turn') {   // Codex notify: 마지막 인자 하나가 JSON(type agent-turn-complete · thread-id · input-messages · last-assistant-message)
@@ -165,7 +170,7 @@ async function turnHook(kind, arg) {
     const keys = [process.env.BOARDER_WINDOW, j['thread-id'], windowKey().key];
     const prompt = (Array.isArray(j['input-messages']) ? j['input-messages'] : []).filter(p => typeof p === 'string');
     const plan = T.replyPlan({ keys, prompt, at: 0, reply: j['last-assistant-message'] });
-    if (plan) await postReply(plan);
+    if (plan) await postReply(plan, strict);
     return;
   }
   let j; try { j = JSON.parse(await readStdin()); } catch { return; }
@@ -265,6 +270,7 @@ export async function main(argv) {
       try { await windowToken({ timeoutMs: 6000 }); } catch (e) { note = `Boarder: ${e.name === 'TimeoutError' ? 'the Boarder server did not answer in time — reports may fail until the network is back' : e.message}`; }
       return console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: note } }));
     }
+    if (cmd === 'hook' && pos[0] === 'sdk-turn') { await turnHook('codex-turn', await readStdin(), true); return; }
     if (cmd === 'hook' && (pos[0] === 'stop' || pos[0] === 'codex-turn')) { await turnHook(pos[0], pos[1]).catch(() => {}); return; }
     if (cmd === 'hook' && pos[0] === 'prompt') { await promptHook().catch(() => {}); return; }
     const num = v => v === undefined ? undefined : Number(v);

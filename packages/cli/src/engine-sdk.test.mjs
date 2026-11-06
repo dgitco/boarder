@@ -3,6 +3,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+import http from 'node:http';
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bx-sdk-'));
 process.env.BOARDER_HOME = path.join(home, 'cfg');
@@ -159,6 +160,71 @@ test('codex: 계정 둘(CODEX_HOME) · 같은 thread 로 이어 열기', async (
   assert.equal(calls.filter(c => c.p === 'codex').at(-1).id, 'th-1');
   assert.equal(S.list(cfg).length, 2);
   assert.equal(S.list(cfg)[0].meta.provider, 'codex');
+});
+
+test('codex: 메인 봇 지시는 첫 턴과 이어 보낸 턴에도 전달', async () => {
+  const system = '이 사람의 메인 봇입니다. boarder chat 으로 답하세요.';
+  await S.open(cfg, { id: 'ew_sys', cwd: home, provider: 'codex', system, prompt: '첫 인사' });
+  await wait(() => S.state(cfg, 'ew_sys').state === 'idle');
+  await S.send(cfg, 'ew_sys', '안녕');
+  await wait(() => S.state(cfg, 'ew_sys').state === 'idle');
+  const turns = calls.filter(c => c.p === 'codex');
+  assert.ok(turns.every(c => c.text.includes(system)));
+  assert.ok(turns[0].text.endsWith('첫 인사'));
+  assert.ok(turns[1].text.endsWith('안녕'));
+  S._reset();
+  S._inject.codex.Codex.prototype.resumeThread = function(id, o) { return this.startThread(o); };
+  await S.send(cfg, 'ew_sys', '데몬 다시 시작 뒤');
+  await wait(() => S.state(cfg, 'ew_sys').state === 'idle');
+  assert.ok(calls.filter(c => c.p === 'codex').at(-1).text.includes(system));
+});
+
+test('codex: SDK 최종 답을 원 Primary 스레드로 게시하고 명시적 답은 중복하지 않음', async () => {
+  const T = await import('./turn.mjs');
+  const C = await import('./config.mjs');
+  const posts = [];
+  let fail = 0;
+  const srv = http.createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    if (req.url === '/api/device/window') res.end(JSON.stringify({ token: 'test-window' }));
+    else { posts.push({ url: req.url, body: JSON.parse(body) }); res.statusCode = fail; if (fail === 503) fail = 200; res.end('{"ok":true}'); }
+  });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  C.saveDevice({ token: 'test-device', device_id: 'test-sdk', server: `http://127.0.0.1:${srv.address().port}` });
+  let explicit = false;
+  let finalText = '안녕하세요!';
+  S._inject.codex = { Codex: class { startThread() { return { runStreamed: async () => ({ events: (async function* () {
+    yield { type: 'thread.started', thread_id: 'sdk-reply' };
+    if (explicit) T.recordReply(['ew_reply'], 'chat_say', { thread: '1793940000.000001', text: '이미 답함' });
+    yield { type: 'item.completed', item: { type: 'command_execution', aggregated_output: '도구의 비공개 출력은 답에 넣지 않음' } };
+    yield { type: 'item.completed', item: { type: 'agent_message', text: finalText } };
+    yield { type: 'turn.completed' };
+  })() }) }; } } };
+  const prompt = '[보드 · Primary · 스레드 1793940000.000001] [Boarder chat] 안녕\n첨부 본문: ' + '긴 첨부'.repeat(20000);
+  try {
+    fail = 200;
+    await S.open(cfg, { id: 'ew_reply', cwd: home, provider: 'codex' });
+    await S.send(cfg, 'ew_reply', prompt);
+    await wait(() => S.state(cfg, 'ew_reply').state === 'idle', 6000);
+    assert.deepEqual(posts, [{ url: '/api/agent/chat_say', body: { text: '안녕하세요!', thread: '1793940000.000001' } }]);
+    explicit = true;
+    await S.send(cfg, 'ew_reply', prompt);
+    await wait(() => S.state(cfg, 'ew_reply').state === 'idle', 6000);
+    assert.equal(posts.length, 1, 'boarder chat 으로 이미 답한 턴은 다시 게시하지 않음');
+    explicit = false; fail = 503;
+    finalText = 'Bearer sk-' + 'a'.repeat(40) + '\n' + '긴 답'.repeat(20000);
+    await S.send(cfg, 'ew_reply', prompt);
+    await wait(() => S.state(cfg, 'ew_reply').state === 'idle', 6000);
+    assert.equal(posts.length, 3, '명시적 503 거절 뒤 같은 최종 답을 한 번 다시 게시');
+    assert.ok(posts.at(-1).body.text.length <= 3000);
+    assert.ok(!posts.at(-1).body.text.includes('a'.repeat(40)), '기존 비밀값 가림 재사용');
+    assert.ok(!JSON.stringify(posts).includes('도구의 비공개 출력'));
+    fail = 403;
+    await S.send(cfg, 'ew_reply', prompt);
+    await wait(() => S.state(cfg, 'ew_reply').state === 'idle', 6000);
+    assert.match(S.state(cfg, 'ew_reply').error || '', /보더에 답을 게시하지 못했어요/);
+    assert.equal(posts.length, 4, '영구 거절은 다시 보내지 않고 상태 오류로 남김');
+  } finally { await new Promise(r => srv.close(r)); fs.rmSync(path.join(process.env.BOARDER_HOME, 'device.json'), { force: true }); }
 });
 
 test('SDK 가 없으면 창을 만들기 전에 친절한 오류, 한도 글은 state.limit', async () => {

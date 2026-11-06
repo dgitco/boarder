@@ -78,6 +78,17 @@ function setup(state: string) {
 }
 
 const TEXT = "[Boarder chat] 밀린 글";
+test("SDK 답 게시 오류는 쉬는 창이어도 보드 상태에 이유를 남김", async () => {
+  const s = setup("idle");
+  const error = "보더에 답을 게시하지 못했어요 — 연결 상태를 확인해 주세요";
+  await s.say({ type: "state", windows: [{ id: WID, state: "idle", error }] });
+  const row = s.db.prepare("SELECT state, note FROM engine_window WHERE id = ?").get(WID) as { state: string; note: string };
+  assert.equal(row.state, "idle");
+  assert.equal(row.note, error);
+  s.db.prepare("UPDATE engine_window SET note = NULL WHERE id = ?").run(WID);
+  await s.say({ type: "state", windows: [{ id: WID, state: "idle", error: "SDK 원문에 들어온 비공개 사용자·도구 출력" }] });
+  assert.equal((s.db.prepare("SELECT note FROM engine_window WHERE id = ?").get(WID) as { note: string | null }).note, null);
+});
 async function loseThenReconnect(s: ReturnType<typeof setup>) {
   const { dev, eng, say } = s;
   mock.timers.enable({ apis: ["setTimeout"] });

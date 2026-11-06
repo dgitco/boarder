@@ -2,8 +2,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { execFileSync, execFile } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { dir, readJson } from '../config.mjs';
+import { markTurn, parseHead, clip } from '../turn.mjs';
 import { EngineError } from './tmux.mjs';
 import { accountFolder, accountNames, findCli, isLoggedIn } from './login.mjs';
 
@@ -163,13 +164,32 @@ async function codexTurn(cfg, w, text, onSession) {
     w.thread = w.session_id ? codex.resumeThread(w.session_id, opt) : codex.startThread(opt);
   }
   const ac = new AbortController(); w.abort = ac;
-  const { events } = await w.thread.runStreamed(text, { signal: ac.signal });
+  // SDK 에는 Claude 의 systemPrompt 와 CLI notify 설치가 없음. 역할 지시를 매 턴 전하고,
+  // 도구가 망을 못 쓰는 샌드박스에서도 최종 답은 데몬이 기존 답 훅으로 돌려줌.
+  const board = parseHead(text);
+  if (board) markTurn([w.id, w.session_id], text);
+  const prompt = w.system ? `${w.system}\n\n${text}` : text;
+  const { events } = await w.thread.runStreamed(prompt, { signal: ac.signal });
+  let reply = '', completed = false;
   for await (const ev of events) {
     if (ev?.type === 'thread.started' && ev.thread_id && ev.thread_id !== w.session_id) { w.session_id = ev.thread_id; onSession?.(); persist(); }
     if (ev?.type === 'turn.failed') w.error = String(ev.error?.message || 'turn failed');
     if (ev?.type === 'error') w.error = String(ev.message || 'error');
+    if (ev?.type === 'item.completed' && ev.item?.type === 'agent_message') reply = ev.item.text || '';
+    if (ev?.type === 'turn.completed') completed = true;
   }
   if (!w.session_id && w.thread.id) { w.session_id = w.thread.id; onSession?.(); persist(); }
+  if (board && completed && !w.error && !ac.signal.aborted && reply.trim()) {
+    const event = JSON.stringify({ type: 'agent-turn-complete', 'thread-id': w.session_id, 'input-messages': [text], 'last-assistant-message': clip(reply) });
+    const bin = fileURLToPath(new URL('../../bin/boarder.mjs', import.meta.url));
+    await new Promise((resolve, reject) => {
+      const child = execFile(process.execPath, [bin, 'hook', 'sdk-turn'], {
+      env: { ...process.env, BOARDER_WINDOW: w.id, BOARDER_WINDOW_NAME: w.name }, windowsHide: true, timeout: 20000,
+      }, err => err ? reject(new Error('보더에 답을 게시하지 못했어요 — 연결 상태를 확인해 주세요')) : resolve());
+      child.stdin.on('error', () => {});
+      child.stdin.end(event);   // 긴 글 · 첨부는 Windows 명령행 길이 한도를 넘으므로 stdin 으로
+    });
+  }
 }
 
 /** 글 하나를 넣고 턴을 백그라운드로 돌림. session_id 가 알려지거나(첫 줄) 턴이 끝나면 돌려줌 */

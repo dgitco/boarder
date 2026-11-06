@@ -47,12 +47,9 @@ async function sign(secret: string, msg: string) {
   return hex(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(msg))).slice(0, 32);
 }
 /** 서명 링크 /f/<id>?e=<만료 초>&t=<서명> — 7일. 서명 글 앞에 「mfile|」(다른 서명과 섞이지 않게) */
-export async function fileLink(secret: string, base: string, id: string, now = Date.now(), name = "") {
+export async function fileLink(secret: string, base: string, id: string, now = Date.now()) {
   const e = Math.floor(now / 1000) + LINK_DAYS * 86400;
-  let tail = Array.from(String(name).normalize("NFC").replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^[-.]+|-+$/g, "")).slice(0, 60);
-  while (tail.length && encodeURIComponent(tail.join("")).length > 180) tail = tail.slice(0, -1);
-  const t = encodeURIComponent(tail.join("").replace(/[-.]+$/, ""));
-  return `${base.replace(/\/+$/, "")}/f/${id}${t ? "/" + t : ""}?e=${e}&t=${await sign(secret, `mfile|${id}|${e}`)}`;
+  return `${base.replace(/\/+$/, "")}/f/${id}?e=${e}&t=${await sign(secret, `mfile|${id}|${e}`)}`;
 }
 export async function linkOk(secret: string, id: string, e: string, t: string, now = Date.now()) {
   if (!FID.test(id) || !/^\d{9,11}$/.test(e) || Number(e) * 1000 < now || !/^[0-9a-f]{32}$/.test(t)) return false;
@@ -150,7 +147,7 @@ export async function fileLines(env: Env, me: string, base: string, ids: unknown
   for (const x of ids.slice(0, FILES_PER_MSG)) {
     const id = String((x as { id?: unknown })?.id ?? x ?? ""), o = FID.test(id) ? await env.RESULTS.head(`mfiles/${id}`) : null;
     if (!o || o.customMetadata?.owner !== me) { bad++; continue; }
-    lines.push(`📎 ${o.customMetadata?.name || "file"}: ${await fileLink(env.BETTER_AUTH_SECRET, base, id, Date.now(), o.customMetadata?.name || "")}`);
+    lines.push(`📎 ${o.customMetadata?.name || "file"}: ${await fileLink(env.BETTER_AUTH_SECRET, base, id)}`);
   }
   return { lines, bad };
 }

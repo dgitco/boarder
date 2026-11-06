@@ -262,7 +262,9 @@ export class Engine extends DurableObject<EngEnv> {
       let changed = 0;
       for (const w of list) {
         const st = String(w.state || ""); if (!/^(busy|idle|waiting|background|starting|none)$/.test(st) || !/^ew_[a-z0-9]{6,30}$/.test(String(w.id))) continue;
-        const next = st === "none" ? "gone" : st, dialog = w.dialog ? String(w.dialog).slice(0, 20) : null, note = w.limit ? String(w.limit).slice(0, 200) : null;
+        // SDK 게시 실패의 고정 안내만 받음. 다른 SDK 오류 원문에는 계정·도구 출력이 섞일 수 있음.
+        const replyError = w.error === "보더에 답을 게시하지 못했어요 — 연결 상태를 확인해 주세요" ? w.error : null;
+        const next = st === "none" ? "gone" : st, dialog = w.dialog ? String(w.dialog).slice(0, 20) : null, note = w.limit ? String(w.limit).slice(0, 200) : replyError;
         const r = await db.prepare("UPDATE engine_window SET state = ?, state_at = CASE WHEN state = ? THEN state_at ELSE ? END, dialog = ?, note = COALESCE(?, note) WHERE id = ? AND device_id = ? AND state NOT IN ('parked','closed','failed') AND (state IS NOT ? OR dialog IS NOT ? OR (? IS NOT NULL AND note IS NOT ?))")
           .bind(next, next, now, dialog, note, String(w.id), device, next, dialog, note, note).run();
         changed += Number(r?.meta?.changes || 0);
