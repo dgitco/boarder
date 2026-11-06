@@ -990,11 +990,12 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       paint().then(() => { if (document.hidden) return; lag.push(performance.now() - s0); if (lag.length < 20) return; const v = lag.sort((a, b) => a - b); lag = [];
         send('type_lag', v[v.length >> 1], {max: Math.round(v[v.length - 1]), n: v.length}); }); }, true);
     if (!window.PerformanceObserver?.supportedEntryTypes?.includes('long-animation-frame')) return;
-    let worst = null, cnt = 0;
+    let worst = null, cnt = 0, inAt = 0;
+    for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart']) addEventListener(ev, () => { inAt = performance.now(); }, {capture: true, passive: true});
     try { new PerformanceObserver(l => { for (const f of l.getEntries()) { if (f.duration < 150) continue; cnt++; if (!worst || f.duration > worst.duration) worst = f; } }).observe({type: 'long-animation-frame'}); } catch { return; }
     setInterval(() => { const w = worst, n = cnt; worst = null; cnt = 0; if (!w || document.hidden) return;
       const sc = [...(w.scripts || [])].sort((a, b) => b.duration - a.duration)[0];
-      send('long_frame', w.duration, {n, block: Math.round(w.blockingDuration || 0), fn: String(sc?.sourceFunctionName || sc?.invoker || '').slice(0, 60), src: String(sc?.sourceURL || '').split('/').pop().split('?')[0].slice(0, 40)}); }, 60000);
+      send('long_frame', w.duration, {n, idle_s: inAt ? Math.round((performance.now() - inAt) / 1000) : -1, block: Math.round(w.blockingDuration || 0), fn: String(sc?.sourceFunctionName || sc?.invoker || '').slice(0, 60), src: String(sc?.sourceURL || '').split('/').pop().split('?')[0].slice(0, 40)}); }, 60000);
   })();
   (() => { let lt = 0; try { new PerformanceObserver(l => { lt += l.getEntries().length; }).observe({type: 'longtask', buffered: false}); } catch (e) {}
     setInterval(() => { const m = performance.memory; const n = lt; lt = 0;
@@ -1021,7 +1022,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
 })();
 (() => {
   if (!window.HB_LIVE || typeof evOpen !== 'function' || typeof evClose !== 'function' || !window.WebSocket) return;
-  const Native = window.EventSource, POLL = 5000, CHECK = 30000, PING = 10000, PONG = 5000, DOWN = 30000, STALE = 25000;
+  const Native = window.EventSource, POLL = 5000, CHECK = 30000, PING = 10000, PONG = 5000, DOWN = 30000, STALE = 25000, SPREAD = 60000;
   let seq = 0, offAt = 0, cur = null;
   const EV = [], note = (k, v = '') => { EV.push([now(), k, v]); if (EV.length > 60) EV.shift(); };   // 최근 60개(시험 · 「갱신 안 됨」 볼 때 BX_LIVE().ev)
   const now = () => Date.now(), kst = t => typeof kstMin === 'function' ? kstMin(t) : '';
@@ -1059,7 +1060,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     gone(ws, code){   // 끊김(닫힘 · 답 없음): 곧바로 폴링 + 다시 붙기
       if (this.ws !== ws) return; note('close', code); this.ws = null; const was = this.wsUp; if (was && !document.hidden) this.lostAt = now(); this.wsUp = false; clearInterval(this.t.ping); clearTimeout(this.t.pong);
       if (this.closed) return;
-      if (was && now() - this.openAt > 10000) this.back = 500;   // 오래 붙어 있던 연결이 끊김(배포 · DO 나감) — 바로 다시
+      if (was && now() - this.openAt > 10000) {   // 오래 붙어 있던 연결이 끊김
+        this.back = 500;
+        if (code !== 'pong') { clearTimeout(this.t.re); clearTimeout(this.t.poll); this.t.re = setTimeout(() => { if (this.closed || this.ws) return; this.poll(true); this.retry(); }, Math.random() * SPREAD); return; }
+      }
       this.poll(true); this.retry();
     }
     retry(){ if (this.closed) return; clearTimeout(this.t.re); this.t.re = setTimeout(() => this.connect(), this.back * (0.8 + Math.random() * 0.4)); this.back = Math.min(this.back * 2, 30000); }

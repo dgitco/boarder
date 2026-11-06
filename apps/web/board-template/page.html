@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "5ac076ed730a";
+window.HB_VER = "d67ef998df1b";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -976,7 +976,39 @@ body.meet #mview.sheet .grab{display:none}
 #mview.art .mvhd{padding:5px 8px 5px 14px;gap:4px;font-size:13px}
 #mview.art .mvdl.ic,#mview.art .mvx{width:30px;height:30px}
 #mview .mvdl + .mvdl{margin-left:0}
-#mview.full .mvhd a.mvdl{display:none}   
+#mview.full .mvhd a.mvdl{display:none}
+
+#mview.cv .mvbox{background:var(--surface);color:var(--ink)}
+#mview.cv .mvhd{position:relative;z-index:3;padding:6px 8px;gap:2px;border-bottom:1px solid var(--line);background:var(--surface)}
+#mview.cv .mvhd svg{width:18px;height:18px;display:block}
+#mview.cv .cvb,#mview.cv .mvx,#mview.cv .mvdl.ic{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--ink);background:none}
+#mview.cv .mvx{font-size:0}
+#mview.cv .cvb:hover,#mview.cv .mvx:hover,#mview.cv .mvdl.ic:hover,#mview.cv .cvt:hover{background:var(--hover)}
+#mview.cv .cvsep{width:1px;height:18px;background:var(--line);margin:0 4px}
+#mview.cv .cvt{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 8px;border-radius:8px;min-width:0;color:var(--ink);font-weight:600}
+#mview.cv .cvt svg{width:14px;height:14px;color:var(--muted);flex:none}
+#mview.cv .cvsp{flex:1}
+#mview.cv .cvmu{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:8px;background:var(--sunk);color:var(--ink);font-size:13px;font-weight:500;margin-left:4px}
+#mview.cv .cvmu:hover{background:var(--hover)}
+#mview.cv .cvmu svg{width:15px;height:15px;color:var(--muted)}
+#mview.cv .cvmu[aria-pressed="true"],#mview.cv .cvmu[aria-expanded="true"]{background:var(--hover);box-shadow:inset 0 0 0 1px var(--line)}
+#mview.cv .cvt.plain{cursor:default}#mview.cv .cvt.plain:hover{background:none}
+#mview.cv .cvpop{position:absolute;top:44px;z-index:5;min-width:220px;background:var(--surface);color:var(--ink);border-radius:12px;padding:6px;box-shadow:0 0 0 1px var(--line),0 8px 16px -4px rgba(0,0,0,.04),0 24px 32px -8px rgba(0,0,0,.08);display:flex;flex-direction:column}
+#mview.cv .cvpop[hidden]{display:none}
+#mview.cv .cvpop[data-cvpop="menu"]{left:48px}
+#mview.cv .cvpop > button,#mview.cv .cvpop > a{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:8px;color:inherit;text-decoration:none;font-size:13px;text-align:left}
+#mview.cv .cvpop > button:hover,#mview.cv .cvpop > a:hover{background:var(--hover)}
+#mview.cv .cvpop svg{width:16px;height:16px;color:var(--muted);flex:none}
+#mview.cv .cvpop.share{right:84px;width:320px;padding:14px;gap:10px}
+#mview.full.cv .cvpop.share{right:8px}
+#mview.cv .cvpop.share b{font-size:14px}
+#mview.cv .cvrow{display:flex;gap:10px;align-items:flex-start;font-size:13px}
+#mview.cv .cvrow small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+#mview.cv .cvurl{font:12px/1.4 var(--mono,ui-monospace,monospace);color:var(--muted);background:var(--sunk);border-radius:8px;padding:8px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mview.cv .cvcopy{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:13px;font-weight:600}
+#mview.cv .cvcopy:hover{background:var(--hover)}
+#mview.cv.sheet .grab{background:var(--line)}
+@media (max-width:600px){ #mview.cv .cvmu span{display:none} #mview.cv .cvmu{padding:0;width:32px;justify-content:center} #mview.cv .cvpop.share{right:8px;left:8px;width:auto} }   
 .mvid{position:relative;display:block;padding:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#000;cursor:pointer}
 .mvid video{display:block;max-width:min(320px,100%);max-height:260px;pointer-events:none}
 .mvid .mplay{position:absolute;inset:0;margin:auto;width:46px;height:46px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center}
@@ -1295,6 +1327,8 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
 .nbanner:empty{display:none}
 .msg .mh .snd{margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:4px;font-size:11.5px;line-height:16px;color:var(--muted)}
 .msg .mh .snd .g{width:13px;height:13px}
+
+.msg .mh .snd:not(.bad){margin-left:0;line-height:0}.msg .mh .snd:not(.bad) .g-spin{width:13px;height:13px;box-sizing:border-box;border-width:1.5px}
 .msg .mh .snd.bad{color:var(--accent)}
 .msg .mh .snd .resend{display:inline-flex;align-items:center;height:20px;padding:0 4px;border:0;border-radius:10px;background:none;color:var(--accent);cursor:pointer}.msg .mh .snd .resend:hover{background:var(--hover)}.msg .mh .snd .resend i{display:none}.msg .mh .snd .resend svg{width:14px;height:14px}
 .dlv{margin-top:3px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
@@ -1996,7 +2030,7 @@ p.mdi{padding-left:1em;text-indent:-1em}
 .ibctx{margin:4px 16px 0 54px;max-width:calc(100% - 70px);color:var(--muted)}
 .ibctx b{font-weight:500;color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .ibctx span{flex:none}
-.ibfeed .ibi .msg:not(.lopen) > .mbody > .bd{max-height:15em;overflow:hidden}
+.ibfeed .ibi .msg.lclip > .mbody > .bd{max-height:15em;overflow:hidden}   
 .ibfeed .ibi .msg.lclip > .mbody > .bd{-webkit-mask-image:linear-gradient(#000 70%,transparent);mask-image:linear-gradient(#000 70%,transparent)}
 .iblong{display:block;border:0;background:none;color:var(--accent);font:inherit;font-size:13px;font-weight:500;padding:2px 0;cursor:pointer}
 .iberr{color:var(--muted);font-size:12.5px;padding:2px 16px 0 54px}
@@ -6324,6 +6358,7 @@ async function loadTopics() {
     CS.T = D.chat?.topics || { topics: [], threads: [] };
     return;
   }
+  loadTopics.at = Date.now();
   try {
     const t = await getJSON("api/topics");
     if (t === CS.T) return false;
@@ -8461,7 +8496,8 @@ document.addEventListener("click", (e) => {
 }, true);
 async function chatLoad() {
   const b0 = [CS.T, CS.ch[CS.at], CS.th && CS.thr[CS.th.ts]];
-  await Promise.all([loadTopics(), loadCh(CS.at), CS.th ? loadTh(CS.th.k, CS.th.ts) : null]);
+  const tp = evLive() && Date.now() - (loadTopics.at || 0) < 2e3 ? null : loadTopics();
+  await Promise.all([tp, loadCh(CS.at), CS.th ? loadTh(CS.th.k, CS.th.ts) : null]);
   const same = b0[0] === CS.T && b0[1] === CS.ch[CS.at] && b0[2] === (CS.th && CS.thr[CS.th.ts]);
   if (same && !Object.keys(CS.pmeta).length) return;
   for (const [k, m] of Object.entries(CS.pmeta)) {
@@ -10199,7 +10235,7 @@ function mvClose() {
 function mvDrag(box) {
   let x0 = null, y0 = 0, t0 = 0, axis = "";
   box.addEventListener("touchstart", (e) => {
-    if (e.touches.length !== 1 || document.body.classList.contains("meet") || MV.z.s > 1.001 || e.target.closest("video, .mvtxt, .mvhd a, .mvhd button")) {
+    if (e.touches.length !== 1 || document.body.classList.contains("meet") || MV.z.s > 1.001 || e.target.closest("video, .mvtxt, .mvhd a, .mvhd button, .cvpop")) {
       x0 = null;
       return;
     }
@@ -10542,7 +10578,7 @@ function openArt(id, o = {}) {
   const fill = !full && !!o.fill && it.kind === "canvas";
   el.id = "mview";
   el.className = "art" + (it.kind === "canvas" ? " cv" : "") + (sheet ? " sheet" : "") + (full ? " full" : "") + (fill ? " fill" : "");
-  const hd = `<span class="mvn">${esc(it.title || "아티팩트")}</span>
+  const hd = it.kind === "canvas" ? cvHead(id, it, full) : `<span class="mvn">${esc(it.title || "아티팩트")}</span>
     <a class="mvdl ic" href="art/${id}/" target="_blank" rel="noopener" title="새 창으로" aria-label="새 창으로">${ART_OUT}</a><button type="button" class="mvx" data-mvx aria-label="닫기">${ICON.x}</button>`;
   if (keep) {
     delete keep.dataset.pre;
@@ -10560,6 +10596,7 @@ function openArt(id, o = {}) {
   window.HB_P0 = "";
   document.title = (it.title || "캔버스").replace(/\s+/g, " ").trim().slice(0, 80) + " - 보더";
   el.addEventListener("click", (e) => {
+    if (cvHeadClick(e, id)) return;
     if (e.target.closest("[data-meet]")) {
       e.stopPropagation();
       return document.body.classList.contains("meet") ? meetOff() : meetOn(id);
@@ -10572,6 +10609,83 @@ function openArt(id, o = {}) {
   if (sheet && !full && !fill) mvDrag(el.querySelector(".mvbox"));
   if (!full) el.querySelector(".mvx").focus();
 }
+const CV_I = {
+  phone: '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 3.5h2.2l1.2 3.2-1.6 1.1a8.6 8.6 0 0 0 4.9 4.9l1.1-1.6 3.2 1.2v2.2a1.5 1.5 0 0 1-1.6 1.5A13 13 0 0 1 4 5.1 1.5 1.5 0 0 1 5.5 3.5z"/></svg>',
+  home: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  down: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+  share: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>',
+  link: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
+  chat: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>',
+  grid: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
+};
+const cvUrl = (id) => location.origin + "/canvas/" + id;
+function cvHead(id, it, full) {
+  const left = full ? `<button type="button" class="cvb" data-cvh="home" aria-label="홈" title="홈 — 보더 첫 화면">${CV_I.home}</button><i class="cvsep" aria-hidden="true"></i><button type="button" class="cvt" data-cvh="menu" aria-haspopup="menu" aria-expanded="false"><span class="mvn">${esc(it.title || "캔버스")}</span>${CV_I.down}</button>` : `<span class="cvt plain"><span class="mvn">${esc(it.title || "캔버스")}</span></span>`;
+  const right2 = full ? "" : `<i class="cvsep" aria-hidden="true"></i><a class="mvdl ic" href="art/${id}/" target="_blank" rel="noopener" title="새 창으로" aria-label="새 창으로">${ART_OUT}</a><button type="button" class="mvx" data-mvx aria-label="닫기">${ICON.x}</button>`;
+  return left + `<span class="cvsp"></span>` + (typeof LIVE !== "undefined" && LIVE ? `<button type="button" class="cvmu" data-meet aria-pressed="false" aria-label="통화" title="통화하며 짚고 정하기">${CV_I.phone}<span>통화</span></button>` : "") + `<button type="button" class="cvmu" data-cvh="share" aria-label="공유" aria-haspopup="dialog" aria-expanded="false">${CV_I.share}<span>공유</span></button>` + right2 + (full ? `<div class="cvpop" data-cvpop="menu" role="menu" hidden><button type="button" role="menuitem" data-cvh="owner">${CV_I.chat}<span>만든 창 대화로</span></button><button type="button" role="menuitem" data-cvh="arts">${CV_I.grid}<span>다른 캔버스</span></button></div>` : "") + `<div class="cvpop share" data-cvpop="share" role="dialog" aria-label="공유" hidden><b>이 캔버스 공유</b><div class="cvrow">${CV_I.lock}<span>링크 있는 사람<small>보더에 로그인한 사람만 열려요</small></span></div><div class="cvurl" title="${esc(cvUrl(id))}">${esc(cvUrl(id).replace(/^https?:\/\//, ""))}</div><button type="button" class="cvcopy" data-cvh="copy">${CV_I.link}<span>링크 복사</span></button></div>`;
+}
+function cvPop(el, k) {
+  for (const p of el.querySelectorAll("[data-cvpop]")) {
+    const on = p.dataset.cvpop === k && p.hidden;
+    p.hidden = !on;
+    el.querySelector(`[data-cvh="${p.dataset.cvpop}"]`)?.setAttribute("aria-expanded", on);
+  }
+}
+const cvOpen = () => MV.el?.querySelector("[data-cvpop]:not([hidden])");
+addEventListener("blur", () => {
+  if (cvOpen()) setTimeout(() => {
+    if (document.activeElement?.tagName === "IFRAME") cvPop(MV.el, "");
+  }, 0);
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && cvOpen()) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const k = cvOpen().dataset.cvpop;
+    cvPop(MV.el, "");
+    MV.el.querySelector(`[data-cvh="${k}"]`)?.focus();
+  }
+}, true);
+function cvHeadClick(e, id) {
+  const b = e.target.closest("[data-cvh]"), el = MV.el;
+  if (!el) return false;
+  if (!b) {
+    if (!e.target.closest("[data-cvpop]")) cvPop(el, "");
+    return false;
+  }
+  e.stopPropagation();
+  const k = b.dataset.cvh;
+  if (k === "menu" || k === "share") {
+    cvPop(el, k);
+    return true;
+  }
+  cvPop(el, "");
+  if (k === "home") {
+    const full = el.classList.contains("full");
+    mvClose();
+    if (full || /^\/canvas\//.test(location.pathname)) location.href = "/";
+    return true;
+  }
+  if (k === "arts") {
+    mvClose();
+    show("arts");
+    return true;
+  }
+  if (k === "copy") {
+    navigator.clipboard?.writeText(cvUrl(id)).then(() => toast("링크를 복사했어요"), () => toast("복사하지 못했어요"));
+    return true;
+  }
+  if (k === "owner") {
+    fetch("api/artowner/" + id, { cache: "no-store" }).then((r) => r.json()).then((o) => {
+      if (!o.pane || !(byPane[o.pane] || parkBy[o.pane])) return toast("만든 창을 찾지 못했어요");
+      mvClose();
+      openNode(o.pane);
+    }).catch(() => toast("만든 창을 찾지 못했어요"));
+    return true;
+  }
+  return true;
+}
 const VI_PHONE = () => '<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5 8 7l-1.6 1.2a8.5 8.5 0 0 0 5.4 5.4L13 12l3.5 1.5V16a1.5 1.5 0 0 1-1.6 1.5A13.5 13.5 0 0 1 2.5 5.1 1.5 1.5 0 0 1 4 3.5Z"/></svg>';
 const MEET = { art: "", at: null, own: false, watch: 0 };
 function meetMark() {
@@ -10579,8 +10693,10 @@ function meetMark() {
   if (!b) return;
   const on = document.body.classList.contains("meet");
   b.setAttribute("aria-pressed", on);
-  b.title = on ? "미팅 끝 — 통화 끊기" : "미팅 — 화면 가득 띄우고 통화하며 짚고 정하기";
-  b.setAttribute("aria-label", on ? "미팅 끝" : "미팅");
+  b.title = on ? "통화 끝 — 미팅 끊기" : "통화 — 화면 가득 띄우고 통화하며 짚고 정하기";
+  b.setAttribute("aria-label", on ? "통화 끝" : "통화");
+  const t = b.querySelector("span");
+  if (t) t.textContent = on ? "통화 끝" : "통화";
 }
 function meetPost(on) {
   MV.el?.querySelector(".mvst iframe")?.contentWindow?.postMessage({ hbMeet: on }, "*");
@@ -11544,6 +11660,7 @@ setInterval(() => {
   ].filter((x) => keep(x.chan, x.area));
   let savedSig = "", newSig = "";
   const emit = () => {
+    S.sig = ibSig();
     for (const f of subs) try {
       f(HB);
     } catch (e) {
@@ -11710,7 +11827,9 @@ setInterval(() => {
       if (typeof optFix === "function") optFix("inbox", S, typeof GETMETA !== "undefined" ? GETMETA.get(j) : null);
       keepMerge();
       if (typeof DR === "object") S.drafts = S.drafts.filter((x) => !(DR[x.key] && !DR[x.key].text && DR[x.key].at > x.at * 1e3));
+      S.chg = ibSig() !== S.sig;
     }, (e) => {
+      S.chg = true;
       S.err = !S.ok;
       S.fails = (S.fails || 0) + 1;
       const ev = { path: "/api/inbox", method: "GET", status: e?.status ?? null, rid: e?.rid || "", kind: e?.status != null ? "http" : "net", err: String(e?.message || e || "").slice(0, 160) };
@@ -11729,12 +11848,21 @@ setInterval(() => {
       }
     }).finally(() => {
       S.busy = null;
-      emit();
+      S.doneAt = Date.now();
+      if (S.chg !== false) emit();
       if (S.again) {
         S.again = false;
         load();
       }
     });
+  }
+  function ibSig() {
+    try {
+      const t = (S.turn || []).map((x) => x && [x.chan, x.area, x.ts, x.thread, x.at, x.n, x.text, x.root, x.author, x.who, x.kind, x.ckind, x.cstate, x.pane]);
+      return JSON.stringify([S.unread, S.drafts, S.saved, t, [...saved].sort(), S.err, S.ok]);
+    } catch (e) {
+      return String(Math.random());
+    }
   }
   const counts = () => ({ unread: S.unread.filter(notCard(cardSet())).length, drafts: S.drafts.length, saved: S.saved.length, turn: turnRows().length });
   const gone = (pick, key) => {
@@ -11863,7 +11991,7 @@ setInterval(() => {
         failSave();
         draftSet(x.key, text);
         await load();
-        if (typeof chatOn === "function" && chatOn() && CS.at === "i:drafts") feedLoad("i:drafts").then(() => viewChat(true));
+        if (typeof chatOn === "function" && chatOn() && CS.at === "i:drafts") feedLoad("i:drafts", true).then(() => viewChat(true));
         toast(ERR, 4e3, true);
       } else if (fl || CS.pend[key]) toast(ERR, 4e3, true);
       else toast("보냈어요");
@@ -12261,23 +12389,40 @@ setInterval(() => {
     while (FQ.busy < 6 && FQ.list.length) {
       const [ch, th] = FQ.list.shift();
       FQ.busy++;
+      const was = CS.thr[th];
       loadTh(ch, th).finally(() => {
         FQ.busy--;
         FQ.want.delete(th);
         FQ.at.set(th, Date.now());
         for (const f of Object.values(FD)) if (f.batch) batchCheck(f);
-        redraw();
+        if (CS.thr[th] !== was) redraw();
         pump();
       });
     }
   }
-  function feedLoad(ch) {
+  let feedT = 0;
+  const feedCh = /* @__PURE__ */ new Set();
+  function feedLoad(ch, now) {
+    if (!now && CS.ch[ch] && !S.busy && Date.now() - (S.doneAt || 0) < 2e3) {
+      feedCh.add(ch);
+      if (!feedT) feedT = setTimeout(() => {
+        feedT = 0;
+        const cs = [...feedCh];
+        feedCh.clear();
+        const p = load();
+        for (const c of cs) feedSync(c, p);
+      }, Math.max(0, (S.doneAt || 0) + 2e3 - Date.now()));
+      return Promise.resolve();
+    }
+    return feedSync(ch, load());
+  }
+  function feedSync(ch, p) {
     const f = fstate(ch);
-    return load().then(() => {
+    return p.then(() => {
       fsync(f);
-      const now = Date.now();
-      for (const [th, v] of VIS) if (v.ch && now - (FQ.at.get(th) || 0) > 4e3) want(v.ch, th, true);
-      CS.ch[ch] = { messages: [], at: now };
+      const now = Date.now(), same = S.chg === false && !!CS.ch[ch];
+      for (const [th, v] of VIS) if (v.ch && now - (FQ.at.get(th) || 0) > (same ? 3e4 : 4e3)) want(v.ch, th, true);
+      if (!same) CS.ch[ch] = { messages: [], at: now };
     });
   }
   const NM = (m) => m.who === "owner" ? "Owner" : m.name || "비서";
@@ -12302,7 +12447,7 @@ setInterval(() => {
   function itemHTML(f, x) {
     const ch = x.chan, th = thOf(x), t = CS.thr[th], ms = t?.messages || [], id = idOf(f.k, x);
     const done = f.done.has(id) ? " done" : "", ub = done ? ubOf(f, x) : "", stale = ms.length && !ready(f, x) ? " wait" : "";
-    if (!ms.length) return `<div class="ibi wait${done}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${ub}${msgHTML(stub(x, f.k === "saved" || !x.thread ? x.text : x.root || x.text, f.k === "saved" ? x.ts : ""), ch, false)}${t?.err ? `<div class="iberr">${ERR}</div>` : ""}</div>`;
+    if (!ms.length) return `<div class="ibi wait${done}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${ub}${((s) => lng(f, s, msgHTML(s, ch, false)))(stub(x, f.k === "saved" || !x.thread ? x.text : x.root || x.text, f.k === "saved" ? x.ts : ""))}${t?.err ? `<div class="iberr">${ERR}</div>` : ""}</div>`;
     const [root, ...rest] = ms, real = rest.filter((m) => !m.ledger);
     const wrap = (inner) => `<div class="ibi${done}${stale}" data-at="i:${esc(id)}" data-ibid="${esc(id)}" data-ibch="${esc(ch)}" data-ibth="${esc(th)}">${ub}${inner}</div>`;
     const one = "";
@@ -12499,12 +12644,14 @@ setInterval(() => {
       }
     }
     let grew = false;
-    for (const b of fe.querySelectorAll(".ibi:not(.wait) .msg > .mbody > .bd")) {
+    for (const b of fe.querySelectorAll(".ibi .msg:not(.lclip):not(.lopen) > .mbody > .bd")) {
       const m = b.closest(".msg");
-      if (!m || f.long.has(m.dataset.mts)) continue;
-      if (b.scrollHeight > b.clientHeight + 6) {
+      if (!m || !m.dataset.mts || f.long.has(m.dataset.mts)) continue;
+      if (b.scrollHeight > parseFloat(getComputedStyle(b).fontSize) * 15 + 6) {
         f.long.add(m.dataset.mts);
         grew = true;
+        m.classList.add("lclip");
+        b.insertAdjacentHTML("afterend", `<button class="iblong" data-iblong="${esc(m.dataset.mts)}">더 보기</button>`);
       }
     }
     if (grew) redraw();
