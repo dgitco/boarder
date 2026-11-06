@@ -1,6 +1,6 @@
 import { tokenRows } from "./agent-token-cache";
 import { fileNo } from "./owner-vals";
-import { load, data, paneOfId, ME, OWN, inPrim, tsOf, cut, json, CARD_TS, myName, NOT_CHAT } from "./member-board";
+import { load, data, dataReads, paneOfId, ME, OWN, inPrim, tsOf, cut, json, CARD_TS, myName, NOT_CHAT } from "./member-board";
 
 type R = Record<string, any>;
 
@@ -131,7 +131,15 @@ export async function history(db: D1Database, me: string, q?: string | null) {
 const slug = (t: string) => t.trim().toLowerCase().replace(/[^\p{L}\p{N}_]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 40) || `t${Math.floor(Date.now() / 1000)}`;
 const winTitle = (w: unknown) => String(w || "").replace(/^\d+\s+/, "").trim();
 export async function topics(db: D1Database, me: string, bot: { name?: string } | null, pre?: Awaited<ReturnType<typeof load>> | null) {   // pre = 읽기 길이 나눠 쓴 load(loadRead)
-  const L = pre || await load(db, me), D = await data(db, me, bot, L);   // load 한 번(예전엔 data 안 · 밖 두 번)
+  const L = pre || await load(db, me);
+  const [D, cards, roots] = await Promise.all([
+    data(db, me, bot, L, dataReads(db, me)),
+    db.prepare("SELECT rowid AS n, id, win, kind, question, choices, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR at > ?) ORDER BY at DESC LIMIT 200").bind(me, Date.now() - 7 * 86_400_000).all<R>().then(r => r.results),
+    db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary' AND at > ? ORDER BY at DESC, id DESC LIMIT 100").bind(me, Date.now() - 3 * 86_400_000).all<R>().then(r => r.results),
+  ]);
+  const mineTs = roots.filter(r => r.win === ME).map(r => "p:" + tsOf(Number(r.at), Number(r.id)));
+  const replies = (ids: string[]) => ids.length ? db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at + 0, id LIMIT 2000").bind(me, JSON.stringify(ids)).all<R>().then(r => r.results) : Promise.resolve([] as R[]);
+  const [said, reps] = await Promise.all([replies(cards.map(c => String(c.id))), replies(mineTs)]);
   const out = new Map<string, R>();
   for (const p of D.panes as R[]) {
     if (p.kind !== "lead") continue;
@@ -149,8 +157,6 @@ export async function topics(db: D1Database, me: string, bot: { name?: string } 
   const paneTopic = new Map<string, string>(); for (const t of out.values()) for (const p of t.panes) paneTopic.set(p, t.id);
   const mainName = bot?.name || "Primary", my = myName(me);
   const threads: R[] = [];
-  const cards = (await db.prepare("SELECT rowid AS n, id, win, kind, question, choices, body, state, answer, answered_at, at FROM board_card WHERE owner = ? AND (state = 'open' OR at > ?) ORDER BY at DESC LIMIT 200").bind(me, Date.now() - 7 * 86_400_000).all<R>()).results;
-  const said = cards.length ? (await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at + 0, id LIMIT 2000").bind(me, JSON.stringify(cards.map(c => String(c.id)))).all<R>()).results : [];
   for (const c of cards) {
     if (!CARD_TS.test(String(c.id))) continue;
     const n = L.nodeOfWin(String(c.win)), ew = L.engineNodes.find(w => w.name === c.win), owner = n?.pane || (ew ? paneOfId(ew.id) : null);
@@ -163,9 +169,6 @@ export async function topics(db: D1Database, me: string, bot: { name?: string } 
       buttons, at: Math.max(Number(last.ts), Number(c.at) / 1000), needs: c.state === "open" && c.kind !== "todo" && !!buttons && last.who === "agent", last, topic: owner ? paneTopic.get(owner) || null : null });
   }
   // Primary 채팅의 뿌리 글(3일 안 · 최근 100): 내 글은 그 스레드 답(p:<ts>)까지 — 봇 · 보더 글은 답이 없음
-  const roots = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = 'primary' AND at > ? ORDER BY at DESC, id DESC LIMIT 100").bind(me, Date.now() - 3 * 86_400_000).all<R>()).results;
-  const mineTs = roots.filter(r => r.win === ME).map(r => "p:" + tsOf(Number(r.at), Number(r.id)));
-  const reps = mineTs.length ? (await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND thread IN (SELECT value FROM json_each(?)) ORDER BY at + 0, id LIMIT 2000").bind(me, JSON.stringify(mineTs)).all<R>()).results : [];
   for (const r of roots) {
     if (OWN.test(String(r.win))) continue;
     const ts = tsOf(Number(r.at), Number(r.id)), mine = r.win === ME, rs = reps.filter(x => x.thread === "p:" + ts), l = rs.at(-1) || r;
@@ -185,8 +188,9 @@ export function overdue(due: string, now: number) {
   const t = Date.parse(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + "+09:00");   // 시간대 없으면 한국 시각
   return Number.isFinite(t) && t < now;
 }
-export async function promiseRows(db: D1Database, me: string, paneOf: (win: string) => string, now: number) {
-  const rs = (await db.prepare("SELECT id, wid, win, who, what, check_by, due, at FROM member_promise WHERE owner = ? AND state = 'open' ORDER BY at DESC LIMIT 100").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results;
+export const promiseData = async (db: D1Database, me: string) => (await db.prepare("SELECT id, wid, win, who, what, check_by, due, at FROM member_promise WHERE owner = ? AND state = 'open' ORDER BY at DESC LIMIT 100").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results;
+export async function promiseRows(db: D1Database, me: string, paneOf: (win: string) => string, now: number, pre?: R[]) {
+  const rs = pre || await promiseData(db, me);
   const promises = rs.map(r => { const pane = paneOf(String(r.win)), f = fileNo(r.wid); return { n: f ?? Number(r.id), ...(f !== null ? { hp: true } : {}), due: String(r.due), to: cut(r.who, 60), what: cut(r.what, 160), watch: cut(r.check_by, 100), pane, panes: [pane], short: cut(r.what, 18), title: cut(r.what, 30) }; });
   const to_check = rs.filter(r => overdue(String(r.due), now)).map(r => ({ id: fileNo(r.wid) !== null ? "hp" + fileNo(r.wid) : "p" + r.id, src: "promise", pane: paneOf(String(r.win)), win: String(r.win), area: "primary", title: cut(`${r.who}에게 한 약속 — ${r.what}`, 200),
     body: cut(`기한 ${r.due} · 확인 장치: ${r.check_by}`, 600), choices: [], ago: Math.max(0, Math.round((now - Number(r.at)) / 60_000)), kind: "약속", why: `기한(${r.due})이 지났어요 — 지켰는지 확인` }));

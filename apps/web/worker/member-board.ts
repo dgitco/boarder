@@ -9,7 +9,7 @@ import { boardHead, withHead } from "./board-head";
 import { primaryPick, notChat, type Item } from "./importer/group";
 import { REVOKED, withRv } from "./importer/revoked";
 import { prefsOf, tidyOn } from "./node-prefs";
-import { history, topics, promiseRows } from "./member-views";
+import { history, topics, promiseRows, promiseData } from "./member-views";
 import { splitMarks, splitMove } from "./member-split";
 import { seatsFromData } from "./role-seat";
 import { chiefOf, type Seat } from "./inbox-rules";
@@ -394,7 +394,14 @@ export function paneNow<T extends Record<string, any>>(rows: T[], nowMin: number
 export const HSTATE_KO: Record<string, string> = { busy: "일하는 중", starting: "일하는 중", idle: "쉼", waiting: "Owner 대기", background: "뒤 작업 중" };
 export const harnessPane = (id: string) => { const m = /^ew_pane(\d{1,7})$/.exec(id); return m ? `%${m[1]}` : null; };
 const PSTATE: Record<string, string> = { working: "일하는 중", question: "질문" };
-export async function data(db: D1Database, me: string, bot: { name?: string } | null, pre?: Awaited<ReturnType<typeof load>> | null) {
+const taskRows = async (db: D1Database, me: string) => (await db.prepare("SELECT id, task FROM mnode WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\' AND task IS NOT NULL").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results;
+const archivedNames = async (db: D1Database, me: string) => (await db.prepare("SELECT COALESCE(pinned_name, name) AS n FROM mnode WHERE owner = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 300").bind(me).all<R>()).results;
+// topics에서만 서로 독립인 보조 읽기를 시작한다. data API의 읽기 순서는 그대로 둔다.
+export async function dataReads(db: D1Database, me: string) {
+  const [tasks, archived, promises] = await Promise.all([taskRows(db, me), archivedNames(db, me), promiseData(db, me)]);
+  return { tasks, archived, promises };
+}
+export async function data(db: D1Database, me: string, bot: { name?: string } | null, pre?: Awaited<ReturnType<typeof load>> | null, reads?: ReturnType<typeof dataReads>) {
   const L = pre || await load(db, me), now = Date.now(), nowMin = Math.floor(now / 60_000) * 60_000, ago = (ms: number) => Math.max(0, Math.round((nowMin - ms) / 60_000));
   const line = (r: R) => ({ id: r.id, ago: ago(r.at), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 220), handled: false, short: cut(r.text, 60), short_ok: true, title: cut(r.text, 30) });
   const logsOf = (n: Node | null, wins?: string[]) => L.logs.filter(r => !inPrim(r) && r.kind !== "me" && !OWN.test(r.win) && (n ? L.nodeOfWin(r.win) === n : wins!.includes(r.win)));
@@ -416,7 +423,7 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const parked: R[] = [], closed: R[] = [];
   // 업무 노드 값(mnode.task, 0054) — 따로 읽음: 칸이 아직 없는 D1 이면 빈 표(load 의 한 batch 에 넣으면 보드 전체가 깨짐)
   const TASK_ST = new Set(["working", "blocked", "waiting", "done", "cancelled"]);
-  const tasks = new Map(((await db.prepare("SELECT id, task FROM mnode WHERE owner = ? AND id >= 'tk_' AND id < 'tk`' AND id LIKE 'tk\\_%' ESCAPE '\\' AND task IS NOT NULL").bind(me).all<R>().catch(() => ({ results: [] as R[] }))).results)
+  const tasks = new Map((reads ? (await reads).tasks : await taskRows(db, me))
     .map(r => [String(r.id), json<R>(r.task, {})] as [string, R]).filter(([, t]) => TASK_ST.has(String(t.state))));
   const hasKid = new Set(L.nodes.map(n => L.parents[n.id]).filter(Boolean));   // 보이는 노드의 상위만(닫힘 · 보관된 하위만 있으면 담당 없음 그대로)
   const cardNodes = new Set(L.tidy ? L.cards.filter(c => c.state === "open").map(c => L.nodeOfWin(c.win)?.id).filter(Boolean) : []);
@@ -576,11 +583,11 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   const cardsdone = L.closedCards.filter(c => CARD_TS.test(String(c.id))).map(c => ({ ts: String(c.id), thread: String(c.id), channel: cardCh(String(c.win)), kind: c.kind === "todo" ? "todo" : "decision", area: "primary", state: "done", title: cut(String(c.question || ""), 80), at: Number(c.answered_at || c.at) / 1000 }));
   const feed = L.logs.filter(r => !OWN.test(r.win) && !inPrim(r) && r.kind !== "me").slice(0, 40).map(r => ({ id: r.id, ago: ago(r.at), pane: L.nodeOfWin(r.win)?.pane || PRIMARY, win: cut(r.win, 30), kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 160) }));
   // 보관한 노드 이름(주인 D.archived 와 같은 꼴) — 찾기 · 타임라인 · 「보관」 띠가 씀
-  const archived = ((await db.prepare("SELECT COALESCE(pinned_name, name) AS n FROM mnode WHERE owner = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 300").bind(me).all<R>()).results).map(r => String(r.n || "노드"));
+  const archived = (reads ? (await reads).archived : await archivedNames(db, me)).map(r => String(r.n || "노드"));
   // 약속(member_promise, 0047): 열린 것 = 주인 D.promises 꼴, 기한이 지난 것은 to_check(「지켰는지 확인」) — 표가 아직 없으면(이주 전) 빈 꼴
   const promPane = (w: string) => { if (L.harness.length && /^%\d{1,7}$/.test(w)) return w;
     const ew = L.engineNodes.find(x => x.name === w), p = ew ? paneOfId(ew.id) : ""; return p && known.has(p) ? p : toPane(w); };
-  const { promises, to_check: overdue } = await promiseRows(db, me, promPane, nowMin);
+  const { promises, to_check: overdue } = await promiseRows(db, me, promPane, nowMin, reads ? (await reads).promises : undefined);
   const to_check = L.harness.length ? overdue.filter(x => !/^hp\d/.test(String(x.id))) : overdue;
   const seatName = new Map(L.nodes.filter(n => L.seatIds.has(n.id)).map(n => [n.id, L.seatRole.get(n.id)!]));
   const seatId = new Map([...seatName].map(([id, nm]) => [nm, id]));
