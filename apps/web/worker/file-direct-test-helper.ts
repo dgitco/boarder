@@ -38,6 +38,7 @@ export function fileR2(failCopies = 0) {
     put: async (key: string, value: string | ArrayBuffer | Uint8Array, options: { httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string> } = {}) => {
       const b = typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value as ArrayBuffer); m.set(key, { b, ...options }); return obj(key);
     },
+    list: async (o: { prefix?: string; limit?: number } = {}) => { const ks = [...m.keys()].filter(k => k.startsWith(o.prefix || '')).sort().slice(0, o.limit || 1000); return { objects: ks.map(k => obj(k)), truncated: false, delimitedPrefixes: [] }; },
     head: async (key: string) => obj(key), get: async (key: string, options?: { range?: { offset: number; length: number } }) => obj(key, options?.range),
     delete: async (keys: string | string[]) => { for (const key of Array.isArray(keys) ? keys : [keys]) m.delete(key); },
     createMultipartUpload: async () => ({ uploadId: crypto.randomUUID(), abort: async () => {} }),

@@ -62,6 +62,59 @@ test("캔버스 껍데기: 에이전트가 방금 만든 캔버스를 1분 안�
   assert.equal(r.headers.get("content-security-policy"), null, "새 캔버스 B 가 낡은 목록 때문에 sandbox(다른 출처)로 갇혀 판을 못 부름");
 });
 
+test("캔버스 껍데기: R2 색인(read_files 켬)에 아직 없는 막 올린 캔버스도 다리 목록으로 껍데기 — 첫 열기 빈 캔버스", async () => {
+  const A = newId("R"), B = newId("S"), arts: Record<string, { kind: string }> = { [A]: { kind: "canvas" } };
+  const { D1 } = d1(), st = { artsDown: false, artsCalls: 0 };
+  await D1.prepare("INSERT INTO f7_flag(name, on_at, note) VALUES ('read_files', ?, '시험')").bind(Date.now()).run();
+  const ix = { arts: { [A]: { kind: "canvas" } } };   // R2 색인엔 A 만(B 는 색인이 퍼지기 전)
+  const RESULTS = { get: async (k: string) => k.endsWith("index.json") ? { json: async () => ix } : null, put: async () => {}, head: async () => null, list: async () => ({ objects: [] }) };
+  const env = { DB: D1, BRIDGE: bridgeNs(arts, st), RESULTS, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+  const get = async (path: string) => app.fetch(new Request("https://example.test" + path, { headers: { accept: "text/html", "sec-fetch-dest": "iframe", cookie: await cookie() } }), env, { waitUntil() {}, passThroughOnException() {} });
+  later(70_000);   // 앞 시험이 남긴 모듈 캐시(다리 목록 60초 · 색인 15초 · 스위치 10초)를 넘김
+  assert.ok(isShell(await get(`/art/${A}/`)), "색인에 있는 캔버스 A");
+  arts[B] = { kind: "canvas" };   // 에이전트가 막 올림 — 다리 목록엔 바로, R2 색인엔 아직
+  later(6_000);
+  const r = await get(`/art/${B}/`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-security-policy"), null, "R2 색인에 없다고 「캔버스 아님」으로 봐 sandbox 로 가두면 판을 못 불러 빈 캔버스");
+});
+
+test("보안: 목록은 캔버스라도 다리가 준 응답이 에이전트 페이지(sandbox CSP)면 sandbox 그대로 — 페이지를 캔버스로 다시 올린 경합", async () => {
+  later(70_000);
+  const X = newId("X"), arts: Record<string, { kind: string }> = { [X]: { kind: "canvas" } };
+  const { D1 } = d1(), st = { artsDown: false, artsCalls: 0 }, te = new TextEncoder(), base = bridgeNs(arts, st);
+  const BRIDGE = { idFromName: (n: string) => n, get: () => ({ call: async (r: { method: string; path: string }) => r.path === `/art/${X}/`
+    ? { status: 200, headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "sandbox allow-scripts" }, body: te.encode("<!doctype html><html><head></head><body>에이전트 페이지</body></html>") }
+    : (base.get() as any).call(r) }) };
+  const env = { DB: D1, BRIDGE, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+  const r = await app.fetch(new Request(`https://example.test/art/${X}/`, { headers: { accept: "text/html", "sec-fetch-dest": "iframe", cookie: await cookie() } }), env, { waitUntil() {}, passThroughOnException() {} });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get("content-security-policy") || "", /sandbox/, "받은 몸통이 에이전트 페이지인데 sandbox 가 빠지면 보더와 같은 출처로 돔");
+});
+
+for (const after of ["none", "canvas"] as const) test(`보안: R2 로 에이전트 페이지 몸통을 받는 사이 색인이 바뀌어도(나중 색인 ${after === "none" ? "미등재" : "캔버스"} · 다리 목록 캔버스) sandbox 그대로`, async () => {
+  later(70_000);
+  const X = newId(after === "none" ? "J" : "K"), arts: Record<string, { kind: string }> = { [X]: { kind: "canvas" } };
+  const { D1 } = d1(), st = { artsDown: false, artsCalls: 0 }, te = new TextEncoder();
+  await D1.prepare("INSERT INTO f7_flag(name, on_at, note) VALUES ('read_files', ?, '시험')").bind(Date.now()).run();
+  let ix: any = { v: 1, at: 0, blobs: {}, shim: "", arts: { [X]: { kind: "page", title: "에이전트 페이지", at: "", acct: "", auto: "", main: "index.html" } } };
+  const html = te.encode("<!doctype html><html><head></head><body>에이전트 페이지</body></html>");
+  const RESULTS = { get: async (k: string) => {
+    if (k.endsWith("index.json")) { const v = ix; return { json: async () => v }; }
+    if (k === `art/${X}/index.html`) {   // 몸통을 읽는 동안(15초+) 색인이 바뀜
+      ix = { ...ix, arts: after === "none" ? {} : { [X]: { kind: "canvas", title: "캔버스", at: "", acct: "", auto: "" } } }; later(16_000);
+      return { size: html.length, body: new Response(html).body, arrayBuffer: async () => html.buffer.slice(0), httpMetadata: {} };
+    }
+    return null;
+  }, head: async () => null, list: async () => ({ objects: [] }) };
+  const env = { DB: D1, BRIDGE: bridgeNs(arts, st), RESULTS, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+  const r = await app.fetch(new Request(`https://example.test/art/${X}/`, { headers: { accept: "text/html", "sec-fetch-dest": "iframe", cookie: await cookie() } }), env, { waitUntil() {}, passThroughOnException() {} });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("x-boarder-src"), "r2", "R2 로 답해야 이 경합을 잼");
+  assert.match(await r.text(), /에이전트 페이지/);
+  assert.match(r.headers.get("content-security-policy") || "", /sandbox/, "R2 가 준 몸통은 에이전트 페이지인데 나중 목록이 캔버스라 sandbox 가 빠짐");
+});
+
 test("캔버스 껍데기: 보드 목록(/api/arts)이 한 번 일시 실패해도 그 뒤 1분 동안 모든 캔버스가 깨지지 않음", async () => {
   const A = newId("C"), arts = { [A]: { kind: "canvas" } };
   const { st, get } = setup(arts);

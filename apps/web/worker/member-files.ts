@@ -1,8 +1,7 @@
-// 회원 쓰기 칸 파일 · 받아쓰기 — 보드 틀(page)이 부르는 /api/upload · /api/file/:id · /api/voice/stt 를 회원 길로(틀은 그대로).
-// 예전 회원 길: 올리기 · 받아쓰기는 JSON 이 아니라 「bad json」(400), 파일 붙은 글은 「아직 안 돼요」, 파일 보기는 403.
-// 저장: R2 mfiles/<id>(customMetadata owner = 회원 메일). 보기는 올린 사람만. 창(에이전트)에는 7일 서명 링크 줄(/f/<id>)로 — 로그인 없이 curl 로 받게
 import type { Context } from "hono";
 import * as direct from "./direct-uploads";
+import * as uid from "./uid";
+import { f7On } from "./ledger";
 import { isAdmin } from "./who";
 
 type Env = direct.DirectEnv & { DB: D1Database; RESULTS: R2Bucket; AI: { run(model: string, input: unknown): Promise<unknown> }; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string };
@@ -10,7 +9,9 @@ type C = Context<{ Bindings: Env }>;
 
 export const LEGACY_FILE_MAX = 20 * 1024 * 1024;
 export const FILE_MAX = direct.MAX_FILE, VOICE_MAX = 3 * 1024 * 1024, LINK_DAYS = 7, FILES_PER_MSG = 10;
-const FID = /^[0-9a-f]{32}$/, RISKY = /html|svg|xml|javascript|ecmascript/i;
+// 파일 id = 새 UUID v7(하이픈 꼴) 또는 옛 32자 16진. 주소 · 화면에서 오면 소문자로(대소문자 안 가림)
+export const FID_SRC = "[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}";
+const FID = new RegExp(`^(?:${FID_SRC})$`), OLD = /^[0-9a-f]{32}$/, RISKY = /html|svg|xml|javascript|ecmascript/i;
 export const DAY_FILES = 200, DAY_FILE_BYTES = 500 * 1024 * 1024, DAY_STT = 300;
 /** 하루 칸(user_pref k = q:<칸>:<날짜>, v = {"n":개수,"b":바이트})에 한 번 더 셈 — 상한을 넘으면 세지 않고 false. 한 문장(UPSERT … WHERE … RETURNING)이라 동시에 와도 넘지 않음 */
 export async function quotaTake(db: D1Database, me: string, kind: string, bytes: number, maxN: number, maxB: number, now = Date.now()) {
@@ -20,7 +21,7 @@ export async function quotaTake(db: D1Database, me: string, kind: string, bytes:
     ON CONFLICT(owner, k) DO UPDATE SET v = json_object('n', json_extract(user_pref.v, '$.n') + 1, 'b', json_extract(user_pref.v, '$.b') + json_extract(excluded.v, '$.b')), at = excluded.at
     WHERE json_extract(user_pref.v, '$.n') + 1 <= ? AND json_extract(user_pref.v, '$.b') + json_extract(excluded.v, '$.b') <= ?
     RETURNING v`).bind(me, k, bytes, now, maxN, maxB).first<{ v: string }>();
-  if (r && Math.random() < 0.05) await db.prepare("DELETE FROM user_pref WHERE owner = ? AND k LIKE 'q:%' AND at < ?").bind(me, now - 3 * 86_400_000).run().catch(() => {});   // 지난 날 칸 치우기
+  if (r && Math.random() < 0.05) await db.prepare("DELETE FROM user_pref WHERE owner = ? AND (k LIKE 'q:%' OR k LIKE 'uk:%') AND at < ?").bind(me, now - 3 * 86_400_000).run().catch(() => {});   // 지난 날 칸 치우기
   return !!r;
 }
 /** 올리기 한도에서 방금 센 한 번을 돌려줌(R2 에 못 넣었을 때 — 다시 보내면 한도를 한 번 더 세지 않게). 못 돌려줘도 던지지 않음 */
@@ -43,6 +44,22 @@ export async function readCapped(req: Request, max: number): Promise<Uint8Array 
   const out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.byteLength; }
   return out;
 }
+/** R2 키에 붙일 이름: 글자 · 숫자 · . _ - 만(나머지 _), 120자 — 원래 이름은 메타 name 에 그대로(내려받기 이름) */
+export function keyName(name: string) {
+  return Array.from(String(name || "").normalize("NFC").replace(/[^\p{L}\p{N}._-]+/gu, "_").replace(/_+/g, "_").replace(/^[._]+/, "")).slice(0, 120).join("") || "file";
+}
+const keyMemo = new Map<string, string>();   // UUID → 키(바뀌지 않음). 한 isolate 안에서만
+/** 파일 id → R2 키 | null. 옛 32자 = mfiles/<id> 그대로, UUID = 접두사 mfiles/<uuid>/ 목록 한 건 */
+export async function fileKey(bucket: R2Bucket, raw: string): Promise<string | null> {
+  const id = String(raw || "").toLowerCase(); if (!FID.test(id)) return null;
+  if (OLD.test(id)) return `mfiles/${id}`;
+  const m = keyMemo.get(id); if (m) return m;
+  const l = await bucket.list({ prefix: `mfiles/${id}/`, limit: 1 });
+  const k = l.objects[0]?.key || null;
+  if (k) { if (keyMemo.size > 5000) keyMemo.clear(); keyMemo.set(id, k); }
+  return k;
+}
+async function headId(bucket: R2Bucket, id: string) { const k = await fileKey(bucket, id); return k ? bucket.head(k) : null; }
 const tooMany = (c: C, what: string) => c.json({ ok: false, error: `오늘 ${what} 한도를 넘었어요 — 내일 다시 해요` }, 429, { "retry-after": "3600" });
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
 async function sign(secret: string, msg: string) {
@@ -51,10 +68,11 @@ async function sign(secret: string, msg: string) {
 }
 /** 서명 링크 /f/<id>?e=<만료 초>&t=<서명> — 7일. 서명 글 앞에 「mfile|」(다른 서명과 섞이지 않게) */
 export async function fileLink(secret: string, base: string, id: string, now = Date.now()) {
-  const e = Math.floor(now / 1000) + LINK_DAYS * 86400;
+  id = id.toLowerCase(); const e = Math.floor(now / 1000) + LINK_DAYS * 86400;
   return `${base.replace(/\/+$/, "")}/f/${id}?e=${e}&t=${await sign(secret, `mfile|${id}|${e}`)}`;
 }
 export async function linkOk(secret: string, id: string, e: string, t: string, now = Date.now()) {
+  id = id.toLowerCase();
   if (!FID.test(id) || !/^\d{9,11}$/.test(e) || Number(e) * 1000 < now || !/^[0-9a-f]{32}$/.test(t)) return false;
   const want = await sign(secret, `mfile|${id}|${e}`); let d = 0; for (let i = 0; i < 32; i++) d |= want.charCodeAt(i) ^ t.charCodeAt(i); return d === 0;
 }
@@ -85,11 +103,24 @@ async function headers(o: R2ObjectBody, dl: boolean, sample?: Uint8Array): Promi
   return { h, body };
 }
 
-/** 올리는 사람 + 첨부 열쇠 → 32자리 16진 파일 id(같은 열쇠 = 같은 id) */
+/** 올리는 사람 + 첨부 열쇠 → 32자리 16진(옛 파일 id · 열쇠 칸 이름) */
 async function keyedId(me: string, key: string) {
   const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`mfile|${me}|${key}`)));
   return [...d.slice(0, 16)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
+/** 같은 첨부 열쇠 = 같은 파일 id(다시 보내도 하나만): 옛 판이 이미 mfiles/<32자> 로 넣었으면 그 id, 아니면 열쇠마다 UUID v7 하나를 user_pref(uk:<32자>)에 묶음 */
+async function stableId(env: Env, me: string, key: string, gen: boolean) {
+  const kid = await keyedId(me, key);
+  if (!gen) return kid;   // 스위치 꺼짐 = 예전 id(32자)
+  const old = await env.RESULTS.head(`mfiles/${kid}`).catch(() => null);
+  if (old && fileOwner(old) === me) return kid;
+  const fresh = uid.newUid();
+  const r = await env.DB.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?, ?, ?, ?) ON CONFLICT(owner, k) DO UPDATE SET at = user_pref.at RETURNING v").bind(me, "uk:" + kid, fresh, Date.now()).first<{ v: string }>();
+  return r && FID.test(r.v) ? r.v : fresh;
+}
+const genOn = (env: Env) => f7On(env.DB, uid.GEN_FLAG).catch(() => false);   // 새 파일 id 를 UUID v7 · 키 mfiles/<uuid>/<이름> 으로(스위치 켠 뒤). 읽기는 늘 두 꼴 다
+const targetOf = (id: string, name: string) => OLD.test(id) ? `mfiles/${id}` : `mfiles/${id}/${keyName(name)}`;
+const idOf = (target: string) => /^mfiles\/([0-9a-f]{32}|[0-9a-f-]{36})(?:\/|$)/.exec(target)?.[1] || "";
 /** POST /api/upload[/part|complete|abort] — JSON 제어만. 본문은 서명한 R2 주소로 간다. */
 export async function upload(c: C, me: string) {
   if (new URL(c.req.url).pathname === "/api/upload") return legacyUpload(c, me);
@@ -104,17 +135,17 @@ export async function upload(c: C, me: string) {
     if (action === "init") {
       direct.checkSize(b.size); if (!b.size) throw direct.uploadError(400, "파일이 비었어요");
       const key = String(b.key || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
-      const id = key ? await keyedId(me, key) : crypto.randomUUID().replace(/-/g, "");
-      const old = await c.env.RESULTS.head(`mfiles/${id}`);
+      const gen = await genOn(c.env), id = key ? await stableId(c.env, me, key, gen) : gen ? uid.newUid() : crypto.randomUUID().replace(/-/g, "");
+      const old = await headId(c.env.RESULTS, id);
       if (old && fileOwner(old) === me) return c.json({ ...out(id, fileName(old), old.size, old.httpMetadata?.contentType || "application/octet-stream"), done: true });
       const name = String(b.name || "file").replace(/[\x00-\x1f\x7f"\\/]/g, "_").trim().slice(0, 120) || "file";
       const mime = String(b.mime || "application/octet-stream").slice(0, 100);
       if (/[\r\n]/.test(mime)) throw direct.uploadError(400, "잘못된 파일 형식");
-      const session = await direct.begin(c.env, owner, { target: `mfiles/${id}`, size: b.size, mime, metadata: { ...ownerMeta(me), name: encodeURIComponent(name), name_encoding: "uri" } });
+      const session = await direct.begin(c.env, owner, { target: targetOf(id, name), size: b.size, mime, metadata: { ...ownerMeta(me), name: encodeURIComponent(name), name_encoding: "uri" } });
       try {
         const state = await quotaUpload(c.env.DB, me, session.id, b.size);
         if (state !== "uploading") {
-          const final = state === "done" ? await c.env.RESULTS.head(`mfiles/${id}`) : null;
+          const final = state === "done" ? await headId(c.env.RESULTS, id) : null;
           if (final && fileOwner(final) === me) return c.json({ ...out(id, fileName(final), final.size, final.httpMetadata?.contentType || mime), done: true });
           throw direct.uploadError(409, "이미 마쳤거나 취소한 올리기예요");
         }
@@ -123,22 +154,22 @@ export async function upload(c: C, me: string) {
       return c.json({ ok: true, ...session });
     }
     const session = await direct.getSession(c.env, owner, String(b.id || ""));
-    if (!/^mfiles\/[0-9a-f]{32}$/.test(session.target)) throw direct.uploadError(404, "없는 올리기");
+    if (!/^mfiles\/(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/[^/]{1,480})$/u.test(session.target)) throw direct.uploadError(404, "없는 올리기");
     if (action === "part") return c.json({ ok: true, ...await direct.part(c.env, owner, b.id, b.number) });
     if (action === "abort") { await direct.abort(c.env, owner, b.id); return c.json({ ok: true }); }
     if (action !== "complete") return c.json({ ok: false, error: "없는 제어" }, 404);
     await direct.complete(c.env, owner, b.id, b.parts, async () => {
       await quotaUpload(c.env.DB, me, b.id, session.size);
     });
-    return c.json(out(session.target.slice(7), decodeURIComponent(session.metadata.name), session.size, session.mime));
+    return c.json(out(idOf(session.target), decodeURIComponent(session.metadata.name), session.size, session.mime));
   } catch (e) { if (action === "init") e = direct.initializationError(e); return c.json({ ok: false, error: (e as Error).message, code: (e as {code?: string}).code }, ((e as { status?: number }).status || 503) as 400); }
 }
 async function legacyUpload(c: C, me: string) {
   c.header("Deprecation", "true");
   const key = (c.req.header("x-upload-key") || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
-  const kid = key ? await keyedId(me, key) : "";
+  const gen = await genOn(c.env), kid = key ? await stableId(c.env, me, key, gen).catch(() => "") : "";
   if (kid) {
-    const o = await c.env.RESULTS.head(`mfiles/${kid}`).catch(() => null);
+    const o = await headId(c.env.RESULTS, kid).catch(() => null);
     if (o && fileOwner(o) === me) return c.json({ ok: true, id: kid, name: fileName(o), size: o.size, mime: o.httpMetadata?.contentType || "application/octet-stream" });
   }
   const buf = await readCapped(c.req.raw, LEGACY_FILE_MAX);
@@ -148,8 +179,8 @@ async function legacyUpload(c: C, me: string) {
   if (q !== true) return q === null ? c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503) : tooMany(c, "올리기");   // 셈을 못 하면 받지 않음(기본 거부)
   let name = "file"; try { name = decodeURIComponent(c.req.header("x-file-name") || "file"); } catch {}
   name = name.replace(/[\x00-\x1f\x7f"\\/]/g, "_").trim().slice(0, 120) || "file";
-  const type = (c.req.header("content-type") || "application/octet-stream").slice(0, 100), id = kid || crypto.randomUUID().replace(/-/g, "");
-  try { await c.env.RESULTS.put(`mfiles/${id}`, buf, { httpMetadata: { contentType: type, contentDisposition: disposition("inline", name) }, customMetadata: { ...ownerMeta(me), name: encodeURIComponent(name), name_encoding: "uri" } }); }
+  const type = (c.req.header("content-type") || "application/octet-stream").slice(0, 100), id = kid || (gen ? uid.newUid() : crypto.randomUUID().replace(/-/g, ""));
+  try { await c.env.RESULTS.put(targetOf(id, name), buf, { httpMetadata: { contentType: type, contentDisposition: disposition("inline", name) }, customMetadata: { ...ownerMeta(me), name: encodeURIComponent(name), name_encoding: "uri" } }); }
   catch (e) { await quotaGive(c.env.DB, me, "mfiles", buf.byteLength); console.error("올리기 R2", e); return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" }); }   // 못 넣었음 — 한도는 돌려주고 다시 보내도 되는 503
   return c.json({ ok: true, id, name, size: buf.byteLength, mime: type });
 }
@@ -189,12 +220,12 @@ export function maskedFileReader(env: { RESULTS: R2Bucket; BETTER_AUTH_SECRET: s
   const now = Math.floor(Date.now() / 86400_000) * 86400_000;
   return async (text, author) => {
     if (!author || !text.includes("«가림»")) return text;
-    const re = /(^📎 .{1,200}: )https?:\/\/[^\s/?#]+\/f\/([0-9a-f]{32})(?:\/[^\s?/]{1,400})?\?e=\d{9,11}&«가림»(?=\r?$)/gmu;
+    const re = /(^📎 .{1,200}: )https?:\/\/[^\s/?#]+\/f\/([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/[^\s?/]{1,400})?\?e=\d{9,11}&«가림»(?=\r?$)/gmu;
     const matches = [...text.matchAll(re)];
     const replacements = await Promise.all(matches.map(async m => {
       const id = m[2];
       if (!files.has(id)) files.set(id, (async () => {
-        const o = await env.RESULTS.head(`mfiles/${id}`);
+        const o = await headId(env.RESULTS, id);
         return o ? { owner: fileOwner(o), link: await fileLink(env.BETTER_AUTH_SECRET, base, id, now) } : null;
       })().catch(() => null));
       const f = await files.get(id)!;
@@ -222,10 +253,12 @@ function fileName(o: { customMetadata?: Record<string, string> }) {
 }
 /** GET /api/file/:id — 올린 사람만(남의 것은 없는 것과 같게 404). ?dl = 내려받기 */
 export async function fileGet(c: C, me: string | readonly string[], id: string, dl: boolean) {   // me = 올린 사람 하나, 또는 같은 사람의 메일 여럿(owner_unified 로 회원 길에 든 주인 — 메일 넷)
+  id = id.toLowerCase();
   if (!FID.test(id)) return c.json({ error: "없는 파일" }, 404);
   return cachedServe(c, id, dl, owner => typeof me === "string" ? owner === me : me.includes(owner), () => c.json({ error: "없는 파일" }, 404));
 }
 export async function signedGet(c: C, id: string) {
+  id = id.toLowerCase();
   if (!(await linkOk(c.env.BETTER_AUTH_SECRET, id, c.req.query("e") || "", c.req.query("t") || ""))) return c.text("link expired or invalid\n", 403);
   return cachedServe(c, id, false, () => true, () => c.text("not found\n", 404));
 }
@@ -239,13 +272,14 @@ async function cachedServe(c: C, id: string, dl: boolean, allow: (owner: string)
     const h = new Headers(hit.headers); h.delete("x-bx-owner"); h.set("cache-control", "private, max-age=300"); h.set("x-bx-cache", "hit");
     return new Response(hit.body, { status: hit.status, headers: h });
   }
-  const o = await c.env.RESULTS.get(`mfiles/${id}`);
+  const rk = await fileKey(c.env.RESULTS, id); if (!rk) return nf();
+  const o = await c.env.RESULTS.get(rk);
   if (!o) return nf();
   const owner = fileOwner(o);
   if (!allow(owner)) return nf();
   let sample: Uint8Array | undefined;
   if (!dl && (/^application\/pdf\b/i.test(o.httpMetadata?.contentType || "") || /\.pdf$/i.test(fileName(o)))) {
-    const first = await c.env.RESULTS.get(`mfiles/${id}`, { range: { offset: 0, length: 5 } });
+    const first = await c.env.RESULTS.get(rk, { range: { offset: 0, length: 5 } });
     if (first) sample = new Uint8Array(await first.arrayBuffer());
   }
   const r = await headers(o, dl, sample), res = new Response(r.body, { headers: r.h });
@@ -262,7 +296,7 @@ async function cachedServe(c: C, id: string, dl: boolean, allow: (owner: string)
 export async function fileLines(env: Env, me: string, base: string, ids: unknown[]) {
   const lines: string[] = []; let bad = 0;
   for (const x of ids.slice(0, FILES_PER_MSG)) {
-    const id = String((x as { id?: unknown })?.id ?? x ?? ""), o = FID.test(id) ? await env.RESULTS.head(`mfiles/${id}`) : null;
+    const id = String((x as { id?: unknown })?.id ?? x ?? "").toLowerCase(), o = FID.test(id) ? await headId(env.RESULTS, id) : null;
     if (!o || fileOwner(o) !== me) { bad++; continue; }
     lines.push(`📎 ${fileName(o)}: ${await fileLink(env.BETTER_AUTH_SECRET, base, id)}`);
   }
@@ -271,9 +305,9 @@ export async function fileLines(env: Env, me: string, base: string, ids: unknown
 /** 녹음 첨부의 받아쓰기. files를 링크로 바꾸기 전에 내 파일·지정한 녹음만 읽는다. */
 export async function memoText(env: Env, me: string, b: Record<string, unknown>) {
   if (!b.stt) return "";
-  const id = String(b.stt), ids = Array.isArray(b.files) ? b.files.slice(0, FILES_PER_MSG).map(x => String((x as { id?: unknown })?.id ?? x ?? "")) : [];
+  const id = String(b.stt).toLowerCase(), ids = Array.isArray(b.files) ? b.files.slice(0, FILES_PER_MSG).map(x => String((x as { id?: unknown })?.id ?? x ?? "").toLowerCase()) : [];
   if (!FID.test(id) || !ids.includes(id)) throw new Error("받아쓸 녹음이 첨부에 없어요");
-  const o = await env.RESULTS.get(`mfiles/${id}`);
+  const k = await fileKey(env.RESULTS, id), o = k ? await env.RESULTS.get(k) : null;
   if (!o || fileOwner(o) !== me || !/\.wav$/i.test(fileName(o)) || !o.size || o.size > VOICE_MAX) throw new Error("받아쓸 녹음을 찾지 못했어요");
   if (await quotaTake(env.DB, me, "stt", 0, DAY_STT, Number.MAX_SAFE_INTEGER) !== true) throw new Error("오늘 받아쓰기 한도를 넘었어요");
   const r = await env.AI.run("@cf/openai/whisper", { audio: [...new Uint8Array(await o.arrayBuffer())] }) as { text?: string };
@@ -286,9 +320,9 @@ const IMG = /^image\/(png|jpe?g|gif|webp|avif|bmp)$/;   // 틀(addFiles)이 그�
 export async function draftFiles(bucket: R2Bucket, me: string, raw: unknown): Promise<DraftFile[] | null | undefined> {
   if (raw === undefined || raw === null) return undefined;
   if (!Array.isArray(raw) || raw.length > FILES_PER_MSG) return null;
-  const ids = [...new Set(raw.map(x => String((x as { id?: unknown })?.id ?? x ?? "")))];
+  const ids = [...new Set(raw.map(x => String((x as { id?: unknown })?.id ?? x ?? "").toLowerCase()))];
   if (ids.some(id => !FID.test(id))) return null;
-  const hs = await Promise.all(ids.map(id => bucket.head(`mfiles/${id}`)));
+  const hs = await Promise.all(ids.map(id => headId(bucket, id)));
   const out: DraftFile[] = [];
   for (const [i, o] of hs.entries()) {
     if (!o || fileOwner(o) !== me) return null;

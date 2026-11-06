@@ -2,6 +2,9 @@ import type { Context, Hono } from "hono";
 import * as files from "./files";
 import { ridBatch } from "./queue";
 import * as uploads from "./direct-uploads";
+import { keyUid, GEN_FLAG } from "./uid";
+import { f7On } from "./ledger";
+const canvasUrl = async (c: C, id: string) => `${c.env.PUBLIC_URL || new URL(c.req.url).origin}` + (await f7On(c.env.DB, GEN_FLAG).catch(() => false) ? `/canvas/${keyUid("a", id)}` : `/art/${id}/`);
 
 type Env = uploads.DirectEnv & { RESULTS: R2Bucket; DB: D1Database; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string; [k: string]: unknown };
 type C = Context<{ Bindings: Env }>;
@@ -456,7 +459,7 @@ async function legacyCanvas(c: C, owner: string) {
       onlyIf: oldHead ? { etagMatches: oldHead.etag } : { etagDoesNotMatch: "*" } });
     if (!written) throw failUpload(409, "그 사이 다른 판을 올렸어요. 다시 올려 주세요");
     if (old && old.ver !== ver) c.executionCtx.waitUntil(dropVer(c.env, mk, id, old.ver).catch(() => {}));
-    return c.json({ ok: true, id, ver, title, kind: kd.kind, files: paths.length, bytes: total, replaced: !!old, url: `${c.env.PUBLIC_URL || new URL(c.req.url).origin}/art/${id}/` });
+    return c.json({ ok: true, id, ver, title, kind: kd.kind, files: paths.length, bytes: total, replaced: !!old, url: await canvasUrl(c, id) });
   } catch (e) { c.executionCtx.waitUntil(dropVer(c.env, mk, id, ver).catch(() => {})); throw e; }
 }
 
@@ -523,8 +526,8 @@ export function mountMemberCanvas(app: Hono<{ Bindings: Env }>, h: CanvasHooks) 
     if (action === "complete") return uploads.complete(c.env, owner, body.id, body.parts);
     await uploads.abort(c.env, owner, body.id); return { ok: true };
   });
-  const published = (c: C, batch: CanvasUpload, replaced: boolean) => ({ ok: true, id: batch.id, ver: batch.ver, title: batch.meta.title, kind: batch.meta.kind,
-    files: batch.files.length, bytes: Number(batch.meta.bytes), replaced, url: `${c.env.PUBLIC_URL || new URL(c.req.url).origin}/art/${batch.id}/` });
+  const published = async (c: C, batch: CanvasUpload, replaced: boolean) => ({ ok: true, id: batch.id, ver: batch.ver, title: batch.meta.title, kind: batch.meta.kind,
+    files: batch.files.length, bytes: Number(batch.meta.bytes), replaced, url: await canvasUrl(c, batch.id) });
   control("/api/me/canvas/publish", async (c, owner, body) => {
     const batch = await uploadBatch(c.env, owner, body.session), { mk, id, ver, meta } = batch;
     // 표지는 썼지만 완료 영수증 전에 요청이 종료된 경우 응답만 복구한다.

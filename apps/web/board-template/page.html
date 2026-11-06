@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "772842810ecb";
+window.HB_VER = "190a097413d5";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -97,6 +97,71 @@ window.HB_DTAG = "__BX_DTAG__";
     if (t && r[4]) mSeen[c + "/" + t] = r[4];
     return t && (!r[3] || m) ? "#chat/" + c + "/" + t + (m ? "/" + m : "") : "";
   }
+  const UID = (() => {
+    const M64 = (1n << 64n) - 1n, M62 = (1n << 62n) - 1n, EPOCH = 1793890800000n;
+    const RE = /^([0-9a-f]{8})-?([0-9a-f]{4})-?(7[0-9a-f]{3})-?([89ab][0-9a-f]{3})-?([0-9a-f]{12})$/, TS = /^\d{10}\.\d{6}$/, hx = (n, w) => n.toString(16).padStart(w, "0");
+    const u8 = (s) => {
+      const o = [];
+      for (const ch of s) {
+        const c = ch.codePointAt(0);
+        if (c < 128) o.push(c);
+        else if (c < 2048) o.push(192 | c >> 6, 128 | c & 63);
+        else if (c < 65536) o.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+        else o.push(240 | c >> 18, 128 | c >> 12 & 63, 128 | c >> 6 & 63, 128 | c & 63);
+      }
+      return o;
+    };
+    const fnv = (s) => {
+      let h = 0xcbf29ce484222325n;
+      for (const b of u8(s)) {
+        h ^= BigInt(b);
+        h = h * 0x100000001b3n & M64;
+      }
+      return h;
+    };
+    const make = (ms, a, b) => {
+      const t = hx(ms, 12);
+      return `${t.slice(0, 8)}-${t.slice(8)}-${hx(0x7000n | a & 0xfffn, 4)}-${hx(0x8000n | b >> 48n & 0x3fffn, 4)}-${hx(b & 0xffffffffffffn, 12)}`;
+    };
+    const norm = (s) => {
+      const m = RE.exec(String(s || "").toLowerCase());
+      return m ? m.slice(1).join("-") : "";
+    };
+    const msg = (ts2) => {
+      if (!TS.test(ts2 || "")) return "";
+      const s = BigInt(ts2.slice(0, 10)), us = BigInt(ts2.slice(11));
+      return make(s * 1000n + us / 1000n, us % 1000n, fnv("m|" + ts2) & M62);
+    };
+    const ts = (u) => {
+      const n = norm(u);
+      if (!n) return "";
+      const h = n.replace(/-/g, ""), ms = BigInt("0x" + h.slice(0, 12)), a = BigInt("0x" + h.slice(13, 16)), b = BigInt("0x" + h.slice(16)) & M62;
+      if (a >= 1000n) return "";
+      const t = String(ms / 1000n).padStart(10, "0") + "." + String(ms % 1000n * 1000n + a).padStart(6, "0");
+      return TS.test(t) && (fnv("m|" + t) & M62) === b ? t : "";
+    };
+    const memo = {}, key = (k, v) => memo[k + "|" + v] ||= make(EPOCH, fnv("2|" + k + "|" + v), fnv(k + "|" + v) & M62);
+    return { norm, msg, ts, key };
+  })();
+  const CHK = /^(?!x_)[a-z][a-z0-9_]{1,40}$/, ARTK = /^[A-Za-z0-9]{16,40}$/;
+  const uGen = () => !!window.HB_UIDGEN;
+  const uRev = {};
+  function uKey(kind, u) {
+    const n = UID.norm(u);
+    if (!n) return "";
+    if (uRev[kind + n]) return uRev[kind + n];
+    const w = window.HB_UIDS?.[n];
+    if (w && w[0] === kind) return uRev[kind + n] = w.slice(2);
+    let ks = kind === "c" ? ["primary", "company", "personal", "dgit", "shop", ...window.HB_CH || []] : [];
+    try {
+      ks = ks.concat(window.HB_UIDK?.(kind) || []);
+    } catch (e) {
+    }
+    const k = ks.find((k2) => UID.key(kind, k2) === n) || "";
+    if (k) uRev[kind + n] = k;
+    return k;
+  }
+  const ck = (c) => UID.norm(c) ? uKey("c", c) || c : c;
   const ONE = { tree: "/nodes", arts: "/canvas", timeline: "/timeline", unread: "/unread", saved: "/saved", drafts: "/drafts", inbox: "/inbox", nf: "/nf" };
   function toPath(h) {
     h = String(h || "");
@@ -105,12 +170,17 @@ window.HB_DTAG = "__BX_DTAG__";
     if (!p[0]) return "/" + qs;
     if (p.length === 1 && ONE[p[0]]) return ONE[p[0]] + qs;
     if (p[0] === "node" && p[1]) return p[2] && /^\d{10}\.\d{6}$/.test(p[2]) ? "/nodes/" + seg(p[1]) + "?thread=" + p[2] + (qs ? "&" + qs.slice(1) : "") : "/nodes/" + seg(p.slice(1).join("/")) + qs;
-    if (p[0] === "art" && p[1] && p.length === 2) return "/canvas/" + seg(p[1]) + qs;
+    if (p[0] === "art" && p[1] && p.length === 2) return "/canvas/" + (uGen() && ARTK.test(p[1]) ? UID.key("a", p[1]) : UID.norm(p[1]) || seg(p[1])) + qs;
     if (p[0] === "w" && p[1]) return "/w/" + seg(p.slice(1).join("/")) + qs;
     if (p[0] === "agents" && (p.length === 1 || p.length === 2 && /^(channels|a2a)$/.test(p[1]))) return "/" + p.join("/") + qs;
     if (p[0] === "settings") return "/" + p.map(seg).join("/") + qs;
     if (p[0] === "m" && p[1] && p.length === 2 && AID.test(p[1])) return "/m/" + p[1] + (aSeen[p[1]] ? "-" + aSeen[p[1]] : "") + qs;
     if (p[0] === "chat" && p[1] && p.length <= 4) {
+      if (uGen()) {
+        const c = decodeURIComponent(p[1]), t = p[2] ? decodeURIComponent(p[2]) : "", m = p[3] ? decodeURIComponent(p[3]) : "";
+        const cu = CHK.test(c) ? UID.key("c", c) : "", tu = t ? UID.msg(t) : "", mu = m && m !== t ? UID.msg(m) : "";
+        if (cu && (!t || tu) && (!m || m === t || mu)) return "/chat/" + cu + (mu ? "/" + mu + "?thread=" + tu + (qs ? "&" + qs.slice(1) : "") : (tu ? "/" + tu : "") + qs);
+      }
       if (p[2] && !qs && mOn()) {
         const mp = mPath(p[1], p[2], p[3]);
         if (mp) return mp;
@@ -131,11 +201,20 @@ window.HB_DTAG = "__BX_DTAG__";
       if (k) return "#" + k + (p[0] === "settings" ? qs : p[0] === "unread" && /^\d{10}\.\d{6}$/.test(m) ? "?msg=" + m : "");
     }
     if (p[0] === "nodes" && p[1]) return "#node/" + p.slice(1).join("/") + (t && /^\d{10}\.\d{6}$/.test(t) ? "/" + t : "");
-    if (p[0] === "canvas" && p[1]) return "#art/" + p[1].replace(/-.*$/, "");
+    if (p[0] === "canvas" && p[1]) {
+      const u = UID.norm(p[1].slice(0, 36)) || UID.norm(p[1].slice(0, 32));
+      if (u) return "#art/" + (uKey("a", u) || u);
+      return "#art/" + p[1].replace(/-.*$/, "");
+    }
     if (p[0] === "w" && p[1]) return "#w/" + p.slice(1).join("/");
     if (p[0] === "agents") return "#agents" + (/^(channels|a2a)$/.test(p[1] || "") ? "/" + p[1] : "");
     if (p[0] === "settings") return "#" + p.join("/") + qs;
     if ((p[0] === "m" || p[0] === "M") && p[1] && p.length === 2) return mHash(p[1]);
+    if (p[0] === "chat" && p[1] && UID.norm(p[1])) {
+      const c = ck(p[1]), r = t ? UID.ts(t) || (/^\d{10}\.\d{6}$/.test(t) ? t : "") : "", x = p[2] ? UID.ts(p[2]) || (/^\d{10}\.\d{6}$/.test(p[2]) ? p[2] : "") : "";
+      if (p[2] && !x) return "";
+      return "#chat/" + c + (r && x ? "/" + r + "/" + x : x ? "/" + x : "");
+    }
     if (p[0] === "chat" && p[1]) return t && p[2] ? "#chat/" + p[1] + "/" + encodeURIComponent(t) + "/" + p[2] : "#chat/" + p.slice(1, 3).join("/");
     return "";
   }
@@ -146,6 +225,9 @@ window.HB_DTAG = "__BX_DTAG__";
     isApp,
     mFind,
     aPut,
+    UID,
+    uKey,
+    ck,
     hash: () => {
       const h = location.hash;
       if (!window.HB_PATHS) return h && h !== "#" ? h : "";
@@ -5627,6 +5709,7 @@ matchMedia("(max-width:640px)").addEventListener("change", () => {
   if (cur && !ans.hidden) render();
 });
 const CH = window.HB_CH || ["primary", "company", "personal", "dgit", "shop", ...AGENT_CH.map((a) => a.key)];
+window.HB_UIDK = (kind) => kind === "c" ? [...CH, ...AGENT_CH.map((a) => a.key)] : [...Object.keys(ARTS), ...Object.keys(D.relinks || {})];
 const isXCh = (k) => /^x_[a-z0-9]{6,40}$/.test(k), isCh = (k) => CH.includes(k) || isXCh(k);
 const MAIN5 = ["primary", "company", "personal", "dgit", "shop"], MAIN_ONE = { company: "네", personal: "퍼", dgit: "디", shop: "포" };
 for (const a of AGENT_CH) MAIN_ONE[a.key] ??= [...String(a.name).trim()][0] || a.key[0];
@@ -7079,7 +7162,7 @@ function toolsHTML(m, k, root, inThread) {
 function splitImgs(text) {
   const imgs = [], out = [];
   for (const line of String(text || "").split("\n")) {
-    const fl = /^\s*📎\s*(.+?):\s*https?:\/\/[^\s/]+\/f\/([0-9a-f]{32})(?:\/[^\s?/]+)?\?\S*\s*$/.exec(line);
+    const fl = /^\s*📎\s*(.+?):\s*https?:\/\/[^\s/]+\/f\/([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/[^\s?/]+)?\?\S*\s*$/.exec(line);
     if (fl && /\.(png|jpe?g|webp|gif)$/i.test(fl[1])) {
       imgs.push({ src: "api/file/" + fl[2], name: fl[1], cap: "" });
       continue;
@@ -7197,7 +7280,7 @@ const voiceOf = (fs, me) => LIVE ? (fs || []).filter(isAudio).map((f) => vnHTML(
 function voiceMessage(m) {
   const files = [...m?.files || []], lines = [];
   for (const line of String(m?.text || "").split("\n")) {
-    const a = /^\s*📎\s*(.+?\.(?:wav|webm|m4a|ogg|mp3)):\s*https:\/\/(?:boarder\.dgit\.co|boarder\.dgit\.workers\.dev)\/f\/([0-9a-f]{32})(?:\/[^\s?]+)?\?\S*\s*$/i.exec(line);
+    const a = /^\s*📎\s*(.+?\.(?:wav|webm|m4a|ogg|mp3)):\s*https:\/\/(?:boarder\.dgit\.co|boarder\.dgit\.workers\.dev)\/f\/([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/[^\s?]+)?\?\S*\s*$/i.exec(line);
     if (!a) {
       lines.push(line);
       continue;
@@ -10553,7 +10636,7 @@ function mvZoomWire(el) {
   m.addEventListener("pointerup", up);
   m.addEventListener("pointercancel", up);
 }
-const MV_FID = /(?:^|\/)api\/file\/[0-9a-f]{32}(?:[?#]|$)/;
+const MV_FID = /(?:^|\/)api\/file\/(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:[?#]|$)/;
 const MV_TXT = /\.(txt|md|csv|tsv|json|log|ya?ml|py|js|ts|sh|sql|html?|css|xml)$/i;
 function mvFile(m, it) {
   const card = `<div class="mvf"><i class="fi">${ICON.file}</i><b>${esc(it.name)}</b><small>${esc(fileMeta(it))}</small></div>`;
@@ -10918,6 +11001,16 @@ const loadArts = () => LIVE ? fetch("api/arts").then((r) => r.json()).then((j) =
 }).catch(() => {
 }) : Promise.resolve();
 function artId(href) {
+  const u = /\/canvas\/([0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i.exec(href || "");
+  if (u) {
+    const k = HBR.uKey?.("a", u[1]);
+    if (k) return artId("/canvas/" + k);
+    if (LIVE && Date.now() - (artId.at || 0) > 3e4) {
+      artId.at = Date.now();
+      setTimeout(() => loadArts(), 0);
+    }
+    return null;
+  }
   const m = /(?:claude\.ai\/artifact|\/art|#art|\/canvas)\/([A-Za-z0-9]{16,40})/.exec(href || "");
   if (!m) return null;
   const id = m[1], rl = D.relinks || {}, back = Object.keys(rl).find((k) => rl[k] === id);

@@ -1,4 +1,4 @@
-export type Out = { status: number; headers: Record<string, string>; body: Uint8Array | ReadableStream<Uint8Array>; src?: "r2" };
+export type Out = { status: number; headers: Record<string, string>; body: Uint8Array | ReadableStream<Uint8Array>; src?: "r2"; shell?: true };
 type Art = { kind: "page" | "canvas" | "doc"; title: string; at: string; acct: string; auto: string; main?: string; cv?: string; map?: Record<string, string> };
 type Index = { v: number; at: number; arts: Record<string, Art>; blobs: Record<string, string>; shim: string };
 type Env = { RESULTS: R2Bucket; DB: D1Database };
@@ -119,7 +119,7 @@ async function art(env: Env, ix: Index, parts: string[], anon = false, range?: s
   if (!rest.length) {
     const o = await env.RESULTS.get(SYS + "artcanvas.html"); if (!o) return null;
     const t = it.title.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: te.encode(td.decode(await bytes(o)).split("__TITLE__").join(t)) };
+    return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: te.encode(td.decode(await bytes(o)).split("__TITLE__").join(t)), shell: true };
   }
   if (rest[rest.length - 1] === "support.js") return { status: 200, headers: { "content-type": "text/javascript", "cache-control": "no-store" }, body: te.encode(SUPPORT_JS) };
   const name = rest.join("/"), html = suffix(name) === ".html";

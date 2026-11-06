@@ -8,11 +8,12 @@ import { fileD1, fileR2, directConfig, uploadFile } from "./file-direct-test-hel
 import { readFileSync } from "node:fs";
 
 register("./test-hooks.mjs", import.meta.url);
-const F = await import("./member-files.ts");
+const F = await import("./member-files.ts"), L = await import("./ledger.ts"), GEN = (await import("./uid.ts")).GEN_FLAG;
 
 const A = "a@example.com", B = "b@example.com", SECRET = "test-secret-not-real";
-function setup() {
+function setup(gen = true) {   // gen = 새 파일 id UUID v7 스위치(write_uid_links) — 켬이 기본, 꺼짐은 예전 32자
   const { R: R2 } = fileR2(), { DB, sq } = fileD1();
+  sq.prepare("INSERT INTO f7_flag(name, on_at, note) VALUES (?, ?, '') ON CONFLICT(name) DO UPDATE SET on_at = excluded.on_at").run(GEN, gen ? Date.now() : null);
   const env = { ...directConfig, DB, RESULTS: R2, AI: { run: async (_m: string, i: { audio: number[] }) => { ai.n++; return { text: ` 들린 글 ${i.audio.length} ` }; } }, BETTER_AUTH_SECRET: SECRET };
   const ai = { n: 0 };
   const app = new Hono();
@@ -46,7 +47,7 @@ test("음성메모: 지정한 내 WAV만 받아쓰고 빈 성공·남의 파일�
 
 test("올리기 → 보기: 올린 사람만(남은 404), 빈 몸통 400, 이름의 「/」는 바꿈", async () => {
   const s = setup(), a = await up(s, A, "a/보고서.pdf", "application/pdf");
-  assert.ok(a.ok); assert.match(a.id, /^[0-9a-f]{32}$/); assert.equal(a.name, "a_보고서.pdf");
+  assert.ok(a.ok); assert.match(a.id, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/); assert.equal(a.name, "a_보고서.pdf");
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "내용");
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": B })).status, 404);
   assert.equal((await s.init(A, { name: "empty", mime: "text/plain", size: 0 })).status, 400);
@@ -55,7 +56,7 @@ test("올리기 → 보기: 올린 사람만(남은 404), 빈 몸통 400, 이름
 test("같은 열쇠(X-Upload-Key)로 다시 올려도 파일 하나 · 올리기 한도 한 번만, 열쇠가 다르거나 남이면 따로", async () => {
   const s = setup(), put = async (who: string, key: string) => await (await s.upload(who, "p.png", "image/png", "사진", key)).json() as { ok: boolean; id: string; size: number };
   const a = await put(A, "k-1"), a2 = await put(A, "k-1"), a3 = await put(A, "k-2"), n1 = await put(A, ""), n2 = await put(A, ""), b = await put(B, "k-1");
-  assert.ok(a.ok && a2.ok); assert.equal(a2.id, a.id); assert.equal(a2.size, a.size); assert.match(a.id, /^[0-9a-f]{32}$/);
+  assert.ok(a.ok && a2.ok); assert.equal(a2.id, a.id); assert.equal(a2.size, a.size); assert.match(a.id, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.notEqual(a3.id, a.id); assert.notEqual(n1.id, n2.id); assert.notEqual(b.id, a.id);   // 열쇠 없으면 예전처럼 매번 새 파일, 남의 같은 열쇠는 다른 파일
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "사진");
 });
@@ -72,11 +73,11 @@ test("글 링크 줄: 내 파일만 「📎 이름: 서명 링크」, 남의 · 
   const s = setup(), a = await up(s, A, "보고서.pdf", "application/pdf"), b = await up(s, B, "남의.pdf", "application/pdf");
   const f = await F.fileLines(s.env as never, A, "https://b.example/", [a.id, b.id, "nope"]);
   assert.equal(f.bad, 2); assert.equal(f.lines.length, 1);
-  const m = /^📎 보고서\.pdf: https:\/\/b\.example(\/f\/[0-9a-f]{32}\?e=(\d+)&t=([0-9a-f]{32}))$/.exec(f.lines[0]); assert.ok(m, f.lines[0] + " — 만드는 링크는 id 만");
+  const m = /^📎 보고서\.pdf: https:\/\/b\.example(\/f\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\?e=(\d+)&t=([0-9a-f]{32}))$/.exec(f.lines[0]); assert.ok(m, f.lines[0] + " — 만드는 링크는 id 만");
   assert.equal((await s.call("GET", m![1])).t, "내용");
   assert.equal((await s.call("GET", m![1].replace("?", "/" + encodeURIComponent("보고서.pdf") + "?"))).t, "내용", "이미 나간 이름 꼬리 링크 /f/<id>/<이름> 도 그대로");
   assert.equal((await s.call("GET", m![1].replace(/t=[0-9a-f]/, "t=" + (m![3][0] === "0" ? "1" : "0")))).status, 403);
-  assert.match(readFileSync(new URL("./index.ts", import.meta.url), "utf8"), /app\.get\("\/f\/:id\{\[0-9a-f\]\{32\}\}\/:name", c => memberFiles\.signedGet/, "Worker 에 이름 꼬리 길(옛 링크)");
+  assert.match(readFileSync(new URL("./index.ts", import.meta.url), "utf8"), /app\.get\("\/f\/:id\{[^"]+\}\/:name", c => memberFiles\.signedGet/, "Worker 에 이름 꼬리 길(옛 링크)");
   const old = await F.fileLink(SECRET, "https://b.example", a.id, Date.now() - 8 * 86400_000);
   assert.equal((await s.call("GET", old.replace("https://b.example", ""))).status, 403, "7일 지난 링크");
   assert.equal(await F.linkOk("other-secret", a.id, m![2], m![3]), false, "다른 비밀값으로 만든 서명 아님");
@@ -176,7 +177,7 @@ test("직접 올리기 예약 영수증: init 재시도·완료 재시도는 한
   s.sq.prepare("UPDATE direct_upload SET expires=? WHERE id=?").run(Date.now() - 1, abandoned.id);
   const direct = await import("./direct-uploads.ts"); await direct.sweep(s.env as never);
   assert.deepEqual(usage(), { n: 1, b: 6 });
-  assert.ok(await s.env.RESULTS.head(`mfiles/${done.id}`));
+  assert.ok(await F.fileKey(s.env.RESULTS, done.id));
 });
 
 test("회원 파일 500MiB 경계는 JSON 선언으로 검증 · 다른 회원의 제어 세션 거절", async () => {
@@ -256,10 +257,10 @@ test('0093 이주 전에도 raw 첨부는 유지, 키가 있는 새 init은 준�
 
 test("주인 메일은 R2 에 원문으로(점진 배포 중 옛 Worker 가 원문과 견줘 404), 읽기는 원문 · 인코딩 둘 다", async () => {
   const s = setup(), a = await up(s, A, "사진.png", "image/png");
-  const o = await (s.env.RESULTS as any).head(`mfiles/${a.id}`);
+  const k = (await F.fileKey(s.env.RESULTS, a.id))!, o = await (s.env.RESULTS as any).head(k);
   assert.equal(o.customMetadata.owner, A); assert.equal(o.customMetadata.owner_encoding, undefined);
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "내용");
-  await (s.env.RESULTS as any).put(`mfiles/${a.id}`, new TextEncoder().encode("옛 판"), { customMetadata: { owner: encodeURIComponent(A), owner_encoding: "uri" } });   // 앞 판이 남긴 인코딩 꼴도 열림
+  await (s.env.RESULTS as any).put(k, new TextEncoder().encode("옛 판"), { customMetadata: { owner: encodeURIComponent(A), owner_encoding: "uri" } });   // 앞 판이 남긴 인코딩 꼴도 열림
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "옛 판");
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": B })).status, 404);
 });
@@ -275,4 +276,32 @@ test("시작 요청이 JSON 이 아니거나 객체가 아니어도 400 에 code
     const r = await s.rawCall("POST", "/api/upload/init", { "x-test-user": A, "content-type": "application/json" }, body);
     assert.equal(r.status, 400); assert.equal(((await r.json()) as { code?: string }).code, "direct_upload_rejected");
   }
+});
+
+test("R2 키 = mfiles/<uuid v7>/<안전한 이름> · 링크는 UUID 만 · 내려받기 이름은 원래 이름 · 대문자 id 도 열림 · 옛 32자 파일은 옮기지 않고 그대로", async () => {
+  const s = setup(), a = await up(s, A, "회의 록 (최종)?.pdf", "application/pdf");
+  const k = (await F.fileKey(s.env.RESULTS, a.id))!;
+  assert.equal(k, `mfiles/${a.id}/회의_록_최종_.pdf`, "키 = UUID/이름(글자 · 숫자 · . _ - 만)");
+  const r = await s.call("GET", `/api/file/${a.id}?dl`, { "x-test-user": A });
+  assert.equal(r.status, 200); assert.match(r.h.get("content-disposition") || "", new RegExp("filename\\*=UTF-8''" + encodeURIComponent("회의 록 (최종)?.pdf").replace(/[()]/g, x => "%" + x.charCodeAt(0).toString(16).toUpperCase()) + "$"), "원래 이름 그대로");
+  assert.equal((await s.call("GET", `/api/file/${a.id.toUpperCase()}`, { "x-test-user": A })).t, "내용", "대문자 id");
+  const [line] = (await F.fileLines(s.env as never, A, "https://b.example", [a.id])).lines;
+  assert.ok(!line.includes("mfiles") && !line.includes("회의_록"), "링크에 키를 드러내지 않음: " + line);
+  assert.equal((await s.call("GET", line.split(": ")[1].replace("https://b.example", "").replace(a.id, a.id.toUpperCase()))).t, "내용", "대문자 서명 링크도");
+  // 옛 판이 넣은 파일(mfiles/<32자>, 옮기지 않음)
+  const old = "0123456789abcdef0123456789abcdef";
+  await (s.env.RESULTS as any).put(`mfiles/${old}`, new TextEncoder().encode("옛 파일"), { httpMetadata: { contentType: "text/plain" }, customMetadata: { owner: A, name: encodeURIComponent("옛.txt"), name_encoding: "uri" } });
+  assert.equal((await s.call("GET", `/api/file/${old}`, { "x-test-user": A })).t, "옛 파일");
+  const ol = (await F.fileLines(s.env as never, A, "https://b.example", [old])).lines[0];
+  assert.match(ol, /\/f\/0123456789abcdef0123456789abcdef\?e=/); assert.equal((await s.call("GET", ol.split(": ")[1].replace("https://b.example", ""))).t, "옛 파일");
+  assert.equal(F.keyName("../../etc/passwd"), "etc_passwd"); assert.equal(F.keyName(""), "file"); assert.equal(F.keyName("가".repeat(300)).length, 120);
+});
+
+test("스위치 꺼짐: 새 파일은 예전 꼴(32자 id · mfiles/<id>) — 배포 사이 옛 Worker 도 열 수 있게", async () => {
+  await L.setFlag((await import("./file-direct-test-helper.ts")).fileD1().DB, "x_reset", false);   // 스위치 캐시 비우기
+  const s = setup(false), a = await up(s, A, "옛꼴.txt", "text/plain");
+  assert.match(a.id, /^[0-9a-f]{32}$/);
+  assert.ok(await (s.env.RESULTS as any).head(`mfiles/${a.id}`));
+  assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "내용");
+  await L.setFlag((await import("./file-direct-test-helper.ts")).fileD1().DB, "x_reset", false);
 });

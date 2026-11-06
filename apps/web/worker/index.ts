@@ -113,6 +113,7 @@ addTools(hosted.tools);
 import * as live from "./live";
 import * as queue from "./queue";
 import * as bxs from "./bxs";
+import * as uid from "./uid";
 
 type Env = AuthEnv & PH & directUploads.DirectEnv & { SNAP: DurableObjectNamespace<import("./board").BoardSnap>; BRIDGE: DurableObjectNamespace<import("./bridge").Bridge>; RELAY_TOKEN: string; LEDGER_TOKEN?: string; ADMIN_TOKEN?: string; ENGINE: DurableObjectNamespace<Engine>; RESULTS: R2Bucket; CF_VERSION_METADATA: WorkerVersionMetadata; CONNECTOR_KEY?: string; SEARCH: DurableObjectNamespace<import("./search").Search>; AI: Ai; VOYAGE_API_KEY?: string; OB_EXPORT_SIGN_KEY?: string; OB_EXPORT_URL?: string; PUSH: DurableObjectNamespace<import("./push-do").Pusher>; VAPID_PRIVATE?: string; SOURCE_URL?: string; FAULT_OK?: string };
 const app = new Hono<{ Bindings: Env }>();
@@ -229,7 +230,7 @@ function bridgeSeg(req: Request, total: number, h: Record<string, string>) {
   if (!doMs) return seg(req, "bridge", total);
   seg(req, "hop", total - doMs); seg(req, "relay", doMs - board); seg(req, "board", board);
 }
-const normPath = (p: string) => p.replace(/\/\d{10}\.\d{6}/g, "/:ts").replace(/\/[0-9a-f]{32}(\.[a-z0-9]+)?/g, "/:hash").replace(/\/(?:%25|%)\d+/g, "/:pane")
+const normPath = (p: string) => p.replace(/\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g, "/:uid").replace(/\/\d{10}\.\d{6}/g, "/:ts").replace(/\/[0-9a-f]{32}(\.[a-z0-9]+)?/g, "/:hash").replace(/\/(?:%25|%)\d+/g, "/:pane")
   .replace(/\/[A-Za-z0-9_-]{16,}/g, "/:id").replace(/\/[^/]+\.dc\.html$/, "/:board.dc.html").replace(/\/[^/]+\.[A-Za-z0-9]{1,5}$/, "/:file").slice(0, 80);
 app.use("*", async (c, next) => {
   const t0 = Date.now(), rec = { seg: {} as Record<string, number>, who: undefined as string | undefined, dev: undefined as string | undefined, cookies: [] as string[], quiet: undefined as boolean | undefined }, meter = newMeter();
@@ -759,8 +760,8 @@ app.get("/api/agent/result/:id", async c => {
   const body = o.customMetadata?.vault === "1" ? await openBlob(c.env as unknown as VaultEnv, ctx.person, k, await o.arrayBuffer()) : o.body;   // 봉한 것만 풂 — 옛 것은 지금처럼 흘려보냄
   return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 });
-app.get("/f/:id{[0-9a-f]{32}}", c => memberFiles.signedGet(c as never, c.req.param("id")));
-app.get("/f/:id{[0-9a-f]{32}}/:name", c => memberFiles.signedGet(c as never, c.req.param("id")));
+app.get("/f/:id{[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}}", c => memberFiles.signedGet(c as never, c.req.param("id")));
+app.get("/f/:id{[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}}/:name", c => memberFiles.signedGet(c as never, c.req.param("id")));
 app.route("/", legal);   // 개인정보 처리방침 · 약관(legal.ts) — 구글 동의 화면 링크
 app.post("/mcp", async c => { const ctx = await agentCtx(c); if (ctx === "mismatch") return c.json({ error: "신원 불일치" }, 403); if (!ctx) return c.json({ error: "토큰" }, 401);
   const m = await c.req.raw.clone().json().catch(() => null) as { method?: string; params?: { name?: unknown } } | null, tn = String(m?.params?.name || "");
@@ -784,7 +785,7 @@ const CTRL_ALL = /[\x00-\x1f\x7f-\x9f]/g;
 const clean = (v: unknown, n: number) => String(v ?? "").replace(CTRL_ALL, "").trim().slice(0, n);
 const docNav = (c: { req: { method: string; header(k: string): string | undefined } }, url: URL) =>
   c.req.method === "GET" && c.req.header("sec-fetch-dest") === "document" && !url.pathname.startsWith("/api/") && url.pathname !== "/";
-export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/[A-Za-z0-9]{16,40}(?:-[^/]{0,400})?)?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/\d{10}\.\d{6})?|m\/(?:[a-z][0-9a-z]{6,12}(?:_[0-9a-z]{6,12})?|\d{1,8}(?:-\d{1,4}){0,2}(?:\.\d{1,5})?)(?:-[^/]{0,400})?|w\/[^/]+|settings(?:\/[^/]+){0,2}|task-status(?:\/[\w.-]{1,40})?|device-sessions|agents(?:\/(?:channels|a2a))?)\/?$/;
+export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/(?:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-7[0-9A-Fa-f]{3}-[89abAB][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}|[A-Za-z0-9]{16,40}(?:-[^/]{0,400})?))?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/(?:\d{10}\.\d{6}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-7[0-9A-Fa-f]{3}-[89abAB][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}))?|m\/(?:[a-z][0-9a-z]{6,12}(?:_[0-9a-z]{6,12})?|\d{1,8}(?:-\d{1,4}){0,2}(?:\.\d{1,5})?)(?:-[^/]{0,400})?|w\/[^/]+|settings(?:\/[^/]+){0,2}|task-status(?:\/[\w.-]{1,40})?|device-sessions|agents(?:\/(?:channels|a2a))?)\/?$/;
 const NOFRAME = { "cache-control": "no-store", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" };
 const sameSite = (c: Context<{ Bindings: Env }>) => c.req.header("x-hb") === "1" && ["same-origin", "none", undefined].includes(c.req.header("sec-fetch-site"));
 async function deviceOf(c: Context<{ Bindings: Env }>, opt: { watch?: boolean; harness?: boolean; ownercli?: boolean } = {}) {
@@ -2341,7 +2342,7 @@ app.post("/api/dev/ch", async c => {
 let artKinds: { at: number; ch: string; kinds: Record<string, string> } | null = null;
 async function isCanvas(env: Env, ch: string, id: string) { return (await artKind(env, ch, id)) === "canvas"; }
 async function artKind(env: Env, ch: string, id: string): Promise<string> {
-  if (ch === "owner" && await ledger.f7On(env.DB, "read_files")) { const ix = await files.index(env); if (ix) return ix.arts[id]?.kind || ""; }
+  if (ch === "owner" && await ledger.f7On(env.DB, "read_files")) { const ix = await files.index(env); if (ix && id in ix.arts) return ix.arts[id]?.kind || ""; }
   const age = artKinds && artKinds.ch === ch ? Date.now() - artKinds.at : Infinity;
   if (age > 60_000 || (age > 5_000 && !(id in artKinds!.kinds))) {
     const r = await boardCall(env, ch, { method: "GET", path: "/api/arts", headers: { accept: "application/json" } }).catch(() => null);
@@ -2677,7 +2678,24 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   } else if (hop.log && !j.already) await queue.ridBatch(c.env.DB, qrid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at, wid) VALUES (?,?,?,?,?,?,?)").bind(me, hop.log.win.slice(0, 120), "me", hop.log.text.slice(0, 4000), hop.log.thread ?? null, Date.now(), wid)]).catch(e => console.error("노드 채팅 줄", e));
   return c.json({ ...j, ok: true, rid, state: "ok", channel: "primary", ...(pre ? { ts: memberBoard.tsOf(pre.at, pre.id) } : {}) });
 }
+export async function uidSeed(env: Env, email: string, path: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const ch = /^\/chat\/([^/]+)/.exec(path)?.[1], cu = ch ? uid.norm(ch) : "";
+  if (cu && !uid.uidKey("c", cu, uid.DEFAULT_CH)) {
+    const rows = await env.DB.prepare("SELECT id FROM wl_talk_chan").all<{ id: string }>().then(r => r.results.map(x => x.id)).catch(() => [] as string[]);
+    const k = uid.uidKey("c", cu, rows.filter(x => uid.CHAN_KEY.test(x))); if (k) out[cu] = "c:" + k;
+  }
+  const cv = /^\/canvas\/([^/]+)/.exec(path)?.[1], au = cv ? uid.norm(cv.slice(0, 36)) || uid.norm(cv.slice(0, 32)) : "";
+  if (au) {
+    const own = Object.keys((await files.index(env as never).catch(() => null))?.arts || {});
+    let k = uid.uidKey("a", au, own);
+    if (!k) k = uid.uidKey("a", au, Object.keys(await memberCanvas.list(env as never, email).catch(() => ({}))));
+    if (k) out[au] = "a:" + k;
+  }
+  return out;
+}
 async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: string, member = "", q = false, ea: boolean | "personal" | "x" = false) {
+  const [uids, uidGen] = await Promise.all([uidSeed(c.env, email, new URL(c.req.url).pathname).catch(() => ({})), ledger.f7On(c.env.DB, uid.GEN_FLAG).catch(() => false)]);
   // 큰 껍데기 css · js 는 /bxs 주소로(bxs.ts — 같은 차례, 고전 스크립트). 해시를 못 만들면 예전처럼 인라인
   const bx = await shellTags(c.env, c.executionCtx).catch(() => null);
   // 사람별 덧씌우기: 지금 로그인한 사람 것만. ?no_overlay=1 이면 얹지 않음(깨졌을 때 꺼내는 길). 읽기 실패는 덧씌우기 없이 그대로 그림
@@ -2687,7 +2705,7 @@ async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: s
       .on('meta[name="apple-mobile-web-app-title"]', { element: e => { e.setAttribute("content", "보더"); } })
       .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (!/^#(chat|art\\/|arts|node\\/|tree|w\\/|inbox|unread|saved|drafts|timeline|nf|settings|t=|board)/.test(location.hash) && location.pathname && location.pathname !== '/') { var hp = location.pathname, hq = new URLSearchParams(location.search), hm; if (hp === '/nodes') HB_HASH0 = '#tree'; else if (hm = /^\\/nodes\\/([^/]+)$/.exec(hp)) HB_HASH0 = '#node/' + hm[1] + (/^\\d{10}\\.\\d{6}$/.test(hq.get('thread') || '') ? '/' + hq.get('thread') : ''); else if (hm = /^\\/canvas\\/([A-Za-z0-9]{16,40})(?:-[^/]*)?$/.exec(hp)) HB_HASH0 = '#art/' + hm[1]; else if (hp === '/canvas') HB_HASH0 = '#arts'; else if (hm = /^\\/chat\\/([^/]+)(?:\\/([^/]+))?$/.exec(hp)) HB_HASH0 = '#chat/' + hm[1] + (hm[2] ? (hq.get('thread') ? '/' + hq.get('thread') + '/' + hm[2] : '/' + hm[2]) : ''); else if (hp === '/unread' && /^\\d{10}\\.\\d{6}$/.test(hq.get('msg') || '')) HB_HASH0 = '#unread?msg=' + hq.get('msg'); else if (hm = /^\\/(inbox|unread|saved|drafts|timeline|nf|w\\/.+|settings(?:\\/.*)?)$/.exec(hp)) HB_HASH0 = '#' + hm[1]; } document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000); if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|unread(\\?msg=\\d{10}\\.\\d{6})?$|saved$|drafts$|settings(\\/|$|\\?))/.test(window.HB_HASH0)) { document.documentElement.classList.add('bx-route'); setTimeout(function(){ document.documentElement.classList.remove('bx-route') }, 35000) }</script>", { html: true });
         e.prepend(`<script>window.HBR=window.HBR||{hash:function(){return location.hash},same:function(a,b){return a===b},go:function(h){location.hash=h},toHash:function(){return ''},toPath:function(){return null},isApp:function(){return false},url:function(h){return location.origin+'/'+h}}</script>`, { html: true });
-        if (!ea && !emb) e.prepend(`<base href="/"><script>window.HB_PATHS=1</script>`, { html: true });
+        if (!ea && !emb) e.prepend(`<base href="/"><script>window.HB_PATHS=1${uidGen ? ";window.HB_UIDGEN=1" : ""}${Object.keys(uids).length ? ";window.HB_UIDS=" + JSON.stringify(uids).replace(/</g, "\\u003c") : ""}</script>`, { html: true });
         const pg0 = ({ "/task-status": "tasks", "/device-sessions": "devices" } as Record<string, string>)[new URL(c.req.url).pathname.replace(/^(\/task-status)\/[\w.-]{1,40}$/, "$1").replace(/\/$/, "")];   // /task-status/<요청 id> = 그 요청 세부
         if (pg0) e.prepend(`<script>window.BX_PG0 = "${pg0}"; window.BX_PG0_PATH = ${JSON.stringify(new URL(c.req.url).pathname)}</script>`, { html: true });   // 경로는 위 꼴(글자 · 숫자 · . _ -)만 지난 것   // 상태 페이지 주소로 열림(status.js) — 보드 첫 그리기가 주소를 /nodes 로 바꾸기 전에 남겨 둠
         if (ea === "x") e.prepend(`<script>window.BX_X=1</script>`, { html: true });   // /x = 피드 화면(x.js 가 같은 몸통 위에 피드 · 유리 막대를 얹음)
@@ -2705,6 +2723,7 @@ export function msgPathLower(path: string): string | null {
 app.all("*", async c => {
   let url = new URL(c.req.url);
   if (c.req.method === "GET" || c.req.method === "HEAD") { const lo = msgPathLower(url.pathname); if (lo) return c.redirect(lo + url.search, 301); }
+  if (c.req.method === "GET" || c.req.method === "HEAD") { const to = uid.newPath(url.pathname, url.search); if (to && APP_PATH.test(to.split("?")[0]) && await ledger.f7On(c.env.DB, uid.GEN_FLAG).catch(() => false)) return c.redirect(to, 301); }   // 스위치 켠 뒤만(꺼짐 = 받기만)
   if ((c.req.method === "GET" || c.req.method === "HEAD") && APP_PATH.test(url.pathname)) url = new URL("/", url);   // 보더 화면 경로 = 같은 보드(주소창은 그대로 — ?thread= 같은 물음 글은 화면이 읽음)
   // React 꾸러미(/assets, 해시 이름)와 기본 봇 그림은 누구에게나 Boarder 것 — 주인이 /device 를 열어도 빈 화면이 안 되게(보드에는 /assets 가 없음)
   if (/^\/(assets|landing)\//.test(url.pathname) || url.pathname === "/icons/primary-blob.svg" || url.pathname === "/node-rules.md") return c.env.ASSETS.fetch(c.req.raw);
@@ -2812,7 +2831,7 @@ app.all("*", async c => {
           }
           if (url.pathname === "/api/topics" || url.pathname === "/api/history") return (await ownSnapRead(c, url)) ?? queue.retrySafe(c);
         }
-        const fm = /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, ownU ? ownerMails(c.env, s.user.email) : me, fm[1], url.searchParams.has("dl"));
+        const fm = /^\/api\/file\/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, ownU ? ownerMails(c.env, s.user.email) : me, fm[1], url.searchParams.has("dl"));
         if (url.pathname === "/api/sesslog") {
           const hs = await memberBoard.sessLogHarness(c.env.DB, me, url.searchParams.get("pane") || "", url.searchParams.get("name") || "", (p, n) => engineLog(c.env, p, n));
           if (hs) return c.json(hs.body, hs.status as 200, { "cache-control": "no-store" });
@@ -2893,7 +2912,7 @@ app.all("*", async c => {
       if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
       return url.pathname.startsWith("/api/upload") ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
     }
-    const fm = c.req.method === "GET" || c.req.method === "HEAD" ? /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname) : null;
+    const fm = c.req.method === "GET" || c.req.method === "HEAD" ? /^\/api\/file\/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$/.exec(url.pathname) : null;
     if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));
   }
   // 파일 붙은 글: 회원과 같이 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 다리로(창이 링크로 받아 감)
@@ -3056,7 +3075,8 @@ app.all("*", async c => {
   for (const h of PASS_RES) if (r.headers[h]) out.set(h, r.headers[h]);
   out.set("x-content-type-options", "nosniff");
   if (fr) fromR2(out);
-  const canvasShell = !!shell && await isCanvas(c.env, chOf(c), shell[1]);
+  const bridgeCsp = !fr && Object.keys(r.headers || {}).some(k => k.toLowerCase() === "content-security-policy");
+  const canvasShell = !!shell && (fr ? fr.shell === true : !bridgeCsp && await isCanvas(c.env, chOf(c), shell[1]));
   if (/^\/(art|_blob)\//.test(url.pathname) && !canvasShell)
     out.set("content-security-policy", "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads");   // 다리 왕복(릴레이 · 보드 포함) — 느릴 때 어디서인지
   const unzip = () => { if (r.headers["content-encoding"] !== "gzip") return r.body as unknown as BodyInit; out.delete("content-encoding"); return new Response(r.body as unknown as BodyInit).body!.pipeThrough(new DecompressionStream("gzip")); };

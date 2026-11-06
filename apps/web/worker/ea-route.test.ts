@@ -67,7 +67,7 @@ function setup() {
   const ASSETS = { fetch: async (r: Request) => new Response(new URL(r.url).pathname === "/" ? "<!doctype html><html><head></head><body><div id=root>로그인 화면</div></body></html>" : "nf", { headers: { "content-type": "text/html" } }) };
   const env = { DB: D1, ASSETS, BRIDGE: bridgeNs(paths), BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
   const get = async (path: string, who: string | null = OWNER, method = "GET") => app.fetch(new Request("https://example.test" + path, { method, redirect: "manual", headers: { accept: "text/html", "sec-fetch-dest": "document", ...(who ? { cookie: await cookie(who) } : {}) } }), env, { waitUntil() {}, passThroughOnException() {} });
-  return { paths, get };
+  return { paths, get, env };
 }
 
 test("주인 /es: / 와 같은 몸통(다리 path 「/」)에 틀 + head 맨 앞 BX_EA · ea.css · ea.js · ea-secret.js(틀 스크립트 뒤)", async () => {
@@ -106,15 +106,15 @@ test("머리 글 주소 대기: 채팅 · 스레드 · 캔버스 · 노드 · �
     new Function("window", "location", "document", "history", "setTimeout", head!)(w, loc, doc, hist, () => 0);
     return { route: cls.has("bx-route"), boot: cls.has("bx-boot"), hash: loc.hash, h0: w.HB_HASH0 };
   };
-  for (const h of ["#chat/primary/1793681208.264390", "#chat/primary", "#art/abcdefghijklmnop", "#node/%2512", "#w/Q-1", "#inbox", "#unread", "#saved", "#drafts", "#settings", "#settings/nodes"]) {
+  for (const h of ["#chat/primary/1793611111.200000", "#chat/primary", "#art/abcdefghijklmnop", "#node/%2512", "#w/Q-1", "#inbox", "#unread", "#saved", "#drafts", "#settings", "#settings/nodes"]) {
     const r = run(h); assert.ok(r.route && r.boot, h + " → bx-route"); assert.equal(r.h0, h);
   }
   const atPath = (pathname: string, search: string) => { const w: Record<string, unknown> = {}, doc = { documentElement: { classList: { add() {}, remove() {} } } }; new Function("window", "location", "document", "history", "setTimeout", head!)(w, { hash: "", pathname, search }, doc, { state: null, replaceState() {} }, () => 0); const g = globalThis as any, h = g.HB_HASH0; delete g.HB_HASH0; return h; };   // 경로 갈래는 맨 이름 HB_HASH0 에 씀(브라우저에선 window 와 같음)
-  assert.equal(atPath("/nodes/abc", "?thread=1793681208.264390"), "#node/abc/1793681208.264390", "새로 고침 · 공유한 노드 스레드 주소");
+  assert.equal(atPath("/nodes/abc", "?thread=1793611111.200000"), "#node/abc/1793611111.200000", "새로 고침 · 공유한 노드 스레드 주소");
   assert.equal(atPath("/nodes/abc", "?thread=../x"), "#node/abc", "틀린 스레드 값은 버림");
   assert.equal(atPath("/nodes/abc", ""), "#node/abc");
-  for (const h of ["", "#tree", "#timeline", "#arts", "#t=1793681208.264390&c=primary", "#nf"]) assert.equal(run(h).route, false, (h || "빈 주소") + " → 가림막 없음");
-  for (const h of ["#chat/primary", "#chat/primary/1793681208.264390", "#art/abcdefghijklmnop", "#node/%2512", "#inbox", "#settings/connectors", "#t=1793681208.264390&c=primary"]) assert.equal(run(h).hash, h, h + " → 주소 그대로(#tree 를 거치지 않게)");
+  for (const h of ["", "#tree", "#timeline", "#arts", "#t=1793611111.200000&c=primary", "#nf"]) assert.equal(run(h).route, false, (h || "빈 주소") + " → 가림막 없음");
+  for (const h of ["#chat/primary", "#chat/primary/1793611111.200000", "#art/abcdefghijklmnop", "#node/%2512", "#inbox", "#settings/connectors", "#t=1793611111.200000&c=primary"]) assert.equal(run(h).hash, h, h + " → 주소 그대로(#tree 를 거치지 않게)");
   const css = (await Promise.all([...html.matchAll(/\/bxs\/([0-9a-f]{32})\.css/g)].map(async m => (await get(`/bxs/${m[1]}.css`)).text()))).join("\n");
   assert.ok(css.includes("html.bx-route .wrap{visibility:hidden}") && css.includes("html.bx-route body::after"), "틀 css: 가림막 · 스피너");
 });
@@ -185,7 +185,7 @@ test("/ea/ → 301 /ea, 회원 /ea → /es(퍼스널 리드가 없음)", async (
 });
 
 test("보더 화면 경로: /nodes · /chat/<채널>/<스레드> · /canvas/<id> · /inbox · /settings/… = / 와 같은 보드 + 경로 모드 머리(base · HB_PATHS), 비슷한 다른 주소는 아님", async () => {
-  for (const p of ["/nodes", "/nodes/%2512", "/chat/primary", "/chat/primary/1793681208.264390", "/chat/team/1793681208.264390?thread=1700000000.000001", "/canvas", "/canvas/abcdefghijklmnop", "/inbox", "/unread", "/timeline", "/settings/nodes", "/w/Q-1", "/nf"]) {
+  for (const p of ["/nodes", "/nodes/%2512", "/chat/primary", "/chat/primary/1793611111.200000", "/chat/team/1793611111.200000?thread=1793600000.100000", "/canvas", "/canvas/abcdefghijklmnop", "/inbox", "/unread", "/timeline", "/settings/nodes", "/w/Q-1", "/nf"]) {
     const { paths, get } = setup();
     const r = await get(p);
     assert.equal(r.status, 200, p);
@@ -235,4 +235,20 @@ test("/feed/ → 301 /feed, 옛 /x → 301 /feed, 회원 /feed → 자기 화면
   const n = await get("/feed", null);
   assert.ok((await n.text()).includes("로그인 화면"));
   assert.deepEqual(paths, []);
+});
+
+test("UUID 주소: 받기는 늘 · 스위치 write_uid_links 켜면 옛 꼴 · 대문자 → 301 새 주소 + 화면에 HB_UIDGEN, 끄면 옛 꼴 그대로 200", async () => {
+  const U = await import("./uid.ts"), L = await import("./ledger.ts");
+  const cp = U.keyUid("c", "primary"), cd = U.keyUid("c", "team"), t1 = U.msgUid("1793611111.200000"), t0 = U.msgUid("1793600000.100000"), ca = U.keyUid("a", "abcdefghijklmnop");
+  const fresh = ["/chat/" + cp, `/chat/${cp}/${t1}`, `/chat/${cd}/${t1}?thread=${t0}`, `/canvas/${ca}`];
+  { const s = setup(); await L.setFlag(s.env.DB as never, U.GEN_FLAG, false);
+    for (const p of [...fresh, "/chat/primary/1793611111.200000", "/canvas/abcdefghijklmnop"]) { const r = await s.get(p); assert.equal(r.status, 200, "꺼짐 " + p); assert.ok(!(await r.text()).includes("HB_UIDGEN"), "꺼짐 = 만들기 안 함 " + p); } }
+  const s = setup(); await L.setFlag(s.env.DB as never, U.GEN_FLAG, true);
+  for (const [p, to] of [["/chat/primary", `/chat/${cp}`], ["/chat/primary/1793611111.200000", `/chat/${cp}/${t1}`], ["/chat/team/1793611111.200000?thread=1793600000.100000", `/chat/${cd}/${t1}?thread=${t0}`],
+    ["/canvas/abcdefghijklmnop", `/canvas/${ca}`], [`/chat/${cp.toUpperCase()}/${t1.toUpperCase()}`, `/chat/${cp}/${t1}`], [`/canvas/${ca.toUpperCase()}`, `/canvas/${ca}`]]) {
+    const r = await s.get(p), l = new URL(r.headers.get("location") || "/", "https://x");
+    assert.equal(r.status, 301, p); assert.equal(l.pathname + l.search, to, p);
+  }
+  for (const p of fresh) { const r = await s.get(p); assert.equal(r.status, 200, p); const h = await r.text(); assert.ok(h.includes("window.HB_UIDGEN=1") && h.includes("window.HB_PATHS=1"), p); }
+  await L.setFlag(s.env.DB as never, U.GEN_FLAG, false);
 });

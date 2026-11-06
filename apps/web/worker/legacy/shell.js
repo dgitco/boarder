@@ -708,7 +708,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       const pre0 = () => { window.HB_ART0?.remove(); window.HB_ART0 = null; };
       if (k !== 'art'){ S.artBack = null; if (MVv()) mvClose(); pre0(); }
       if (k !== 'agents') agClose();
-      if (k === 'art'){ const aid = () => ARTS[a] ? a : window.artId?.('#art/' + a);
+      if (k === 'art'){ const aid = () => ARTS[a] ? a : window.artId?.('#art/' + (HBR.uKey?.('a', a) || a));
         if (MVv() !== a){ if (await linkUntil(aid)){ if (gen === G && !/^#settings(\/|$|\?)/.test(HBR.hash())){ if (!ans.hidden) closeAns(); const id = aid(); openArt(id); if (id !== a){ history.replaceState(history.state, '', '#art/' + id); moved = true; } } } else if (gen === G){ pre0(); linkFail(); } } }
       else if (k === 'chat' && CH.includes(a)){
         if (b && typeof window.HBOpenCard === 'function' && !(chatMode() && (cur.chan === a || (cur.chan === 'primary' && CS.th?.k === a)) && CS.th?.ts === b)){   // 합친 #메인 안에 이미 연 그 스레드면 그대로
