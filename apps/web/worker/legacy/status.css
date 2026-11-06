@@ -158,7 +158,7 @@ html.bx .bx-stp[data-pg="tasks"]{max-width:1640px}
 .bx-tb-today .nums b{display:block;font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2}
 .bx-tb-today .nums small{display:block;color:var(--mut);font-size:11.5px;line-height:1.35;overflow-wrap:anywhere}
 .bx-tb-today .nums .ok b{color:var(--ok)}.bx-tb-today .nums .bad b{color:var(--bad)}.bx-tb-today .nums .dec b{color:var(--dg)}
-.bx-tb-today .note{color:var(--mut);font-size:12px;margin:8px 0 0;overflow-wrap:anywhere}
+.bx-tb-today .bx-tb-note{color:var(--mut);font-size:12px;margin:8px 0 0;overflow-wrap:anywhere}
 .bx-tb-today .decs{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
 .bx-tb-today .decs h3{font-size:14px;margin:0 0 6px;color:var(--dg)}
 .bx-tb-today .decs .d{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-top:1px dashed var(--line);font-size:13px;flex-wrap:wrap}
@@ -183,7 +183,7 @@ html.bx .bx-stp[data-pg="tasks"]{max-width:1640px}
 .bx-tb-ar{margin:22px 0 4px;padding-bottom:6px;border-bottom:2px solid var(--acc);font-size:16px;font-weight:700}
 .bx-tb-ar span{color:var(--mut);font-size:13px;font-weight:400}
 .bx-tb-dh{display:flex;align-items:baseline;gap:10px;margin:22px 0 10px}
-.bx-tb-dh h3{margin:0;font-size:16px;font-weight:700}.bx-tb-dh span{color:var(--mut);font-size:13px}
+.bx-tb-dh h3{margin:0;font-size:16px;font-weight:700;flex:none;white-space:nowrap}.bx-tb-dh span{color:var(--mut);font-size:13px;min-width:0}   /* 폰 폭에서 부서 이름이 줄어 세로로 접히지 않게 */
 .bx-tb-dg{color:var(--dg)}
 .bx-tb-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:12px}
 .bx-tb-c{display:flex;flex-direction:column;gap:4px;cursor:pointer;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
@@ -202,7 +202,7 @@ html.bx .bx-stp[data-pg="tasks"]{max-width:1640px}
 .bx-tb-ft{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--mut);margin-top:2px}
 .bx-tb-ft .ow{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bx-tb-ft .ago{white-space:nowrap;font-variant-numeric:tabular-nums}.bx-tb-ft .ago.old{color:var(--warn);font-weight:600}
-.bx-tb-ft .go{color:var(--acc);font-size:16px}
+.bx-tb-ft .bx-tb-go{color:var(--acc);font-size:16px}
 .bx-tb-ft a{font-weight:600}
 .bx-tb-decb{font-size:12.5px;font-weight:600;color:var(--dg);background:var(--dgb);border-radius:8px;padding:4px 8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .bx-tb-decb a{color:var(--dg)}
@@ -214,7 +214,8 @@ html.bx .bx-stp[data-pg="tasks"]{max-width:1640px}
 .bx-tb-tk{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
 .bx-tb-tk h4{margin:0 0 6px;font-size:14px;font-weight:600;line-height:1.4}.bx-tb-tk h4 a,.bx-tb-tk h4 .bx-tb-n{margin-right:6px}
 .bx-tb-tk .ow{color:var(--mut);font-size:12px}
-.bx-tb-tk .lg{font-size:13px;margin:6px 0}.bx-tb-tk .lg .tm{color:var(--mut);font-size:12px;margin-right:6px}
+/* 보드 화면(board.html)의 맨 선택자(.lg 범례 네모 width:18px · 폰 .note 숨김 · .go 검은 단추)와 이름이 겹쳐 글이 접히거나 숨었음 — 상태 페이지 이름은 bx-tb- 로 */
+.bx-tb-tk .bx-tb-lg{font-size:13px;margin:6px 0}.bx-tb-tk .bx-tb-lg .tm{color:var(--mut);font-size:12px;margin-right:6px}
 .bx-tb-tk ul{margin:4px 0 0;padding-left:16px;font-size:12.5px}.bx-tb-tk li{margin:2px 0}
 .bx-tb-tk .lbl{font-size:11px;color:var(--mut);margin-top:6px}
 .bx-tb-tk.ask{border-left:3px solid var(--dg)}.bx-tb-tk.ask p{margin:4px 0;color:var(--mut);font-size:13px}

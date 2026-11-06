@@ -534,7 +534,7 @@
     el.innerHTML = header('프로필')
       + (!owner && window.BXBot ? `<div class="bxs-sech">내 아바타</div>${card('me')}` : '')
       + (bot ? `<div class="bxs-sech">${owner ? '내 아바타' : '메인 봇'}</div>${card('bot')}` : '')
-      + (bot || (!owner && window.BXBot) ? '<div class="bxs-sech">계정</div>' : '') + `<div class="bxs-list"><div class="bxs-li"><div><b>메일</b><span>${esc(me.user?.email || '')}</span></div></div><div class="bxs-li"><div><b>로그아웃</b><span>이 브라우저에서 나가요</span></div>${btn('로그아웃', 'data-out', 'sm ghost danger')}</div></div>`;
+      + (bot || (!owner && window.BXBot) ? '<div class="bxs-sech">계정</div>' : '') + `<div class="bxs-list"><div data-ue>${ueRows({emails: [{email: me.user?.primary_email || me.user?.email || '', primary: true, key: true, locked: true}], pending: []}, null)}</div><div class="bxs-li"><div><b>로그아웃</b><span>이 브라우저에서 나가요</span></div>${btn('로그아웃', 'data-out', 'sm ghost danger')}</div></div>`;
     const wire = (bpEl, P, store, done, fields) => {
       let saved = P.get(), busy = false, want = null;
       const commit = async k => {
@@ -571,8 +571,73 @@
         else { applyAccent(); document.querySelectorAll('link[rel="icon"]').forEach(l => { l.href = `/_blob/${b.fav}.png`; }); const hi = document.querySelector('#hello img'); if (hi) hi.src = `/_blob/${b.fav}.png`; }   // 회원: 파비콘 · 인사 그림(왼쪽 위 로고 · 홈 화면 아이콘은 다음에 열 때)
       }, ['seed', 'hue', 'name', 'photo']);
     }
+    const ueEl = el.querySelector('[data-ue]');
+    let UE = null, form = null;   // form: null | {step: 'mail'} | {step: 'code', email}
+    const paintUE = () => { if (UE) ueEl.innerHTML = ueRows(UE, form); const f = ueEl.querySelector('[data-uein]'); if (f && form) f.focus(); };
+    const loadUE = () => api('GET', 'api/me/emails').then(j => { if (!live()) return; UE = j; paintUE(); }).catch(() => {});
+    loadUE();
+    const busy = (b, on) => { if (b){ b.disabled = on; } };
+    const ueAct = async (t) => {
+      const b = t.closest('button');
+      if (t.closest('[data-ueadd]')){ form = {step: 'mail'}; return paintUE(); }
+      if (t.closest('[data-uecancel]')){ form = null; return paintUE(); }
+      if (t.closest('[data-uesend]')){
+        const i = ueEl.querySelector('[data-uein]'), v = String(i?.value || '').trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return toast('메일 주소를 넣어요');
+        busy(b, true);
+        try { await api('POST', 'api/me/emails', {email: v}); form = {step: 'code', email: v}; if (!UE.pending.includes(v)) UE.pending.push(v); paintUE(); toast(v + ' 로 코드를 보냈어요'); }
+        catch (err) { busy(b, false); toast(err.message); }
+        return;
+      }
+      if (t.closest('[data-uecode]')){ form = {step: 'code', email: t.closest('[data-uecode]').dataset.uecode}; return paintUE(); }
+      if (t.closest('[data-ueok]')){
+        const i = ueEl.querySelector('[data-uein]'), code = String(i?.value || '').replace(/\s/g, ''), email = form?.email;
+        if (!/^\d{6}$/.test(code)) return toast('메일로 받은 6자리 코드를 넣어요');
+        busy(b, true);
+        try { await api('POST', 'api/me/emails/verify', {email, code}); form = null; toast(email + ' 을 붙였어요'); await loadUE(); }
+        catch (err) { busy(b, false); toast(err.message); if (/다시 받아/.test(err.message)){ form = null; await loadUE(); } }
+        return;
+      }
+      const pr = t.closest('[data-uepri]');
+      if (pr){
+        const email = pr.dataset.uepri, was = UE.emails.map(x => x.primary);
+        UE.emails.forEach(x => { x.primary = x.email === email; }); paintUE();
+        try { await api('POST', 'api/me/emails/primary', {email}); }
+        catch (err) { UE.emails.forEach((x, k) => { x.primary = was[k]; }); paintUE(); toast(err.message); }
+        return;
+      }
+      const rm = t.closest('[data-uerm]');
+      if (rm){
+        const email = rm.dataset.uerm, pend = UE.pending.includes(email);
+        if (!pend && !(await confirmBox(esc(email) + ' 을 뗄까요? 이 메일로는 더 로그인할 수 없어요. 이 메일로 이미 들어온 브라우저는 그대로예요(최대 30일) — 그 브라우저에서 로그아웃하면 나가요.', '떼기'))) return;
+        const before = JSON.stringify(UE);
+        UE.pending = UE.pending.filter(x => x !== email);
+        const gone = UE.emails.find(x => x.email === email); UE.emails = UE.emails.filter(x => x.email !== email);
+        if (gone?.primary){ const k = UE.emails.find(x => x.key); if (k) k.primary = true; }
+        if (form?.email === email) form = null;
+        paintUE();
+        try { await api('DELETE', 'api/me/emails/' + encodeURIComponent(email)); }
+        catch (err) { UE = JSON.parse(before); paintUE(); toast(err.message); }
+      }
+    };
+    el.onkeydown = e => { if (e.key === 'Enter' && e.target.matches?.('[data-uein]')){ e.preventDefault(); ueEl.querySelector('[data-uesend],[data-ueok]')?.click(); } };
     el.onclick = async e => {
+      if (UE && e.target.closest('[data-ue]')) return ueAct(e.target);
       if (e.target.closest('[data-out]') && await confirmBox('로그아웃할까요?', '로그아웃')){ await window.bxPushOff?.(); await fetch('api/auth/sign-out', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: '{}'}); location.href = '/'; } };
+  };
+  // 「계정」 붙은 메일 줄들(PAGES.profile): 대표 · 처음 가입한 메일 표시, 확인 대기, 더하기 칸(메일 → 코드). 주인 넷(locked)은 떼기 · 대표로 없음
+  const ueRows = (U, form) => {
+    const one = U.emails.length === 1 && !U.pending.length;
+    const row = x => `<div class="bxs-li"><div><b>${one ? '메일' : esc(x.email)}${x.primary && !one ? ' <span class="bxs-badge">대표</span>' : ''}</b><span>${one ? esc(x.email) : x.locked ? '주인 메일' : x.key ? '처음 가입한 메일' : '붙은 메일 · 이 메일로도 로그인해요'}</span></div>`
+      + (x.locked || (x.primary && x.key) ? '' : `<span class="bxs-row">${x.primary || U.owner ? '' : btn('대표로', `data-uepri="${esc(x.email)}"`, 'sm ghost')}${x.key ? '' : btn('떼기', `data-uerm="${esc(x.email)}"`, 'sm ghost danger')}</span>`) + '</div>';
+    const pend = e => form?.step === 'code' && form.email === e
+      ? `<div class="bxs-li col"><div><b>${esc(e)}</b><span>메일로 받은 6자리 코드를 넣어요(10분 안)</span></div><div class="bxs-row"><input class="bxs-in sm" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6자리 코드" aria-label="확인 코드" data-uein>${btn('확인', 'data-ueok', 'sm pri')}${btn('취소', `data-uerm="${esc(e)}"`, 'sm ghost')}</div></div>`
+      : `<div class="bxs-li"><div><b>${esc(e)} <span class="bxs-badge warn">확인 대기</span></b><span>코드를 넣으면 붙어요</span></div><span class="bxs-row">${btn('코드 넣기', `data-uecode="${esc(e)}"`, 'sm ghost')}${btn('취소', `data-uerm="${esc(e)}"`, 'sm ghost')}</span></div>`;
+    const full = U.max && U.emails.length + U.pending.length >= U.max;
+    const add = !U.max ? '' : form?.step === 'mail'
+      ? `<div class="bxs-li col"><div><b>메일 더하기</b><span>그 메일로 확인 코드를 보내요</span></div><div class="bxs-row"><input class="bxs-in sm" type="email" autocomplete="email" placeholder="붙일 메일" aria-label="붙일 메일" data-uein>${btn('코드 받기', 'data-uesend', 'sm pri')}${btn('취소', 'data-uecancel', 'sm ghost')}</div></div>`
+      : `<div class="bxs-li"><div><b>메일 더하기</b><span>${full ? `메일은 ${U.max}개까지 붙여요` : '붙인 메일 아무거나로 로그인 · 초대받을 수 있어요'}</span></div>${full ? '' : btn('메일 더하기', 'data-ueadd', 'sm ghost')}</div>`;
+    return U.emails.map(row).join('') + U.pending.map(pend).join('') + add;
   };
   const ago = t => { if (!t) return '보낸 적 없음'; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? '방금' : m < 60 ? `${m}분 전` : m < 1440 ? `${Math.round(m / 60)}시간 전` : `${Math.round(m / 1440)}일 전`; };
   const kst = s => { if (!s) return '—'; const d = new Date(s), t = d.toLocaleTimeString('ko-KR', {hour: '2-digit', minute: '2-digit', hour12: false}); return new Date().toDateString() === d.toDateString() ? t : `${d.getMonth() + 1}/${d.getDate()} ${t}`; };

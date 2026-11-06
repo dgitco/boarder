@@ -109,6 +109,8 @@ export const sysLine = (db: D1Database, owner: string, text: string, wid?: strin
 
 // deliver 와 reopen 이 서로 부르니 답 꼴을 적어 둠(추론이 돌아 TS7023)
 type Delivered = { sent?: boolean; reopened?: boolean; queued?: boolean; device?: boolean };
+export const LOGIN_LINE = "아직 구독 계정이 연동되지 않았어요 — 설정 › 기기 › 엔진에서 ChatGPT 나 Claude 「로그인」을 눌러 주세요. 그동안 보낸 글은 로그인되면 메인 봇에게 넣어요";
+export const loginMissing = (e: unknown) => /계정이 아직 로그인되지 않았어요/.test(String((e as Error)?.message || e));
 export const LOST_LINE = "방금 글이 창에 안 들어갔어요 — 메인 봇 창을 열지 못했어요. 설정 › 노드 「메인 봇 창」을 확인하고 다시 보내 주세요";
 const REOPEN_ASK_MS = 3 * 60_000, REOPEN_GIVEUP_MS = 10 * 60_000, REOPEN_DROP_MS = 60 * 60_000;
 const reopenLostLine = (name: string) => `「${name}」 창이 다시 뜨지 않아 방금 글이 안 들어갔어요 — 다시 보내 주세요. 또 그러면 그 기기에서 boarder engine 상태를 확인해 주세요`;
@@ -136,8 +138,14 @@ export class Engine extends DurableObject<EngEnv> {
   /** 기기 폐기 · 초대 빠짐: 데몬에 4401(데몬은 끝내고 다시 안 뜸), 규칙 알람 멈춤 */
   async revoke() {
     for (const w of this.ctx.getWebSockets()) try { w.close(4401, "revoked"); } catch {}
-    await this.ctx.storage.deleteAlarm(); await this.ctx.storage.delete("pending"); await this.ctx.storage.delete("hpending"); await this.ctx.storage.delete("reopens");
+    await this.ctx.storage.deleteAlarm(); await this.ctx.storage.delete("pending"); await this.ctx.storage.delete("hpending"); await this.ctx.storage.delete("held"); await this.ctx.storage.delete("reopens");
     return { ok: true };
+  }
+  /** 구독 로그인이 없어 메인 봇을 못 연 동안 온 채팅 글: 맡아 둠(최근 20개) — 메인 봇이 열리면 ensureMain 이 넣음. 로그인 없음 때문이 아니면 false(그 길은 예전처럼 LOST_LINE) */
+  async holdForMain(msg: string) {
+    const t = await this.ctx.storage.get<number>("main_login_missing");
+    if (!t || Date.now() - t > 60_000) return false;
+    const q = (await this.q<string>("held")) || []; q.push(msg); await this.qput("held", q.slice(-20)); return true;
   }
   async pend(p: Pend) { const q = (await this.q<Pend>("pending")) || []; q.push({ ...p, k: p.k || crypto.randomUUID() }); await this.qput("pending", q.slice(-50)); return { queued: true }; }
   // 밀린 글 줄(pending · hpending — 사람 글 원문) 봉함(f7_flag envelope): 켜짐이면 {o: 주인, d: 기기, s: 봉한 JSON}, 꺼짐이면 지금처럼 배열 그대로.
@@ -146,14 +154,14 @@ export class Engine extends DurableObject<EngEnv> {
   // 스위치는 사람마다: 엔진 DEK 주인은 who.owner(기기 주인 메일) 그대로 두고, 스위치 이름만 다른 길과 같게(주인 메일 = 'envelope:owner')
   private on(owner: string) { return envelopeOn(this.ve(), flagOwner(this.env as { ALLOW_EMAILS?: string }, owner)); }
   private async warm() { try { const { owner } = await this.who(); if (await this.on(owner)) await getDek(this.ve(), owner, { create: true }); } catch { /* 데우기는 덤 — 스위치 · DEK 오류는 쓰는 qput 이 크게 던짐 */ } }
-  private async q<T>(k: "pending" | "hpending"): Promise<T[]> {
+  private async q<T>(k: "pending" | "hpending" | "held"): Promise<T[]> {
     await this.warm();
     const v = await this.ctx.storage.get<T[] | { o: string; d: string; s: string }>(k);
     if (!v) return [];
     if (Array.isArray(v)) return v;
     return JSON.parse((await openField(this.ve(), v.o, { tbl: "engine", pk: v.d, col: k }, v.s)) as string) as T[];
   }
-  private async qput(k: "pending" | "hpending", q: unknown[]) {
+  private async qput(k: "pending" | "hpending" | "held", q: unknown[]) {
     const { owner, device } = await this.who(), d = device || "-";
     if (!(await this.on(owner))) return this.ctx.storage.put(k, q);
     await this.ctx.storage.put(k, { o: owner, d, s: await sealFieldNow(this.ve(), owner, { tbl: "engine", pk: d, col: k }, JSON.stringify(q)) });
@@ -161,14 +169,14 @@ export class Engine extends DurableObject<EngEnv> {
   /** 옮기기(worker/vault/migrate.ts): 두 줄의 꼴 — plain = 배열, v2 = {o, d, s} */
   async vaultPlan() {
     const out = { plain: 0, v2: 0, empty: 0 };
-    for (const k of ["pending", "hpending"] as const) { const v = await this.ctx.storage.get(k); if (!v || Array.isArray(v) && !v.length) out.empty++; else if (Array.isArray(v)) out.plain++; else out.v2++; }
+    for (const k of ["pending", "hpending", "held"] as const) { const v = await this.ctx.storage.get(k); if (!v || Array.isArray(v) && !v.length) out.empty++; else if (Array.isArray(v)) out.plain++; else out.v2++; }
     return out;
   }
   /** to v2 = 배열을 봉함, plain = 봉한 것을 배열로(되돌리기). 봉한 값을 다시 열어 같은지 본 뒤, 그사이 줄이 바뀌었으면(다시 읽어 비교) 안 씀 */
   async vaultMove(to: "v2" | "plain", dryRun = false) {
     const out = { done: 0, skipped: 0, changed: 0, failed: [] as { key: string; error: string }[] };
     const { owner, device } = await this.who(), d = device || "-", ve = this.ve();
-    for (const k of ["pending", "hpending"] as const) {
+    for (const k of ["pending", "hpending", "held"] as const) {
       try {
         if (to === "v2") await getDek(ve, owner, { create: true });   // 읽기 앞에 데움(입력 문)
         const v = await this.ctx.storage.get<unknown[] | { o: string; d: string; s: string }>(k);
@@ -311,18 +319,19 @@ export class Engine extends DurableObject<EngEnv> {
     const have = await db.prepare("SELECT (SELECT count(*) FROM role WHERE owner = ?1) + (SELECT count(*) FROM engine_window WHERE owner = ?1 AND kind = 'role') n").bind(owner).first<{ n: number }>();
     const now = Date.now(), claim = await db.prepare("INSERT OR IGNORE INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").bind(owner, "default_roles_seeded", have?.n ? "had-roles" : "seeded", now).run();
     if (!claim.meta.changes || have?.n) return { seeded: 0 };
-    let opened = 0, why = "";
+    let opened = 0, why = "", login = false;
     const { roles: defaults } = await promptsOf(db, owner);
     for (const r of defaults) {
       const cwd = `~/boarder/${r.id}`;
       await db.prepare("INSERT OR IGNORE INTO role(owner, id, name, instructions, intake, engine, source, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(owner, r.id, r.name, r.instructions, r.brief, JSON.stringify({ device, engine: "tmux", model: MODEL, cwd }), "default", now, now).run();
       try { await this.open({ owner, kind: "role", role_id: r.id, name: r.name, cwd, prompt: rolePrompt(r.name, r.instructions, rules.one_goal !== false) }); opened++; }
       catch (e) {
-        why = shortWhy(e);
+        why = shortWhy(e); login = loginMissing(e);
         await db.batch([db.prepare("UPDATE role SET engine = json_set(engine, '$.pending', 1) WHERE owner = ? AND id = ? AND json_valid(engine)").bind(owner, r.id),
           db.prepare("UPDATE engine_window SET state = 'closed', state_at = ? WHERE owner = ? AND role_id = ? AND state = 'failed'").bind(Date.now(), owner, r.id)]).catch(() => null);
       }
     }
+    if (!opened && login) return { seeded: defaults.length, opened };   // 구독 로그인 없음: 메인 봇 안내 한 줄(LOGIN_LINE)로 충분 — 역할은 로그인 뒤 메인 봇이 열릴 때 같이 열림
     await sysLine(db, owner, opened ? `기본 역할 ${opened}개(${defaults.map(r => r.name).join(" · ")})를 만들었어요` : `기본 역할을 만들었지만 창은 못 열었어요${why ? ` — ${why}` : ""}`).catch(() => null);
     return { seeded: defaults.length, opened };
   }
@@ -355,11 +364,22 @@ export class Engine extends DurableObject<EngEnv> {
     const name = bot?.name || "Primary";
     const { rules } = await ownerCfg(db, owner).catch(() => ({ rules: RULES }));
     const r = await this.open({ owner, kind: "main", name, cwd: "~/boarder/primary", prompt: (await promptsOf(db, owner)).mainHello, system: mainSystem(owner, name, rules.one_goal !== false) }).catch(async (e: unknown) => {
+      if (loginMissing(e)) {
+        const prev = await this.ctx.storage.get<number>("main_login_missing"), now = Date.now();
+        const first = !prev || now - prev > 6 * 3600_000;
+        await this.ctx.storage.put("main_login_missing", now);
+        if (first) await sysLine(db, owner, LOGIN_LINE).catch(() => null);
+        return null;
+      }
       await sysLine(db, owner, `메인 봇을 못 열었어요 — ${shortWhy(e)}`).catch(() => null);
       return null;
     });
     if (r) {
       await sysLine(db, owner, "메인 봇이 이 기기에서 시작했어요", r.id);
+      await this.ctx.storage.delete("main_login_missing");
+      // 로그인 전에 맡아 둔 채팅 글을 새 메인 봇에게(첫 인사 턴 뒤 — deliver 가 바쁘면 줄 세움)
+      const held = (await this.q<string>("held")) || [];
+      if (held.length) { await this.ctx.storage.delete("held"); for (const m of held) await this.deliver(r.id, m).catch(() => null); }
       // 새 메인 창이 열렸다 = 이 기기 엔진이 이제 일함(예: 구독 로그인 뒤 첫 글) — 미뤄 둔 역할 창도 지금 엶(hello 를 기다리지 않음, 먼저 차지한 한 번만)
       this.ctx.waitUntil(this.openPending(owner).catch(() => null));
     }
@@ -721,6 +741,7 @@ export async function chatToMain(env: EngEnv, owner: string, text: string, head 
   else {
     const imp2 = await importedPrimary(env.DB, owner);
     if (imp2) return toImported(env, owner, imp2, `${msg}\n${PRIMARY_HINT}`);
+    if (await (async () => (stub as unknown as { holdForMain(m: string): Promise<boolean> }).holdForMain(msg))().catch(() => false)) return { held: true };
   }
   return { started: !!id };
 }

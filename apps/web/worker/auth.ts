@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { emailOTP } from "better-auth/plugins";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
+import { linkedUser, sessionTarget, type AuthState } from "./user-email";
 
 export type Env = { DB: D1Database; EMAIL: SendEmail; ASSETS: Fetcher; BETTER_AUTH_SECRET: string; PUBLIC_URL: string; ALT_URLS?: string; ALLOW_EMAILS: string; GOOGLE_CLIENT_ID?: string; GOOGLE_CLIENT_SECRET?: string };
 
@@ -8,7 +9,9 @@ export const allowed = (env: Env, email: string) => env.ALLOW_EMAILS.split(",").
 export const isOwner = allowed;
 export async function member(env: Env, email: string): Promise<boolean> {
   if (allowed(env, email)) return true;
-  return !!(await env.DB.prepare("SELECT 1 FROM invite WHERE email = ?").bind(email.trim().toLowerCase()).first());
+  if (await env.DB.prepare("SELECT 1 FROM invite WHERE email = ?").bind(email.trim().toLowerCase()).first()) return true;
+  const k = await linkedUser(env.DB, email);
+  return !!k && (allowed(env, k.email) || !!(await env.DB.prepare("SELECT 1 FROM invite WHERE email = ?").bind(k.email).first()));
 }
 
 const codeMail = (code: string) => ({
@@ -37,7 +40,8 @@ export const otpStore = (secret: string) => ({
   decrypt: async (v: string) => (v.startsWith(OTP_SEALED) ? symmetricDecrypt({ key: secret, data: v.slice(OTP_SEALED.length) }) : v),
 });
 
-export function createAuth(env: Env) {
+// st(요청마다 새것, user-email.ts authState): 붙은 메일 로그인으로 세션을 옮겼는지 · 이 요청에서 막 만든 user — 부른 쪽이 응답 뒤 빈 user 를 지우고 캐시 쿠키를 비움(dropFresh · dropCacheCookie)
+export function createAuth(env: Env, st?: AuthState) {
   return betterAuth({
     database: env.DB,
     secret: env.BETTER_AUTH_SECRET,
@@ -46,7 +50,7 @@ export function createAuth(env: Env) {
     trustedOrigins: [env.PUBLIC_URL, ...(env.ALT_URLS || "").split(",").filter(Boolean)],
     ...(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? { socialProviders: { google: { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, prompt: "select_account" as const } } } : {}),
     rateLimit: { enabled: true },
-    disabledPaths: ["/email-otp/request-password-reset", "/forget-password/email-otp", "/email-otp/reset-password"],
+    disabledPaths: ["/email-otp/request-password-reset", "/forget-password/email-otp", "/email-otp/reset-password", "/change-email", "/email-otp/request-email-change", "/email-otp/change-email"],
     advanced: { ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] } },
     account: { accountLinking: { enabled: true }, encryptOAuthTokens: true },
     session: { expiresIn: 60 * 60 * 24 * 30, cookieCache: { enabled: true, maxAge: 5 * 60 } },   // 요청마다 D1 을 안 감(5분 서명 쿠키) — 나가기는 바로, 다른 기기 끊기는 최대 5분 늦음
@@ -66,6 +70,18 @@ export function createAuth(env: Env) {
         },
       }),
     ],
-    databaseHooks: { user: { create: { before: async (u) => (u.emailVerified && (await member(env, u.email)) ? { data: u } : false) } } },   // 확인된 메일 + 초대(코드 길은 늘 확인됨, 구글은 email_verified)
+    databaseHooks: {
+      user: { create: {
+        before: async (u) => (u.emailVerified && (await member(env, u.email)) ? { data: u } : false),   // 확인된 메일 + 초대(코드 길은 늘 확인됨, 구글은 email_verified)
+        after: async (u) => { st?.fresh.add(u.id); },
+      } },
+      // 붙은 메일로 로그인(코드 · 구글 모두): better-auth 는 그 메일 user 를 찾거나 새로 만들어 세션을 엶 → 세션 주인을 열쇠 user 로 바꿈.
+      // 그래서 getSession 은 늘 열쇠 user(열쇠 메일)를 돌려줌 — s.user.email 을 데이터 열쇠로 쓰는 곳은 그대로
+      session: { create: { before: async (s) => {
+        const to = await sessionTarget(env.DB, s.userId); if (!to) return { data: s };
+        st?.moved.push({ from: s.userId, to });
+        return { data: { ...s, userId: to } };
+      } } },
+    },
   });
 }

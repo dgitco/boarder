@@ -30,7 +30,7 @@ function d1() {
 
 const { DEFAULT_ROLES } = await import("./engine.ts");
 const MEMBER = "member@example.test", OWNER = "owner@example.test", DEV = "devMember01", T = Date.now();
-function setup(o: { on?: boolean; who?: string; harness?: boolean; online?: boolean; bot?: boolean; failOpen?: boolean } = {}) {
+function setup(o: { on?: boolean; who?: string; harness?: boolean; online?: boolean; bot?: boolean; failOpen?: boolean; failMsg?: string } = {}) {
   const { db, D1 } = d1(), who = o.who || MEMBER;
   db.prepare("INSERT INTO invite(email, by_email, at) VALUES (?,?,?)").run(MEMBER, OWNER, T);
   db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run(DEV, who, "pc", "", "h1", T, T, o.harness ? "harness" : "full", T);
@@ -38,7 +38,7 @@ function setup(o: { on?: boolean; who?: string; harness?: boolean; online?: bool
   if (o.on !== false) db.prepare("INSERT INTO engine_owner(owner, rules, updated_at) VALUES (?,?,?)").run(who, JSON.stringify({ default_roles: true }), T);   // 묶음 플래그: 켠 회원만
   const store = new Map<string, unknown>(); const sent: any[] = [];
   let eng: any;
-  const ws = { readyState: 1, deserializeAttachment: () => ({ at: T }), send: (t: string) => { const m = JSON.parse(t); sent.push(m); const w = eng.wait.get(m.id); clearTimeout(w.timer); eng.wait.delete(m.id); o.failOpen ? w.reject(new Error("Authorization: Bearer sk-test-1234 로그인 필요")) : w.resolve({}); } };
+  const ws = { readyState: 1, deserializeAttachment: () => ({ at: T }), send: (t: string) => { const m = JSON.parse(t); sent.push(m); const w = eng.wait.get(m.id); clearTimeout(w.timer); eng.wait.delete(m.id); o.failOpen ? w.reject(new Error(o.failMsg || "Authorization: Bearer sk-test-1234 로그인 필요")) : w.resolve({}); } };
   const ctx = { setWebSocketAutoResponse() {}, getWebSockets: () => (o.online === false ? [] : [ws]), waitUntil() {}, storage: { get: async (k: string) => store.get(k), put: async (k: string, v: unknown) => { store.set(k, v); }, delete: async (k: string) => store.delete(k), setAlarm: async () => {}, deleteAlarm: async () => {} } };
   store.set("who", { device: DEV, owner: who, harness: !!o.harness });
   const env = { DB: D1, PUBLIC_URL: "https://example.test", ALLOW_EMAILS: OWNER, ENGINE: { idFromName: (n: string) => n, get: () => ({}) } };
@@ -125,6 +125,27 @@ test("새 메인 창이 열리면(로그인 뒤 첫 글) 미룬 역할 창도 he
   await Promise.all(jobs);
   const open = s.db.prepare("SELECT role_id FROM engine_window WHERE owner = ? AND kind = 'role' AND state NOT IN ('closed','failed')").all(MEMBER) as { role_id: string }[];
   assert.equal(open.length, DEFAULT_ROLES.length, "미룬 역할 창이 다 열림");
+});
+
+test("구독 로그인 없음: 안내 한 줄만 한 번 · 그동안 온 글은 맡아 뒀다 로그인 뒤 열린 메인 봇에게 넣음", async () => {
+  const o = { failOpen: true, failMsg: "이 기기의 Claude 계정이 아직 로그인되지 않았어요 — 설정 › 기기 › 엔진에서 「로그인」을 눌러 주세요" };
+  const s = setup(o);
+  s.eng.ctx.waitUntil = () => {};
+  assert.equal(await s.eng.ensureMain(MEMBER, DEV), null);
+  await s.eng.seedRoles(MEMBER);
+  assert.equal(await s.eng.ensureMain(MEMBER, DEV), null, "두 번째도 실패");
+  assert.ok(await s.eng.holdForMain("[보드 · Primary] [Boarder chat] 안녕"), "글을 맡아 둠");
+  const lines = s.sys();
+  assert.equal(lines.filter(t => /아직 구독 계정이 연동되지 않았어요/.test(t)).length, 1, "안내 한 줄만");
+  assert.ok(!lines.some(t => /메인 봇을 못 열었어요|창은 못 열었어요/.test(t)), "오류 줄은 안 쌓임");
+  o.failOpen = false; s.sent.length = 0;
+  const id = await s.eng.ensureMain(MEMBER, DEV);
+  assert.ok(id, "로그인 뒤 메인 봇 열림");
+  const pend = await s.eng.q("pending") as { id: string; text: string }[];   // 새 창은 「시작 중」이라 첫 인사 턴 뒤에 넣게 줄 섬(deliver 가 쉬면 넣음)
+  assert.ok(s.sent.some(m => JSON.stringify(m).includes("[Boarder chat] 안녕") && m.verb !== "open") || pend.some(p => p.id === id && p.text.includes("[Boarder chat] 안녕")), "맡아 둔 글이 새 메인 봇에게 감(바로 또는 그 창 줄)");
+  assert.equal(await s.eng.holdForMain("x"), false, "로그인된 뒤엔 맡지 않음(예전 길)");
+  await s.eng.ctx.storage.put("main_login_missing", Date.now() - 5 * 60_000);
+  assert.equal(await s.eng.holdForMain("y"), false, "오래된 표시(1분 넘음)로는 맡지 않음 — 다른 실패의 글을 묻지 않게");
 });
 
 test("메인 봇 열기 실패는 삼키지 않고 그 회원 시스템 줄에 이유를 남김", async () => {

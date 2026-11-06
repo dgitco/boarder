@@ -227,3 +227,12 @@ test("사이드바 다시 그리기 신호: status.js 가 보내는 이름을 �
   const sent = SRC.match(/new Event\('([\w-]+)'\)/)![1];
   assert.match(readFileSync(new URL("../legacy/shell.js", import.meta.url), "utf8"), new RegExp(`addEventListener\\('${sent}', \\(\\) => sync\\(\\)\\)`));
 });
+
+test("상태 페이지 클래스가 보드 화면(board.html)의 맨 선택자와 겹치지 않음 — .lg(범례 네모 18px) · 폰 .note 숨김 · .go 검은 단추가 카드 글을 접거나 숨겼음", () => {
+  const html = readFileSync(new URL("../../board-template/page.html", import.meta.url), "utf8");
+  const css = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m => m[1]).join("\n");
+  const SHARED = new Set(["g", "g-spin"]);   // 공통 아이콘 · 돌림표는 일부러 같이 씀
+  const used = new Set([...SRC.matchAll(/class="([^"$]*)/g)].flatMap(m => m[1].split(/\s+/)).filter(c => /^[\w-]+$/.test(c) && !c.startsWith("bx-") && !SHARED.has(c)));
+  const hit = [...used].filter(c => new RegExp(`(?:^|[{},])\\s*\\.${c.replace(/-/g, "\\-")}(?![\\w-])[^{,]*\\{`, "m").test(css));
+  assert.deepEqual(hit, []);
+});

@@ -9,6 +9,7 @@ import { uiPrefStmts } from "./ui-pref";
 import { onboarding } from "./member-onboarding";
 import { legal } from "./legal";
 import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
+import * as UE from "./user-email";
 import * as W from "./who";
 import * as OK from "./owner-key";
 import { installPrompt, BOARDER_SKILL, boarderSkill, RULE_KEYS, memberOnboard, type Bot } from "./install";
@@ -236,7 +237,7 @@ app.use("*", async (c, next) => {
   const lw = rec.who && /^[^@\s:%]+@[^@\s:%]+$/.test(rec.who) ? rec.who : rec.dev;
   const lwU = !!lw && isOwner(c.env, lw) && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && (lw !== rec.who ? W.unifiedAnyIn(await ledger.f7All(c.env.DB), c.env) : await unifiedOn(c.env, lw));
   if (lw && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && !(lwU && rec.quiet)) memberBoard.loadForget(lwU ? W.canon(c.env) : lw);
-  if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && (!isOwner(c.env, lw) || lwU) && !/^\/api\/(relay\/|device\/metrics|device\/taskboard|me\/taskboard|me\/devboard|me\/features$|draft$|cardcheck$|me\/tasks\/view$)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok). 상태 페이지 쓰기는 보드 화면 값을 안 바꿈(그 페이지가 스스로 다시 읽음)
+  if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && (!isOwner(c.env, lw) || lwU) && !/^\/api\/(relay\/|device\/metrics|device\/taskboard|me\/taskboard|me\/devboard|me\/features$|draft$|cardcheck$|me\/tasks\/view$|me\/emails)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok). 상태 페이지 쓰기는 보드 화면 값을 안 바꿈(그 페이지가 스스로 다시 읽음). 붙은 메일(설정 › 프로필)도 보드 값이 아님
     c.executionCtx.waitUntil(live.bumpMember(c.env, lw));
   const total = Date.now() - t0, st = [...Object.entries(rec.seg).map(([k, v]) => `${k};dur=${v}`), ...(meter.d1rn ? [`d1r;dur=${meter.d1r};desc=${meter.d1rn}`] : []), ...(meter.d1wn ? [`d1w;dur=${meter.d1w};desc=${meter.d1wn}`] : []), ...(meter.dobn ? [`dob;dur=${meter.dob};desc=${meter.dobn}`] : []), ...(meter.r2n ? [`r2m;dur=${meter.r2};desc=${meter.r2n}`] : []), `total;dur=${total}`].join(", ");
   if (c.res.status === 101 || (c.res as any).webSocket) { }
@@ -310,7 +311,13 @@ app.post("/api/auth/email-otp/send-verification-otp", async (c, next) => {
   if (email && !(await otpSendOk(c.env.DB, email))) return c.json({ code: "TOO_MANY_REQUESTS", message: "too many codes for this address" }, 429, { "retry-after": "600" });
   await next();
 });
-app.on(["GET", "POST"], "/api/auth/*", c => createAuth(c.env).handler(c.req.raw));
+// 붙은 메일 로그인(user-email.ts): 세션을 열쇠 user 로 옮긴 응답이면 이 요청에서 막 만든 빈 user 를 지우고 캐시 쿠키(빈 user 를 담음)를 비움
+app.on(["GET", "POST"], "/api/auth/*", async c => {
+  const st = UE.authState(), auth = createAuth(c.env, st), res = await auth.handler(c.req.raw);
+  if (!st.moved.length) return res;
+  await UE.dropFresh(c.env.DB, st);
+  return UE.dropCacheCookie(res, (await auth.$context).authCookies.sessionData.name);
+});
 const lookAt = new Map<string, number[]>();
 app.post("/api/login/lookup", async c => {
   const ip = c.req.header("cf-connecting-ip") || "", now = Date.now();
@@ -326,7 +333,35 @@ app.post("/api/login/lookup", async c => {
 app.get("/api/login/methods", c => c.json({ code: true, google: Boolean(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET), home: c.env.PUBLIC_URL }));   // 로그인 화면이 켤 단추(구글은 콜백이 PUBLIC_URL 이라 다른 주소에선 거기로 옮겨 시작)
 app.get("/api/me", async c => {   // 이름 · id 까지 — 서명 쿠키 말고 better-auth 로(가끔만 부름)
   const s0 = await createAuth(c.env).api.getSession({ headers: c.req.raw.headers }), s = s0 && await member(c.env, s0.user.email) ? s0 : null;
-  return s ? c.json({ user: { id: s.user.id, email: s.user.email, name: s.user.name, owner: isOwner(c.env, s.user.email) } }) : c.json({ user: null }, 401);
+  return s ? c.json({ user: { id: s.user.id, email: s.user.email, primary_email: await UE.primaryEmail(c.env.DB, s.user.email), name: s.user.name, owner: isOwner(c.env, s.user.email) } }) : c.json({ user: null }, 401);
+});
+// 한 계정에 메일 여러 개(설정 › 프로필 「계정」, user-email.ts): 회원 · 주인 같은 길. 코드는 응답에 안 냄(메일로만)
+app.get("/api/me/emails", async c => {
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  const r = await UE.listEmails(c.env, s.user.email); return r ? c.json(r, 200, { "cache-control": "no-store" }) : c.json({ error: "로그인" }, 401);
+});
+const ueBody = async (c: Context<{ Bindings: Env }>) => await c.req.json<{ email?: unknown; code?: unknown }>().catch(() => ({} as { email?: unknown; code?: unknown }));
+const ueOut = (c: Context<{ Bindings: Env }>, r: { error: string; status: number } | { ok: true }) => "error" in r ? c.json({ error: r.error }, r.status as 400) : c.json({ ok: true });
+app.post("/api/me/emails", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  const r = await UE.startAdd(c.env, s.user.email, (await ueBody(c)).email, otpSendOk);
+  return "error" in r ? ueOut(c, r) : c.json({ ok: true, email: r.email });
+});
+app.post("/api/me/emails/verify", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  const b = await ueBody(c); return ueOut(c, await UE.verifyAdd(c.env, s.user.email, b.email, b.code));
+});
+app.post("/api/me/emails/primary", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  return ueOut(c, await UE.setPrimary(c.env, s.user.email, (await ueBody(c)).email));
+});
+app.delete("/api/me/emails/:email", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  return ueOut(c, await UE.removeEmail(c.env, s.user.email, decodeURIComponent(c.req.param("email"))));
 });
 
 async function gunzipCapped(body: ReadableStream<Uint8Array>, cap: number) {
@@ -1788,7 +1823,8 @@ app.post("/api/device/owner-state", async c => {
 });
 
 const invite = async (env: Env, email: string, by: string) => {
-  const e = clean(email, 200).toLowerCase(); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return null;
+  const e0 = clean(email, 200).toLowerCase(); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e0)) return null;
+  const e = await UE.keyEmail(env.DB, e0);   // 붙은 메일이면 그 계정 열쇠 메일로(이미 회원이면 겹치지 않음)
   await env.DB.prepare("INSERT INTO invite(email, by_email, at) VALUES (?,?,?) ON CONFLICT(email) DO NOTHING").bind(e, by, Date.now()).run(); return e;
 };
 app.post("/api/me/invites", async c => {
@@ -1875,7 +1911,7 @@ app.post("/api/admin/invites", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ email?: string; remove?: boolean }>().catch(() => ({} as { email?: string; remove?: boolean }));
   if (b.remove) {
-    const e = clean(b.email, 200).toLowerCase(), now = Date.now();
+    const e = await UE.keyEmail(c.env.DB, clean(b.email, 200).toLowerCase()), now = Date.now();   // 붙은 메일이면 그 계정(열쇠 메일) 기준
     await c.env.DB.batch([
       c.env.DB.prepare("DELETE FROM invite WHERE email = ?").bind(e),
       c.env.DB.prepare("DELETE FROM sales_member WHERE email = ?").bind(e),
@@ -1917,14 +1953,17 @@ app.post("/api/admin/test-session", async c => {
   const b = await c.req.json<{ email?: string; revoke?: boolean }>().catch(() => ({} as { email?: string; revoke?: boolean }));
   const e = clean(b.email, 80).toLowerCase();
   if (!TEST_EMAIL.test(e) || isOwner(c.env, e)) return c.json({ error: "시험 주소(@example.com)만" }, 400);
-  const ctx = await createAuth(c.env).$context;
-  const found = await ctx.internalAdapter.findUserByEmail(e);
+  const lk = await UE.linkedUser(c.env.DB, e);
+  if (lk && (!TEST_EMAIL.test(lk.email) || isOwner(c.env, lk.email))) return c.json({ error: "시험 주소(@example.com)만" }, 400);
+  const key = lk?.email ?? e;
+  const st = UE.authState(), ctx = await createAuth(c.env, st).$context;
+  const found = await ctx.internalAdapter.findUserByEmail(key);
   if (b.revoke){
     if (found) await ctx.internalAdapter.deleteUserSessions(found.user.id);
     const now = Date.now();
     await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE agent_token SET revoked_at = ? WHERE owner = ? AND revoked_at IS NULL").bind(now, e),
-      c.env.DB.prepare("UPDATE device SET revoked_at = ? WHERE owner = ? AND revoked_at IS NULL").bind(now, e),
+      c.env.DB.prepare("UPDATE agent_token SET revoked_at = ? WHERE owner = ? AND revoked_at IS NULL").bind(now, key),
+      c.env.DB.prepare("UPDATE device SET revoked_at = ? WHERE owner = ? AND revoked_at IS NULL").bind(now, key),
     ]);
     tokCache.clear(); return c.json({ ok: true });
   }
@@ -1936,9 +1975,16 @@ app.post("/api/admin/test-session", async c => {
   }
   if (!user) return c.json({ error: "가입 안 됨" }, 403);   // 가입 훅이 거절(초대가 그 사이 빠짐)
   const sess = await ctx.internalAdapter.createSession(user.id, true);
+  await UE.dropFresh(c.env.DB, st);
   const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(ctx.secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const sign = async (v: string) => encodeURIComponent(`${v}.${btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(v)))))}`);
   return c.json({ cookies: [{ name: ctx.authCookies.sessionToken.name, value: await sign(sess.token) }, { name: ctx.authCookies.dontRememberToken.name, value: await sign("true") }], expires: sess.expiresAt }, 200, { "cache-control": "no-store" });
+});
+// 메일 더하기 시험 코드(관리 토큰, X7 끝에서 끝): 확인 대기 중인 @example.com 주소의 코드 — 시험 주소엔 메일을 안 보냄. 다른 주소 · 대기 없음 = 404
+app.post("/api/admin/test-email-code", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const code = await UE.testCode(c.env, (await ueBody(c)).email);
+  return code ? c.json({ code }, 200, { "cache-control": "no-store" }) : c.json({ error: "없음" }, 404);
 });
 const vscope = (s: unknown) => vmig.scopes().includes(String(s)) ? String(s) as vmig.Scope : null;   // 등록한 scope 만(공개 판엔 호스팅 전용 표가 없음)
 const vowner = (o: unknown) => typeof o === "string" ? (o.startsWith("x:") || o.startsWith("o:") ? o : o.trim().toLowerCase()) : undefined;
@@ -2930,7 +2976,7 @@ async function pushRoute(c: Context<{ Bindings: Env }>, url: URL, canon?: string
 }
 
 const salesSend = (env: Env): SalesSend => ({
-  mail: (to, m) => env.EMAIL.send({ to, from: { email: "login@0bridge.dev", name: "Boarder 영업 보드" }, ...m } as never),
+  mail: async (to, m) => env.EMAIL.send({ to: await UE.primaryEmail(env.DB, to), from: { email: "login@0bridge.dev", name: "Boarder 영업 보드" }, ...m } as never),
   push: async (to, n) => { if (await ledger.f7On(env.DB, "member_push")) return memberPusher(env, to)?.mNotify(to, { ...n, title: "영업 보드" }); },
   member: e => member(env as never, e),
 });

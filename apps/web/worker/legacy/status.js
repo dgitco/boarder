@@ -127,7 +127,7 @@
         + `<h4>${pill(SL(ev.k), STC(ev.c || ev.k))}<span class="t">${E(t.title || t.quote || t.id)}${t.x?.split_of ? `<span class="bx-tb-sp">${E(t.x.split_of)}에서 따로</span>` : ''}</span></h4>`
         + (st === '막힘' ? nx + now : now + nx)
         + (ev.why ? `<p class="bx-tb-evl"><b>근거</b>${E(ev.why)}${ev.who ? ' · 기다림: ' + E(ev.who) : ''}</p>` : ev.who ? `<p class="bx-tb-evl"><b>기다림</b>${E(ev.who)}</p>` : '')
-        + `<div class="bx-tb-ft"><span class="ow">${E(owners(t.assignee))}</span><span class="ago${stale ? ' old' : ''}">${E(stale ? ago(mv).replace(' 전', '') + '째 조용' : ago(mv))}</span><span class="go">›</span></div></article>`;
+        + `<div class="bx-tb-ft"><span class="ow">${E(owners(t.assignee))}</span><span class="ago${stale ? ' old' : ''}">${E(stale ? ago(mv).replace(' 전', '') + '째 조용' : ago(mv))}</span><span class="bx-tb-go">›</span></div></article>`;
     }
     const dxcard = c => `<article class="bx-tb-c dxc"><div class="bx-tb-decb">정하실 것 · ${E(c.k || '')}</div><h4><span class="t">${E(c.t)}</span></h4><div class="bx-tb-ft"><span class="ow">아직 요청에 안 붙은 카드</span>${c.id ? `<a href="${E(cardHref(c.id))}">카드 열기 ›</a>` : ''}</div></article>`;
     function groups(L){
@@ -152,7 +152,7 @@
       return `<div class="bx-tb-today"><div class="hd"><h2>${V.tday ? '어제' : '오늘'} ${E(md(t0 + 3600e3))} 요청</h2><button type="button" class="bx-tb-chip${V.tday ? '' : ' on'}" data-day="0">오늘</button><button type="button" class="bx-tb-chip${V.tday ? ' on' : ''}" data-day="1">어제</button></div>`
         + `<div class="nums">${btn('', L.length, '요청 · 끝 포함', no ? '안 함 · 멈춤 ' + no : '', '모두')}${btn('ok', fin.length, '끝', np ? 'PR 없는 일 ' + np : '', '끝')}${btn('', run.length, '진행', [opn ? 'PR 열림 ' + opn : '', half ? '운영 확인 전 ' + half : ''].filter(Boolean).join(' · '), '진행')}`
         + `${btn('bad', blk.length, '막힘', Object.entries(who).sort((a, b) => b[1] - a[1]).map(([w, n]) => w + ' ' + n).join(' · '), '막힘')}${btn('dec', decs.length, '결정', '', '정하실 것')}</div>`
-        + `<p class="note">끝 = 붙은 PR 이 모두 머지 + 운영 배포 + 운영 확인 줄이 있을 때만. 머지만 됐으면 「머지 · 운영 확인 전」, 배포까지면 「운영 나감 · 확인 전」. PR 없는 일(답 · 결정 · 손일)은 대화 · 작업 기록으로 끝을 셈. 막힘 = 막힘 + 다른 쪽을 기다리는 요청.</p>`
+        + `<p class="bx-tb-note">끝 = 붙은 PR 이 모두 머지 + 운영 배포 + 운영 확인 줄이 있을 때만. 머지만 됐으면 「머지 · 운영 확인 전」, 배포까지면 「운영 나감 · 확인 전」. PR 없는 일(답 · 결정 · 손일)은 대화 · 작업 기록으로 끝을 셈. 막힘 = 막힘 + 다른 쪽을 기다리는 요청.</p>`
         + `<div class="decs"><h3>정하실 것 ${decs.length}</h3>${decs.length ? decs.map(c => { const q = (String(c.t).match(/Q-\d+/) || [''])[0]; return `<div class="d">${pill(c.k || '결정', 'warn')}${q && !String(c.t).trim().startsWith(q) ? `<b>${E(q)}</b>` : ''}<span class="t">${E(c.t)}</span>${c.r ? `<a href="#" data-tk="${E(c.r.id)}">${E(c.r.id)} ›</a>` : ''}${c.id ? `<a href="${E(cardHref(c.id))}">카드 열기 ›</a>` : ''}</div>`; }).join('') : `<p class="none">지금 답을 기다리는 결정 · 할 일 카드가 없어요${B().cards_n ? ' — 보드 최근 카드 ' + E(B().cards_n) + '장 모두 답함 · 닫음' : ''}${B().cards_at ? ' · ' + E(hhmm(B().cards_at)) + ' 읽음' : ''}.</p>`}</div></div>`;
     }
     // 처리 느림? — 기기별 바쁨(부하 ÷ 코어 %) · 메모리 압박 · 검사 대기 · 일감 대기. 누르면 기기 세션 현황 페이지
@@ -187,7 +187,7 @@
       const q = V.q.toLowerCase(), T = B().depts || [], repo = B().repo;
       const hit = t => !q || [t.n, t.t, t.lm, ...(t.m || []).flat(), ...(t.o || []).flat()].join(' ').toLowerCase().includes(q);
       const prs = (L, lab) => L?.length ? `<div class="lbl">${lab} ${L.length}</div><ul>${L.map(a => `<li>${aN(a[0], prU(a[0], repo))} ${a[2] ? '(초안) ' : ''}${E(a[1] || '')}</li>`).join('')}</ul>` : '';
-      const card = t => `<div class="bx-tb-tk"><h4>${aN(String(t.n).replace(/^#/, ''), /^\d+$/.test(t.n) ? isU(t.n, repo) : '', /^\d+$/.test(t.n) ? '#' + t.n : t.n)} ${E(t.t || '')}</h4>${pill(t.s || '진행')}${t.big ? pill('요청', '') : ''}${t.w ? `<span class="ow">${E(t.w)}</span>` : ''}${t.lm ? `<div class="lg"><span class="tm">${t.la ? E(md(t.la).slice(0, 5) + ' ' + hhmm(t.la)) : ''}${t.lk ? ' · ' + E(t.lk) : ''}</span>${E(t.lm)}</div>` : ''}${prs(t.m, '머지')}${prs(t.o, '열린 PR')}</div>`;
+      const card = t => `<div class="bx-tb-tk"><h4>${aN(String(t.n).replace(/^#/, ''), /^\d+$/.test(t.n) ? isU(t.n, repo) : '', /^\d+$/.test(t.n) ? '#' + t.n : t.n)} ${E(t.t || '')}</h4>${pill(t.s || '진행')}${t.big ? pill('요청', '') : ''}${t.w ? `<span class="ow">${E(t.w)}</span>` : ''}${t.lm ? `<div class="bx-tb-lg"><span class="tm">${t.la ? E(md(t.la).slice(0, 5) + ' ' + hhmm(t.la)) : ''}${t.lk ? ' · ' + E(t.lk) : ''}</span>${E(t.lm)}</div>` : ''}${prs(t.m, '머지')}${prs(t.o, '열린 PR')}</div>`;
       let h = '';
       for (const d of [...DORD, '부서 미지정']){
         const all = T.filter(t => (t.d || '부서 미지정') === d && hit(t)); if (!all.length) continue;
