@@ -960,3 +960,95 @@ test("모아 보기 로컬 사본(snap_inbox): owner_unified 를 끈 주인 길�
   t.db.prepare("INSERT INTO wl_change(tbl, pk, op, at, origin) VALUES ('talk_seen', '[\"y\"]', 'up', ?, 'web')").run(Date.now());
   assert.notEqual((await t.req("GET", "/api/inbox", undefined, h)).h.get("x-f7"), "snap", "사본이 늦으면 예전 길");
 });
+
+
+test("주인 읽기: cfg·sync 한 RPC와 구형 DO 폴백의 JSON·ETag·나이 머리가 같음", async () => {
+  const t = await setup(), h = await t.human(OWNER);
+  await t.flag("owner_unified", true);
+  const old = await t.req("GET", "/api/chat/main", undefined, h);
+  assert.equal(old.status, 200, old.text);
+  const ns = t.env.SNAP; let batch = 0;
+  const stamp = Date.now();
+  t.env.SNAP = { ...ns, get: (...args: unknown[]) => {
+    const stub = ns.get(...args);
+    return { ...stub, getMany: async (keys: string[]) => {
+      batch++; assert.deepEqual(keys, ["cfg", "sync"]);
+      return Promise.all(keys.map(async k => {
+        const v = await stub.get(k); return v ? { ...v, at: stamp, checked: stamp } : null;
+      }));
+    } };
+  } };
+  const fresh = await t.req("GET", "/api/chat/main", undefined, h);
+  assert.equal(fresh.status, 200, fresh.text); assert.equal(batch, 1);
+  assert.deepEqual({ ...fresh.j, read_at: 0 }, { ...old.j, read_at: 0 });
+  assert.equal(fresh.h.get("etag"), old.h.get("etag"));
+  for (const k of ["x-cfg-age", "x-sync-age"]) assert.ok(Number(fresh.h.get(k)) >= 0 && Number(fresh.h.get(k)) < 5000);
+  assert.match(fresh.h.get("server-timing")!, /dob;dur=\d+;desc=1/);
+  const cached = await t.req("GET", "/api/chat/main", undefined, { ...h, "if-none-match": fresh.h.get("etag")! });
+  assert.equal(cached.status, 304); assert.equal(cached.text, "");
+  // 실제 RPC의 「구형 DO 메서드 없음」은 비동기 거절. setup의 구형 스텁은 동기 부재도 검증함.
+  t.env.SNAP = { ...ns, get: (...args: unknown[]) => ({ ...ns.get(...args), getMany: async () => { throw new Error("old DO"); } }) };
+  const rejected = await t.req("GET", "/api/chat/main", undefined, h);
+  assert.equal(rejected.status, 200, rejected.text);
+  assert.deepEqual({ ...rejected.j, read_at: 0 }, { ...old.j, read_at: 0 });
+});
+
+
+test("화면 틀 조건부 읽기: 회원·주인 첫 HTML 동등, 다음 요청 본문 0, 바뀐 틀 즉시 반영", async () => {
+  const t = await setup(); await t.flag("read_page", true);
+  const ns = t.env.SNAP;
+  let value = { body: PAGE, etag: '"conditional-page-1"', at: Date.now(), checked: Date.now() };
+  let full = 0, same = 0;
+  t.env.SNAP = { ...ns, get: (...args: unknown[]) => {
+    const s = ns.get(...args);
+    return { ...s, get: async (k: string) => k === "page" ? value : s.get(k), getIf: async (k: string, tag: string) => {
+      assert.equal(k, "page");
+      if (tag === value.etag) { same++; return { same: true, etag: value.etag, at: value.at, checked: value.checked }; }
+      full++; return value;
+    } };
+  } };
+  for (const email of [MEMBER, OWNER]) {
+    const h = await t.human(email), before = full;
+    const first = await t.req("GET", "/nodes", undefined, h), next = await t.req("GET", "/nodes", undefined, h);
+    assert.equal(first.status, 200, first.text); assert.equal(next.status, 200, next.text);
+    assert.equal(next.text, first.text);
+    assert.ok(full - before <= 1); assert.ok(same > 0);
+    assert.ok(!first.text.includes("__BX_DATA__"));
+  }
+  assert.equal(full, 1, "회원·주인 사이에도 같은 비개인 화면 틀을 재전송하지 않음");
+  const v2 = JSON.parse(PAGE); v2.ver = "v2"; v2.html = v2.html.replace("</body>", '<div id="new-template"></div></body>');
+  value = { ...value, body: JSON.stringify(v2), etag: '"conditional-page-2"' };
+  const changed = await t.req("GET", "/nodes", undefined, await t.human(MEMBER));
+  assert.equal(changed.status, 200, changed.text); assert.ok(changed.text.includes('id="new-template"'));
+  assert.equal(full, 2);
+});
+
+test("화면 틀 조건부 읽기: 구형 DO의 getIf 거절은 기존 get으로 첫 HTML 제공", async () => {
+  const t = await setup(), ns = t.env.SNAP, h = await t.human(MEMBER);
+  let fallback = 0;
+  t.env.SNAP = { ...ns, get: (...args: unknown[]) => {
+    const s = ns.get(...args); return { ...s, getIf: async () => { throw new Error("old DO"); }, get: async (k: string) => { if (k === "page") fallback++; return s.get(k); } };
+  } };
+  const old = await t.req("GET", "/nodes", undefined, h);
+  assert.equal(old.status, 200, old.text); assert.ok(fallback >= 1);
+});
+
+
+test("조건부 화면 틀: /bxs 차가운 읽기에서 틀을 받아 덩어리 복구, 다음 첫 HTML은 본문 재전송 없음", async () => {
+  const t = await setup(), h = await t.human(MEMBER), ns = t.env.SNAP;
+  const { shaOf } = await import("./bxs.ts");
+  const js = "/* conditional-page-bxs " + "x".repeat(5000) + " */", sha = await shaOf(js), page = JSON.parse(PAGE);
+  page.html = page.html.replace("</body>", `<script>${js}</script></body>`);
+  const value = { body: JSON.stringify(page), etag: '"bxs-page-unique"', at: Date.now(), checked: Date.now() };
+  let full = 0, same = 0;
+  t.env.SNAP = { ...ns, get: (...args: unknown[]) => ({ ...ns.get(...args), getIf: async (k: string, tag: string) => {
+    assert.equal(k, "page");
+    if (tag === value.etag) { same++; return { same: true, etag: value.etag, at: value.at, checked: value.checked }; }
+    full++; return value;
+  } }) };
+  const block = await t.req("GET", `/bxs/${sha}.js`, undefined, h);
+  assert.equal(block.status, 200, block.text); assert.equal(block.text, js);
+  const html = await t.req("GET", "/nodes", undefined, h);
+  assert.equal(html.status, 200, html.text); assert.ok(html.text.includes(`/bxs/${sha}.js`));
+  assert.equal(full, 1); assert.ok(same >= 1);
+});

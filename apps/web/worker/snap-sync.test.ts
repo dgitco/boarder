@@ -73,3 +73,49 @@ test("늦은 저장만 쓰는 동안: 타이머가 돌면 디스크에 들어가
   assert.equal(await s.touch("data", true), true);
   die(s);
 });
+
+
+test("한 RPC로 읽은 cfg·sync는 get과 같고, 없는 칸·중복·순서를 보존함", async () => {
+  const db = disk(), s = life(db);
+  await s.put("cfg", '{"channels":{"primary":"C1"}}');
+  await s.put("sync", '{"seq":7}');
+  const keys = ["sync", "missing", "cfg", "sync"];
+  assert.deepEqual(await s.getMany(keys), await Promise.all(keys.map(k => s.get(k))));
+  assert.deepEqual(await s.getMany([]), []);
+});
+
+test("한 RPC로 읽어도 다시 뜬 뒤 아직 못 받은 cfg는 낡음, 새 sync는 현재 시각", async () => {
+  const db = disk(); let s = life(db);
+  await s.put("cfg", '{"v":1}');
+  await s.put("cfg", '{"v":2}', false, true); die(s);
+  s = life(db); await s.put("sync", '{"seq":8}');
+  const [cfg, sync] = await s.getMany(["cfg", "sync"]);
+  assert.equal(cfg!.at, 0); assert.equal(cfg!.checked, 0);
+  assert.equal(JSON.parse(cfg!.body).v, 1);
+  assert.ok(sync!.at > 0);
+  assert.deepEqual([cfg, sync], await Promise.all([s.get("cfg"), s.get("sync")]));
+});
+
+
+test("조건부 스냅숏: 같은 ETag는 본문 없이 현재 checked를 반환, 바뀜·없음은 get과 같음", async () => {
+  const db = disk(), s = life(db);
+  const etag = await s.put("page", '{"html":"large"}');
+  const full = await s.get("page");
+  assert.deepEqual(await s.getIf("page", ""), full);
+  assert.deepEqual(await s.getIf("page", "other"), full);
+  await s.touch("page");
+  const same = await s.getIf("page", etag), now = await s.get("page");
+  assert.deepEqual(same, { same: true, etag, at: now!.at, checked: now!.checked });
+  assert.ok(!("body" in same!));
+  await s.put("page", '{"html":"new"}');
+  assert.deepEqual(await s.getIf("page", etag), await s.get("page"));
+  assert.equal(await s.getIf("missing", etag), null);
+});
+
+test("조건부 스냅숏: 다시 뜬 DO는 본문이 같아도 at=checked=0 보호를 유지", async () => {
+  const db = disk(); let s = life(db);
+  const etag = await s.put("page", '{"html":"old"}');
+  await s.put("data", '{"v":2}', false, true); die(s);
+  s = life(db);
+  assert.deepEqual(await s.getIf("page", etag), { same: true, etag, at: 0, checked: 0 });
+});

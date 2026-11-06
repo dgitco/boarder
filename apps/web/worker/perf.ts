@@ -1,6 +1,6 @@
 import { RAW } from "./agent-token-cache";
-export type Meter = { d1r: number; d1rn: number; d1w: number; d1wn: number; dob: number; dobn: number; r2: number; r2n: number };
-export const newMeter = (): Meter => ({ d1r: 0, d1rn: 0, d1w: 0, d1wn: 0, dob: 0, dobn: 0, r2: 0, r2n: 0 });
+export type Meter = { d1r: number; d1rn: number; d1w: number; d1wn: number; dob: number; dobn: number; r2: number; r2n: number; doCalls: Record<string, { ms: number; n: number; max: number; chars?: number; same?: number }> };
+export const newMeter = (): Meter => ({ d1r: 0, d1rn: 0, d1w: 0, d1wn: 0, dob: 0, dobn: 0, r2: 0, r2n: 0, doCalls: {} });
 
 const isRead = (sql: string) => /^\s*(select|pragma|explain|with)\b/i.test(sql);
 const track = <T>(p: Promise<T>, done: () => void) => { p.then(done, done); return p; };
@@ -42,24 +42,39 @@ function meterR2(b: R2Bucket, m: Meter): R2Bucket {
   });
 }
 // DO: 네임스페이스의 get · getByName 이 돌려준 스텁의 호출만 잼(fetch · RPC). 답은 그대로 돌려줌(RpcPromise 도)
-function meterStub<T extends object>(s: T, m: Meter): T {
+function meterStub<T extends object>(s: T, m: Meter, ns: string): T {
   return new Proxy(s, {
     get(t, k) {
       if (typeof k === "symbol" || k === "then" || k === "id" || k === "name" || k === "dup") return (t as any)[k];
       const v = (t as any)[k]; if (typeof v !== "function") return v;
       return (...a: unknown[]) => {
-        const s0 = Date.now(), r = (t as any)[k](...a), done = () => { m.dob += Date.now() - s0; m.dobn++; };
-        if (r && typeof r.then === "function") r.then(done, done); else done();
+        const s0 = Date.now(), r = (t as any)[k](...a), done = (value?: unknown) => {
+          const ms = Date.now() - s0; m.dob += ms; m.dobn++;
+          // 객체 이름 · RPC 인자(메일 · 글 · 열쇠)는 기록하지 않음. 코드의 바인딩과 메서드만.
+          const label = `${ns}_${String(k)}`, c = m.doCalls[label] ||= { ms: 0, n: 0, max: 0 };
+          c.ms += ms; c.n++; c.max = Math.max(c.max, ms);
+          // 고정한 page/data만 구분. 다른 열쇠 · RPC 인자는 기록하지 않음.
+          if (ns === "snap" && (k === "get" || k === "getIf") && (a[0] === "page" || a[0] === "data")) {
+            const d = m.doCalls[`${label}_${a[0]}`] ||= { ms: 0, n: 0, max: 0, chars: 0, same: 0 };
+            d.ms += ms; d.n++; d.max = Math.max(d.max, ms);
+            if (value && typeof value === "object") {
+              const v = value as { body?: unknown; same?: unknown };
+              d.chars! += typeof v.body === "string" ? v.body.length : 0;
+              d.same! += v.same === true ? 1 : 0;
+            }
+          }
+        };
+        if (r && typeof r.then === "function") r.then(done, () => done()); else done(r);
         return r;
       };
     },
   });
 }
-function meterNS<T extends object>(n: T, m: Meter): T {
+function meterNS<T extends object>(n: T, m: Meter, ns: string): T {
   return new Proxy(n, {
     get(t, k) {
       const v = (t as any)[k];
-      if (k === "get" || k === "getByName") return (...a: unknown[]) => meterStub(v.apply(t, a), m);
+      if (k === "get" || k === "getByName") return (...a: unknown[]) => meterStub(v.apply(t, a), m, ns);
       return typeof v === "function" ? v.bind(t) : v;
     },
   });
@@ -68,10 +83,10 @@ const NS = ["SNAP", "BRIDGE", "ENGINE", "SEARCH", "PUSH"];
 export function meterEnv<E extends { DB: D1Database; RESULTS?: R2Bucket }>(env: E, m: Meter): E {
   const out: any = { ...env, DB: meterDB(env.DB, m) };
   if (env.RESULTS) out.RESULTS = meterR2(env.RESULTS, m);
-  for (const k of NS) if ((env as any)[k]) out[k] = meterNS((env as any)[k], m);
+  for (const k of NS) if ((env as any)[k]) out[k] = meterNS((env as any)[k], m, k.toLowerCase());
   return out;
 }
-export const meterProps = (m: Meter) => ({ d1_read_ms: m.d1r, d1_read_n: m.d1rn, d1_write_ms: m.d1w, d1_write_n: m.d1wn, do_ms: m.dob, do_n: m.dobn, r2_ms: m.r2, r2_n: m.r2n });
+export const meterProps = (m: Meter) => ({ ...Object.fromEntries(Object.entries(m.doCalls).flatMap(([k, v]) => [[`do_${k}_ms`, v.ms], [`do_${k}_n`, v.n], [`do_${k}_max_ms`, v.max], ...(v.chars !== undefined ? [[`do_${k}_body_chars`, v.chars], [`do_${k}_same_n`, v.same!]] : [])])), d1_read_ms: m.d1r, d1_read_n: m.d1rn, d1_write_ms: m.d1w, d1_write_n: m.d1wn, do_ms: m.dob, do_n: m.dobn, r2_ms: m.r2, r2_n: m.r2n });
 
 export function sampleOf(path: string, method: string, status: number) {
   if (status >= 500) return 1;

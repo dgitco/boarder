@@ -165,6 +165,18 @@ export class BoardSnap extends DurableObject<object> {
   async get(key: string) {
     const r = this.view(key); return r ? { body: r.body, etag: r.etag, at: r.at, checked: r.checked } : null;
   }
+  // 본문이 같아도 view의 시각은 새로 반환함. 재시작 뒤 낡음(0)과 touch를 캐시가 숨기지 않게.
+  async getIf(key: string, etag: string) {
+    const r = this.view(key); if (!r) return null;
+    const meta = { etag: r.etag, at: r.at, checked: r.checked };
+    return etag && r.etag === etag ? { ...meta, same: true as const } : { ...meta, body: r.body };
+  }
+  // 같은 화면에 필요한 칸은 한 RPC로 읽음. view를 써서 재시작 뒤 낡음 표시는 get과 같게 유지함.
+  async getMany(keys: string[]) {
+    return keys.map(key => {
+      const r = this.view(key); return r ? { body: r.body, etag: r.etag, at: r.at, checked: r.checked } : null;
+    });
+  }
   // 폴링 대비(GET /api/live): 화면 바뀜 표에 쓰는 스냅숏 ETag 들
   async tags() {
     const t: Record<string, string> = {};

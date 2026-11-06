@@ -106,6 +106,7 @@ import { claimEndpoint, linePushOpen, releaseEndpoint, routeCard, routeLine, rou
 import * as emoji from "./emoji";
 import * as memberSearch from "./member-search";
 import { newMeter, meterEnv, meterProps, sampleOf } from "./perf";
+import { PageSnapshot } from "./snap-read";
 import * as PU from "./push";
 import { resolve as pushResolve, cardLoc } from "./push-do";
 import { hosted } from "./hosted";   // 호스팅 전용(ee/) — 공개 판에선 빈 확장
@@ -156,12 +157,14 @@ const boardCall = async (env: Env, ch: string, r: { method: string; path: string
 const boardTool = async (env: Env, ch: string, name: string, args: Record<string, unknown>, agent: string) => (hosted.exec && await hosted.exec.on(env.DB)) ? hosted.exec.tool(env, ch, name, args, agent) : bridge(env, ch).tool(name, args, agent);
 const chOf = (c: Context<{ Bindings: Env }>) => /(?:^|;\s*)bx-ch=test(?:;|$)/.test(c.req.header("cookie") || "") ? "test" : "owner";
 const snap = (env: Env) => env.SNAP.get(env.SNAP.idFromName(live.OWNER_SNAP), { locationHint: "apac" });
+const pageSnapshot = new PageSnapshot();
+const readPage = (env: Env) => pageSnapshot.read(snap(env));
 let verMemo = { at: 0, v: "" };
 async function pageVer(env: Env) {
   if (Date.now() - verMemo.at < 60_000) return verMemo.v;
   verMemo.at = Date.now();
   verMemo.v = "";
-  try { const pg = await snap(env).get("page"); if (pg) verMemo.v = String(JSON.parse(pg.body).ver || "").slice(0, 40); } catch { /* 다음 판에 */ }
+  try { const pg = await readPage(env); if (pg) verMemo.v = String(JSON.parse(pg.body).ver || "").slice(0, 40); } catch { /* 다음 판에 */ }
   return verMemo.v;
 }
 app.use("/api/data", async (c, next) => {
@@ -2445,7 +2448,10 @@ function shadowUnified(c: Context<{ Bindings: Env }>, body: string, who: string)
 // 스냅숏이 마지막으로 「맞음」을 받은 뒤 지난 ms
 const snapAge = (x: { at: number; checked?: number }) => Date.now() - Math.max(x.at, x.checked || 0);
 async function ledgerAges(env: Env) {
-  const [cf, sy] = await Promise.all([snap(env).get("cfg"), snap(env).get("sync")]);
+  // 점진 배포 중 구형 DO는 getMany가 없을 수 있음. 읽기만 하는 옛 RPC로 폴백.
+  const s = snap(env); let cf: Snap, sy: Snap;
+  try { [cf, sy] = await s.getMany(["cfg", "sync"]); }
+  catch { [cf, sy] = await Promise.all([s.get("cfg"), s.get("sync")]); }
   return { cfg: cf, syncAge: sy ? snapAge(sy) : Infinity, h: { "x-cfg-age": cf ? String(snapAge(cf)) : "none", "x-sync-age": sy ? String(snapAge(sy)) : "none" } };
 }
 const OWN_CHAT_POST = new Set([...ownerJobs.PATHS, "/api/draft", "/api/nodepri"].filter(p => p !== "/api/clientlog"));
@@ -2582,21 +2588,21 @@ app.get("/bxs/:f", async c => {
   let b = bxStore.get(sha);
   if (!b) { await shellTags(c.env, c.executionCtx); b = bxStore.get(sha); }
   if (!b) { const o = await c.env.RESULTS.get(`bxs/${sha}.${kind}`).catch(() => null); if (o) { b = { kind, body: await o.text() }; bxPut(sha, b); bxSaved.add(sha); } }
-  if (!b) { const pg = await snap(c.env).get("page").catch(() => null); if (pg) { await tplHtml(c.env, c.executionCtx, pg); b = bxStore.get(sha); } }
+  if (!b) { const pg = await readPage(c.env).catch(() => null); if (pg) { await tplHtml(c.env, c.executionCtx, pg); b = bxStore.get(sha); } }
   if (!b || b.kind !== kind) return c.text("not found", 404, { "cache-control": "no-store" });
   const h = { "content-type": bxs.TYPE[kind], "cache-control": bxs.CACHE, etag: `"${sha}"`, "x-content-type-options": "nosniff" };
   if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === h.etag) return new Response(null, { status: 304, headers: h });
   return new Response(b.body, { headers: h });
 });
 async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
-  const [pg, dt] = await Promise.all([snap(env).get("page"), snap(env).get("data")]);
+  const [pg, dt] = await Promise.all([readPage(env), snap(env).get("data")]);
   if (!pg || !dt) return null;
   const html = (await tplHtml(env, ctx, pg))
     .replace("__BX_DATA__", () => dt.body.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(dt.etag));
   return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-snap-age": String(Math.max(snapAge(pg), snapAge(dt))) } as Record<string, string>, body: new TextEncoder().encode(html) };
 }
 async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea: boolean | "x" | "personal" = false, chans: string[] = ["primary"]) {   // chans = 채널 목록(회원 Primary 하나, 켠 주인은 주인 채널 표)
-  const pg = await snap(c.env).get("page"); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
+  const pg = await readPage(c.env); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
   await memberBoard.fresh(c.env, me, c.executionCtx).catch(e => console.error("묶기", e));
   const data = await memberBoard.data(c.env.DB, me, bot, await memberBoard.loadShared(c.env.DB, me, c.executionCtx)), d = JSON.stringify(data), tag = await memberBoard.etag(d);
   const roster = new Map((((data as { roster?: unknown }).roster as { key?: string; name?: string }[] | undefined) || []).filter(r => r && typeof r.key === "string" && r.name).map(r => [r.key!, r]));
