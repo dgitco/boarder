@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { register } from "node:module";
 import { DatabaseSync } from "node:sqlite";
+import { copyFetch, directConfig, directHelpers } from "./canvas-direct-test-helper.ts";
 
 register("./test-hooks.mjs", import.meta.url);
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
@@ -14,7 +15,7 @@ const MIG = new URL("../migrations/", import.meta.url);
 function d1() {   // member-parity.test 의 가짜 D1(+ first(col) · raw — index.ts 로그인 길이 씀)
   const db = new DatabaseSync(":memory:");
   for (const f of readdirSync(MIG).filter(f => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(f, MIG), "utf8"));
-  const exec = (sql: string, args: unknown[]) => { const st = db.prepare(sql); if (/^\s*(select|with)/i.test(sql)) return { success: true, results: st.all(...(args as never[])).map(r => ({ ...r })), meta: { changes: 0 } }; const r = st.run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes) } }; };
+  const exec = (sql: string, args: unknown[]) => { const st = db.prepare(sql); if ((/^\s*(select|with)/i.test(sql) || /\bRETURNING\b/i.test(sql))) return { success: true, results: st.all(...(args as never[])).map(r => ({ ...r })), meta: { changes: 0 } }; const r = st.run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes) } }; };
   const stmt = (sql: string, args: unknown[] = []): any => ({ sql, args, bind: (...a: unknown[]) => stmt(sql, a),
     first: async (col?: string) => { const r = exec(sql, args).results[0] as Record<string, unknown> | undefined; return r ? (col ? r[col] : r) : null; },
     all: async () => exec(sql, args), run: async () => exec(sql, args), raw: async () => exec(sql, args).results.map(r => Object.values(r)) });
@@ -22,10 +23,13 @@ function d1() {   // member-parity.test 의 가짜 D1(+ first(col) · raw — in
   return { db, D1 };
 }
 function r2() {
-  const m = new Map<string, { b: Uint8Array; httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string> }>();
-  const obj = (key: string) => { const v = m.get(key)!; return { key, size: v.b.length, httpMetadata: v.httpMetadata, customMetadata: v.customMetadata, body: new Response(v.b as BodyInit).body, arrayBuffer: async () => v.b.slice().buffer, text: async () => new TextDecoder().decode(v.b), json: async () => JSON.parse(new TextDecoder().decode(v.b)) }; };
+  const m = new Map<string, { b: Uint8Array; tag?: string; httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string> }>();
+  const obj = (key: string) => { const v = m.get(key)!; return { key, etag: v.tag || "test-etag", size: v.b.length, httpMetadata: v.httpMetadata, customMetadata: v.customMetadata, body: new Response(v.b as BodyInit).body, arrayBuffer: async () => v.b.slice().buffer, text: async () => new TextDecoder().decode(v.b), json: async () => JSON.parse(new TextDecoder().decode(v.b)) }; };
+  let revision = 0;
   const R = {
-    put: async (key: string, b: ArrayBuffer | string | Uint8Array | Blob, o: { httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string> } = {}) => { m.set(key, { b: typeof b === "string" ? new TextEncoder().encode(b) : b instanceof Blob ? new Uint8Array(await b.arrayBuffer()) : new Uint8Array(b as ArrayBuffer), ...o }); return {}; },
+    createMultipartUpload: async () => ({ uploadId: crypto.randomUUID(), abort: async () => {} }),
+    resumeMultipartUpload: () => ({ abort: async () => {} }),
+    put: async (key: string, b: ArrayBuffer | string | Uint8Array | Blob, o: { httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string>; onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string } } = {}) => { if (o.onlyIf?.etagMatches && (m.get(key)?.tag || "test-etag") !== o.onlyIf.etagMatches || o.onlyIf?.etagDoesNotMatch === "*" && m.has(key)) return null; m.set(key, { tag: String(++revision), b: typeof b === "string" ? new TextEncoder().encode(b) : b instanceof Blob ? new Uint8Array(await b.arrayBuffer()) : new Uint8Array(b as ArrayBuffer), ...o }); return {}; },
     get: async (key: string) => m.has(key) ? obj(key) : null,
     head: async (key: string) => m.has(key) ? obj(key) : null,
     list: async (o: { prefix?: string }) => ({ objects: [...m.keys()].filter(k => k.startsWith(o.prefix || "")).sort().map(obj), truncated: false }),
@@ -53,24 +57,19 @@ async function setup() {
   db.prepare(`INSERT INTO "user"(id, name, email, emailVerified, createdAt, updatedAt) VALUES (?,?,?,?,?,?)`).run("u-a", "앨리스<가상>", A, 1, "2026-11-02", "2026-11-02");
   await R.put("art/_sys/artcanvas.html", SHELL);
   await R.put("art/_sys/index.json", JSON.stringify({ v: 1, at: 1, arts: {}, blobs: {}, shim: btoa(SHIM) }));
-  const env = { DB: D1, RESULTS: R, SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) }, ASSETS: { fetch: async () => new Response("<html>로그인 화면</html>", { headers: { "content-type": "text/html" } }) },
+  copyFetch(m);
+  const env = { ...directConfig, DB: D1, RESULTS: R, SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) }, ASSETS: { fetch: async () => new Response("<html>로그인 화면</html>", { headers: { "content-type": "text/html" } }) },
     BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test", ADMIN_TOKEN: "admin-test-not-real" };
   const ctx = { waitUntil(p: Promise<unknown>) { waits.push(p); }, passThroughOnException() {} };
   const go = (path: string, init: RequestInit = {}) => app.fetch(new Request("https://example.test" + path, init), env, ctx);
-  const put = (tok: string, files: Record<string, string>, o: { id?: string; title?: string } = {}) => {
-    const fd = new FormData(), paths = Object.keys(files);
-    fd.set("manifest", JSON.stringify(paths.map(path => ({ path }))));
-    paths.forEach((p, i) => fd.set(`f${i}`, new Blob([files[p]]), p.split("/").pop()));
-    if (o.id) fd.set("id", o.id); if (o.title) fd.set("title", o.title);
-    return go("/api/me/canvas", { method: "POST", headers: { authorization: `Bearer ${tok}` }, body: fd });
-  };
+  const { put, init, control } = directHelpers(go, db, R);
   const view = async (email: string | null, path: string) => go(path, { headers: { accept: "text/html", ...(email ? { cookie: await cookie(email) } : {}) } });
   const getj = async (email: string, path: string) => { const r = await go(path, { headers: { accept: "application/json", cookie: await cookie(email) } }); return { status: r.status, j: await r.json() as any }; };
   const post = async (email: string, path: string, body: unknown, h: Record<string, string> = {}) => {
     const r = await go(path, { method: "POST", headers: { "content-type": "application/json", "x-hb": "1", "sec-fetch-site": "same-origin", cookie: await cookie(email), ...h }, body: JSON.stringify(body) });
     return { status: r.status, j: await r.json() as any };
   };
-  return { db, m, go, put, view, getj, post };
+  return { db, m, go, put, init, control, view, getj, post };
 }
 const PAGE = "<!doctype html><html><head><title>가상 페이지</title></head><body>지어낸 글</body></html>";
 const CANVAS = { title: "가상 설계안", boards: { "Overview.dc.html": { x: 0, y: 0, w: 800, h: 600 } }, order: ["Overview.dc.html"] };
@@ -225,10 +224,19 @@ test("목록 고정 별 · 썸네일 판: 내 캔버스만, 판 이름 검사, �
 });
 
 const ADM = { authorization: "Bearer admin-test-not-real" };
-const JPG = new Uint8Array([0xff, 0xd8, ...new Array(3000).fill(7), 0xff, 0xd9]);
+const JPG = new Uint8Array([0xff, 0xd8, 0xff, ...new Array(3000).fill(7), 0xff, 0xd9]);
 const CV2 = { ...CANVAS, boards: { "Overview.dc.html": { w: 800, h: 600 }, "Second.dc.html": { w: 1000, h: 700 } }, order: ["Overview.dc.html", "Second.dc.html"] };
 const jobs = async (s: any) => (await (await s.go("/api/admin/mthumb/jobs?limit=20", { headers: ADM })).json() as any).jobs as any[];
-const putThumb = (s: any, j: any, ver = j.ver, pref = j.pref) => s.go(`/api/admin/mthumb/${j.mk}/${j.art}?ver=${ver}&pref=${encodeURIComponent(pref)}`, { method: "PUT", headers: { ...ADM, "content-type": "image/jpeg" }, body: JPG });
+const putThumb = async (s: any, j: any, ver = j.ver, pref = j.pref, bytes = JPG) => {
+  const post = (action: string, body: unknown) => s.go(`/api/admin/media/thumb/${action}`, { method: "POST", headers: { ...ADM, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const r = await post("init", { mk: j.mk, art: j.art, ver, pref, size: bytes.length, mime: "image/jpeg" }); if (!r.ok) return r;
+  const session = await r.json() as any;
+  const part = await post("part", { id: session.id, number: 1 }); if (!part.ok) return part;
+  const row = s.db.prepare("SELECT * FROM direct_upload WHERE id=?").get(session.id) as any;
+  // JPEG 본문은 Worker 요청을 거치지 않고 R2에 들어간 것으로 흉내 낸다.
+  s.m.set(row.source, { b: bytes, customMetadata: JSON.parse(row.metadata), httpMetadata: { contentType: row.mime } });
+  return post("complete", { id: session.id, parts: [{ partNumber: 1, etag: "test-etag" }] });
+};
 
 test("회원 썸네일 일감: 관리자 토큰만 · 없음 → 찍으면 빠짐 · 판 버전 바뀜 · 지정 판 바뀜 · 회원마다 따로", async () => {
   const s = await setup();
@@ -286,8 +294,10 @@ test("회원 썸네일 올리기 · 서빙: JPEG 만 · 내 캔버스만 읽힘 
   const a = await (await s.put(TOK.A, { "project/canvas.json": JSON.stringify(CV2), "project/Overview.dc.html": BOARD })).json() as any;
   const j = (await jobs(s))[0];
   assert.equal((await s.go(`/art/${a.id}/_thumb.jpg`, { headers: { cookie: await cookie(A) } })).status, 404);   // 아직 없음
-  assert.equal((await s.go(`/api/admin/mthumb/${j.mk}/${a.id}?ver=${j.ver}&pref=`, { method: "PUT", headers: ADM, body: new Uint8Array(3000).fill(65) })).status, 400);   // JPEG 아님
-  assert.equal((await s.go(`/api/admin/mthumb/${j.mk}/${a.id}?ver=${j.ver}&pref=`, { method: "PUT", body: JPG })).status, 403);
+  assert.equal((await putThumb(s, j, j.ver, j.pref, new Uint8Array(3000).fill(65))).status, 400);   // JPEG 아님
+  assert.equal((await s.go("/api/admin/media/thumb/init", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mk: j.mk, art: a.id, ver: j.ver, pref: "", size: JPG.length, mime: "image/jpeg" }) })).status, 403);
+  const legacy = await s.go(`/api/admin/mthumb/${j.mk}/${a.id}?ver=${j.ver}&pref=`, { method: "PUT", headers: ADM, body: JPG });
+  assert.equal(legacy.status, 200); assert.equal(legacy.headers.get("deprecation"), "true");
   assert.equal((await putThumb(s, { ...j, art: "Nope0000000000000000001" })).status, 404);
   assert.equal((await putThumb(s, j)).status, 200);
   const r = await s.go(`/art/${a.id}/_thumb.jpg`, { headers: { cookie: await cookie(A) } });

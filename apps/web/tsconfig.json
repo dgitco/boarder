@@ -12,5 +12,5 @@
     "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src", "worker", "vite.config.ts"],
-  "exclude": ["worker/**/*.test.ts"]
+  "exclude": ["worker/**/*.test.ts", "worker/*-test-helper.ts"]
 }

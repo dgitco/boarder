@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { register } from "node:module";
 import { DatabaseSync } from "node:sqlite";
+import { copyFetch, directConfig, directHelpers } from "./canvas-direct-test-helper.ts";
 
 register("./test-hooks.mjs", import.meta.url);
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
@@ -25,10 +26,13 @@ function d1() {
 }
 // 가짜 R2: put · get · head · list(prefix · include) · delete(하나 · 여럿)
 function r2() {
-  const m = new Map<string, { b: Uint8Array; httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string> }>();
-  const obj = (key: string) => { const v = m.get(key)!; return { key, size: v.b.length, httpMetadata: v.httpMetadata, customMetadata: v.customMetadata, body: new Response(v.b as BodyInit).body, arrayBuffer: async () => v.b.slice().buffer, text: async () => new TextDecoder().decode(v.b), json: async () => JSON.parse(new TextDecoder().decode(v.b)) }; };
+  const m = new Map<string, { b: Uint8Array; tag?: string; httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string> }>();
+  const obj = (key: string) => { const v = m.get(key)!; return { key, etag: v.tag || "test-etag", size: v.b.length, httpMetadata: v.httpMetadata, customMetadata: v.customMetadata, body: new Response(v.b as BodyInit).body, arrayBuffer: async () => v.b.slice().buffer, text: async () => new TextDecoder().decode(v.b), json: async () => JSON.parse(new TextDecoder().decode(v.b)) }; };
+  let revision = 0;
   const R = {
-    put: async (key: string, b: ArrayBuffer | string | Uint8Array | Blob, o: { httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string> } = {}) => { m.set(key, { b: typeof b === "string" ? new TextEncoder().encode(b) : b instanceof Blob ? new Uint8Array(await b.arrayBuffer()) : new Uint8Array(b as ArrayBuffer), ...o }); return {}; },
+    createMultipartUpload: async () => ({ uploadId: crypto.randomUUID(), abort: async () => {} }),
+    resumeMultipartUpload: () => ({ abort: async () => {} }),
+    put: async (key: string, b: ArrayBuffer | string | Uint8Array | Blob, o: { httpMetadata?: R2HTTPMetadata; customMetadata?: Record<string, string>; onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string } } = {}) => { if (o.onlyIf?.etagMatches && (m.get(key)?.tag || "test-etag") !== o.onlyIf.etagMatches || o.onlyIf?.etagDoesNotMatch === "*" && m.has(key)) return null; m.set(key, { tag: String(++revision), b: typeof b === "string" ? new TextEncoder().encode(b) : b instanceof Blob ? new Uint8Array(await b.arrayBuffer()) : new Uint8Array(b as ArrayBuffer), ...o }); return {}; },
     get: async (key: string, o?: { range?: { offset: number; length: number } }) => {   // R2 range 받기(조각 몸통 · size 는 전체)
       if (!m.has(key)) return null; const x = obj(key), r = o?.range; if (!r) return x;
       const b = m.get(key)!.b.slice(r.offset, r.offset + r.length); return { ...x, body: new Response(b as BodyInit).body, arrayBuffer: async () => b.slice().buffer };
@@ -57,19 +61,14 @@ async function setup() {
   const { db, D1 } = d1(), { m, R } = r2(), waits: Promise<unknown>[] = [];
   for (const e of [A, B]) db.prepare("INSERT INTO invite(email, by_email, at) VALUES (?,?,?)").run(e, OWNER, 1);
   for (const [k, e] of [["A", A], ["B", B], ["O", OWNER]] as const) db.prepare("INSERT INTO device(id, owner, name, token_hash, created_at, scope) VALUES (?,?,?,?,?,?)").run("dev" + k, e, "시험", await sha(TOK[k]), 1, k === "O" ? "watch" : "full");
-  const env = { DB: D1, RESULTS: R, SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) }, ASSETS: { fetch: async () => new Response("<html>로그인 화면</html>", { headers: { "content-type": "text/html" } }) },   // 화면 칸 알리기(live.ts)는 빈 것
+  copyFetch(m);
+  const env = { ...directConfig, DB: D1, RESULTS: R, SNAP: { idFromName: (n: string) => n, get: () => ({ bump: async () => 0 }) }, ASSETS: { fetch: async () => new Response("<html>로그인 화면</html>", { headers: { "content-type": "text/html" } }) },   // 화면 칸 알리기(live.ts)는 빈 것
     BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
   const ctx = { waitUntil(p: Promise<unknown>) { waits.push(p); }, passThroughOnException() {} };
   const go = (path: string, init: RequestInit = {}) => app.fetch(new Request("https://example.test" + path, init), env, ctx);
-  const put = (tok: string, files: Record<string, string | Uint8Array>, o: { id?: string; title?: string; manifest?: unknown; win?: string; wid?: string } = {}) => {
-    const fd = new FormData(), paths = Object.keys(files);
-    fd.set("manifest", JSON.stringify(o.manifest ?? paths.map(path => ({ path }))));
-    paths.forEach((p, i) => fd.set(`f${i}`, new Blob([files[p] as BlobPart]), p.split("/").pop()));
-    if (o.id) fd.set("id", o.id); if (o.title) fd.set("title", o.title); if (o.win) fd.set("win", o.win); if (o.wid) fd.set("wid", o.wid);
-    return go("/api/me/canvas", { method: "POST", headers: { authorization: `Bearer ${tok}` }, body: fd });
-  };
+  const { put, init, control } = directHelpers(go, db, R);
   const view = async (email: string | null, path: string) => go(path, { headers: { accept: "text/html", "sec-fetch-dest": "iframe", ...(email ? { cookie: await cookie(email) } : {}) } });
-  return { db, m, env, go, put, view, settle: async () => { await Promise.all(waits.splice(0)); } };
+  return { db, m, env, go, put, init, control, view, settle: async () => { await Promise.all(waits.splice(0)); } };
 }
 const PAGE = "<!doctype html><html><head><title>가상 보고서</title></head><body><img src='a.png'>지어낸 글</body></html>";
 
@@ -159,10 +158,8 @@ test("상한 · 꼴: index.html 없음 · 경로 넘기 · 같은 경로 둘 · 
   assert.equal(await st(s.put(TOK.A, { "index.html": PAGE, "a/./b.js": "1" })), 400);
   assert.equal(await st(s.put(TOK.A, { "index.html": PAGE }, { manifest: [{ path: "index.html" }, { path: "index.html" }] })), 400);
   assert.equal(await st(s.put(TOK.A, { "index.html": PAGE }, { id: "short" })), 400);
-  assert.equal(await st(s.put(TOK.A, { "index.html": PAGE, "big.bin": new Uint8Array(MC.LIMITS.file + 1) })), 413);
-  const many: Record<string, Uint8Array | string> = { "index.html": PAGE };
-  for (let i = 0; i < 3; i++) many[`p${i}.bin`] = new Uint8Array(MC.LIMITS.file);   // 각각은 상한 안, 합은 넘음
-  assert.equal(await st(s.put(TOK.A, many)), 413);
+  assert.equal(await st(s.init(TOK.A, [{ path: "index.html", size: MC.LIMITS.file + 1 }])), 413);
+  assert.equal(await st(s.init(TOK.A, [{ path: "index.html", size: MC.LIMITS.total }, { path: "big.bin", size: 1 }])), 413);
   const lots: Record<string, string> = { "index.html": PAGE };
   for (let i = 0; i < MC.LIMITS.files; i++) lots[`f${i}.txt`] = "x";
   assert.equal(await st(s.put(TOK.A, lots)), 413);
@@ -332,4 +329,198 @@ test("썸네일 일감: 최근 200장 밖으로 밀린 옛 캔버스(썸네일 �
   }
   assert.equal(seen.size, 1800, `옛 1800장 중 ${seen.size} 장만 일감`);
   assert.ok(maxHeads <= 2 * MC.THUMB_SCAN, `한 번에 head ${maxHeads} 번 — 최근 + 조각 ${2 * MC.THUMB_SCAN} 이하`);
+});
+
+test("직접 올리기: 500MiB 딱 허용 · 1바이트 초과 거절 · 구형 multipart는 별도 검증", async () => {
+  const s = await setup();
+  assert.equal(MC.LIMITS.file, 524288000); assert.equal(MC.LIMITS.total, 524288000);
+  const r = await s.init(TOK.A, [{ path: "index.html", size: MC.LIMITS.file }]);
+  assert.equal(r.status, 200);
+  const batch = await r.json() as any;
+  assert.equal(batch.uploads[0].size, 524288000);
+  assert.ok(batch.uploads[0].parts > 1);
+  assert.equal(s.m.size, 0); // 500MiB 선언만 보냈으며 본문 할당이나 Worker 전송 없음
+  assert.equal((await s.init(TOK.A, [{ path: "index.html", size: MC.LIMITS.file + 1 }])).status, 413);
+  assert.equal((await s.init(TOK.A, [{ path: "index.html", size: -1 }])).status, 400);
+  const fd = new FormData(); fd.set("f0", new Blob(["아주 작은 파일"]));
+  const legacy = await s.go("/api/me/canvas", { method: "POST", headers: { authorization: `Bearer ${TOK.A}` }, body: fd });
+  assert.equal(legacy.status, 400); assert.equal(legacy.headers.get("deprecation"), "true");
+  assert.equal((await s.control(TOK.A, "/abort", { session: batch.session })).status, 200);
+});
+
+test("직접 올리기: 서명 · 회원 · 파일 세션 경계와 전송 완료 확인 뒤 게시", async () => {
+  const s = await setup(), batch = await (await s.init(TOK.A, [{ path: "index.html", size: 7 }], { title: "직접 전송" })).json() as any;
+  const id = batch.uploads[0].id, ctl = { session: batch.session, index: 0, id, number: 1 };
+  assert.equal((await s.control(TOK.B, "/upload/part", ctl)).status, 404);
+  assert.equal((await s.control(TOK.B, "/upload/complete", ctl)).status, 404);
+  assert.equal((await s.control(TOK.A, "/upload/part", { ...ctl, id: "0".repeat(32) })).status, 404);
+  assert.equal((await s.control(TOK.A, "/upload/part", { ...ctl, index: 1 })).status, 404);
+  assert.equal((await s.control(TOK.A, "/upload/part", { ...ctl, session: batch.session + "x" })).status, 404);
+  assert.equal((await s.control(TOK.A, "/publish", { session: batch.session })).status, 409);
+  const signed = await s.control(TOK.A, "/upload/part", ctl); assert.equal(signed.status, 200);
+  assert.match((await signed.json() as any).url, /^https:\/\/canvas-test\.r2\.cloudflarestorage\.com\//);
+  const row = s.db.prepare("SELECT * FROM direct_upload WHERE id = ?").get(id) as any;
+  // 파일 전송은 R2 쪽에서만 일어나는 것으로 흉내 낸다. Worker에는 JSON 제어만 보낸다.
+  await s.env.RESULTS.put(row.source, "<p></p>", { httpMetadata: { contentType: row.mime }, customMetadata: JSON.parse(row.metadata) });
+  assert.equal((await s.control(TOK.A, "/upload/complete", { ...ctl, parts: [{ partNumber: 1, etag: "test-etag" }] })).status, 200);
+  assert.equal((await s.control(TOK.A, "/publish", { session: batch.session })).status, 200);
+  assert.equal((await s.control(TOK.A, "/publish", { session: batch.session })).status, 200); // 응답 유실 뒤 재시도
+  assert.equal((await s.control(TOK.A, "/upload/part", ctl)).status, 409);
+  assert.equal((await s.control(TOK.A, "/abort", { session: batch.session })).status, 200);
+  assert.equal((await s.view(A, `/art/${batch.id}/`)).status, 200); // 게시 뒤 취소로 파일이 지워지지 않음
+  assert.equal((await s.put(TOK.A, { "index.html": "다음 판" }, { id: batch.id })).status, 200);
+  assert.equal((await s.control(TOK.A, "/publish", { session: batch.session })).status, 409);
+});
+
+test("직접 올리기: 빈 부속 파일 지원 · 전송 중 취소는 새 판만 정리", async () => {
+  const s = await setup(), first = await (await s.put(TOK.A, { "index.html": PAGE, "empty.css": "" })).json() as any;
+  assert.equal((await s.view(A, `/art/${first.id}/empty.css`)).status, 200);
+  const batch = await (await s.init(TOK.A, [{ path: "index.html", size: 1 }, { path: "x.css", size: 0 }], { id: first.id })).json() as any;
+  const row = s.db.prepare("SELECT * FROM direct_upload WHERE id = ?").get(batch.uploads[0].id) as any;
+  await s.env.RESULTS.put(row.source, "x", { customMetadata: JSON.parse(row.metadata) });
+  assert.equal((await s.control(TOK.A, "/upload/complete", { session: batch.session, index: 0, id: row.id, parts: [] })).status, 200);
+  assert.equal((await s.control(TOK.A, "/abort", { session: batch.session })).status, 200);
+  const mk = await MC.keyOf(A);
+  assert.ok(![...s.m.keys()].some(k => k.startsWith(`mart/${mk}/${first.id}/${batch.ver}/`)));
+  assert.match(await (await s.view(A, `/art/${first.id}/`)).text(), /지어낸 글/);
+  assert.equal((await s.control(TOK.A, "/upload/part", { session: batch.session, index: 1, id: batch.uploads[1].id, number: 1 })).status, 409);
+});
+
+test("큰 Design HTML은 SHIM을 앞64KiB에만 끼운 스트림 · 큰 canvas.json은 구조 파싱하지 않음", async () => {
+  const s = await setup();
+  const j = await (await s.put(TOK.A, { "canvas.json": JSON.stringify({ title: "스트림", boards: { "Overview.dc.html": {} } }), "Overview.dc.html": "<head></head><body>작은 판</body>" })).json() as any;
+  await s.env.RESULTS.put("art/_sys/index.json", JSON.stringify({ v: 1, at: 1, arts: {}, blobs: {}, shim: btoa("<meta name='stream-shim'>") }));
+  const get = s.env.RESULTS.get.bind(s.env.RESULTS), mk = await MC.keyOf(A);
+  let fullReads = 0;
+  (s.env.RESULTS as any).get = async (key: string, options: any) => {
+    const o = await get(key, options); if (!o) return null;
+    if (key.endsWith("/Overview.dc.html")) return { ...o, size: MC.LIMITS.file,
+      body: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("<head></head><body>" + "x".repeat(70000))); c.enqueue(new TextEncoder().encode("마지막</body>")); c.close(); } }),
+      arrayBuffer: async () => { fullReads++; throw new Error("통째 읽기 금지"); }, text: async () => { fullReads++; throw new Error("통째 읽기 금지"); } };
+    if (key.endsWith("/canvas.json")) return { ...o, size: MC.LIMITS.file, text: async () => { fullReads++; throw new Error("큰 JSON 파싱 금지"); } };
+    return o;
+  };
+  const result = await MC.file(s.env as never, mk, j.id, "Overview.dc.html");
+  const html = await new Response(result!.body as BodyInit).text();
+  assert.match(html, /<meta name='stream-shim'><\/head>/); assert.match(html, /마지막<\/body>$/);
+  assert.equal((await MC.artthumb(s.env as never, A, { art: j.id, board: "Overview.dc.html" }))[0], 400);
+  assert.equal(fullReads, 0);
+});
+
+
+test("직접 올린 썸네일의 한글 판 이름은 metadata prefencoded 표에 따라 디코딩", () => {
+  assert.equal(MC.thumbStale({ ver: "v", pref: encodeURIComponent("설계.dc.html"), prefencoded: "1" }, { ver: "v" }, "설계.dc.html"), false);
+  assert.equal(MC.thumbStale({ ver: "v", pref: "%ZZ", prefencoded: "1" }, { ver: "v" }, "설계.dc.html"), true);
+  assert.equal(MC.thumbStale({ ver: "v", pref: "설계.dc.html" }, { ver: "v" }, "설계.dc.html"), false);
+});
+
+test("캔버스 게시 잠금은 취소·추가 조각 발급과 배타적 · 만료된 미게시 판만 정리", async () => {
+  const s = await setup(), first = await (await s.put(TOK.A, { "index.html": PAGE })).json() as any;
+  const batch = await (await s.init(TOK.A, [{ path: "index.html", size: 1 }], { id: first.id })).json() as any;
+  const row = s.db.prepare("SELECT * FROM direct_upload WHERE id = ?").get(batch.uploads[0].id) as any;
+  await s.env.RESULTS.put(row.source, "x", { customMetadata: JSON.parse(row.metadata) });
+  assert.equal((await s.control(TOK.A, "/upload/complete", { session: batch.session, index: 0, id: row.id, parts: [] })).status, 200);
+  const mk = await MC.keyOf(A), key = `${mk}/${first.id}/${batch.ver}`;
+  s.db.prepare("UPDATE canvas_upload SET state='publishing' WHERE id=?").run(key);
+  assert.equal((await s.control(TOK.A, "/abort", { session: batch.session })).status, 409);
+  assert.equal((await s.control(TOK.A, "/upload/part", { session: batch.session, index: 0, id: row.id, number: 1 })).status, 409);
+  s.db.prepare("UPDATE canvas_upload SET expires=?").run(Date.now() - 16 * 60_000);
+  await MC.sweepUploads(s.env as never);
+  assert.ok(![...s.m.keys()].some(k => k.startsWith(`mart/${mk}/${first.id}/${batch.ver}/`)));
+  assert.match(await (await s.view(A, `/art/${first.id}/`)).text(), /지어낸 글/);
+  assert.equal((s.db.prepare("SELECT count(*) n FROM canvas_upload").get() as any).n, 0);
+});
+
+test("게시·취소 중 강제 종료: 5분 지난 잠금 재획득, 표지 게시 뒤 완료 영수증 복구", async () => {
+  const s = await setup(), batch = await (await s.init(TOK.A, [{ path: "index.html", size: 1 }])).json() as any;
+  const id = batch.uploads[0].id, row = s.db.prepare("SELECT * FROM direct_upload WHERE id=?").get(id) as any;
+  await s.env.RESULTS.put(row.source, "x", { customMetadata: JSON.parse(row.metadata) });
+  assert.equal((await s.control(TOK.A, "/upload/complete", { session: batch.session, index: 0, id, parts: [] })).status, 200);
+  const mk = await MC.keyOf(A), key = `${mk}/${batch.id}/${batch.ver}`;
+  s.db.prepare("UPDATE canvas_upload SET state='publishing', locked_at=? WHERE id=?").run(Date.now() - 6 * 60_000, key);
+  assert.equal((await s.control(TOK.A, "/publish", { session: batch.session })).status, 200);
+  s.db.prepare("UPDATE canvas_upload SET state='publishing', locked_at=? WHERE id=?").run(Date.now(), key);
+  assert.equal((await s.control(TOK.A, "/publish", { session: batch.session })).status, 200);
+  assert.equal((s.db.prepare("SELECT state FROM canvas_upload WHERE id=?").get(key) as any).state, "done");
+  const cancelled = await (await s.init(TOK.A, [{ path: "index.html", size: 1 }], { id: batch.id })).json() as any;
+  const cancelledKey = `${mk}/${batch.id}/${cancelled.ver}`;
+  s.db.prepare("UPDATE canvas_upload SET state='aborting', locked_at=? WHERE id=?").run(Date.now() - 6 * 60_000, cancelledKey);
+  assert.equal((await s.control(TOK.A, "/abort", { session: cancelled.session })).status, 200);
+  assert.equal((s.db.prepare("SELECT state FROM canvas_upload WHERE id=?").get(cancelledKey) as any).state, "aborted");
+  assert.equal((await s.view(A, `/art/${batch.id}/`)).status, 200);
+});
+
+test("캔버스 정리: 완료·취소 행은 일괄 삭제, 미게시 판은 같은 20개 예산을 반복해 모두 정리", async () => {
+  const s = await setup(), published = await (await s.put(TOK.A, { "index.html": PAGE })).json() as any;
+  const mk = await MC.keyOf(A), expired = Date.now() - 16 * 60_000;
+  s.db.prepare("UPDATE canvas_upload SET expires=?").run(expired);
+  const insert = s.db.prepare("INSERT INTO canvas_upload(id,owner,state,expires) VALUES (?,?,?,?)");
+  for (let i = 0; i < 250; i++) insert.run(`${mk}/TerminalCanvas0000000001/v${i}`, A, i < 200 ? "done" : "aborted", expired);
+  for (let i = 0; i < 45; i++) {
+    const id = "DrainCanvas" + String(i).padStart(16, "0");
+    insert.run(`${mk}/${id}/v1`, A, "open", expired);
+    s.m.set(`mart/${mk}/${id}/v1/index.html`, { b: new Uint8Array([1]) });
+  }
+  let lists = 0;
+  const list = s.env.RESULTS.list.bind(s.env.RESULTS);
+  (s.env.RESULTS as any).list = (...args: any[]) => { lists++; return list(...args); };
+  const remaining = () => (s.db.prepare("SELECT count(*) n FROM canvas_upload").get() as any).n;
+  for (const expected of [25, 5, 0]) {
+    lists = 0; await MC.sweepUploads(s.env as never);
+    assert.equal(remaining(), expected); assert.ok(lists <= 20, `R2 청소 ${lists}개, 한 번에 20개 이하`);
+  }
+  assert.equal((await s.view(A, `/art/${published.id}/`)).status, 200);
+  assert.ok(![...s.m.keys()].some(key => /\/DrainCanvas/.test(key)));
+});
+
+function oldCanvas(s: any, token: string, files: Record<string, string | Uint8Array>, options: Record<string, string> = {}) {
+  const fd = new FormData(), paths = Object.keys(files);
+  fd.set("manifest", JSON.stringify(paths.map(path => ({ path }))));
+  for (const [index, path] of paths.entries()) fd.set(`f${index}`, new Blob([files[path] as BlobPart]), path.split("/").pop());
+  for (const [key, value] of Object.entries(options)) fd.set(key, value);
+  return s.go("/api/me/canvas", { method: "POST", headers: { authorization: `Bearer ${token}` }, body: fd });
+}
+test("구형 CLI multipart는 새 Worker에서도 구한도·기존 제목·새 판·회원 경계 유지, Deprecation 표시", async () => {
+  const s = await setup();
+  assert.equal((await oldCanvas(s, TOK.O, { "index.html": PAGE })).status, 401);
+  const response = await oldCanvas(s, TOK.A, { "index.html": PAGE, "a.png": new Uint8Array([1, 2, 3]) }, { acct: "구형", win: "test:window", wid: "ew_legacy0001" });
+  assert.equal(response.status, 200); assert.equal(response.headers.get("deprecation"), "true");
+  const a = await response.json() as any;
+  assert.equal(a.title, "가상 보고서"); assert.equal(a.files, 2); assert.equal(a.replaced, false);
+  assert.equal((await s.view(B, `/art/${a.id}/`)).status, 404);
+  assert.match(await (await s.view(A, `/art/${a.id}/`)).text(), /지어낸 글/);
+  const next = await oldCanvas(s, TOK.A, { "index.html": "<title>다음 판</title>" }, { id: a.id });
+  assert.equal(next.status, 200); assert.equal((await next.json() as any).replaced, true);
+  await s.settle(); assert.equal((await s.view(A, `/art/${a.id}/a.png`)).status, 404);
+  assert.equal((s.db.prepare("SELECT count(*) n FROM direct_upload").get() as any).n, 0);
+  assert.equal((await oldCanvas(s, TOK.A, { "index.html": PAGE, "../outside": "x" })).status, 400);
+});
+
+test("서명 설정이 없어도 구형 CLI는 게시, 새 JSON init은 식별 가능한503 · 일반 JSON 오류는400", async () => {
+  const s = await setup(); delete (s.env as any).R2_BOARDER_ACCESS_KEY_ID; delete (s.env as any).R2_BOARDER_SECRET_ACCESS_KEY;
+  const init = await s.init(TOK.A, [{ path: "index.html", size: 1 }]);
+  assert.equal(init.status, 503); assert.equal((await init.json() as any).code, "direct_upload_unavailable");
+  const legacy = await oldCanvas(s, TOK.A, { "index.html": PAGE });
+  assert.equal(legacy.status, 200); assert.equal(legacy.headers.get("deprecation"), "true");
+  assert.equal((await s.init(TOK.A, [{ path: "../invalid", size: 1 }])).status, 400);
+});
+
+test("multipart 구한도는 10MiB/파일·25MiB/묶음 그대로, 정확히25MiB 허용·1바이트 초과 거절", async () => {
+  const s = await setup(), MiB = 1024 * 1024;
+  assert.deepEqual(MC.LEGACY_LIMITS, { file: 10 * MiB, total: 25 * MiB });
+  const files = { "index.html": "", "a.bin": new Uint8Array(10 * MiB), "b.bin": new Uint8Array(10 * MiB), "c.bin": new Uint8Array(5 * MiB) };
+  const exact = await oldCanvas(s, TOK.A, files); assert.equal(exact.status, 200);
+  assert.equal((await exact.json() as any).bytes, 25 * MiB);
+  assert.equal((await oldCanvas(s, TOK.A, { ...files, "c.bin": new Uint8Array(5 * MiB + 1) })).status, 413);
+  assert.equal((await oldCanvas(s, TOK.A, { "index.html": "", "too-big.bin": new Uint8Array(10 * MiB + 1) })).status, 413);
+});
+
+test('0093 이주 전의 옛 multipart 유지, 키가 있어도 없는 테이블은 준비안됨503',async()=>{
+ for(const drop of ['DROP TABLE direct_upload; DROP TABLE canvas_upload','DROP TABLE canvas_upload']){
+  const s=await setup();s.db.exec(drop);
+  const init=await s.init(TOK.A,[{path:'index.html',size:1}]);assert.equal(init.status,503);
+  assert.equal((await init.json() as any).code,'direct_upload_unavailable');
+  const old=await oldCanvas(s,TOK.A,{'index.html':PAGE});assert.equal(old.status,200);assert.equal(old.headers.get('deprecation'),'true');
+  assert.equal((await s.view(A,`/art/${(await old.json() as any).id}/`)).status,200);
+ }
 });

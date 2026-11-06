@@ -1,8 +1,10 @@
+// node --test --no-warnings --experimental-transform-types apps/web/worker/files-upload.test.ts (Node 22.18+ · node:sqlite · apps/web 의존성 설치된 채)
+// 신뢰성 점검: 릴레이 init/part/complete의 제어 JSON만 Worker로, 본문은 가짜 R2에 직접 넣는다. D1은 전체 이주를 적용한 메모리 SQLite.
+// 자료는 다 지어낸 것(이름 · id · 그림 바이트).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { register } from "node:module";
-import { DatabaseSync } from "node:sqlite";
+import { directConfig, fileD1, fileR2, uploadFile } from './file-direct-test-helper.ts';
 
 register("./test-hooks.mjs", import.meta.url);
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
@@ -28,25 +30,24 @@ function r2() {
   return { m, hook, bucket };
 }
 function d1() {
-  const db = new DatabaseSync(":memory:");
-  db.exec(readFileSync(new URL("../migrations/0032_emoji.sql", import.meta.url), "utf8"));
-  const stmt = (sql: string, args: unknown[] = []): any => ({
-    sql, args, bind: (...a: unknown[]) => stmt(sql, a),
-    all: async () => ({ success: true, results: db.prepare(sql).all(...(args as never[])), meta: {} }),
-    first: async () => (db.prepare(sql).get(...(args as never[])) as object | undefined) ?? null,
-    run: async () => { const r = db.prepare(sql).run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes) } }; },
-  });
-  return { prepare: (sql: string) => stmt(sql), batch: async (ss: any[]) => Promise.all(ss.map(s => s.all())) } as unknown as D1Database;
+  return fileD1().DB;
+}
+
+function relay() {
+  const { R } = fileR2(), env = { RESULTS: R, DB: d1(), RELAY_TOKEN: 'relay-token-made-up', ...directConfig };
+  const put = (id: string, name: string, bytes: Uint8Array) => uploadFile((suffix, body) => app.fetch(new Request('https://example.test/api/relay/upload' + (suffix || '/init'), {
+    method: 'POST', headers: { authorization: 'Bearer relay-token-made-up', 'content-type': 'application/json' },
+    body: JSON.stringify(suffix !== '/init' ? body : { key: body.key, size: body.size, mime: body.mime, metadata: { name: encodeURIComponent(body.name) } }),
+  }), env, { waitUntil() {}, passThroughOnException() {} }), env, bytes, { key: 'files/' + id, name, mime: 'application/pdf' });
+  return { env, put };
 }
 
 test("릴레이 첨부: 긴 한글 파일 이름(600자 넘게 인코딩)도 내려받기 이름이 id 로 바뀌지 않음", async () => {
-  const { bucket } = r2(), env = { RESULTS: bucket, DB: d1(), RELAY_TOKEN: "relay-token-made-up" };
+  const { env, put } = relay();
   // 헤더는 ASCII 만 되니 릴레이는 이름을 퍼센트 인코딩해 보냄(files.ts attach 가 unq 로 풂). 한글 70자 = 인코딩 630자
   const name = "회의록".repeat(23) + "끝.pdf", id = "F0TESTLONG01";
-  const put = await app.fetch(new Request(`https://example.test/api/relay/file?key=files/${id}`, { method: "PUT",
-    headers: { authorization: "Bearer relay-token-made-up", "content-type": "application/pdf", "x-file-name": encodeURIComponent(name) }, body: new TextEncoder().encode("%PDF-made-up") }),
-    env, { waitUntil() {}, passThroughOnException() {} });
-  assert.equal(put.status, 200);
+  const uploaded = await put(id, name, new TextEncoder().encode('%PDF-made-up'));
+  assert.equal(uploaded.status, 200, await uploaded.text());
   const o = await files.answer(env as never, `/api/file/${id}`, {});
   assert.equal(o?.status, 200);
   const cd = o!.headers["content-disposition"], got = decodeURIComponent(cd.split("''")[1]);
@@ -55,11 +56,10 @@ test("릴레이 첨부: 긴 한글 파일 이름(600자 넘게 인코딩)도 내
 });
 
 test("릴레이 첨부: 짧은 이름 · 600자 안 이름은 그대로", async () => {
-  const { bucket } = r2(), env = { RESULTS: bucket, DB: d1(), RELAY_TOKEN: "relay-token-made-up" };
+  const { env, put } = relay();
   for (const [id, name] of [["F0TESTSHORT1", "보고서 100%.pdf"], ["F0TESTEXACT1", "가".repeat(66) + ".pdf"]]) {
-    await app.fetch(new Request(`https://example.test/api/relay/file?key=files/${id}`, { method: "PUT",
-      headers: { authorization: "Bearer relay-token-made-up", "content-type": "application/pdf", "x-file-name": encodeURIComponent(name) }, body: new TextEncoder().encode("x") }),
-      env, { waitUntil() {}, passThroughOnException() {} });
+    const uploaded = await put(id, name, new TextEncoder().encode('x'));
+    assert.equal(uploaded.status, 200, await uploaded.text());
     const o = await files.answer(env as never, `/api/file/${id}`, {});
     assert.equal(decodeURIComponent(o!.headers["content-disposition"].split("''")[1]), name);
   }
@@ -90,4 +90,14 @@ test("이모지: 그냥 지우면 그림도 지워짐 · 같은 이름 동시 �
   assert.equal((await emoji.remove(env, "a@example.test", true, "dup"))[0], 200);
   assert.equal((await emoji.list(env, null, false)).org.length, 0);
   assert.equal(m.has("emoji/" + url.slice("emoji/i/".length)), false, "지운 이모지의 그림이 남음");
+});
+
+test('옛 relay 파일 PUT은 새 Worker에서도32MiB 한도·SHA·인증을 유지',async()=>{
+ const {R}=fileR2(),env={DB:d1(),RESULTS:R,RELAY_TOKEN:'legacy-relay'},body=new TextEncoder().encode('old relay file');
+ const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',body))].map(n=>n.toString(16).padStart(2,'0')).join('');
+ const send=(extra:Record<string,string>={})=>app.fetch(new Request('https://example.test/api/relay/file?key=art/test/file.txt',{method:'PUT',headers:{authorization:'Bearer legacy-relay','x-sha256':sha,...extra},body}),env as never,{waitUntil(){},passThroughOnException(){}} as never);
+ const ok=await send();assert.equal(ok.status,200);assert.equal(ok.headers.get('deprecation'),'true');
+ assert.equal((await send({'x-sha256':'0'.repeat(64)})).status,400);
+ assert.equal((await send({authorization:'Bearer wrong'})).status,403);
+ assert.equal((await send({'content-length':String(32*1024*1024+1)})).status,413);
 });

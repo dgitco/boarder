@@ -34,6 +34,9 @@ import { mountWindows } from "./member-windows";
 import { mountTokenRevoke, ownDevice, auditStmt, NOT_BLOCKED, noBlockTable, noRevokeTables, type RevokeDeps } from "./token-revoke";
 import { engineOf, chatToMain, approveDraft, deliverTo, ownerCfg, sysLine, RULES, engineSend, ownerWindows, harnessDevice, liveDevice, openedLastHour, OPEN_PER_HOUR, type Engine } from "./engine";
 import { engineLog, hNote } from "./engine";
+import directUploadJs from "../../../packages/cli/src/direct-upload.mjs?raw";
+import * as directMedia from "./direct-media";
+import * as directUploads from "./direct-uploads";
 import shellJs from "./legacy/shell.js?raw";
 import shellCss from "./legacy/shell.css?raw";
 import installSh from "./install/install.sh?raw";
@@ -109,7 +112,7 @@ import * as live from "./live";
 import * as queue from "./queue";
 import * as bxs from "./bxs";
 
-type Env = AuthEnv & PH & { SNAP: DurableObjectNamespace<import("./board").BoardSnap>; BRIDGE: DurableObjectNamespace<import("./bridge").Bridge>; RELAY_TOKEN: string; LEDGER_TOKEN?: string; ADMIN_TOKEN?: string; ENGINE: DurableObjectNamespace<Engine>; RESULTS: R2Bucket; CF_VERSION_METADATA: WorkerVersionMetadata; CONNECTOR_KEY?: string; SEARCH: DurableObjectNamespace<import("./search").Search>; AI: Ai; VOYAGE_API_KEY?: string; OB_EXPORT_SIGN_KEY?: string; OB_EXPORT_URL?: string; PUSH: DurableObjectNamespace<import("./push-do").Pusher>; VAPID_PRIVATE?: string; SOURCE_URL?: string; FAULT_OK?: string };
+type Env = AuthEnv & PH & directUploads.DirectEnv & { SNAP: DurableObjectNamespace<import("./board").BoardSnap>; BRIDGE: DurableObjectNamespace<import("./bridge").Bridge>; RELAY_TOKEN: string; LEDGER_TOKEN?: string; ADMIN_TOKEN?: string; ENGINE: DurableObjectNamespace<Engine>; RESULTS: R2Bucket; CF_VERSION_METADATA: WorkerVersionMetadata; CONNECTOR_KEY?: string; SEARCH: DurableObjectNamespace<import("./search").Search>; AI: Ai; VOYAGE_API_KEY?: string; OB_EXPORT_SIGN_KEY?: string; OB_EXPORT_URL?: string; PUSH: DurableObjectNamespace<import("./push-do").Pusher>; VAPID_PRIVATE?: string; SOURCE_URL?: string; FAULT_OK?: string };
 const app = new Hono<{ Bindings: Env }>();
 app.use("*", async (c, next) => { try { const on = await ledger.f7AllPeek(c.env.DB, p => c.executionCtx.waitUntil(p)); W.setCanonOn(on.has("owner_key_canon")); memberBoard.setHarnessKey(W.unifiedAnyIn(on, c.env) ? W.canon(c.env) : ""); } catch {} return next(); });
 const MC_PATHS = /^\/api\/(data|inbox|topics|chats|chat\/[^/]+(\/\d{9,11}\.\d{6})?)$/, MC_TTL = 10, MC_RATE = new Map<string, { at: number; n: number }>();
@@ -330,6 +333,7 @@ app.post("/api/login/lookup", async c => {
   if (!(await member(c.env, email))) return c.json({ ok: false, error: "invite_required" });
   return c.json({ account: "exists", methods: { code: true, google: Boolean(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET) } });
 });
+app.get("/direct-upload.js", c => c.body(directUploadJs, 200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" }));
 app.get("/api/login/methods", c => c.json({ code: true, google: Boolean(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET), home: c.env.PUBLIC_URL }));   // 로그인 화면이 켤 단추(구글은 콜백이 PUBLIC_URL 이라 다른 주소에선 거기로 옮겨 시작)
 app.get("/api/me", async c => {   // 이름 · id 까지 — 서명 쿠키 말고 better-auth 로(가끔만 부름)
   const s0 = await createAuth(c.env).api.getSession({ headers: c.req.raw.headers }), s = s0 && await member(c.env, s0.user.email) ? s0 : null;
@@ -496,12 +500,52 @@ app.post("/api/relay/write", async c => {
   if (st === 200) c.executionCtx.waitUntil(live.bumpLedger(c.env));
   return c.json(body, st as 200 | 400 | 503);
 });
+app.post("/api/relay/upload/:action", async c => {
+  if (!relayOk(c)) return c.json({ error: "no" }, 403);
+  const raw = await memberFiles.readCapped(c.req.raw, 16 * 1024);
+  if (raw === "big") return c.json({ error: "너무 큼" }, 413);
+  let b: any; try { b = JSON.parse(new TextDecoder().decode(raw || new Uint8Array())); } catch { return c.json({ error: "JSON" }, 400); }
+  if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ error: "JSON" }, 400);
+  const owner = "relay:files", action = c.req.param("action");
+  try {
+    if (action === "init") {
+      if (typeof b.key !== "string" || !files.okKey(b.key)) return c.json({ error: "키" }, 400);
+      const metadata = Object.fromEntries(["sha256", "name", "mtime"].map(k => [k, String(b.metadata?.[k] || "").slice(0, k === "name" ? files.NAME_MAX : 100)]));
+      if (metadata.sha256 && !/^[0-9a-f]{64}$/.test(metadata.sha256)) return c.json({ error: "sha256" }, 400);
+      return c.json({ ok: true, ...await directUploads.begin(c.env, owner, { target: b.key, size: b.size, mime: String(b.mime || "application/octet-stream").slice(0, 100), metadata }) });
+    }
+    if (action === "read") {
+      const session = await directUploads.getSession(c.env, owner, b.id);
+      if (session.state !== "done") return c.json({ error: "등록 전 파일" }, 409);
+      return c.json({ ok: true, ...await directUploads.presign(c.env, "GET", session.target) });
+    }
+    if (action === "part") return c.json({ ok: true, ...await directUploads.part(c.env, owner, b.id, b.number) });
+    if (action === "complete") return c.json({ ok: true, ...await directUploads.complete(c.env, owner, b.id, b.parts) });
+    if (action === "abort") { await directUploads.abort(c.env, owner, b.id); return c.json({ ok: true }); }
+    return c.json({ error: "없는 제어" }, 404);
+  } catch (e) { if (action === "init") e = directUploads.initializationError(e); return c.json({ error: (e as Error).message, code: (e as {code?: string}).code }, ((e as { status?: number }).status || 503) as 400); }
+});
+app.post("/api/relay/file/read", async c => {
+  if (!relayOk(c)) return c.json({ error: "no" }, 403);
+  const raw = await memberFiles.readCapped(c.req.raw, 2048);
+  if (raw === "big") return c.json({ error: "너무 큼" }, 413);
+  let key: unknown; try { key = JSON.parse(new TextDecoder().decode(raw || new Uint8Array())).key; } catch { return c.json({ error: "JSON" }, 400); }
+  if (typeof key !== "string" || !files.okKey(key)) return c.json({ error: "키" }, 400);
+  const o = await c.env.RESULTS.head(key);
+  if (!o) return c.json({ error: "없는 파일" }, 404);
+  if (o.size > directUploads.MAX_FILE) return c.json({ error: "500MB까지" }, 413);
+  const name = files.nameOf(o.customMetadata?.name || "") || key.split("/").pop() || "file";
+  try { return c.json({ ok: true, ...await directUploads.presign(c.env, "GET", key, {}, { "response-content-disposition": memberFiles.disposition("attachment", name) }), size: o.size }); }
+  catch { return c.json({ error: "직접 내려받기 설정이 아직 준비되지 않았어요" }, 503); }
+});
 app.put("/api/relay/file", async c => {
+  c.header("Deprecation", "true");
   if (!relayOk(c)) return c.json({ error: "no" }, 403);
   const key = c.req.query("key") || ""; if (!files.okKey(key)) return c.json({ error: "키" }, 400);
   if (+(c.req.header("content-length") || 0) > 32 * 1024 * 1024) return c.json({ error: "너무 큼" }, 413);
-  const b = new Uint8Array(await c.req.arrayBuffer()); if (b.length > 32 * 1024 * 1024) return c.json({ error: "너무 큼" }, 413);
-  const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].map(x => x.toString(16).padStart(2, "0")).join("");
+  const b = await memberFiles.readCapped(c.req.raw, 32 * 1024 * 1024); if (b === "big") return c.json({ error: "너무 큼" }, 413);
+  if (!b) return c.json({ error: "본문" }, 400);
+  const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", b.slice()))].map(x => x.toString(16).padStart(2, "0")).join("");
   if (c.req.header("x-sha256") && c.req.header("x-sha256") !== sha) return c.json({ error: "sha 다름" }, 400);
   await c.env.RESULTS.put(key, b, { httpMetadata: { contentType: c.req.header("content-type") || "application/octet-stream" },
     customMetadata: { sha256: sha, name: (c.req.header("x-file-name") || "").slice(0, files.NAME_MAX), mtime: (c.req.header("x-mtime") || "").slice(0, 30) } });
@@ -1317,8 +1361,6 @@ app.get("/api/me/bot", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   return c.json({ bot: await myBot(c.env, await myBotKey(c.env, s.user.email)) }, 200, { "cache-control": "no-store" });
 });
-// 그림 하나(PNG · JPEG · WebP, 1.5MB 까지) → R2 blobs/<내용 해시 32자>. 머리 바이트로 꼴 확인 — 올린 사람이 꼴을 속여 HTML 등을 못 올리게(받는 쪽도 nosniff · sandbox)
-// 사진 한 장 받아 두기(PNG · JPEG · WebP, 1.5MB 이하): 화면 길(/api/me/bot/image)과 기기 CLI 길(device-settings.ts avatar)이 같이 씀
 async function putPhoto(env: Env, body: Uint8Array<ArrayBuffer>): Promise<{ id: string } | { error: string; status: 400 | 413 }> {
   if (!body.byteLength || body.byteLength > 1_500_000) return { error: "사진이 너무 커요", status: 413 };
   const hex = [...body.slice(0, 12)].map(b => b.toString(16).padStart(2, "0")).join("");
@@ -1329,11 +1371,19 @@ async function putPhoto(env: Env, body: Uint8Array<ArrayBuffer>): Promise<{ id: 
   return { id };
 }
 app.post("/api/me/bot/image", async c => {
+  c.header("Deprecation", "true");
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   if (+(c.req.header("content-length") || 0) > 1_500_000) return c.json({ error: "사진이 너무 커요" }, 413);
-  const r = await putPhoto(c.env, new Uint8Array(await c.req.arrayBuffer()));
+  const body = await memberFiles.readCapped(c.req.raw, 1_500_000);
+  if (body === "big") return c.json({ error: "사진이 너무 커요" }, 413);
+  const r = await putPhoto(c.env, (body || new Uint8Array()).slice());
   return "error" in r ? c.json({ error: r.error }, r.status) : c.json({ id: r.id });
+});
+app.post("/api/me/bot/image/:action", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  return directMedia.handle(c as never, s.user.email.toLowerCase(), "photo", c.req.param("action"));
 });
 app.post("/api/me/bot", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
@@ -1862,6 +1912,7 @@ app.get("/api/emoji/custom", async c => {
   return c.json(await emoji.list(c.env, me, !!me && isOwner(c.env, me)), 200, { "cache-control": "no-store" });
 });
 app.post("/api/emoji/custom", async c => {
+  c.header("Deprecation", "true");
   if (!sameSite(c)) return c.json({ ok: false, error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ ok: false, error: "로그인" }, 401);
   if (Number(c.req.header("content-length") || 0) > emoji.MAX) return c.json({ ok: false, error: "그림이 너무 커요" }, 413);
@@ -1886,6 +1937,11 @@ app.post("/api/emoji/bot", async c => {
   const b = await c.req.json<{ bot?: string; on?: boolean }>().catch(() => ({} as { bot?: string; on?: boolean }));
   const [st, j] = await emoji.bot(c.env, me, String(b.bot || ""), !!b.on);
   return c.json(j, st as 200);
+});
+app.post("/api/emoji/custom/:action", async c => {
+  if (!sameSite(c)) return c.json({ ok: false, error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
+  return directMedia.handle(c as never, s.user.email.toLowerCase(), "emoji", c.req.param("action"), await emojiStd(c.env));
 });
 app.get("/emoji/i/:file", async c => {
   if (!(await signedIn(c))) return c.text("", 401);
@@ -1939,9 +1995,18 @@ app.get("/api/admin/mthumb/jobs", async c => {
   return c.json({ jobs: await memberCanvas.thumbJobs(c.env as never, Math.min(Math.max(Number(c.req.query("limit")) || 8, 1), 20), new Set((c.req.query("skip") || "").split(",").filter(x => /^[A-Za-z0-9]{16,40}$/.test(x)).slice(0, 200))) }, 200, { "cache-control": "no-store" });
 });
 app.put("/api/admin/mthumb/:mk/:id", async c => {
+  c.header("Deprecation", "true");
   if (!admin(c)) return c.json({ error: "no" }, 403);
-  const r = await memberCanvas.putThumb(c.env as never, c.req.param("mk"), c.req.param("id"), await c.req.arrayBuffer(), c.req.query("ver") || "", c.req.query("pref") || "");
+  const body = await memberFiles.readCapped(c.req.raw, 400_000);
+  if (!body || body === "big") return c.json({ error: "크기" }, 413);
+  const r = await memberCanvas.putThumb(c.env as never, c.req.param("mk"), c.req.param("id"), body.slice().buffer, c.req.query("ver") || "", c.req.query("pref") || "");
   return c.json(r[1], r[0] as 200);
+});
+app.post("/api/admin/media/:kind/:action", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const kind = c.req.param("kind");
+  if (kind !== "blob" && kind !== "thumb") return c.json({ error: "없는 올리기" }, 404);
+  return directMedia.handle(c as never, "@admin", kind, c.req.param("action"));
 });
 app.post("/api/admin/member-push-log", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
@@ -2166,10 +2231,11 @@ app.get("/api/admin/agent-tokens", async c => {
   return c.json({ live: r.results });
 });
 app.put("/api/admin/blobs/:id", async c => {
+  c.header("Deprecation", "true");
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const id = c.req.param("id"), type = c.req.header("content-type") || "";
   if (!/^[0-9a-f]{32}$/.test(id) || !/^(image\/(png|jpeg|webp|gif|avif)|font\/(woff2?|ttf|otf))$/.test(type)) return c.json({ error: "id · 이미지 · 글꼴 꼴" }, 400);
-  const body = await c.req.arrayBuffer(); if (!body.byteLength || body.byteLength > 15 << 20) return c.json({ error: "크기" }, 400);
+  const body = await memberFiles.readCapped(c.req.raw, 15 * 1024 * 1024); if (!body || body === "big" || !body.byteLength) return c.json({ error: "크기" }, 400);
   await c.env.RESULTS.put(`blobs/${id}`, body, { httpMetadata: { contentType: type } });
   return c.json({ ok: true, bytes: body.byteLength });
 });
@@ -2341,9 +2407,9 @@ async function filesFirst(c: Context<{ Bindings: Env }>, path: string, headers: 
   finally { seg(c.req.raw, "r2", Date.now() - t); }
 }
 // 그림자 대조(shadow_files): 다리로 답한 파일 길마다 R2 답도 만들어 몸통 해시를 견줌 → PostHog f7_shadow_files(same · miss · 길이 · 해시 앞 8바이트). 답에는 영향 없음
-function filesShadow(c: Context<{ Bindings: Env }>, path: string, headers: Record<string, string>, r: { status: number; headers: Record<string, string>; body: Uint8Array }, who: string) {
+function filesShadow(c: Context<{ Bindings: Env }>, path: string, headers: Record<string, string>, r: { status: number; headers: Record<string, string>; body: Uint8Array | ReadableStream<Uint8Array> }, who: string) {
   const p = path.split("?")[0];
-  if (chOf(c) !== "owner" || !files.FILE_PATH.test(p) || r.body.length > 8 * 1024 * 1024) return;
+  if (chOf(c) !== "owner" || !files.FILE_PATH.test(p) || !(r.body instanceof Uint8Array) || r.body.length > 8 * 1024 * 1024) return;
   const out = { status: r.status, headers: { ...r.headers }, body: r.body.slice() };
   c.executionCtx.waitUntil((async () => {
     if (!(await ledger.f7On(c.env.DB, "shadow_files"))) return;
@@ -2724,9 +2790,9 @@ app.all("*", async c => {
           () => live.liveOf(c.env, me, true).tags().then(x => JSON.stringify([(x as { boot?: string }).boot ?? "", x.t.data ?? "", x.t.chat ?? ""])));
         if (r) return r;
       }
-      if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {   // 몸통이 파일 · 녹음(JSON 아님) — 회원 쓰기와 같은 문
+      if (c.req.method === "POST" && (/^\/api\/upload(?:\/(?:init|part|complete|abort))?$/.test(url.pathname) || url.pathname === "/api/voice/stt")) {   // 파일 제어 JSON·녹음은 회원 쓰기와 같은 문
         if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
-        return url.pathname === "/api/upload" ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
+        return url.pathname.startsWith("/api/upload") ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
       }
       if (c.req.method === "POST" && /^\/api\/voice\/(rtc\/(start|stop|note)|end)$/.test(url.pathname)) {   // 통화 — 내 엔진 기기에서만(member-voice.ts)
         if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
@@ -2772,9 +2838,9 @@ app.all("*", async c => {
   if (!["GET", "HEAD", "POST"].includes(c.req.method)) return c.json({ error: "안 되는 방법" }, 405);
   {
     const me = s.user.email.toLowerCase();
-    if (c.req.method === "POST" && (url.pathname === "/api/upload" || url.pathname === "/api/voice/stt")) {
+    if (c.req.method === "POST" && (/^\/api\/upload(?:\/(?:init|part|complete|abort))?$/.test(url.pathname) || url.pathname === "/api/voice/stt")) {
       if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
-      return url.pathname === "/api/upload" ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
+      return url.pathname.startsWith("/api/upload") ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
     }
     const fm = c.req.method === "GET" || c.req.method === "HEAD" ? /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname) : null;
     if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"));
@@ -2924,8 +2990,8 @@ app.all("*", async c => {
   }
   const noWrite = url.pathname === "/api/clientlog" || (url.pathname === "/api/chat" && !!body && body.byteLength < 4096 && (() => { try { return !!(JSON.parse(new TextDecoder().decode(body)) as { seen?: unknown }).seen; } catch { return false; } })());
   if (c.req.method === "POST" && r.status < 400 && !noWrite) REC.get(c.req.raw)?.cookies.push("bx_w=1; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=20");
-  if (shadowRd && rd && !fr && !own) {   // 그림자: 304 대신 몸통을 받아 대조하고, 화면에는 보드처럼 같은 ETag 면 빈 304
-    const bridged = r, inm = c.req.header("if-none-match") || c.req.header("x-bx-inm"), bms = Date.now() - t0;
+  if (shadowRd && rd && !fr && !own && r.body instanceof Uint8Array) {   // 그림자: 304 대신 몸통을 받아 대조하고, 화면에는 보드처럼 같은 ETag 면 빈 304
+    const bridged = { ...r, body: r.body }, inm = c.req.header("if-none-match") || c.req.header("x-bx-inm"), bms = Date.now() - t0;
     c.executionCtx.waitUntil(ownerRead.shadow(c.env.DB, () => snap(c.env).get("cfg"), rd, bridged).then(d => {
       if (d?.diff) capture(c.env, c.executionCtx, "f7_shadow_diff", s.user.email, { route: rd.kind, group: rd.group, at: d.diff, n_bridge: d.n_bridge, n_d1: d.n_d1, ms_d1: d.ms });
       else if (d && Math.random() < 0.05) capture(c.env, c.executionCtx, "f7_shadow_ok", s.user.email, { route: rd.kind, group: rd.group, n_bridge: d.n_bridge, ms_d1: d.ms, ms_bridge: bms });   // 차이 0 이 이어지는지 · 빠르기(5% 표본)
@@ -3068,7 +3134,7 @@ const AGAIN = "x-bx-again", D1_BUSY = /overloaded|Too many resources consumed/i;
 app.onError(async (err, c) => {
   const u = new URL(c.req.url), m = c.req.method, msg = String((err as Error)?.message ?? err).slice(0, 300), again = c.req.raw.headers.has(AGAIN), busy = D1_BUSY.test(msg);
   console.error(JSON.stringify({ ev: "req_error", m, path: u.pathname.slice(0, 120), again, busy, msg }));
-  const upload = m === "POST" && u.pathname === "/api/upload";   // 올리기는 열쇠(X-Upload-Key)로 같은 파일이 하나라 다시 보내도 됨 — 아래 503 + x-retry-safe 로(화면이 조용히 다시)
+  const upload = m === "POST" && /^\/api\/upload(?:\/(?:init|part|complete|abort))?$/.test(u.pathname);   // 올리기는 열쇠(X-Upload-Key)로 같은 파일이 하나라 다시 보내도 됨 — 아래 503 + x-retry-safe 로(화면이 조용히 다시)
   if (m !== "GET" && m !== "HEAD" && !upload) return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 500, { "cache-control": "no-store" });
   if (!again && !busy && !upload && !u.pathname.startsWith("/api/auth/")) {
     await new Promise(ok => setTimeout(ok, 150 + Math.floor(Math.random() * 200)));
@@ -3082,7 +3148,10 @@ app.onError(async (err, c) => {
 
 // app 에 scheduled 를 붙여 내보냄 — 시험이 default 로 받는 app(onError · request)이 그대로 Hono 앱이게
 export default Object.assign(app, {
-  async scheduled(_e: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(memberCanvas.sweepUploads(env).catch(e => console.error("canvas_upload_sweep", String(e).slice(0, 200))));
+    ctx.waitUntil(directUploads.sweep(env).catch(e => console.error("direct_upload_sweep", String(e).slice(0, 200))));
+    if (event.cron === "0 * * * *") return; // 매시간은 업로드 정리만. 영업 알림은 기존 하루 한 번 그대로.
     ctx.waitUntil(sweepTaskBoard(env.DB).catch(e => console.log(JSON.stringify({ ev: "taskboard_sweep", error: String(e).slice(0, 200) }))));
     ctx.waitUntil((async () => {
       if (!(await ledger.f7On(env.DB, "member_salesmail"))) return;

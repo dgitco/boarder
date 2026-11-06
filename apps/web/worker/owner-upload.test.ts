@@ -1,10 +1,9 @@
 // node --test --no-warnings --experimental-transform-types apps/web/worker/owner-upload.test.ts
-// 주인도 회원과 같은 한 길: 사진·파일 올리기(/api/upload)와 파일 붙은 글(/api/chat)은 다리를 거치지 않고 Worker(R2)가 받음. 다리 호출을 적어 두는 가짜로 확인.
+// 주인도 회원과 같은 한 길: Worker는 사진·파일의 JSON 제어만, 본문은 R2 직접 전송. 파일 붙은 글의 링크 등록과 다리 호출 경계를 확인.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
 import { register } from "node:module";
-import { DatabaseSync } from "node:sqlite";
+import { fileD1, fileR2, directConfig, uploadFile } from "./file-direct-test-helper.ts";
 
 register("./test-hooks.mjs", import.meta.url);
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
@@ -29,28 +28,6 @@ register("./test-hooks.mjs", import.meta.url);
 };
 const { default: app } = await import("./index.ts");
 
-const MIG = new URL("../migrations/", import.meta.url);
-function d1() {
-  const db = new DatabaseSync(":memory:");
-  for (const f of readdirSync(MIG).filter(f => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(f, MIG), "utf8"));
-  const stmt = (sql: string, args: unknown[] = []): any => ({
-    sql, args, bind: (...a: unknown[]) => stmt(sql, a),
-    all: async () => ({ success: true, results: db.prepare(sql).all(...(args as never[])), meta: {} }),
-    first: async (col?: string) => { const r = db.prepare(sql).get(...(args as never[])) as Record<string, unknown> | undefined; return r ? (col ? r[col] : r) : null; },
-    raw: async () => db.prepare(sql).all(...(args as never[])).map(r => Object.values(r as object)),
-    run: async () => { const r = db.prepare(sql).run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes) } }; },
-  });
-  return { D1: { prepare: (sql: string) => stmt(sql), batch: async (ss: any[]) => Promise.all(ss.map(s => s.all())) } as unknown as D1Database };
-}
-
-function r2() {
-  const m = new Map<string, { b: Uint8Array; meta: Record<string, string> }>();
-  return { m, bucket: {
-    put: async (k: string, v: ArrayBuffer | Uint8Array, o?: { customMetadata?: Record<string, string> }) => { m.set(k, { b: new Uint8Array(v as ArrayBuffer), meta: o?.customMetadata || {} }); },
-    head: async (k: string) => { const o = m.get(k); return o ? { customMetadata: o.meta, size: o.b.length } : null; },
-    get: async (k: string) => { const o = m.get(k); return o ? { customMetadata: o.meta, httpMetadata: { contentType: "image/png" }, size: o.b.length, writeHttpMetadata: (h: Headers) => { h.set("content-type", "image/png"); }, body: new Response(o.b as BodyInit).body } : null; },
-  } as unknown as R2Bucket };
-}
 const OWNER = "owner@example.test", SECRET = "test-secret-not-real", TOKEN = "sess-token-made-up";
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
 async function cookie(email: string) {
@@ -60,16 +37,17 @@ async function cookie(email: string) {
   return `better-auth.session_token=${TOKEN}; bx_s=${encodeURIComponent(`${email}|${exp}|${sig}`)}`;
 }
 function setup() {
-  const { D1 } = d1(), calls: { path: string; body: string }[] = [], { m, bucket } = r2();
+  const { DB: D1 } = fileD1(), calls: { path: string; body: string }[] = [], { m, R: bucket } = fileR2();
   const call = async (r: { path: string; body?: Uint8Array }) => { calls.push({ path: r.path, body: r.body ? new TextDecoder().decode(r.body) : "" }); return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode('{"ok":true}') }; };
-  const env = { DB: D1, RESULTS: bucket, ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+  const env = { ...directConfig, DB: D1, RESULTS: bucket, ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
   const send = async (path: string, body: BodyInit, headers: Record<string, string> = {}) => app.fetch(new Request("https://example.test" + path, { method: "POST", headers: { cookie: await cookie(OWNER), "x-hb": "1", "sec-fetch-site": "same-origin", ...headers }, body }), env as never, { waitUntil() {}, passThroughOnException() {} } as never);
   const get = async (path: string) => app.fetch(new Request("https://example.test" + path, { headers: { cookie: await cookie(OWNER) } }), env as never, { waitUntil() {}, passThroughOnException() {} } as never);
-  return { calls, m, send, get };
+  const upload = (body: Uint8Array, name: string) => uploadFile((suffix, b) => send("/api/upload" + suffix, JSON.stringify(b), { "content-type": "application/json" }), env, body, { name, mime: "image/png" });
+  return { calls, m, send, get, upload };
 }
-test("주인 사진 올리기: 다리를 안 거치고 Worker 가 R2 에 받음, 올린 파일은 주인이 읽음", async () => {
+test("주인 사진 올리기: Worker 는 JSON 제어만, 본문은 R2 직접 전송, 올린 파일은 주인이 읽음", async () => {
   const t = setup();
-  const r = await t.send("/api/upload", new Uint8Array([1, 2, 3, 4]), { "content-type": "image/png", "x-file-name": encodeURIComponent("사진.png") });
+  const r = await t.upload(new Uint8Array([1, 2, 3, 4]), "사진.png");
   assert.equal(r.status, 200);
   const j = await r.json() as { ok: boolean; id: string; name: string };
   assert.ok(j.ok && /^[0-9a-f]{32}$/.test(j.id) && j.name === "사진.png");
@@ -79,7 +57,7 @@ test("주인 사진 올리기: 다리를 안 거치고 Worker 가 R2 에 받음,
 });
 test("주인 파일 붙은 글: 링크 줄이 붙어 다리로 한 번, 없는 파일이면 400 이고 다리 안 감", async () => {
   const t = setup();
-  const up = await (await t.send("/api/upload", new Uint8Array([9, 9]), { "content-type": "image/png", "x-file-name": "a.png" })).json() as { id: string };
+  const up = await (await t.upload(new Uint8Array([9, 9]), "a.png")).json() as { id: string };
   const r = await t.send("/api/chat", JSON.stringify({ text: "봐줘", files: [{ id: up.id }] }), { "content-type": "application/json" });
   assert.equal(r.status, 200);
   assert.equal(t.calls.length, 1);

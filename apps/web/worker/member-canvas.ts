@@ -1,12 +1,14 @@
 import type { Context, Hono } from "hono";
 import * as files from "./files";
 import { ridBatch } from "./queue";
+import * as uploads from "./direct-uploads";
 
-type Env = { RESULTS: R2Bucket; DB: D1Database; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string; [k: string]: unknown };
+type Env = uploads.DirectEnv & { RESULTS: R2Bucket; DB: D1Database; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string; [k: string]: unknown };
 type C = Context<{ Bindings: Env }>;
 export type CanvasHooks = { device: (c: C) => Promise<{ id: string; owner: string } | null> };
 
-export const LIMITS = { files: 200, file: 10 << 20, total: 25 << 20, canvases: 2000, path: 200, depth: 8, title: 200, acct: 80 };
+export const LIMITS = { files: 200, file: 500 * 1024 * 1024, total: 500 * 1024 * 1024, canvases: 2000, path: 200, depth: 8, title: 200, acct: 80 };
+export const LEGACY_LIMITS = { file: 10 << 20, total: 25 << 20 };
 export const ID = /^[A-Za-z0-9]{16,40}$/;
 const CTRL = /[\x00-\x1f\x7f]/g;
 const te = new TextEncoder();
@@ -36,7 +38,6 @@ export function okPath(p: unknown): p is string {
 }
 const marker = (mk: string, id: string) => `mart/${mk}/_c/${id}`;
 const fileKey = (mk: string, id: string, ver: string, p: string) => `mart/${mk}/${id}/${ver}/${p}`;
-const titleOf = (html: string) => { const m = /<title[^>]*>([^<]{1,400})<\/title>/i.exec(html); return m ? m[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : ""; };
 
 type Meta = { title: string; acct: string; at: string; ver: string; n: string; bytes: string; kind?: string; cv?: string; win?: string; wid?: string };
 export function kindOf(paths: string[]): { kind: "canvas" | "page"; cv: string } {
@@ -96,6 +97,28 @@ async function blob(env: Env, key: string, guess: string, range?: string): Promi
   return { body: o.body, ct, html: false, status: r ? 206 : 200, extra: { "accept-ranges": "bytes", ...(r ? { "content-range": `bytes ${r.a}-${r.z}/${hd.size}` } : {}) } };
 }
 const te2 = new TextEncoder(), td = new TextDecoder();
+const JSON_LIMIT = 2 * 1024 * 1024;
+async function canvasJson(env: Env, key: string): Promise<any> {
+  const o = await env.RESULTS.get(key, { range: { offset: 0, length: JSON_LIMIT + 1 } });
+  if (!o) return null;
+  if (o.size > JSON_LIMIT) { await o.body?.cancel(); return null; }
+  try { return JSON.parse(await o.text()); } catch { return null; }
+}
+// SHIM은 앞 64KiB에만 끼우고 나머지는 그대로 흘려 보낸다.
+function shimStream(body: ReadableStream<Uint8Array>, shim: string): ReadableStream<Uint8Array> {
+  const head = new Uint8Array(65536); let length = 0, injected = false;
+  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      if (injected) { controller.enqueue(chunk); return; }
+      const take = Math.min(head.length - length, chunk.length); head.set(chunk.subarray(0, take), length); length += take;
+      if (length === head.length) {
+        controller.enqueue(files.shim({ shim }, head)); injected = true;
+        if (take < chunk.length) controller.enqueue(chunk.subarray(take));
+      }
+    },
+    flush(controller) { if (!injected) controller.enqueue(files.shim({ shim }, head.subarray(0, length))); },
+  }));
+}
 export async function file(env: Env, mk: string, id: string, rel: string, range?: string): Promise<Got | null> {
   if (!ID.test(id)) return null;
   const m = await metaOf(env, mk, id); if (!m) return null;
@@ -116,8 +139,8 @@ export async function file(env: Env, mk: string, id: string, rel: string, range?
       if (!isHtml(p)) { const g = await blob(env, fileKey(mk, id, m.ver, p), typeOf(p), range); if (g) return g; continue; }
       const o = await env.RESULTS.get(fileKey(mk, id, m.ver, p)); if (!o) continue;
       const ct = o.httpMetadata?.contentType || typeOf(p);
-      const ix = await files.index(env).catch(() => null), b = new Uint8Array(await o.arrayBuffer());
-      return { body: ix?.shim ? files.shim(ix, b) : b, ct, html: true };
+      const ix = await files.index(env).catch(() => null);
+      return { body: ix?.shim ? shimStream(o.body, ix.shim) : o.body, ct, html: true };
     }
     return null;
   }
@@ -138,10 +161,10 @@ export async function boardText(env: Env, email: string, art: string, board: str
   if (!ID.test(art) || !BOARD.test(board)) return null;
   const m = await metaOf(env, mk, art); if (!m || m.kind !== "canvas") return null;
   let o: R2ObjectBody | null = null;
-  for (const p of [...new Set([m.cv ? `${m.cv}/${board}` : board, board, `project/${board}`])]) { if (okPath(p) && (o = await env.RESULTS.get(fileKey(mk, art, m.ver, p)))) break; }
+  for (const p of [...new Set([m.cv ? `${m.cv}/${board}` : board, board, `project/${board}`])]) { if (okPath(p) && (o = await env.RESULTS.get(fileKey(mk, art, m.ver, p), { range: { offset: 0, length: 400_000 } }))) break; }
   if (!o) return null;
   let title = board;
-  try { const cj = await env.RESULTS.get(fileKey(mk, art, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); const t = cj ? (JSON.parse(await cj.text()) as { boards?: Record<string, { title?: string }> })?.boards?.[board]?.title : ""; if (t) title = String(t); } catch {}
+  try { const cj = await canvasJson(env, fileKey(mk, art, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); const t = cj?.boards?.[board]?.title || ""; if (t) title = String(t); } catch {}
   const h = (await o.text()).slice(0, 400_000).replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
   const one = (t: string, n: number) => t.replace(CTRL, " ").split(/\s+/).filter(Boolean).join(" ").slice(0, n);
@@ -205,7 +228,7 @@ export async function artthumb(env: Env, email: string, body: { art?: unknown; b
   const board = String(body.board || "").slice(0, 200);
   if (board) {
     let boards: string[] = [];
-    try { const o = await env.RESULTS.get(fileKey(await keyOf(me), art, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); const b = o ? (JSON.parse(await o.text()) as { boards?: unknown }).boards : null; if (b && typeof b === "object") boards = Object.keys(b); } catch {}
+    try { const b = (await canvasJson(env, fileKey(await keyOf(me), art, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")))?.boards; if (b && typeof b === "object") boards = Object.keys(b); } catch {}
     if (!boards.includes(board)) return [400, { ok: false, error: "그 캔버스에 없는 판이에요" }];
   }
   await ridBatch(env.DB, rid, [prefSet(env.DB, me, art, "thumb", board)]);
@@ -227,8 +250,10 @@ const thumbKey = (mk: string, id: string) => `mart/${mk}/${id}/${THUMB}`;
 const THUMB_MAX = 400_000;
 export const PAGE_BOARD = { board: "index.html", w: 1280, h: 800 };
 export type ThumbJob = { art: string; mk: string; board: string; w: number; h: number; ver: string; pref: string; bxt: string };
-export function thumbStale(have: { ver?: string; pref?: string } | null, m: { ver: string }, pref: string) {
-  return !have || have.ver !== m.ver || (have.pref ?? "") !== pref;
+export function thumbStale(have: { ver?: string; pref?: string; prefencoded?: string } | null, m: { ver: string }, pref: string) {
+  let saved = have?.pref ?? "";
+  if (have?.prefencoded === "1") { try { saved = decodeURIComponent(saved); } catch { return true; } }
+  return !have || have.ver !== m.ver || saved !== pref;
 }
 /** 찍을 판: 지정(pref)이 canvas.json boards 에 있으면 그것, 아니면 order 맨 앞 → boards 맨 앞(canvas_thumb.pick 과 같은 차례) */
 export function pickBoard(cj: { boards?: Record<string, { w?: number; h?: number }>; order?: unknown[]; thumb?: unknown }, pref: string) {
@@ -257,10 +282,10 @@ export async function thumbJobs(env: Env & { BETTER_AUTH_SECRET: string }, limit
         const { id, m } = part[k], h = hs[k];
         if (out.length >= limit) break;
         const isCv = m.kind === "canvas", want = isCv ? pref.get(id) || "" : "";
-        if (!thumbStale(h?.customMetadata as { ver?: string; pref?: string } | null ?? null, m, want)) continue;
+        if (!thumbStale(h?.customMetadata as { ver?: string; pref?: string; prefencoded?: string } | null ?? null, m, want)) continue;
         let cj: Parameters<typeof pickBoard>[0] = {};
         if (!isCv) { out.push({ art: id, mk, ...PAGE_BOARD, ver: m.ver, pref: "", bxt: await token(env.BETTER_AUTH_SECRET, mk, id, Date.now() + 15 * 60_000) }); continue; }
-        try { const o = await env.RESULTS.get(fileKey(mk, id, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); if (o) cj = JSON.parse(await o.text()); } catch {}
+        try { cj = await canvasJson(env, fileKey(mk, id, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")) || {}; } catch {}
         const pk = pickBoard(cj, want); if (!pk) continue;
         out.push({ art: id, mk, ...pk, ver: m.ver, pref: want, bxt: await token(env.BETTER_AUTH_SECRET, mk, id, Date.now() + 15 * 60_000) });
       }
@@ -314,48 +339,242 @@ export async function remove(env: Env, email: string, id: string): Promise<[numb
   return [200, { ok: true, id, files: n }];
 }
 
-export function mountMemberCanvas(app: Hono<{ Bindings: Env }>, h: CanvasHooks) {
-  app.post("/api/me/canvas", async c => {
-    const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
-    if (+(c.req.header("content-length") || 0) > LIMITS.total + (1 << 20)) return c.json({ error: "너무 큼", max_bytes: LIMITS.total }, 413);
-    let fd: FormData; try { fd = await c.req.formData(); } catch { return c.json({ error: "multipart 아님" }, 400); }
-    let man: unknown; try { man = JSON.parse(String(fd.get("manifest") ?? "")); } catch { return c.json({ error: "manifest JSON 아님" }, 400); }
-    if (!Array.isArray(man) || !man.length) return c.json({ error: "manifest = [{path}]" }, 400);
-    if (man.length > LIMITS.files) return c.json({ error: "파일 수 상한", max_files: LIMITS.files }, 413);
-    const paths = man.map(x => (x as { path?: unknown })?.path);
-    const bad = paths.find(p => !okPath(p)); if (bad !== undefined) return c.json({ error: `경로: ${String(bad).slice(0, 80)}` }, 400);
-    if (new Set(paths).size !== paths.length) return c.json({ error: "같은 경로가 둘" }, 400);
-    const kd = kindOf(paths as string[]);
-    if (kd.kind === "page" && !paths.includes("index.html")) return c.json({ error: "index.html 이 없어요" }, 400);
-    const blobs: Blob[] = []; let total = 0;
-    for (let i = 0; i < paths.length; i++) {
-      const f = fd.get(`f${i}`);
-      if (!f || typeof f === "string") return c.json({ error: `f${i} 파일이 없어요` }, 400);
-      if (f.size > LIMITS.file) return c.json({ error: "파일 크기 상한", path: paths[i], max_file_bytes: LIMITS.file }, 413);
-      total += f.size; if (total > LIMITS.total) return c.json({ error: "너무 큼", max_bytes: LIMITS.total }, 413);
-      blobs.push(f);
+const CONTROL_MAX = 256 * 1024;
+const failUpload = (status: number, message: string) => Object.assign(new Error(message), { status });
+type UploadPart = { id: string; size: number; partSize: number; parts: number };
+type CanvasUpload = { mk: string; id: string; ver: string; previous: string; exp: number; meta: Meta; files: { path: string; size: number; upload: UploadPart }[] };
+
+// 제어 요청은 JSON만 받으며 실제 파일 본문은 이 Worker에 들어오지 않음.
+async function controlJson(c: C): Promise<Record<string, any>> {
+  if (!/^application\/json(?:;|$)/i.test(c.req.header("content-type") || "")) throw failUpload(415, "JSON manifest로 직접 올려 주세요. boarder CLI를 갱신해 주세요");
+  if (Number(c.req.header("content-length") || 0) > CONTROL_MAX) throw failUpload(413, "제어 요청이 너무 커요");
+  const reader = c.req.raw.body?.getReader(), chunks: Uint8Array[] = []; let size = 0;
+  if (!reader) throw failUpload(400, "JSON이 없어요");
+  try {
+    while (true) {
+      const { done, value } = await reader.read(); if (done) break;
+      size += value.length; if (size > CONTROL_MAX) { await reader.cancel(); throw failUpload(413, "제어 요청이 너무 커요"); }
+      chunks.push(value);
     }
-    const given = fd.get("id");
-    if (given !== null && (typeof given !== "string" || !ID.test(given))) return c.json({ error: "id 는 영문 · 숫자 16–40자" }, 400);
-    const mk = await keyOf(d.owner), id = (given as string | null) || newId();
-    const old = await metaOf(c.env, mk, id);
-    if (!old && (await all(c.env, mk)).length >= LIMITS.canvases) return c.json({ error: "캔버스 수 상한", max_canvases: LIMITS.canvases }, 429);
-    const ver = newVer();
-    // 파일은 Blob 그대로 R2 에(몸통을 한 번 더 복사하지 않음 — 25MB 묶음이 isolate 메모리를 두 배로 먹지 않게)
-    for (let i = 0; i < paths.length; i += 20)
-      await Promise.all(paths.slice(i, i + 20).map((p, j) => c.env.RESULTS.put(fileKey(mk, id, ver, p as string), blobs[i + j], { httpMetadata: { contentType: typeOf(p as string) } })));
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+  let body; try { body = JSON.parse(td.decode(bytes)); } catch { throw failUpload(400, "JSON 아님"); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw failUpload(400, "JSON 객체가 필요해요");
+  return body;
+}
+async function uploadToken(env: Env, batch: CanvasUpload): Promise<string> {
+  const body = btoa(Array.from(te.encode(JSON.stringify(batch)), b => String.fromCharCode(b)).join("")).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${body}.${await sign(env.BETTER_AUTH_SECRET, `canvas-upload:${body}`)}`;
+}
+const batchKey = (batch: CanvasUpload) => `${batch.mk}/${batch.id}/${batch.ver}`;
+async function batchState(env: Env, owner: string, batch: CanvasUpload) {
+  const row = await env.DB.prepare("SELECT state FROM canvas_upload WHERE id = ? AND owner = ?").bind(batchKey(batch), owner).first<{ state: string }>();
+  if (!row) throw failUpload(404, "없는 올리기 세션");
+  return row.state;
+}
+async function uploadBatch(env: Env, owner: string, value: unknown): Promise<CanvasUpload> {
+  if (typeof value !== "string" || value.length > CONTROL_MAX) throw failUpload(404, "없는 올리기 세션");
+  const [body, sig, extra] = value.split(".");
+  const wanted = await sign(env.BETTER_AUTH_SECRET, `canvas-upload:${body}`);
+  let mismatch = sig?.length === wanted.length ? 0 : 1;
+  for (let i = 0; i < wanted.length; i++) mismatch |= wanted.charCodeAt(i) ^ (sig?.charCodeAt(i) || 0);
+  if (!body || !sig || extra || mismatch) throw failUpload(404, "없는 올리기 세션");
+  let batch: CanvasUpload;
+  try { batch = JSON.parse(td.decode(Uint8Array.from(atob(body.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0)))); }
+  catch { throw failUpload(404, "없는 올리기 세션"); }
+  if (batch.mk !== await keyOf(owner) || batch.exp < Date.now()) throw failUpload(404, "없거나 만료된 올리기 세션");
+  return batch;
+}
+
+/** 클라이언트가 종료돼 취소를 못 보내도 만료된 미게시 판을 정리한다. 진행 중인 요청은 15분 여유를 둔다. */
+export async function sweepUploads(env: Env) {
+  const expired = Date.now() - 15 * 60_000;
+  // 게시·취소까지 끝난 묶음은 R2 정리가 필요 없으므로 한 번에 지운다.
+  await env.DB.prepare("DELETE FROM canvas_upload WHERE expires < ? AND state IN ('done','aborted')").bind(expired).run();
+  const rows = await env.DB.prepare("SELECT id, state FROM canvas_upload WHERE expires < ? AND state NOT IN ('done','aborted') ORDER BY expires, id LIMIT 20").bind(expired).all<{ id: string; state: string }>();
+  for (const row of rows.results) {
+    const key = /^([0-9a-f]{32})\/([A-Za-z0-9]{16,40})\/([a-z0-9]+)$/.exec(row.id);
+    if (!key) continue;
+    const [, mk, id, ver] = key;
+    if (row.state !== "done" && (await metaOf(env, mk, id))?.ver !== ver) await dropVer(env, mk, id, ver);
+    await env.DB.prepare("DELETE FROM canvas_upload WHERE id = ? AND expires < ?").bind(row.id, expired).run();
+  }
+}
+
+// 이전 CLI의 multipart 계약만 구한도로 받는다. JSON 직접 전송의 한도를 넓히는 우회로 쓰지 않는다.
+async function legacyForm(c: C) {
+  let size = 0;
+  if (!c.req.raw.body) throw failUpload(400, "multipart 아님");
+  const capped = c.req.raw.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({ transform(chunk, controller) {
+    size += chunk.length; if (size > LEGACY_LIMITS.total + (1 << 20)) throw failUpload(413, "이전 올리기 방식은 합 25MiB까지예요");
+    controller.enqueue(chunk);
+  } }));
+  return new Response(capped, { headers: { "content-type": c.req.header("content-type") || "" } }).formData();
+}
+const legacyTitleOf = (html: string) => { const m = /<title[^>]*>([^<]{1,400})<\/title>/i.exec(html); return m ? m[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'") : ""; };
+async function legacyCanvas(c: C, owner: string) {
+  if (+(c.req.header("content-length") || 0) > LEGACY_LIMITS.total + (1 << 20)) return c.json({ error: "너무 큼", max_bytes: LEGACY_LIMITS.total }, 413);
+  let fd: FormData; try { fd = await legacyForm(c); } catch (e) { if ((e as { status?: number }).status === 413) throw e; return c.json({ error: "multipart 아님" }, 400); }
+  let man: unknown; try { man = JSON.parse(String(fd.get("manifest") ?? "")); } catch { return c.json({ error: "manifest JSON 아님" }, 400); }
+  if (!Array.isArray(man) || !man.length) return c.json({ error: "manifest = [{path}]" }, 400);
+  if (man.length > LIMITS.files) return c.json({ error: "파일 수 상한", max_files: LIMITS.files }, 413);
+  const paths = man.map(x => (x as { path?: unknown })?.path);
+  if (paths.some(p => !okPath(p))) return c.json({ error: "올릴 수 없는 경로" }, 400);
+  if (new Set(paths).size !== paths.length) return c.json({ error: "같은 경로가 둘" }, 400);
+  const kd = kindOf(paths as string[]);
+  if (kd.kind === "page" && !paths.includes("index.html")) return c.json({ error: "index.html 이 없어요" }, 400);
+  const blobs: Blob[] = []; let total = 0;
+  for (let i = 0; i < paths.length; i++) {
+    const f = fd.get(`f${i}`);
+    if (!f || typeof f === "string") return c.json({ error: `f${i} 파일이 없어요` }, 400);
+    if (f.size > LEGACY_LIMITS.file) return c.json({ error: "파일 크기 상한", path: paths[i], max_file_bytes: LEGACY_LIMITS.file }, 413);
+    total += f.size; if (total > LEGACY_LIMITS.total) return c.json({ error: "너무 큼", max_bytes: LEGACY_LIMITS.total }, 413);
+    blobs.push(f);
+  }
+  const given = fd.get("id");
+  if (given !== null && (typeof given !== "string" || !ID.test(given))) return c.json({ error: "id 는 영문 · 숫자 16–40자" }, 400);
+  const mk = await keyOf(owner), id = (given as string | null) || newId();
+  const oldHead = await c.env.RESULTS.head(marker(mk, id)), old = oldHead?.customMetadata?.ver ? oldHead.customMetadata as unknown as Meta : null;
+  if (!old && (await all(c.env, mk)).length >= LIMITS.canvases) return c.json({ error: "캔버스 수 상한", max_canvases: LIMITS.canvases }, 429);
+  const ver = newVer();
+  try {
+    // 구형 CLI만 10MiB/파일·25MiB/묶음 안에서 Worker로 받는다.
+    for (let i = 0; i < paths.length; i += 20) {
+      const written = await Promise.allSettled(paths.slice(i, i + 20).map((p, j) => c.env.RESULTS.put(fileKey(mk, id, ver, p as string), blobs[i + j], { httpMetadata: { contentType: typeOf(p as string) } })));
+      const failed = written.find(result => result.status === "rejected"); if (failed?.status === "rejected") throw failed.reason;
+    }
     const idx = paths.indexOf("index.html"), cj = paths.indexOf(kd.cv ? `${kd.cv}/canvas.json` : "canvas.json");
     const cvTitle = async () => { try { return String(JSON.parse(await blobs[cj].slice(0, 2 << 20).text())?.title || "").slice(0, 80); } catch { return ""; } };   // 주인 _canvas_title 과 같음
     const title = clean(fd.get("title"), LIMITS.title) || clean(kd.kind === "canvas" ? await cvTitle() : "", LIMITS.title)
-      || (idx >= 0 ? clean(titleOf(await blobs[idx].slice(0, 65536).text()), LIMITS.title) : "") || id;
+      || (idx >= 0 ? clean(legacyTitleOf(await blobs[idx].slice(0, 65536).text()), LIMITS.title) : "") || id;
     const acct = clean(fd.get("acct"), LIMITS.acct);
     const win = clean(fd.get("win"), 120), wid = clean(fd.get("wid"), 44);
     const meta: Meta = { title, acct, at: String(Math.floor(Date.now() / 1000)), ver, n: String(paths.length), bytes: String(total), kind: kd.kind, cv: kd.cv,
       ...(/^[\w@.:/+-]{2,120}$/.test(win) ? { win } : {}), ...(/^ew_[a-z0-9]{3,40}$/i.test(wid) ? { wid } : {}) };
-    try { await c.env.RESULTS.put(marker(mk, id), JSON.stringify({ ...meta, files: paths }), { httpMetadata: { contentType: "application/json" }, customMetadata: meta }); }
-    catch (e) { c.executionCtx.waitUntil(dropVer(c.env, mk, id, ver).catch(() => {})); throw e; }
+    const written = await c.env.RESULTS.put(marker(mk, id), JSON.stringify({ ...meta, files: paths }), { httpMetadata: { contentType: "application/json" }, customMetadata: meta,
+      onlyIf: oldHead ? { etagMatches: oldHead.etag } : { etagDoesNotMatch: "*" } });
+    if (!written) throw failUpload(409, "그 사이 다른 판을 올렸어요. 다시 올려 주세요");
     if (old && old.ver !== ver) c.executionCtx.waitUntil(dropVer(c.env, mk, id, old.ver).catch(() => {}));
     return c.json({ ok: true, id, ver, title, kind: kd.kind, files: paths.length, bytes: total, replaced: !!old, url: `${c.env.PUBLIC_URL || new URL(c.req.url).origin}/art/${id}/` });
+  } catch (e) { c.executionCtx.waitUntil(dropVer(c.env, mk, id, ver).catch(() => {})); throw e; }
+}
+
+export function mountMemberCanvas(app: Hono<{ Bindings: Env }>, h: CanvasHooks) {
+  const control = (route: string, handle: (c: C, owner: string, body: Record<string, any>) => Promise<object>) => {
+    app.post(route, async c => {
+      const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+      try {
+        if (route === "/api/me/canvas" && /^multipart\/form-data(?:;|$)/i.test(c.req.header("content-type") || "")) {
+          c.header("Deprecation", "true"); return await legacyCanvas(c, d.owner);
+        }
+        return c.json(await handle(c, d.owner, await controlJson(c)));
+      }
+      catch (e) {
+        const err = (route === "/api/me/canvas" ? uploads.initializationError(e) : e) as Error & { status?: number; code?: string };
+        if (err.status === 503 && err.code === "direct_upload_unavailable") return c.json({ error: err.message, code: err.code }, 503);
+        if (err.status && err.status >= 400 && err.status < 500) return c.json({ error: err.message }, err.status as 400);
+        throw e;
+      }
+    });
+  };
+  control("/api/me/canvas", async (c, owner, body) => {
+    const man = body.manifest;
+    if (!Array.isArray(man) || !man.length) throw failUpload(400, "manifest = [{path,size}]");
+    if (man.length > LIMITS.files) throw failUpload(413, "파일 수 상한");
+    const paths = man.map(x => x?.path);
+    if (paths.some(p => !okPath(p))) throw failUpload(400, "올릴 수 없는 경로");
+    if (new Set(paths).size !== paths.length) throw failUpload(400, "같은 경로가 둘");
+    const kd = kindOf(paths);
+    if (kd.kind === "page" && !paths.includes("index.html")) throw failUpload(400, "index.html 이 없어요");
+    let total = 0;
+    for (const f of man) {
+      if (!Number.isSafeInteger(f.size) || f.size < 0) throw failUpload(400, "파일 크기가 올바르지 않아요");
+      if (f.size > LIMITS.file || (total += f.size) > LIMITS.total) throw failUpload(413, "500MiB 크기 상한(524288000바이트)");
+    }
+    if (body.id !== undefined && (typeof body.id !== "string" || !ID.test(body.id))) throw failUpload(400, "id 는 영문 · 숫자 16–40자");
+    const mk = await keyOf(owner), id = body.id || newId(), old = await metaOf(c.env, mk, id);
+    if (!old && (await all(c.env, mk)).length >= LIMITS.canvases) throw failUpload(429, "캔버스 수 상한");
+    const ver = newVer(), win = clean(body.win, 120), wid = clean(body.wid, 44);
+    const meta: Meta = { title: clean(body.title, LIMITS.title) || id, acct: clean(body.acct, LIMITS.acct), at: String(Math.floor(Date.now() / 1000)), ver,
+      n: String(paths.length), bytes: String(total), kind: kd.kind, cv: kd.cv,
+      ...(/^[\w@.:/+-]{2,120}$/.test(win) ? { win } : {}), ...(/^ew_[a-z0-9]{3,40}$/i.test(wid) ? { wid } : {}) };
+    const started: { path: string; size: number; upload: UploadPart }[] = [];
+    try {
+      // 실패 시 이미 시작한 multipart들도 정리한 뒤 오류를 돌려줌.
+      for (let i = 0; i < man.length; i += 10) {
+        const group = await Promise.allSettled(man.slice(i, i + 10).map(async f => ({ path: f.path, size: f.size, upload: await uploads.begin(c.env, owner, {
+          target: fileKey(mk, id, ver, f.path), size: f.size, mime: typeOf(f.path), metadata: { canvas: id, version: ver },
+        }) })));
+        for (const r of group) if (r.status === "fulfilled") started.push(r.value);
+        const failed = group.find(r => r.status === "rejected"); if (failed?.status === "rejected") throw failed.reason;
+      }
+      const batch: CanvasUpload = { mk, id, ver, previous: old?.ver || "", exp: Date.now() + 60 * 60_000, meta, files: started };
+      const session = await uploadToken(c.env, batch);
+      await c.env.DB.prepare("INSERT INTO canvas_upload(id,owner,state,expires) VALUES (?,?,'open',?)").bind(batchKey(batch), owner, batch.exp).run();
+      return { ok: true, id, ver, session, uploads: started.map(f => f.upload) };
+    } catch (e) { await Promise.allSettled(started.map(f => uploads.abort(c.env, owner, f.upload.id))); throw e; }
+  });
+  for (const action of ["part", "complete", "abort"] as const) control(`/api/me/canvas/upload/${action}`, async (c, owner, body) => {
+    const batch = await uploadBatch(c.env, owner, body.session), f = batch.files[body.index];
+    if (await batchState(c.env, owner, batch) !== "open") throw failUpload(409, "이미 마쳤거나 취소한 올리기");
+    if (!Number.isInteger(body.index) || !f || f.upload.id !== body.id) throw failUpload(404, "없는 올리기 파일");
+    if (action === "part") return uploads.part(c.env, owner, body.id, body.number);
+    if (action === "complete") return uploads.complete(c.env, owner, body.id, body.parts);
+    await uploads.abort(c.env, owner, body.id); return { ok: true };
+  });
+  const published = (c: C, batch: CanvasUpload, replaced: boolean) => ({ ok: true, id: batch.id, ver: batch.ver, title: batch.meta.title, kind: batch.meta.kind,
+    files: batch.files.length, bytes: Number(batch.meta.bytes), replaced, url: `${c.env.PUBLIC_URL || new URL(c.req.url).origin}/art/${batch.id}/` });
+  control("/api/me/canvas/publish", async (c, owner, body) => {
+    const batch = await uploadBatch(c.env, owner, body.session), { mk, id, ver, meta } = batch;
+    // 표지는 썼지만 완료 영수증 전에 요청이 종료된 경우 응답만 복구한다.
+    if ((await metaOf(c.env, mk, id))?.ver === ver) {
+      await c.env.DB.prepare("UPDATE canvas_upload SET state = 'done', locked_at = NULL WHERE id = ? AND owner = ?").bind(batchKey(batch), owner).run();
+      return published(c, batch, !!batch.previous);
+    }
+    if (await batchState(c.env, owner, batch) === "done") throw failUpload(409, "그 사이 다른 판을 올렸어요");
+    const lease = Date.now();
+    const lock = await c.env.DB.prepare("UPDATE canvas_upload SET state = 'publishing', locked_at = ? WHERE id = ? AND owner = ? AND (state = 'open' OR (state = 'publishing' AND locked_at < ?)) RETURNING id").bind(lease, batchKey(batch), owner, lease - 5 * 60_000).first();
+    if (!lock) throw failUpload(409, "이미 마쳤거나 취소 중인 올리기");
+    try {
+      const oldHead = await c.env.RESULTS.head(marker(mk, id)), old = oldHead?.customMetadata?.ver ? oldHead.customMetadata as unknown as Meta : null;
+      if ((old?.ver || "") !== batch.previous && old?.ver !== ver) throw failUpload(409, "그 사이 다른 판을 올렸어요. 다시 올려 주세요");
+      // 전송이 끝난 파일의 크기를 HEAD로 확인한 뒤 표지를 한 번만 바꿈. 본문을 읽지 않음.
+      for (let i = 0; i < batch.files.length; i += 20) await Promise.all(batch.files.slice(i, i + 20).map(async f => {
+        const o = await c.env.RESULTS.head(fileKey(mk, id, ver, f.path));
+        if (!o || o.size !== f.size || o.customMetadata?.canvas !== id || o.customMetadata?.version !== ver) throw failUpload(409, "아직 올리지 못한 파일이 있어요");
+      }));
+      if (!old && (await all(c.env, mk)).length >= LIMITS.canvases) throw failUpload(429, "캔버스 수 상한");
+      const written = await c.env.RESULTS.put(marker(mk, id), JSON.stringify({ ...meta, files: batch.files.map(f => f.path) }), { httpMetadata: { contentType: "application/json" }, customMetadata: meta,
+        onlyIf: oldHead ? { etagMatches: oldHead.etag } : { etagDoesNotMatch: "*" } });
+      if (!written) throw failUpload(409, "그 사이 다른 판을 올렸어요. 다시 올려 주세요");
+      await c.env.DB.prepare("UPDATE canvas_upload SET state = 'done', locked_at = NULL WHERE id = ? AND owner = ? AND locked_at = ?").bind(batchKey(batch), owner, lease).run();
+      if (old && old.ver !== ver) c.executionCtx.waitUntil(dropVer(c.env, mk, id, old.ver).catch(() => {}));
+      return published(c, batch, !!batch.previous);
+    } catch (e) {
+      await c.env.DB.prepare("UPDATE canvas_upload SET state = 'open', locked_at = NULL WHERE id = ? AND owner = ? AND state = 'publishing' AND locked_at = ?").bind(batchKey(batch), owner, lease).run();
+      throw e;
+    }
+  });
+  control("/api/me/canvas/abort", async (c, owner, body) => {
+    const batch = await uploadBatch(c.env, owner, body.session), state = await batchState(c.env, owner, batch);
+    if (state === "done" || state === "aborted") return { ok: true };
+    const lease = Date.now();
+    const lock = await c.env.DB.prepare("UPDATE canvas_upload SET state = 'aborting', locked_at = ? WHERE id = ? AND owner = ? AND (state = 'open' OR (state = 'aborting' AND locked_at < ?)) RETURNING id").bind(lease, batchKey(batch), owner, lease - 5 * 60_000).first();
+    if (!lock) throw failUpload(409, "게시 또는 취소를 확인 중이에요");
+    try {
+      const results = await Promise.allSettled(batch.files.map(f => uploads.abort(c.env, owner, f.upload.id)));
+      const failed = results.find(r => r.status === "rejected"); if (failed?.status === "rejected") throw failed.reason;
+      const sessions = await Promise.all(batch.files.map(f => uploads.getSession(c.env, owner, f.upload.id)));
+      if (sessions.some(s => s.state === "completing")) throw failUpload(409, "파일 등록이 끝나면 정리를 다시 시도해 주세요");
+      const old = await metaOf(c.env, batch.mk, batch.id);
+      if (old?.ver !== batch.ver) await dropVer(c.env, batch.mk, batch.id, batch.ver);
+      await c.env.DB.prepare("UPDATE canvas_upload SET state = 'aborted', locked_at = NULL WHERE id = ? AND owner = ? AND locked_at = ?").bind(batchKey(batch), owner, lease).run();
+      return { ok: true };
+    } catch (e) {
+      await c.env.DB.prepare("UPDATE canvas_upload SET state = 'open', locked_at = NULL WHERE id = ? AND owner = ? AND state = 'aborting' AND locked_at = ?").bind(batchKey(batch), owner, lease).run();
+      throw e;
+    }
   });
   app.get("/api/me/canvas", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);

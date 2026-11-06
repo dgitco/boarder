@@ -1,4 +1,14 @@
 (() => {
+  async function uploadModule(){
+    try { return await import('/direct-upload.js'); }
+    catch (error) {
+      let status;
+      try { status = (await fetch('/direct-upload.js', {method: 'GET', credentials: 'same-origin'})).status; }
+      catch { throw error; }
+      if ([404, 405, 410, 501].includes(status)) return {uploadDirect: (_blob, {legacy}) => legacy()};
+      throw error;
+    }
+  }
   const R = document.documentElement, PC = matchMedia('(min-width: 861px)');
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
   const mk = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -1272,12 +1282,20 @@
       if (HE()?.get().by[v]) return bad('같은 이름이 있어요 — 바꿔 주세요');
       const b = $('[data-emsave]'); b.disabled = true; const was = b.innerHTML; b.innerHTML = spin;
       try {
-        const r = await fetch('api/emoji/custom', {method: 'POST', credentials: 'include', headers: {'x-hb': '1', 'content-type': pic.type, 'x-emoji-name': encodeURIComponent(v)}, body: pic.blob});
-        const j = await r.json().catch(() => ({}));
-        if (r.status >= 400 && r.status < 500 && j.error){ b.disabled = false; b.innerHTML = was; return bad(j.error); }   // 이름 · 그림 문제는 그 칸 아래
-        if (!r.ok || !j.ok) throw new Error();
+        const { uploadDirect } = await uploadModule();
+        const control = async (action, body) => {
+          const r = await fetch('/api/emoji/custom/' + action, {method: 'POST', credentials: 'include', headers: {'x-hb': '1', 'content-type': 'application/json'}, body: JSON.stringify(body)});
+          const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || '일시적인 오류가 발생했어요'), {status: r.status, code: j.code}); return j;
+        };
+        const legacy = async () => {
+          if (pic.blob.size > 512 * 1024) throw Object.assign(new Error('그림이 너무 커요'), {status: 413});
+          const r = await fetch('/api/emoji/custom', {method: 'POST', credentials: 'include', headers: {'x-hb': '1', 'content-type': pic.type, 'x-emoji-name': encodeURIComponent(v)}, body: pic.blob});
+          const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || '일시적인 오류가 발생했어요'), {status: r.status}); return j;
+        };
+        const j = await uploadDirect(pic.blob, {control, legacy, init: {size: pic.blob.size, mime: pic.type, name: v}});
+        if (!j.ok) throw new Error();
         await HE()?.load(true); toast(`:${v}: 을 추가했어요`); done?.(v);
-      } catch { b.disabled = false; b.innerHTML = was; toast('일시적인 오류가 발생했어요'); }
+      } catch (e) { b.disabled = false; b.innerHTML = was; if (e.status >= 400 && e.status < 500) return bad(e.message); toast('일시적인 오류가 발생했어요'); }
     };
     return () => { if (url) URL.revokeObjectURL(url); };
   }

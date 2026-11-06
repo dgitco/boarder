@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Hono } from "hono";
 import { register } from "node:module";
-import { DatabaseSync } from "node:sqlite";
+import { fileD1, fileR2, directConfig, uploadFile } from "./file-direct-test-helper.ts";
 import { readFileSync } from "node:fs";
 
 register("./test-hooks.mjs", import.meta.url);
@@ -12,43 +12,38 @@ const F = await import("./member-files.ts");
 
 const A = "a@example.com", B = "b@example.com", SECRET = "test-secret-not-real";
 function setup() {
-  const objs = new Map<string, { body: Uint8Array; http: Record<string, string>; meta: Record<string, string> }>();
-  const R2 = {
-    put: async (k: string, v: ArrayBuffer, o: { httpMetadata: Record<string, string>; customMetadata: Record<string, string> }) => { objs.set(k, { body: new Uint8Array(v), http: o.httpMetadata, meta: o.customMetadata }); },
-    get: async (k: string) => { const o = objs.get(k); return o ? { customMetadata: o.meta, body: new Blob([o.body]).stream(), writeHttpMetadata: (h: Headers) => { if (o.http.contentType) h.set("content-type", o.http.contentType); if (o.http.contentDisposition) h.set("content-disposition", o.http.contentDisposition); } } : null; },
-    head: async (k: string) => { const o = objs.get(k); return o ? { customMetadata: o.meta, httpMetadata: o.http, size: o.body.length } : null; },
-  };
-  // 하루 상한 칸(user_pref) — 가짜 D1 = 메모리 SQLite, 표는 마이그레이션 파일 그대로
-  const sq = new DatabaseSync(":memory:"); sq.exec(readFileSync(new URL("../migrations/0030_user_pref.sql", import.meta.url), "utf8"));
-  const stmt = (sql: string, args: unknown[] = []): any => ({ bind: (...a: unknown[]) => stmt(sql, a), first: async () => (sq.prepare(sql).get(...(args as never[])) as unknown) ?? null, run: async () => sq.prepare(sql).run(...(args as never[])) });
-  const DB = { prepare: (s: string) => stmt(s) };
-  const env = { DB, RESULTS: R2, AI: { run: async (_m: string, i: { audio: number[] }) => { ai.n++; return { text: ` 들린 글 ${i.audio.length} ` }; } }, BETTER_AUTH_SECRET: SECRET };
+  const { R: R2 } = fileR2(), { DB, sq } = fileD1();
+  const env = { ...directConfig, DB, RESULTS: R2, AI: { run: async (_m: string, i: { audio: number[] }) => { ai.n++; return { text: ` 들린 글 ${i.audio.length} ` }; } }, BETTER_AUTH_SECRET: SECRET };
   const ai = { n: 0 };
   const app = new Hono();
-  app.post("/api/upload", c => F.upload(c as never, c.req.header("x-test-user")!));
+  app.post("/api/upload/:action?", c => F.upload(c as never, c.req.header("x-test-user")!));
   app.post("/api/voice/stt", c => F.stt(c as never, c.req.header("x-test-user") || A));
   app.get("/api/file/:id", c => F.fileGet(c as never, c.req.header("x-test-user")!, c.req.param("id"), c.req.query("dl") !== undefined));
   app.get("/f/:id", c => F.signedGet(c as never, c.req.param("id")));
   app.get("/f/:id/:name", c => F.signedGet(c as never, c.req.param("id")));   // index.ts 의 이름 꼬리 길과 같게(아래 시험이 index.ts 에 그 길이 있는지 봄)
+  const rawCall = (method: string, path: string, h: Record<string, string> = {}, body?: BodyInit) =>
+    app.fetch(new Request("https://b.example" + path, { method, headers: h, body, ...(body instanceof ReadableStream ? { duplex: "half" } : {}) } as RequestInit), env);
   const call = async (method: string, path: string, h: Record<string, string> = {}, body?: BodyInit) => {
-    const r = await app.fetch(new Request("https://b.example" + path, { method, headers: h, body, ...(body instanceof ReadableStream ? { duplex: "half" } : {}) } as RequestInit), env);
-    return { status: r.status, h: r.headers, t: await r.text() };
+    const r = await rawCall(method, path, h, body); return { status: r.status, h: r.headers, t: await r.text() };
   };
-  return { env, call, sq, ai };
+  const control = (who: string, suffix: string, body: any) => rawCall('POST', '/api/upload' + suffix, { 'x-test-user': who, 'content-type': 'application/json' }, JSON.stringify(body));
+  const init = (who: string, body: any) => control(who, '/init', body);
+  const upload = (who: string, name: string, mime: string, body: string | Uint8Array = "내용", key = '') => uploadFile((suffix, b) => control(who, suffix, b), env as never, body, { name, mime, key });
+  return { env, call, sq, ai, init, upload, control };
 }
 const up = async (s: ReturnType<typeof setup>, who: string, name: string, type: string, body = "내용") =>
-  JSON.parse((await s.call("POST", "/api/upload", { "x-test-user": who, "x-file-name": encodeURIComponent(name), "content-type": type }, body)).t) as { ok: boolean; id: string; name: string };
+  await (await s.upload(who, name, type, body)).json() as { ok: boolean; id: string; name: string };
 
 test("올리기 → 보기: 올린 사람만(남은 404), 빈 몸통 400, 이름의 「/」는 바꿈", async () => {
   const s = setup(), a = await up(s, A, "a/보고서.pdf", "application/pdf");
   assert.ok(a.ok); assert.match(a.id, /^[0-9a-f]{32}$/); assert.equal(a.name, "a_보고서.pdf");
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": A })).t, "내용");
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": B })).status, 404);
-  assert.equal((await s.call("POST", "/api/upload", { "x-test-user": A }, "")).status, 400);
+  assert.equal((await s.init(A, { name: "empty", mime: "text/plain", size: 0 })).status, 400);
 });
 
 test("같은 열쇠(X-Upload-Key)로 다시 올려도 파일 하나 · 올리기 한도 한 번만, 열쇠가 다르거나 남이면 따로", async () => {
-  const s = setup(), put = async (who: string, key: string) => JSON.parse((await s.call("POST", "/api/upload", { "x-test-user": who, "x-file-name": "p.png", "content-type": "image/png", ...(key ? { "x-upload-key": key } : {}) }, "사진")).t) as { ok: boolean; id: string; size: number };
+  const s = setup(), put = async (who: string, key: string) => await (await s.upload(who, "p.png", "image/png", "사진", key)).json() as { ok: boolean; id: string; size: number };
   const a = await put(A, "k-1"), a2 = await put(A, "k-1"), a3 = await put(A, "k-2"), n1 = await put(A, ""), n2 = await put(A, ""), b = await put(B, "k-1");
   assert.ok(a.ok && a2.ok); assert.equal(a2.id, a.id); assert.equal(a2.size, a.size); assert.match(a.id, /^[0-9a-f]{32}$/);
   assert.notEqual(a3.id, a.id); assert.notEqual(n1.id, n2.id); assert.notEqual(b.id, a.id);   // 열쇠 없으면 예전처럼 매번 새 파일, 남의 같은 열쇠는 다른 파일
@@ -90,18 +85,15 @@ function chunked(size: number, chunk = 1024 * 1024) {
   const body = new ReadableStream<Uint8Array>({ pull(ctl) { if (st.pulled * chunk >= size) return ctl.close(); st.pulled++; ctl.enqueue(new Uint8Array(chunk)); } }, { highWaterMark: 0 });
   return { body, st };
 }
-test("조각 요청(content-length 없음): 올리기 · 받아쓰기는 읽으면서 상한을 넘으면 끊고 413 — 끝까지 읽지 않음", async () => {
-  const s = setup();
-  const up1 = chunked(F.FILE_MAX * 5);
-  const r = await s.call("POST", "/api/upload", { "x-test-user": A, "x-file-name": "big.bin" }, up1.body as never);
-  assert.equal(r.status, 413);
-  assert.ok(up1.st.pulled <= F.FILE_MAX / (1024 * 1024) + 2, `20MB 를 조금 넘어 끊어야 함(당긴 조각 ${up1.st.pulled})`);
+test("옛 첨부는20MiB까지만 읽고 거절 · 받아쓰기도 읽으면서 상한413", async () => {
+  const s = setup(), up1 = chunked(F.FILE_MAX * 5);
+  assert.equal((await s.call("POST", "/api/upload", { "x-test-user": A, "x-file-name": "big.bin" }, up1.body as never)).status, 413);
+  assert.ok(up1.st.pulled <= 22, "옛 첨부도 상한 뒤에는 읽지 않음");
   const v = chunked(F.VOICE_MAX * 10, 256 * 1024);
   assert.equal((await s.call("POST", "/api/voice/stt", { "x-test-user": A }, v.body as never)).status, 413);
-  assert.ok(v.st.pulled <= F.VOICE_MAX / (256 * 1024) + 2, `3MB 를 조금 넘어 끊어야 함(당긴 조각 ${v.st.pulled})`);
-  assert.equal(s.ai.n, 0, "받아쓰기를 부르지 않음");
-  const ok = chunked(3 * 1024, 1024);   // 상한 안의 조각 요청은 그대로 받음
-  assert.equal(JSON.parse((await s.call("POST", "/api/upload", { "x-test-user": A, "x-file-name": "s.bin" }, ok.body as never)).t).size, 3 * 1024);
+  assert.ok(v.st.pulled <= F.VOICE_MAX / (256 * 1024) + 2);
+  assert.equal(s.ai.n, 0);
+  assert.equal((await (await s.upload(A, "s.bin", "application/octet-stream", new Uint8Array(3 * 1024))).json() as any).size, 3 * 1024);
 });
 
 test("하루 상한: 올리기는 회원마다 개수 · 총량, 받아쓰기는 회원마다 횟수 — 넘으면 429 이고 받아쓰기(AI)를 부르지 않음, 다른 회원은 따로", async () => {
@@ -110,10 +102,10 @@ test("하루 상한: 올리기는 회원마다 개수 · 총량, 받아쓰기는
   const set = (who: string, kind: string, n: number, b: number) => s.sq.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?) ON CONFLICT(owner, k) DO UPDATE SET v = excluded.v").run(who, `q:${kind}:${day}`, JSON.stringify({ n, b }), now);
   set(A, "mfiles", F.DAY_FILES - 1, 0);
   assert.ok((await up(s, A, "a.txt", "text/plain")).ok, "상한 바로 아래는 됨");
-  assert.equal((await s.call("POST", "/api/upload", { "x-test-user": A, "x-file-name": "b.txt" }, "내용")).status, 429, "개수 상한");
+  assert.equal((await s.init(A, { name: "b.txt", mime: "text/plain", size: 6 })).status, 429, "개수 상한");
   assert.ok((await up(s, B, "b.txt", "text/plain")).ok, "다른 회원은 따로");
   set(B, "mfiles", 0, F.DAY_FILE_BYTES - 3);
-  assert.equal((await s.call("POST", "/api/upload", { "x-test-user": B, "x-file-name": "c.txt" }, "내용")).status, 429, "총량 상한(「내용」 = 6바이트)");
+  assert.equal((await s.init(B, { name: "c.txt", mime: "text/plain", size: 6 })).status, 429, "총량 상한(「내용」 = 6바이트)");
   set(A, "stt", F.DAY_STT - 1, 0);
   assert.equal((await s.call("POST", "/api/voice/stt", { "x-test-user": A }, new Uint8Array(4))).status, 200);
   const before = s.ai.n;
@@ -128,7 +120,7 @@ test("하루 상한 셈: 동시에 와도 상한을 넘지 않음 · 셈을 못 
   assert.equal(r.filter(Boolean).length, 5);
   const broken = { prepare: () => { throw new Error("D1 장애(시험)"); } };
   const s2 = setup(); (s2.env as any).DB = broken;
-  assert.equal((await s2.call("POST", "/api/upload", { "x-test-user": A, "x-file-name": "x.txt" }, "내용")).status, 503);
+  assert.equal((await s2.init(A, { name: "x.txt", mime: "text/plain", size: 6 })).status, 503);
 });
 
 test("PDF: 맨 앞이 %PDF- 면 화면 안 보기(inline · application/pdf · sandbox 없이 frame-ancestors), 가짜 PDF 는 내려받기 + sandbox, ?dl 은 내려받기 · 한글 이름 RFC5987", async () => {
@@ -150,4 +142,104 @@ test("첨부 줄 정규식(member-inbox FILE_LINE): 지금 링크(id 만)와 이
   const u = await F.fileLink(SECRET, "https://b.example", "0".repeat(32));
   assert.ok(/\/f\/0{32}\?e=/.test(u), u);
   assert.ok(re.test(`📎 a.png: ${u}`)); assert.ok(re.test(`📎 a.png: ${u.replace("?", "/" + encodeURIComponent("가".repeat(20) + ".png") + "?")}`));
+});
+
+test("직접 올리기 예약 영수증: init 재시도·완료 재시도는 한 번만 셈, 취소와 만료는 환불", async () => {
+  const s = setup(), usage = () => {
+    const row = s.sq.prepare("SELECT v FROM user_pref WHERE owner=? AND k LIKE 'q:mfiles:%'").get(A) as any;
+    return row ? JSON.parse(row.v) : { n: 0, b: 0 };
+  };
+  const spec = { name: "예약.txt", mime: "text/plain", size: 6, key: "receipt-key" };
+  const a = await (await s.init(A, spec)).json() as any, again = await (await s.init(A, spec)).json() as any;
+  assert.equal(a.id, again.id); assert.deepEqual(usage(), { n: 1, b: 6 });
+  assert.equal((await s.control(A, "/abort", { id: a.id })).status, 200);
+  assert.deepEqual(usage(), { n: 0, b: 0 });
+  const pending = await (await s.init(A, spec)).json() as any;
+  assert.notEqual(pending.id, a.id);
+  const done = await (await s.upload(A, spec.name, spec.mime, "내용", spec.key)).json() as any;
+  assert.ok(done.ok); assert.deepEqual(usage(), { n: 1, b: 6 });
+  assert.equal((await s.control(A, "/complete", { id: pending.id, parts: [] })).status, 200);
+  assert.equal((await s.control(A, "/abort", { id: pending.id })).status, 200);
+  assert.deepEqual(usage(), { n: 1, b: 6 });
+  const abandoned = await (await s.init(A, { ...spec, key: "abandoned", size: 8 })).json() as any;
+  assert.deepEqual(usage(), { n: 2, b: 14 });
+  s.sq.prepare("UPDATE direct_upload SET expires=? WHERE id=?").run(Date.now() - 1, abandoned.id);
+  const direct = await import("./direct-uploads.ts"); await direct.sweep(s.env as never);
+  assert.deepEqual(usage(), { n: 1, b: 6 });
+  assert.ok(await s.env.RESULTS.head(`mfiles/${done.id}`));
+});
+
+test("회원 파일 500MiB 경계는 JSON 선언으로 검증 · 다른 회원의 제어 세션 거절", async () => {
+  const s = setup(), exact = await s.init(A, { name: "큰 파일.bin", mime: "application/octet-stream", size: 524288000 });
+  assert.equal(exact.status, 200);
+  const session = await exact.json() as any;
+  assert.equal(session.size, F.FILE_MAX); assert.ok(session.parts > 1);
+  assert.equal((await s.init(B, { name: "초과.bin", mime: "application/octet-stream", size: 524288001 })).status, 413);
+  for (const action of ["part", "complete", "abort"]) assert.equal((await s.control(B, '/' + action, { id: session.id, number: 1, parts: [] })).status, 404);
+  assert.equal((await s.control(A, "/abort", { id: session.id })).status, 200);
+});
+
+test("취소 정리가 일시 실패해도 다음 취소가 같은 예약을 한 번만 환불한다", async () => {
+  const s = setup(), pending = await (await s.init(A, {name:"취소.bin",mime:"application/octet-stream",size:4})).json() as any;
+  const original = s.env.RESULTS.delete; let fails = 1;
+  s.env.RESULTS.delete = (async (key: string | string[]) => { if (fails-- > 0) throw Error('R2 transient delete failure'); return original(key as never); }) as never;
+  assert.equal((await s.control(A,"/abort",{id:pending.id})).status,503);
+  assert.equal((await s.control(A,"/abort",{id:pending.id})).status,200);
+  assert.equal((await s.control(A,"/abort",{id:pending.id})).status,200);
+  const row = s.sq.prepare("SELECT v FROM user_pref WHERE owner=? AND k LIKE 'q:mfiles:%'").get(A) as any;
+  assert.deepEqual(JSON.parse(row.v),{n:0,b:0});
+  assert.equal((s.sq.prepare('SELECT charged_day FROM direct_upload WHERE id=?').get(pending.id) as any).charged_day,null);
+});
+
+test("같은 열쇠 재초기화 사이 취소되면 aborted 세션을 다시 과금하지 않는다", async () => {
+  const s = setup(), spec={name:"경합.bin",mime:"application/octet-stream",size:4,key:"abort-race"};
+  const pending=await (await s.init(A,spec)).json() as any, original=s.env.DB.batch.bind(s.env.DB);let race=true;
+  s.env.DB.batch=(async (statements:any[])=>{
+    if(race){race=false;assert.equal((await s.control(A,"/abort",{id:pending.id})).status,200);}
+    return original(statements);
+  }) as never;
+  assert.equal((await s.init(A,spec)).status,409);
+  const usage=s.sq.prepare("SELECT v FROM user_pref WHERE owner=? AND k LIKE 'q:mfiles:%'").get(A) as any;
+  assert.deepEqual(JSON.parse(usage.v),{n:0,b:0});
+  assert.equal((s.sq.prepare('SELECT charged_day FROM direct_upload WHERE id=?').get(pending.id) as any).charged_day,null);
+});
+
+test("취소의 조회 뒤 예약이 들어와도 최신 영수증으로 환불한다",async()=>{
+  const s=setup(),pending=await (await s.init(A,{name:"늦은예약.bin",mime:"application/octet-stream",size:4})).json() as any;
+  const day=new Date().toISOString().slice(0,10);
+  s.sq.prepare('UPDATE direct_upload SET charged_day=NULL WHERE id=?').run(pending.id);
+  s.sq.prepare("UPDATE user_pref SET v=json_object('n',0,'b',0) WHERE owner=? AND k=?").run(A,`q:mfiles:${day}`);
+  const original=s.env.DB.prepare.bind(s.env.DB);let reserve=true;
+  s.env.DB.prepare=((sql:string)=>{
+    const st=original(sql);
+    if(sql.includes("state = 'aborted'")){
+      const bind=st.bind.bind(st);st.bind=((...args:any[])=>{const bound=bind(...args),first=bound.first.bind(bound);bound.first=(async()=>{
+        if(reserve){reserve=false;s.sq.prepare('UPDATE direct_upload SET charged_day=? WHERE id=?').run(day,pending.id);s.sq.prepare("UPDATE user_pref SET v=json_object('n',1,'b',4) WHERE owner=? AND k=?").run(A,`q:mfiles:${day}`);}return first();
+      }) as never;return bound;}) as never;
+    }
+    return st;
+  }) as never;
+  assert.equal((await s.control(A,"/abort",{id:pending.id})).status,200);
+  const usage=s.sq.prepare('SELECT v FROM user_pref WHERE owner=? AND k=?').get(A,`q:mfiles:${day}`) as any;
+  assert.deepEqual(JSON.parse(usage.v),{n:0,b:0});
+});
+
+test('옛 클라이언트 raw JSON도 제어로 오인하지 않고 저장·키 재시도·한도를 유지',async()=>{
+ const s=setup(),headers={'x-test-user':A,'x-file-name':'data.json','x-upload-key':'legacy-json','content-type':'application/json'};
+ const a=await s.call('POST','/api/upload',headers,'{"hello":"world"}');
+ assert.equal(a.status,200);assert.equal(a.h.get('deprecation'),'true');
+ const id=JSON.parse(a.t).id;
+ assert.equal((await s.call('GET','/api/file/'+id,{'x-test-user':A})).t,'{"hello":"world"}');
+ const b=await s.call('POST','/api/upload',headers,'{"hello":"world"}');assert.equal(JSON.parse(b.t).id,id);
+ const quota=JSON.parse((s.sq.prepare("SELECT v FROM user_pref WHERE owner=? AND k LIKE 'q:mfiles:%'").get(A) as any).v);assert.equal(quota.n,1);
+ const direct=await s.init(A,{name:'new.txt',mime:'text/plain',size:3});assert.equal(direct.status,200);assert.equal(direct.headers.get('deprecation'),null);
+});
+
+test('0093 이주 전에도 raw 첨부는 유지, 키가 있는 새 init은 준비안됨503으로 전환 가능',async()=>{
+ const s=setup();s.sq.exec('DROP TABLE direct_upload; DROP TABLE canvas_upload');
+ const init=await s.init(A,{name:'new.txt',mime:'text/plain',size:3});
+ assert.equal(init.status,503);assert.equal((await init.json() as any).code,'direct_upload_unavailable');
+ const raw=await s.call('POST','/api/upload',{'x-test-user':A,'x-file-name':'old.json','content-type':'application/json'},'{"legacy":true}');
+ assert.equal(raw.status,200);assert.equal(raw.h.get('deprecation'),'true');
+ assert.equal((await s.call('GET','/api/file/'+JSON.parse(raw.t).id,{'x-test-user':A})).t,'{"legacy":true}');
 });

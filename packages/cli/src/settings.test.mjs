@@ -1,8 +1,10 @@
 // node --test packages/cli/src/settings.test.mjs — boarder 설정 명령의 인자 → 서버 값 · 되돌리는 명령(지어낸 값). 서버까지의 끝에서 끝 시험은 apps/web/worker/device-settings.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-const { valueOf, undoOf, SETTINGS_COMMANDS, COMMAND_KEYS, windowsPath } = await import('./settings.mjs');
-import { readFileSync } from 'node:fs';
+const { valueOf, undoOf, SETTINGS_COMMANDS, COMMAND_KEYS, windowsPath, settingsCommand } = await import('./settings.mjs');
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 test('인자 → 값: on/off · off 는 지움 · 빠지면 사용법(undefined · null)', () => {
   assert.equal(valueOf('task-channels', ['on'], {}), true);
@@ -73,4 +75,59 @@ test('boarder windows 질의: --since 30m · 2h · 1d 는 지금부터 거꾸로
   assert.equal(windowsPath({ since: '2026-11-05T21:00:00+09:00', task: true }, now), '/api/device/windows?since=2026-11-05T21%3A00%3A00%2B09%3A00', 'ISO 는 그대로 · 값 없는 --task 는 안 보냄');
   assert.equal(windowsPath({ since: '30d', closed: '1' }, now), `/api/device/windows?since=${now - 30 * 86_400_000}&closed=1`, '30일 창에서 닫힌 창을 다시 넣기');
   assert.ok(SETTINGS_COMMANDS.includes('windows') && SETTINGS_COMMANDS.includes('window'), '창 하나(window) 와 모든 창(windows) 둘 다');
+});
+
+async function avatarUpload({ status, code, stage = 'init', network = false }, check) {
+  const root = mkdtempSync(path.join(tmpdir(), 'boarder-avatar-')), beforeHome = process.env.BOARDER_HOME;
+  const previousFetch = globalThis.fetch, previousLog = console.log, calls = [], output = [];
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]), id = 'a'.repeat(32);
+  process.env.BOARDER_HOME = root;
+  writeFileSync(path.join(root, 'device.json'), JSON.stringify({ token: 'bxd_fake-test-token', server: 'https://example.test' }));
+  const photo = path.join(root, 'avatar.png'); writeFileSync(photo, png);
+  console.log = s => output.push(String(s));
+  const response = (body, httpStatus = 200) => new Response(JSON.stringify(body), { status: httpStatus, headers: { 'content-type': 'application/json' } });
+  globalThis.fetch = async (url, options) => {
+    const endpoint = new URL(url).pathname; calls.push(endpoint);
+    if (endpoint === '/api/device/avatar-image/init' && stage === 'part') return response({ id: 'b'.repeat(32), size: png.length, partSize: png.length, parts: 1 });
+    if (endpoint === '/api/device/avatar-image/' + stage) {
+      if (network) throw new Error('network failure');
+      return response({ error: code === 'direct_upload_unavailable' ? '직접 올리기 설정이 아직 준비되지 않았어요' : 'test failure', ...(code ? { code } : {}) }, status);
+    }
+    if (endpoint === '/api/device/avatar-image') {
+      assert.deepEqual(options.body, png, '구형 경로에는 원래 작은 사진 바이트');
+      assert.equal(options.headers['content-type'], 'application/octet-stream');
+      return response({ ok: true, id });
+    }
+    if (endpoint === '/api/device/settings') {
+      assert.deepEqual(JSON.parse(options.body), { key: 'avatar', value: { photo: id } });
+      return response({ ok: true, before: { seed: 'nova', hue: 20 }, after: { seed: 'nova', hue: 20, photo: id } });
+    }
+    throw new Error('unexpected endpoint');
+  };
+  try { await check({ run: () => settingsCommand('avatar', 'set', [], { photo }), calls, output, id }); }
+  finally {
+    globalThis.fetch = previousFetch; console.log = previousLog;
+    if (beforeHome === undefined) delete process.env.BOARDER_HOME; else process.env.BOARDER_HOME = beforeHome;
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('아바타 CLI는 초기화 지원 없음·설정 누락에만 구형 사진 업로드 후 기존 설정을 저장한다', async t => {
+  for (const scenario of [{ status: 404 }, { status: 405 }, { status: 415 }, { status: 501 }, { status: 503, code: 'direct_upload_unavailable' }]) {
+    await t.test(String(scenario.status), () => avatarUpload(scenario, async ({ run, calls, output, id }) => {
+      await run();
+      assert.deepEqual(calls, ['/api/device/avatar-image/init', '/api/device/avatar-image', '/api/device/settings']);
+      assert.equal(JSON.parse(output[0]).after.photo, id);
+    }));
+  }
+});
+
+test('아바타 CLI는 인증·권한·크기·일반503·네트워크·조각 실패에 구형 업로드를 하지 않는다', async t => {
+  for (const scenario of [{ status: 401 }, { status: 403 }, { status: 413 }, { status: 503 }, { network: true }, { status: 404, stage: 'part' }]) {
+    await t.test(JSON.stringify(scenario), () => avatarUpload(scenario, async ({ run, calls }) => {
+      await assert.rejects(run());
+      assert.equal(calls.includes('/api/device/avatar-image'), false);
+      assert.equal(calls.includes('/api/device/settings'), false);
+    }));
+  }
 });

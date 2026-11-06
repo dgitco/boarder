@@ -187,10 +187,17 @@ export async function settingsCommand(cmd, sub, pos, flags) {
     if (flags.photo) {
       const d = loadDevice(); if (!d?.token) fail('This machine is not set up for Boarder yet — run `boarder setup --yes`.', 3);
       let bytes; try { bytes = readFileSync(flags.photo); } catch (e) { fail(`could not read the photo (${e.code || 'error'})`); }
-      const r = await fetch(`${server()}/api/device/avatar-image`, { method: 'POST', headers: { authorization: `Bearer ${d.token}`, 'content-type': 'application/octet-stream' }, body: bytes, signal: AbortSignal.timeout(60_000) });
-      const j = await r.json().catch(() => ({}));
-      if (r.status === 403 && j.error === 'not_allowed') fail(`not allowed: ${j.hint || 'run `boarder settings allow` and press 「허용」 on your board'}`, 77);
-      if (!r.ok) fail(j.error || `server answered ${r.status}`);
+      const hex = bytes.subarray(0, 12).toString('hex'), mime = hex.startsWith('89504e470d0a1a0a') ? 'image/png' : hex.startsWith('ffd8ff') ? 'image/jpeg' : hex.startsWith('52494646') && hex.slice(16, 24) === '57454250' ? 'image/webp' : '';
+      if (!mime || bytes.length > 1_500_000) fail('사진은 PNG · JPEG · WebP, 1,500,000바이트까지예요');
+      const { uploadDirect } = await import('./direct-upload.mjs');
+      const response = async r => {
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 403 && j.error === 'not_allowed') fail(`not allowed: ${j.hint || 'run `boarder settings allow` and press 「허용」 on your board'}`, 77);
+        if (!r.ok) throw Object.assign(new Error(j.error || `server answered ${r.status}`), {status: r.status, code: j.code}); return j;
+      };
+      const control = async (action, body) => response(await fetch(`${server()}/api/device/avatar-image/${action}`, { method: 'POST', headers: { authorization: `Bearer ${d.token}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) }));
+      const legacy = async () => response(await fetch(`${server()}/api/device/avatar-image`, { method: 'POST', headers: { authorization: `Bearer ${d.token}`, 'content-type': 'application/octet-stream' }, body: bytes, signal: AbortSignal.timeout(60_000) }));
+      const j = await uploadDirect(new Blob([bytes], {type: mime}), {control, legacy, init: {size: bytes.length, mime}});
       value.photo = j.id;
     }
     if (!Object.keys(value).length) fail(SETTINGS_HELP, 64);

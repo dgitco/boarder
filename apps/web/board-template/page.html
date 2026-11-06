@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "af3d28264279";
+window.HB_VER = "afa39689491d";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -7689,108 +7689,95 @@ const attChips = (id) => (CS.att[id] || []).map((a, i) => {
   return a.url ? `<span class="chip img${st}"${k} title="${esc(a.f.name)}"><img src="${a.url}" alt="${esc(a.f.name)}">${attX(id, i, a)}</span>` : `<span class="chip${st}"${k} title="${esc(a.f.name)}"><i class="fi">${ICON.file}</i><span class="cn"><b>${esc(a.f.name)}</b><small>${esc(fileMeta({ name: a.f.name, mime: a.f.type, size: a.f.size }))}</small></span>${attX(id, i, a)}</span>`;
 }).join("");
 const upKey = (a) => a.uk ||= String(window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+const uploadModule = async () => {
+  try {
+    return await import("/direct-upload.js");
+  } catch (error) {
+    let response;
+    try {
+      response = await fetch("/direct-upload.js", { credentials: "same-origin" });
+    } catch {
+      throw error;
+    }
+    if ([404, 405, 410, 501].includes(response.status)) return { uploadDirect: (_blob, options) => {
+      if (options.session || options.signal?.aborted) throw error;
+      return options.legacy();
+    } };
+    throw error;
+  }
+};
+async function directAttachment(a, signal) {
+  const { uploadDirect } = await uploadModule();
+  const control = async (action, body) => {
+    for (let tries = 0; ; tries++) {
+      const request = new AbortController();
+      let timedOut = false;
+      const cancel = () => request.abort(signal.reason), timer = setTimeout(() => {
+        timedOut = true;
+        request.abort();
+      }, action === "abort" ? 1e4 : 12e4);
+      if (action !== "abort") {
+        if (signal?.aborted) cancel();
+        else signal?.addEventListener("abort", cancel, { once: true });
+      }
+      try {
+        const r = await fetch("api/upload/" + action, { method: "POST", headers: { "X-HB": "1", "Content-Type": "application/json" }, body: JSON.stringify(body), signal: request.signal, ...action === "abort" ? { keepalive: true } : {} });
+        const j2 = await r.json().catch(() => ({}));
+        if (!r.ok) throw Object.assign(new Error(j2.error || UP_ERR), { status: r.status, code: j2.code });
+        if (action === "init") a.session = j2;
+        return j2;
+      } catch (e) {
+        if (timedOut && !signal?.aborted) e = Object.assign(new Error("2분 동안 응답 없음"), { status: 408 });
+        if (signal?.aborted || tries >= 2 || e.status && e.status < 500 && e.status !== 409) throw e;
+        await sleep(1e3 * (tries + 1));
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", cancel);
+      }
+    }
+  };
+  const legacy = async () => {
+    if (a.f.size > 25 * 1024 * 1024) throw Object.assign(new Error("이전 올리기 방식은 25MB까지예요"), { status: 413 });
+    const r = await fetch("api/upload", { method: "POST", headers: { "X-HB": "1", "X-File-Name": encodeURIComponent(a.f.name), "X-Upload-Key": upKey(a), "Content-Type": a.f.type || "application/octet-stream" }, body: a.f, signal });
+    const j2 = await r.json();
+    if (!r.ok) throw Object.assign(new Error(j2.error || UP_ERR), { status: r.status });
+    return j2;
+  };
+  const j = await uploadDirect(a.f, {
+    control,
+    legacy,
+    session: a.session,
+    init: { key: upKey(a), name: a.f.name, mime: a.f.type || "application/octet-stream", size: a.f.size },
+    signal,
+    progress: (p) => {
+      a.p = p;
+      const c = document.querySelector(`.chip[data-ak="${a.k}"] .dp`);
+      if (c) c.setAttribute("stroke-dashoffset", (44 * (1 - p)).toFixed(1));
+    }
+  });
+  a.id = j.id;
+  a.err = false;
+  return j.id;
+}
 function preUp(id, a) {
   a.p = 0;
-  a.done = new Promise((res) => {
-    const fin = () => {
-      a.xhr = null;
-      res();
-      if ((CS.att[id] || []).includes(a)) attChanged(id);
-    };
-    let tries = 0;
-    const go = () => {
-      if (!(CS.att[id] || []).includes(a)) return fin();
-      const x = a.xhr = new XMLHttpRequest();
-      tries++;
-      x.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          a.p = e.loaded / e.total;
-          const c = document.querySelector(`.chip[data-ak="${a.k}"] .dp`);
-          if (c) c.setAttribute("stroke-dashoffset", (44 * (1 - a.p)).toFixed(1));
-        }
-      };
-      let done = false, stall;
-      const rq = window.hbRid?.() || "", bad = (why, status) => {
-        if (done) return;
-        done = true;
-        clearTimeout(stall);
-        window.HB_LASTFAIL = { path: "/api/upload", method: "POST", status, rid: x.getResponseHeader?.("x-request-id") || rq, err: why, at: Date.now(), tries };
-        if (tries < 3 && (status === 0 || status >= 500) && !why.startsWith("2분")) {
-          a.p = 0;
-          setTimeout(go, tries * 2e3);
-          return;
-        }
-        a.err = true;
-        fin();
-      };
-      const arm = () => {
-        clearTimeout(stall);
-        stall = setTimeout(() => {
-          bad("2분 동안 진행 없음", 0);
-          try {
-            x.abort();
-          } catch (e) {
-          }
-        }, 12e4);
-      };
-      x.upload.addEventListener("progress", arm);
-      x.upload.addEventListener("load", arm);
-      arm();
-      x.onload = () => {
-        if (done) return;
-        let j = null;
-        try {
-          j = JSON.parse(x.responseText);
-        } catch (e) {
-        }
-        if (x.status < 300 && j?.ok) {
-          done = true;
-          clearTimeout(stall);
-          a.id = j.id;
-          a.err = false;
-          fin();
-        } else bad("응답 " + x.status, x.status);
-      };
-      x.onerror = () => bad("연결 끊김", 0);
-      x.onabort = () => {
-        if (!done) {
-          done = true;
-          clearTimeout(stall);
-          fin();
-        }
-      };
-      x.open("POST", "api/upload");
-      x.setRequestHeader("X-Request-Id", rq);
-      x.setRequestHeader("X-HB", "1");
-      x.setRequestHeader("X-Upload-Key", upKey(a));
-      x.setRequestHeader("X-File-Name", encodeURIComponent(a.f.name));
-      x.setRequestHeader("Content-Type", a.f.type || "application/octet-stream");
-      x.send(a.f);
-    };
-    go();
+  const controller = new AbortController();
+  a.xhr = { abort: () => controller.abort() };
+  a.done = directAttachment(a, controller.signal).catch((e) => {
+    if (!controller.signal.aborted) {
+      a.err = true;
+      window.HB_LASTFAIL = { path: "/api/upload", method: "POST", status: e.status || 0, err: String(e.message || e), at: Date.now() };
+    }
+  }).finally(() => {
+    a.xhr = null;
+    if ((CS.att[id] || []).includes(a)) attChanged(id);
   });
 }
 const UP_ERR = "첨부를 올리지 못했어요";
 async function upOne(a) {
   if (a.done) await a.done;
   if (a.id) return a.id;
-  for (let i = 0; ; i++) {
-    let r, j;
-    try {
-      r = await fetch("api/upload", { method: "POST", headers: { "X-HB": "1", "X-Upload-Key": upKey(a), "X-File-Name": encodeURIComponent(a.f.name), "Content-Type": a.f.type || "application/octet-stream" }, body: a.f });
-      j = await r.json().catch(() => null);
-    } catch (e) {
-      if (i >= 2) throw e;
-      await sleep(1500 * (i + 1));
-      continue;
-    }
-    if (r.ok && j?.ok) {
-      a.id = j.id;
-      return j.id;
-    }
-    if (r.status < 500 || i >= 2) throw new Error(j?.error || r.status);
-    await sleep(1500 * (i + 1));
-  }
+  return directAttachment(a);
 }
 function attChanged(id) {
   attSave(id);
@@ -7933,10 +7920,10 @@ document.body.appendChild(filePick);
 function addFiles(id, list) {
   const fs = [...list || []].filter((f) => f.size > 0);
   if (!fs.length) return;
-  const big2 = fs.filter((f) => f.size > 25 * 1024 * 1024);
-  if (big2.length) toast("25MB 넘는 파일은 못 올려요: " + big2.map((f) => f.name).join(", "));
+  const big2 = fs.filter((f) => f.size > 500 * 1024 * 1024);
+  if (big2.length) toast("500MB 넘는 파일은 못 올려요: " + big2.map((f) => f.name).join(", "));
   const dk = taKey(document.getElementById(id));
-  const add = fs.filter((f) => f.size <= 25 * 1024 * 1024).map((f) => ({ f, url: /^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(f.type) ? URL.createObjectURL(f) : "", k: Math.random().toString(36).slice(2, 10), dk }));
+  const add = fs.filter((f) => f.size <= 500 * 1024 * 1024).map((f) => ({ f, url: /^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(f.type) ? URL.createObjectURL(f) : "", k: Math.random().toString(36).slice(2, 10), dk }));
   CS.att[id] = [...CS.att[id] || [], ...add].slice(0, 10);
   if (LIVE) {
     for (const a of add) if (CS.att[id].includes(a)) preUp(id, a);

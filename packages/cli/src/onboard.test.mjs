@@ -41,7 +41,7 @@ async function setupWith(fail) {
       const t = setTimeout(() => c.kill('SIGKILL'), 40000);
       c.on('close', code => { clearTimeout(t); res({ code, out, err, hits, device: (() => { try { return JSON.parse(fs.readFileSync(path.join(B, 'device.json'), 'utf8')); } catch { return null; } })() }); });
     });
-  } finally { srv.closeAllConnections?.(); srv.close(); fs.rmSync(H, { recursive: true, force: true }); }
+  } finally { srv.closeAllConnections?.(); srv.close(); fs.rmSync(H, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }
 
 for (const fail of ['drop', 503]) {
@@ -85,5 +85,5 @@ test('setup 로그인: 영구 실패(verifier 400)는 다시 보내지 않고 �
     assert.notEqual(r.code, 0);
     assert.match(r.err, /verifier/);
     assert.equal(hits.filter(h => h.url === '/api/device/token').length, 1);
-  } finally { srv.closeAllConnections?.(); srv.close(); fs.rmSync(H, { recursive: true, force: true }); }
+  } finally { srv.closeAllConnections?.(); srv.close(); fs.rmSync(H, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });

@@ -4,7 +4,8 @@
   "compatibility_date": "2026-09-01",
   "triggers": {
     "crons": [
-      "30 23 * * *"
+      "30 23 * * *",
+      "0 * * * *"
     ]
   },
   "compatibility_flags": [
@@ -33,6 +34,7 @@
     "region": "aws:ap-northeast-2"
   },
   "vars": {
+    "R2_BUCKET": "boarder",
     "FLAGS_OFF": "cli_profiles",
     "OB_LIVE": "1",
     "OB_MOVED": "hPw6K9ZwdaYa4mftCu3BTAbz8z0jp669",

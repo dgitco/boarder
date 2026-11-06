@@ -114,9 +114,28 @@
   }
 
   // 저장: 그림을 먼저 올리고(내용 해시 id) 그 id 로 봇을 씀 — 서버가 머리 바이트로 꼴을 다시 확인함
+  async function uploadModule(){
+    try { return await import('/direct-upload.js'); }
+    catch (error) {
+      let status;
+      try { status = (await fetch('/direct-upload.js', {method: 'GET', credentials: 'same-origin'})).status; }
+      catch { throw error; }
+      if ([404, 405, 410, 501].includes(status)) return {uploadDirect: (_blob, {legacy}) => legacy()};
+      throw error;
+    }
+  }
   const up = async b => {
-    const r = await fetch('/api/me/bot/image', {method: 'POST', credentials: 'include', headers: {'content-type': b.type || 'image/png', 'x-hb': '1'}, body: b});
-    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || '일시적인 오류가 발생했어요'); return j.id;
+    const { uploadDirect } = await uploadModule();
+    const control = async (action, body) => {
+      const r = await fetch('/api/me/bot/image/' + action, {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify(body)});
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || '일시적인 오류가 발생했어요'), {status: r.status, code: j.code}); return j;
+    };
+    const legacy = async () => {
+      if (b.size > 1_500_000) throw Object.assign(new Error('사진이 너무 커요'), {status: 413});
+      const r = await fetch('/api/me/bot/image', {method: 'POST', credentials: 'include', headers: {'content-type': b.type || 'image/png', 'x-hb': '1'}, body: b});
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || '일시적인 오류가 발생했어요'), {status: r.status}); return j;
+    };
+    const j = await uploadDirect(b, {control, legacy, init: {size: b.size, mime: b.type || 'image/png'}}); return j.id;
   };
   async function save(v){
     const sq = v.photo ? await loadImg(v.photo) : null;   // 사진: 홈 화면은 네모 그대로 · 로고는 동그랗게

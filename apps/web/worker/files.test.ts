@@ -21,7 +21,7 @@ const ix = { v: 1, at: 0, blobs: {}, shim: "", arts: {
   [CANVAS]: { kind: "canvas", title: "주인 캔버스", at: "", acct: "", auto: "" } } };
 const env = { DB: {} as D1Database, RESULTS: bucket({ "art/_sys/index.json": { body: JSON.stringify(ix) }, [`art/${PAGE}/support.js`]: { body: SECRET, ct: "text/javascript" },
   [`art/${CANVAS}/project/clip.mp4`]: { body: "0123456789".repeat(50), ct: "video/mp4" } }) };
-const text = (o: files.Out | null) => o ? new TextDecoder().decode(o.body) : null;
+const text = (o: files.Out | null) => o ? new TextDecoder().decode(o.body as Uint8Array) : null;
 
 test("로그인 없는 support.js: 캔버스는 빈 support.js", async () => {
   const o = await files.answer(env, `/art/${CANVAS}/support.js`, {}, true);
@@ -49,7 +49,7 @@ test("Range: 주인 캔버스 파일은 206 조각 · 끝 n 바이트 · 파일 
   const o3 = await files.answer(env, `/art/${CANVAS}/clip.mp4`, { range: "bytes=600-" });
   assert.equal(o3?.status, 416); assert.equal(o3?.headers["content-range"], "bytes */500");
   const o4 = await files.answer(env, `/art/${CANVAS}/clip.mp4`, {});
-  assert.equal(o4?.status, 200); assert.equal(o4?.body.length, 500);
+  assert.equal(o4?.status, 200); assert.equal(o4?.body instanceof Uint8Array ? o4.body.length : -1, 500);
   assert.equal((await files.answer(env, `/art/${CANVAS}/nope.mp4`, { range: "bytes=0-9" })), null);   // 없는 파일은 예전처럼 null(다리로)
 });
 
@@ -57,4 +57,14 @@ test("byteRange: 꼴이 다르면 통째(null), 여러 칸 · 빈 칸도 통째"
   assert.equal(files.byteRange("bytes=0-1,5-6", 10), null); assert.equal(files.byteRange("bytes=-", 10), null); assert.equal(files.byteRange("items=0-1", 10), null);
   assert.deepEqual(files.byteRange("bytes=2-100", 10), { a: 2, z: 9 }); assert.deepEqual(files.byteRange("bytes=-20", 10), { a: 0, z: 9 });
   assert.equal(files.byteRange("bytes=0-0", 0), "bad");
+});
+
+test("500MiB 릴레이 첨부는 arrayBuffer를 부르지 않고 스트림으로 내준다", async () => {
+  const RESULTS = {
+    head: async () => ({size:524288000,httpMetadata:{contentType:'application/octet-stream'},customMetadata:{name:'large.bin'}}),
+    get: async () => ({size:524288000,body:new Blob(['sample']).stream(),arrayBuffer:async()=>{throw Error('큰 파일 통째 읽기 금지')}}),
+  } as unknown as R2Bucket;
+  const result = await files.answer({RESULTS,DB:{} as D1Database},'/api/file/F12345678',{});
+  assert.equal(result?.status,200);assert.ok(result?.body instanceof ReadableStream);
+  assert.equal(await new Response(result!.body as BodyInit).text(),'sample');
 });

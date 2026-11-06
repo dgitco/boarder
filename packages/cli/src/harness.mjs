@@ -162,6 +162,8 @@ function packFromFolder(plan) {
   try {
     mkdirSync(path.join(stage, 'defaults'), { recursive: true });
     for (const d of ['bin', 'lib', 'board', 'systemd', 'desktop', 'config.example']) if (existsSync(path.join(E, d)) && noLinks(path.join(E, d))) cpSync(path.join(E, d), path.join(stage, d), { recursive: true, filter: noLinks });
+    const uploader = path.join(H, '..', 'packages', 'cli', 'src', 'direct-upload.mjs');
+    if (existsSync(uploader)) copyFileSync(uploader, path.join(stage, 'board', 'direct-upload.js'));
     for (const d of ['skills', 'hooks', 'rules', 'plan-abc']) for (const base of [E, W]) if (existsSync(path.join(base, d))) cpSync(path.join(base, d), path.join(stage, d), { recursive: true, filter: noLinks });
     for (const f of ['install.json', 'bundles.json']) copyFileSync(path.join(W, f), path.join(stage, 'defaults', f));
     if (existsSync(path.join(W, 'wrapper.json'))) copyFileSync(path.join(W, 'wrapper.json'), path.join(stage, 'wrapper.json'));

@@ -36,6 +36,7 @@ function meterR2(b: R2Bucket, m: Meter): R2Bucket {
   return new Proxy(b, {
     get(t, k) {
       const v = (t as any)[k]; if (typeof v !== "function") return v;
+      if (k === "resumeMultipartUpload") return v.bind(t); // 동기 핸들. Promise로 감싸면 multipart 완료·취소가 깨짐
       return (...a: unknown[]) => { const s0 = Date.now(); return track(v.apply(t, a) as Promise<unknown>, () => { m.r2 += Date.now() - s0; m.r2n++; }); };
     },
   });

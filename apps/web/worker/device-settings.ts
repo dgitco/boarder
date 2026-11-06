@@ -8,6 +8,7 @@ import { prefsPatch } from "./node-prefs";
 import { cleanHide, readHide, saveHide } from "./side-order";
 import { FEATS, isFeat, featsOf, setFeat } from "./status-pages/feature";
 import { uiPrefStmts } from "./ui-pref";
+import * as directMedia from "./direct-media";
 
 type Env = { DB: D1Database; PUBLIC_URL: string };
 type C = Context<{ Bindings: Env }>;
@@ -24,7 +25,8 @@ export type Hooks = {
   sessionSync: { get: (env: Env, me: string) => Promise<boolean>; set: (env: Env, me: string, on: boolean) => Promise<unknown> };
   flagsOff?: (env: Env) => string | undefined;
   avatar: { get: (env: Env, me: string) => Promise<{ seed: string; hue: number; photo?: string } | null>; set: (env: Env, me: string, face: { seed: string; hue: number; photo?: string }) => Promise<unknown>;
-    clean: (v: unknown) => { seed: string; hue: number; photo?: string } | null; photoOk: (env: Env, photo: string) => Promise<boolean>; put: (env: Env, body: Uint8Array<ArrayBuffer>) => Promise<{ id: string } | { error: string; status: 400 | 413 }> };
+    clean: (v: unknown) => { seed: string; hue: number; photo?: string } | null; photoOk: (env: Env, photo: string) => Promise<boolean>;
+    put: (env: Env, body: Uint8Array<ArrayBuffer>) => Promise<{ id: string } | { error: string; status: 400 | 413 }> };
   ownerNodeValues: { read: (env: Env) => Promise<Record<string, number> | null>; save: (env: Env, raw: unknown) => Promise<Record<string, number> | null> };
   isOwner: (env: Env, email: string) => boolean;
   mails: (env: Env, email: string) => string[];   // 이 사람의 기기 owner 메일들(주인은 넷)
@@ -290,17 +292,24 @@ export function mountDeviceSettings(host: Hono<any>, h: Hooks) {
   });
   // 아바타 사진 올리기(PNG · JPEG · WebP 1.5MB 이하) → 사진 id. 설정을 바꿔도 되는 기기만(저장소를 아무나 채우지 못하게) · 주인은 아직 화면에서만
   app.post("/api/device/avatar-image", async c => {
+    c.header('Deprecation', 'true');
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401, NOSTORE);
-    if (h.isOwner(c.env, d.owner) && !(await h.unified?.(c.env))) return c.json({ error: OWNER_NO }, 409, NOSTORE);   // 스위치가 켜지면 주인도(사진 id 는 내용 해시라 열쇠와 무관)
+    if (h.isOwner(c.env, d.owner) && !(await h.unified?.(c.env))) return c.json({ error: OWNER_NO }, 409, NOSTORE);
     const me = d.owner.toLowerCase();
     if (!(await allowedWide(c.env.DB, me, d.id))) return c.json({ error: "not_allowed", hint: NOT_ALLOWED_HINT }, 403, NOSTORE);
     if (+(c.req.header("content-length") || 0) > 1_500_000) return c.json({ error: "사진이 너무 커요" }, 413, NOSTORE);
-    // content-length 가 없거나 거짓인 큰 본문도 1.5MB 를 넘기는 순간 끊음(다 읽은 뒤 413 이 아니라)
     const chunks: Uint8Array[] = []; let n = 0; const rd = c.req.raw.body?.getReader();
     while (rd) { const x = await rd.read(); if (x.done) break; n += x.value.byteLength; if (n > 1_500_000) { await rd.cancel().catch(() => {}); return c.json({ error: "사진이 너무 커요" }, 413, NOSTORE); } chunks.push(x.value); }
     const all = new Uint8Array(n); let o = 0; for (const ch of chunks) { all.set(ch, o); o += ch.byteLength; }
     const r = await h.avatar.put(c.env, all);
     return "error" in r ? c.json({ error: r.error }, r.status, NOSTORE) : c.json({ ok: true, id: r.id }, 200, NOSTORE);
+  });
+  app.post('/api/device/avatar-image/:action', async c => {
+    const d = await h.device(c); if (!d) return c.json({ error: '기기 토큰' }, 401, NOSTORE);
+    if (h.isOwner(c.env, d.owner) && !(await h.unified?.(c.env))) return c.json({ error: OWNER_NO }, 409, NOSTORE);
+    const me = d.owner.toLowerCase();
+    if (!(await allowedWide(c.env.DB, me, d.id))) return c.json({ error: 'not_allowed', hint: NOT_ALLOWED_HINT }, 403, NOSTORE);
+    return directMedia.handle(c as never, me, 'photo', c.req.param('action'));
   });
   app.get("/api/device/settings/allow", async c => {
     const d = await h.device(c); if (!d) return c.json({ error: "기기 토큰" }, 401);

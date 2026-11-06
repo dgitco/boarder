@@ -1,4 +1,4 @@
-export type Out = { status: number; headers: Record<string, string>; body: Uint8Array; src?: "r2" };
+export type Out = { status: number; headers: Record<string, string>; body: Uint8Array | ReadableStream<Uint8Array>; src?: "r2" };
 type Art = { kind: "page" | "canvas" | "doc"; title: string; at: string; acct: string; auto: string; main?: string; cv?: string; map?: Record<string, string> };
 type Index = { v: number; at: number; arts: Record<string, Art>; blobs: Record<string, string>; shim: string };
 type Env = { RESULTS: R2Bucket; DB: D1Database };
@@ -27,13 +27,30 @@ export async function index(env: Env): Promise<Index | null> {
 }
 export async function canvasBoards(env: Env, id: string): Promise<string[] | undefined> {
   const it = (await index(env))?.arts[id]; if (!it || it.kind !== "canvas") return [];
-  const o = await env.RESULTS.get(`art/${id}/${it.cv ? it.cv + "/" : ""}canvas.json`).catch(() => null); if (!o) return undefined;
+  const o = await env.RESULTS.get(`art/${id}/${it.cv ? it.cv + "/" : ""}canvas.json`, { range: { offset: 0, length: 2 * 1024 * 1024 } }).catch(() => null); if (!o) return undefined;
+  if (o.size > 2 * 1024 * 1024) { await o.body?.cancel().catch(() => {}); return []; }
   try { const b = (JSON.parse(await o.text()) as { boards?: unknown }).boards; return b && typeof b === "object" ? Object.keys(b) : []; } catch { return []; }
 }
 export async function isCanvas(env: Env, id: string) { return (await index(env))?.arts[id]?.kind === "canvas"; }
 
 const text = (status: number, s: string, ct = "text/plain"): Out => ({ status, headers: { "content-type": ct, "cache-control": "no-store" }, body: te.encode(s) });
 const bytes = async (o: R2ObjectBody) => new Uint8Array(await o.arrayBuffer());
+const streamed = (o: R2ObjectBody) => o.size > 8 * 1024 * 1024 ? o.body : bytes(o);
+// 큰 HTML도 첫 64KiB만 모아 shim을 끼운 다음 뒤는 그대로 흘린다.
+function shimStream(ix: Pick<Index, "shim">, input: ReadableStream<Uint8Array>) {
+  const reader = input.getReader(); let first = true;
+  return new ReadableStream<Uint8Array>({
+    async pull(out) {
+      if (first) {
+        first = false; const chunks: Uint8Array[] = []; let n = 0;
+        while (n < 65536) { const x = await reader.read(); if (x.done) break; chunks.push(x.value); n += x.value.length; }
+        const b = new Uint8Array(n); let at = 0; for (const x of chunks) { b.set(x, at); at += x.length; }
+        out.enqueue(shim(ix, b)); return;
+      }
+      const x = await reader.read(); if (x.done) out.close(); else out.enqueue(x.value);
+    }, cancel: reason => reader.cancel(reason),
+  });
+}
 // 봉한 첨부(메타 vault=1, worker/vault 몸통 꼴 — 주인 DEK, AAD = key): 크기 · 범위는 평문 기준으로 셈. 표시 없는 옛 첨부는 지금 그대로
 const ve = (env: Env) => env as unknown as VaultEnv;
 const rangeOf = (env: Env, key: string) => async (offset: number, length: number) => { const o = await env.RESULTS.get(key, { range: { offset, length } }); if (!o) throw new Error("없음"); return bytes(o); };
@@ -55,7 +72,7 @@ const suffix = (name: string) => { const b = name.slice(name.lastIndexOf("/") + 
 const pyQuote = (s: string) => encodeURIComponent(s).replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase()).replace(/%2F/g, "/");
 const unq = (s: string) => { try { return decodeURIComponent(s); } catch { return null; } };
 export const NAME_MAX = 600;
-function nameOf(s: string) {
+export function nameOf(s: string) {
   const v = unq(s); if (v !== null || s.length < NAME_MAX) return v;
   for (let i = 1; i <= 12; i++) { const w = unq(s.slice(0, -i)); if (w) return w; }
   return null;
@@ -72,20 +89,20 @@ async function ranged(env: Env, key: string, range: string): Promise<Out | null>
   const r = byteRange(range, hd.size), ct = hd.httpMetadata?.contentType || "application/octet-stream";
   if (r === "bad") return { status: 416, headers: { "content-range": `bytes */${hd.size}`, "cache-control": "no-store" }, body: new Uint8Array(0) };
   const o = await env.RESULTS.get(key, r ? { range: { offset: r.a, length: r.z - r.a + 1 } } : undefined); if (!o) return null;
-  return { status: r ? 206 : 200, headers: { "content-type": ct, "accept-ranges": "bytes", ...(r ? { "content-range": `bytes ${r.a}-${r.z}/${hd.size}` } : {}), "cache-control": "no-store" }, body: await bytes(o) };
+  return { status: r ? 206 : 200, headers: { "content-type": ct, "accept-ranges": "bytes", ...(r ? { "content-range": `bytes ${r.a}-${r.z}/${hd.size}` } : {}), "cache-control": "no-store" }, body: await streamed(o) };
 }
 
 async function file(env: Env, ix: Index, key: string, html: boolean, range?: string): Promise<Out | null> {
   if (!html && range) return ranged(env, key, range);
   const o = await env.RESULTS.get(key); if (!o) return null;
-  const b = await bytes(o);
-  return html ? { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: shim(ix, b) }
+  const b = o.size > 8 * 1024 * 1024 ? (html ? shimStream(ix, o.body) : o.body) : await bytes(o);
+  return html ? { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: b instanceof Uint8Array ? shim(ix, b) : b }
     : { status: 200, headers: { "content-type": o.httpMetadata?.contentType || "application/octet-stream", "cache-control": "no-store" }, body: b };
 }
 
 // artview.serve(parts)
 async function art(env: Env, ix: Index, parts: string[], anon = false, range?: string): Promise<Out | null> {
-  if (parts.length === 1 && parts[0] === "_kit.js") { const o = await env.RESULTS.get(SYS + "kit.js"); return o ? { status: 200, headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" }, body: await bytes(o) } : null; }
+  if (parts.length === 1 && parts[0] === "_kit.js") { const o = await env.RESULTS.get(SYS + "kit.js"); return o ? { status: 200, headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" }, body: await streamed(o) } : null; }
   if (!parts.length || !ID.test(parts[0])) return text(404, "not found");
   const aid = parts[0], rest = parts.slice(1).filter(p => !["", ".", ".."].includes(p)), it = ix.arts[aid];
   if (!it) return null;
@@ -93,7 +110,7 @@ async function art(env: Env, ix: Index, parts: string[], anon = false, range?: s
   if (it.kind === "doc") {
     if (rest.length) return text(404, "not found");
     const o = await env.RESULTS.get(`${SYS}doc/${aid}.html`);   // 글(.md)은 릴레이가 artview._doc 그대로 그려 올림
-    return o ? { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: await bytes(o) } : null;
+    return o ? { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }, body: await streamed(o) } : null;
   }
   if (it.kind === "page") {
     const rel = rest.length ? rest.join("/") : it.main || "";
@@ -128,14 +145,14 @@ async function attach(env: Env, id: string, full: boolean, range: string | undef
       if (r[1]) { a = +r[1]; z = Math.min(r[2] ? +r[2] : n - 1, n - 1); } else { a = Math.max(0, n - +r[2]); z = n - 1; }
       if (a > z || a >= n) return { status: 416, headers: { "content-range": `bytes */${n}` }, body: new Uint8Array(0) };
     }
-    let body: Uint8Array;
+    let body: Uint8Array | ReadableStream<Uint8Array>;
     if (sealed) { if (!n) body = new Uint8Array(0); else try { body = await V!.openBlobRange(ve(env), "", key, rangeOf(env, key), sealed, a, z); } catch { return null; } }   // 그 조각만 받아 풂
-    else { const o = await env.RESULTS.get(key, { range: { offset: a, length: z - a + 1 } }); if (!o) return null; body = await bytes(o); }
+    else { const o = await env.RESULTS.get(key, { range: { offset: a, length: z - a + 1 } }); if (!o) return null; body = await streamed(o); }
     return { status: r ? 206 : 200, headers: { "content-type": mime, "accept-ranges": "bytes", ...(r ? { "content-range": `bytes ${a}-${z}/${n}` } : {}),
       "content-disposition": `inline; filename*=UTF-8''${pyQuote(name)}`, "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" }, body };
   }
   const o = await env.RESULTS.get(key); if (!o) return null;
-  const body = sealed ? await V!.openBlob(ve(env), "", key, await o.arrayBuffer()) : await bytes(o);
+  const body = sealed ? await V!.openBlob(ve(env), "", key, await o.arrayBuffer()) : await streamed(o);
   return { status: 200, headers: { "content-type": img ? mime : "application/octet-stream", "content-disposition": `${img ? "inline" : "attachment"}; filename*=UTF-8''${pyQuote(name)}`,
     "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" }, body };
 }
@@ -157,7 +174,7 @@ export async function answer(env: Env, path: string, headers: Record<string, str
     const ct = IMG[suffix(name).toLowerCase()];
     if (!ct || name.includes("/") || name.startsWith(".")) return { status: 404, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }, body: te.encode('{"error": "없음"}') };   // 보드 json.dumps 꼴 그대로(바이트 대조)
     const o = await env.RESULTS.get(`up/${m[1]}/${name}`); if (!o) return null;
-    return { status: 200, headers: { "content-type": ct, "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" }, body: await bytes(o) };
+    return { status: 200, headers: { "content-type": ct, "cache-control": "private, max-age=86400", "x-content-type-options": "nosniff" }, body: await streamed(o) };
   }
   if (p === "/api/arts") {
     const ix = await index(env); if (!ix) return null;
@@ -198,7 +215,7 @@ async function digest(o: { status: number; headers: Record<string, string>; body
   return { len: b.length, sha: [...h.slice(0, 8)].map(x => x.toString(16).padStart(2, "0")).join("") };
 }
 export async function compare(bridgeOut: { status: number; headers: Record<string, string>; body: Uint8Array }, r2: Out | null) {
-  const a = await digest(bridgeOut), b = r2 ? await digest(r2) : null;
+  const a = await digest(bridgeOut), b = r2 && r2.body instanceof Uint8Array ? await digest({ ...r2, body: r2.body }) : null;
   const ctA = (bridgeOut.headers["content-type"] || "").split(";")[0], ctB = r2 ? (r2.headers["content-type"] || "").split(";")[0] : "";
   return { same: !!b && bridgeOut.status === r2!.status && a.sha === b.sha && ctA === ctB, miss: !r2, bridge_status: bridgeOut.status, r2_status: r2?.status ?? null,
     bridge_len: a.len, r2_len: b?.len ?? null, bridge_sha: a.sha, r2_sha: b?.sha ?? null, bridge_ct: ctA, r2_ct: ctB };

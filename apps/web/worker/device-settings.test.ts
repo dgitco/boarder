@@ -9,6 +9,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { directConfig, fileR2, uploadFile } from './file-direct-test-helper.ts';
 
 register("./test-hooks.mjs", import.meta.url);
 (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(..._a: unknown[]) {} };
@@ -19,18 +20,25 @@ const MIG = new URL("../migrations/", import.meta.url);
 function d1() {
   const db = new DatabaseSync(":memory:");
   for (const f of readdirSync(MIG).filter(f => f.endsWith(".sql")).sort()) db.exec(readFileSync(new URL(f, MIG), "utf8"));
-  const run1 = (sql: string, args: unknown[]) => { const r = db.prepare(sql).run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } }; };
+  const run1 = (sql: string, args: unknown[]) => {
+    const st = db.prepare(sql), read = /^\s*(select|with|pragma)\b/i.test(sql);
+    if (read || /\bRETURNING\b/i.test(sql)) {
+      const results = st.all(...(args as never[]));
+      return { success: true, results, meta: { changes: read ? 0 : Number((db.prepare('SELECT changes() n').get() as any).n) } };
+    }
+    const r = st.run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } };
+  };
   const stmt = (sql: string, args: unknown[] = []): any => ({
     sql, args,
     bind: (...a: unknown[]) => stmt(sql, a),
-    all: async () => ({ success: true, results: db.prepare(sql).all(...(args as never[])), meta: {} }),
-    first: async (col?: string) => { const r = db.prepare(sql).get(...(args as never[])) as Record<string, unknown> | undefined; return r ? (col ? r[col] : r) : null; },
-    raw: async () => db.prepare(sql).all(...(args as never[])).map(r => Object.values(r as object)),
+    all: async () => run1(sql, args),
+    first: async (col?: string) => { const r = run1(sql, args).results[0] as Record<string, unknown> | undefined; return r ? (col ? r[col] : r) : null; },
+    raw: async () => run1(sql, args).results.map(r => Object.values(r as object)),
     run: async () => run1(sql, args),
   });
   const D1 = {
     prepare: (sql: string) => stmt(sql),
-    batch: async (ss: any[]) => { db.exec("BEGIN"); try { const o = ss.map(s => /^\s*select/i.test(s.sql) ? { success: true, results: db.prepare(s.sql).all(...(s.args as never[])), meta: {} } : run1(s.sql, s.args)); db.exec("COMMIT"); return o; } catch (e) { if (db.isTransaction) db.exec("ROLLBACK"); throw e; } },
+    batch: async (ss: any[]) => { db.exec("BEGIN"); try { const o = ss.map(s => run1(s.sql, s.args)); db.exec("COMMIT"); return o; } catch (e) { if (db.isTransaction) db.exec("ROLLBACK"); throw e; } },
   } as unknown as D1Database;
   return { db, D1 };
 }
@@ -245,10 +253,15 @@ test("내 기기 목록(GET /api/device/devices): 허락 없이도 읽힘 · 자
 
 test("아바타(seed · hue · 사진): 허락 뒤 · 보낸 칸만 바뀜 · 화면 길과 같은 검사 · 사진 올리기는 허락 뒤 + 이미지만", async () => {
   const s = await setup();
-  const blobs = new Map<string, { t: string }>();
-  s.env.RESULTS = { put: async (k: string, _b: unknown, o: any) => { blobs.set(k, { t: o.httpMetadata.contentType }); }, head: async (k: string) => blobs.has(k) ? { httpMetadata: { contentType: blobs.get(k)!.t } } : null };
+  const { R, m } = fileR2(); Object.assign(s.env, directConfig, { RESULTS: R });
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8]);
-  const up = (body: Uint8Array, t = DEV1) => s.call("POST", "/api/device/avatar-image", undefined as never, s.dev(t)).then(() => app.fetch(new Request("https://example.test/api/device/avatar-image", { method: "POST", headers: s.dev(t), body: body as never }), s.env, s.ctx)).then(async r => ({ status: r.status, j: await r.json().catch(() => null) as any }));
+  const post = (t: string, suffix: string, body: unknown) => app.fetch(new Request('https://example.test/api/device/avatar-image' + (suffix || '/init'), {
+    method: 'POST', headers: { ...s.dev(t), 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }), s.env, s.ctx);
+  const up = async (body: Uint8Array, t = DEV1) => {
+    const r = await uploadFile((suffix, data) => post(t, suffix, data), s.env, body, { name: 'avatar.png', mime: 'image/png' });
+    return { status: r.status, j: await r.json().catch(() => null) as any };
+  };
   assert.equal((await s.set("avatar", { hue: 20 })).status, 403, "허락 없이");
   assert.equal((await up(png)).status, 403);
   await s.grant();
@@ -262,8 +275,38 @@ test("아바타(seed · hue · 사진): 허락 뒤 · 보낸 칸만 바뀜 · �
   assert.equal((await s.get()).j.values.avatar.photo, u.j.id);
   assert.equal((await s.set("avatar", { photo: "" })).j.after.photo, undefined, "사진 지우기");
   assert.equal((await up(png, DEVW)).status, 401, "주인 감시 기기");
-  const big = await app.fetch(new Request("https://example.test/api/device/avatar-image", { method: "POST", headers: s.dev(DEV1), body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array(1_000_000)); c.enqueue(new Uint8Array(1_000_000)); c.close(); } }), duplex: "half" } as never), s.env, s.ctx);
-  assert.equal(big.status, 413, "content-length 없는 큰 본문도 상한에서 끊김");
+  const before = (s.db.prepare('SELECT count(*) n FROM direct_upload').get() as any).n;
+  assert.equal((await post(DEV1, '/init', { size: 1_500_001, mime: 'image/png' })).status, 413, '크기 초과는 R2 서명 발급 전 거절');
+  assert.equal((s.db.prepare('SELECT count(*) n FROM direct_upload').get() as any).n, before);
+  const binary = await app.fetch(new Request('https://example.test/api/device/avatar-image', { method: 'POST', headers: s.dev(DEV1), body: png as never }), s.env, s.ctx);
+  assert.equal(binary.status, 200, '구형 파일 본문도 기존 한도 안에서는 호환');
+  assert.equal(binary.headers.get('deprecation'), 'true');
+  assert.ok(m.has('blobs/' + u.j.id), '완료된 파일만 최종 blob으로 등록');
+  const init = await post(DEV1, '/init', { size: png.length, mime: 'image/png' }), pending = await init.json() as any;
+  assert.equal((await post(DEV2, '/part', { id: pending.id, number: 1 })).status, 403, '같은 회원이어도 다른 기기의 허락을 대신 쓰지 못함');
+});
+
+test('구형 아바타 업로드: 기기 허락·1.5MB·실제 이미지 검사 유지, S3 키 없어도 사용 가능', async () => {
+  const s = await setup(), { R } = fileR2(); s.env.RESULTS = R;
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  const raw = (body: BodyInit, token = DEV1, headers: Record<string, string> = {}) => app.fetch(new Request('https://example.test/api/device/avatar-image', {
+    method: 'POST', headers: { ...(token ? s.dev(token) : {}), 'content-type': 'application/octet-stream', ...headers }, body,
+    ...(body instanceof ReadableStream ? { duplex: 'half' } : {}),
+  } as RequestInit), s.env, s.ctx);
+  assert.equal((await raw(png as BodyInit, '')).status, 401);
+  assert.equal((await raw(png as BodyInit)).status, 403, '허락 없이 저장하지 못함');
+  for (const token of [DEVMW, DEVW]) assert.equal((await raw(png as BodyInit, token)).status, 401);
+  await s.grant();
+  assert.equal((await raw(png as BodyInit, DEV2)).status, 403, '다른 기기는 별도 허락');
+  assert.equal((await raw(new Uint8Array([1, 2, 3]) as BodyInit)).status, 400, 'MIME 머리 대신 이미지 바이트 검사');
+  assert.equal((await raw(png as BodyInit, DEV1, { 'content-length': '1500001' })).status, 413);
+  const chunked = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(1_000_000)); c.enqueue(new Uint8Array(500_001)); c.close(); } });
+  assert.equal((await raw(chunked)).status, 413, '길이 없는 본문도 상한에서 거절');
+  const response = await raw(png as BodyInit), uploaded = await response.json() as any;
+  assert.equal(response.status, 200); assert.equal(response.headers.get('deprecation'), 'true'); assert.match(uploaded.id, /^[0-9a-f]{32}$/);
+  assert.equal((await s.set('avatar', { photo: uploaded.id })).status, 200, '구형 응답 id를 기존 설정에 사용');
+  s.db.prepare("UPDATE device SET revoked_at=? WHERE id='dev1'").run(Date.now());
+  assert.equal((await raw(png as BodyInit)).status, 401, '폐기된 기기는 구형 길도 거절');
 });
 
 test("다른 회원 기기는 내 값을 못 읽고 못 바꿈(자기 값만)", async () => {

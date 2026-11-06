@@ -2,11 +2,13 @@
 // 예전 회원 길: 올리기 · 받아쓰기는 JSON 이 아니라 「bad json」(400), 파일 붙은 글은 「아직 안 돼요」, 파일 보기는 403.
 // 저장: R2 mfiles/<id>(customMetadata owner = 회원 메일). 보기는 올린 사람만. 창(에이전트)에는 7일 서명 링크 줄(/f/<id>)로 — 로그인 없이 curl 로 받게
 import type { Context } from "hono";
+import * as direct from "./direct-uploads";
 
-type Env = { DB: D1Database; RESULTS: R2Bucket; AI: { run(model: string, input: unknown): Promise<unknown> }; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string };
+type Env = direct.DirectEnv & { DB: D1Database; RESULTS: R2Bucket; AI: { run(model: string, input: unknown): Promise<unknown> }; BETTER_AUTH_SECRET: string; PUBLIC_URL?: string };
 type C = Context<{ Bindings: Env }>;
 
-export const FILE_MAX = 20 * 1024 * 1024, VOICE_MAX = 3 * 1024 * 1024, LINK_DAYS = 7, FILES_PER_MSG = 10;
+export const LEGACY_FILE_MAX = 20 * 1024 * 1024;
+export const FILE_MAX = direct.MAX_FILE, VOICE_MAX = 3 * 1024 * 1024, LINK_DAYS = 7, FILES_PER_MSG = 10;
 const FID = /^[0-9a-f]{32}$/, RISKY = /html|svg|xml|javascript|ecmascript/i;
 export const DAY_FILES = 200, DAY_FILE_BYTES = 500 * 1024 * 1024, DAY_STT = 300;
 /** 하루 칸(user_pref k = q:<칸>:<날짜>, v = {"n":개수,"b":바이트})에 한 번 더 셈 — 상한을 넘으면 세지 않고 false. 한 문장(UPSERT … WHERE … RETURNING)이라 동시에 와도 넘지 않음 */
@@ -65,13 +67,12 @@ export function disposition(kind: "inline" | "attachment", name: string) {
 }
 const isPdf = (type: string, name: string, buf: Uint8Array) =>
   buf.length >= 5 && String.fromCharCode(...buf.subarray(0, 5)) === "%PDF-" && (/^application\/pdf\b/i.test(type) || (/octet-stream/i.test(type) && /\.pdf$/i.test(name)));
-async function headers(o: R2ObjectBody, dl: boolean): Promise<{ h: Headers; body: BodyInit }> {
+async function headers(o: R2ObjectBody, dl: boolean, sample?: Uint8Array): Promise<{ h: Headers; body: BodyInit }> {
   const h = new Headers({ "cache-control": "private, max-age=300", "x-content-type-options": "nosniff", "content-security-policy": "sandbox" }); o.writeHttpMetadata(h);
-  const name = o.customMetadata?.name || "file", type = h.get("content-type") || "";
+  const name = fileName(o), type = h.get("content-type") || "";
   let body: BodyInit = o.body;
   if (!dl && (/^application\/pdf\b/i.test(type) || (/octet-stream/i.test(type) && /\.pdf$/i.test(name)))) {
-    const buf = new Uint8Array(await new Response(o.body).arrayBuffer());   // 최대 20MB — 맨 앞 다섯 글자 확인용으로 PDF 만 통째로 읽음
-    body = buf;
+    const buf = sample || new Uint8Array();
     if (isPdf(type, name, buf)) {
       h.set("content-type", "application/pdf"); h.set("content-disposition", disposition("inline", name));
       h.set("content-security-policy", "frame-ancestors 'self'"); return { h, body };
@@ -88,15 +89,58 @@ async function keyedId(me: string, key: string) {
   const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`mfile|${me}|${key}`)));
   return [...d.slice(0, 16)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
-/** POST /api/upload — 틀은 몸통에 파일 그대로 + X-File-Name(URI 인코딩). 답 { ok, id, name, size, mime } */
+/** POST /api/upload[/part|complete|abort] — JSON 제어만. 본문은 서명한 R2 주소로 간다. */
 export async function upload(c: C, me: string) {
+  if (new URL(c.req.url).pathname === "/api/upload") return legacyUpload(c, me);
+  if (!(c.req.header("content-type") || "").includes("application/json")) return c.json({ ok: false, error: "직접 올리기 제어 JSON이 필요해요" }, 415);
+  const raw = await readCapped(c.req.raw, 16 * 1024);
+  if (raw === "big") return c.json({ ok: false, error: "제어 요청이 너무 커요" }, 413);
+  let b: any; try { b = JSON.parse(new TextDecoder().decode(raw || new Uint8Array())); } catch { return c.json({ ok: false, error: "bad json" }, 400); }
+  if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
+  const action = new URL(c.req.url).pathname.split("/")[3] || "init", owner = `file:${me}`;
+  const out = (id: string, name: string, size: number, mime: string) => ({ ok: true, id, name, size, mime });
+  try {
+    if (action === "init") {
+      direct.checkSize(b.size); if (!b.size) throw direct.uploadError(400, "파일이 비었어요");
+      const key = String(b.key || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+      const id = key ? await keyedId(me, key) : crypto.randomUUID().replace(/-/g, "");
+      const old = await c.env.RESULTS.head(`mfiles/${id}`);
+      if (old && fileOwner(old) === me) return c.json({ ...out(id, fileName(old), old.size, old.httpMetadata?.contentType || "application/octet-stream"), done: true });
+      const name = String(b.name || "file").replace(/[\x00-\x1f\x7f"\\/]/g, "_").trim().slice(0, 120) || "file";
+      const mime = String(b.mime || "application/octet-stream").slice(0, 100);
+      if (/[\r\n]/.test(mime)) throw direct.uploadError(400, "잘못된 파일 형식");
+      const session = await direct.begin(c.env, owner, { target: `mfiles/${id}`, size: b.size, mime, metadata: { owner: encodeURIComponent(me), owner_encoding: "uri", name: encodeURIComponent(name), name_encoding: "uri" } });
+      try {
+        const state = await quotaUpload(c.env.DB, me, session.id, b.size);
+        if (state !== "uploading") {
+          const final = state === "done" ? await c.env.RESULTS.head(`mfiles/${id}`) : null;
+          if (final && fileOwner(final) === me) return c.json({ ...out(id, fileName(final), final.size, final.httpMetadata?.contentType || mime), done: true });
+          throw direct.uploadError(409, "이미 마쳤거나 취소한 올리기예요");
+        }
+      }
+      catch (e) { await direct.abort(c.env, owner, session.id).catch(() => {}); throw e; }
+      return c.json({ ok: true, ...session });
+    }
+    const session = await direct.getSession(c.env, owner, String(b.id || ""));
+    if (!/^mfiles\/[0-9a-f]{32}$/.test(session.target)) throw direct.uploadError(404, "없는 올리기");
+    if (action === "part") return c.json({ ok: true, ...await direct.part(c.env, owner, b.id, b.number) });
+    if (action === "abort") { await direct.abort(c.env, owner, b.id); return c.json({ ok: true }); }
+    if (action !== "complete") return c.json({ ok: false, error: "없는 제어" }, 404);
+    await direct.complete(c.env, owner, b.id, b.parts, async () => {
+      await quotaUpload(c.env.DB, me, b.id, session.size);
+    });
+    return c.json(out(session.target.slice(7), decodeURIComponent(session.metadata.name), session.size, session.mime));
+  } catch (e) { if (action === "init") e = direct.initializationError(e); return c.json({ ok: false, error: (e as Error).message, code: (e as {code?: string}).code }, ((e as { status?: number }).status || 503) as 400); }
+}
+async function legacyUpload(c: C, me: string) {
+  c.header("Deprecation", "true");
   const key = (c.req.header("x-upload-key") || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
   const kid = key ? await keyedId(me, key) : "";
   if (kid) {
     const o = await c.env.RESULTS.head(`mfiles/${kid}`).catch(() => null);
-    if (o && o.customMetadata?.owner === me) return c.json({ ok: true, id: kid, name: o.customMetadata?.name || "file", size: o.size, mime: o.httpMetadata?.contentType || "application/octet-stream" });
+    if (o && fileOwner(o) === me) return c.json({ ok: true, id: kid, name: fileName(o), size: o.size, mime: o.httpMetadata?.contentType || "application/octet-stream" });
   }
-  const buf = await readCapped(c.req.raw, FILE_MAX);
+  const buf = await readCapped(c.req.raw, LEGACY_FILE_MAX);
   if (buf === "big") return c.json({ ok: false, error: "20MB 까지예요" }, 413);
   if (!buf || !buf.byteLength) return c.json({ ok: false, error: "파일이 비었어요" }, 400);
   const q = await quotaTake(c.env.DB, me, "mfiles", buf.byteLength, DAY_FILES, DAY_FILE_BYTES).catch(() => null);
@@ -104,9 +148,38 @@ export async function upload(c: C, me: string) {
   let name = "file"; try { name = decodeURIComponent(c.req.header("x-file-name") || "file"); } catch {}
   name = name.replace(/[\x00-\x1f\x7f"\\/]/g, "_").trim().slice(0, 120) || "file";
   const type = (c.req.header("content-type") || "application/octet-stream").slice(0, 100), id = kid || crypto.randomUUID().replace(/-/g, "");
-  try { await c.env.RESULTS.put(`mfiles/${id}`, buf, { httpMetadata: { contentType: type, contentDisposition: disposition("inline", name) }, customMetadata: { owner: me, name } }); }
+  try { await c.env.RESULTS.put(`mfiles/${id}`, buf, { httpMetadata: { contentType: type, contentDisposition: disposition("inline", name) }, customMetadata: { owner: encodeURIComponent(me), owner_encoding: "uri", name: encodeURIComponent(name), name_encoding: "uri" } }); }
   catch (e) { await quotaGive(c.env.DB, me, "mfiles", buf.byteLength); console.error("올리기 R2", e); return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" }); }   // 못 넣었음 — 한도는 돌려주고 다시 보내도 되는 503
   return c.json({ ok: true, id, name, size: buf.byteLength, mime: type });
+}
+
+// 배치의 변경 개수와 세션 영수증을 함께 기록한다. 완료 응답을 잃어도 하루 한도는 한 번만 센다.
+async function quotaUpload(db: D1Database, me: string, id: string, size: number) {
+  const day = new Date().toISOString().slice(0, 10), k = `q:mfiles:${day}`;
+  const results = await db.batch([
+    db.prepare(`INSERT INTO user_pref(owner,k,v,at)
+      SELECT ?,?,json_object('n',1,'b',?),? WHERE EXISTS(SELECT 1 FROM direct_upload WHERE id=? AND charged_day IS NULL AND state='uploading')
+      ON CONFLICT(owner,k) DO UPDATE SET v=json_object('n',json_extract(user_pref.v,'$.n')+1,'b',json_extract(user_pref.v,'$.b')+?),at=excluded.at
+      WHERE EXISTS(SELECT 1 FROM direct_upload WHERE id=? AND charged_day IS NULL AND state='uploading')
+      AND json_extract(user_pref.v,'$.n') < ? AND json_extract(user_pref.v,'$.b')+? <= ?`)
+      .bind(me, k, size, Date.now(), id, size, id, DAY_FILES, size, DAY_FILE_BYTES),
+    db.prepare("UPDATE direct_upload SET charged_day=? WHERE id=? AND charged_day IS NULL AND state='uploading' AND changes()=1").bind(day, id),
+    db.prepare('SELECT charged_day,state FROM direct_upload WHERE id=?').bind(id),
+  ]);
+  const receipt = results[2].results[0] as { charged_day?: string; state?: string } | undefined;
+  if (!receipt || !["uploading", "completing", "done"].includes(receipt.state || "")) throw direct.uploadError(409, "이미 취소한 올리기예요");
+  if (!receipt.charged_day) throw direct.uploadError(429, "오늘 올리기 한도를 넘었어요");
+  return receipt.state;
+}
+function fileOwner(o: { customMetadata?: Record<string,string> }) {
+  const owner = o.customMetadata?.owner || "";
+  if (o.customMetadata?.owner_encoding === "uri") try { return decodeURIComponent(owner); } catch { return ""; }
+  return owner;
+}
+function fileName(o: { customMetadata?: Record<string, string> }) {
+  const n = o.customMetadata?.name || "file";
+  if (o.customMetadata?.name_encoding === "uri") try { return decodeURIComponent(n); } catch {}
+  return n;
 }
 /** GET /api/file/:id — 올린 사람만(남의 것은 없는 것과 같게 404). ?dl = 내려받기 */
 export async function fileGet(c: C, me: string | readonly string[], id: string, dl: boolean) {   // me = 올린 사람 하나, 또는 같은 사람의 메일 여럿(owner_unified 로 회원 길에 든 주인 — 메일 넷)
@@ -129,9 +202,14 @@ async function cachedServe(c: C, id: string, dl: boolean, allow: (owner: string)
   }
   const o = await c.env.RESULTS.get(`mfiles/${id}`);
   if (!o) return nf();
-  const owner = String(o.customMetadata?.owner || "");
+  const owner = fileOwner(o);
   if (!allow(owner)) return nf();
-  const r = await headers(o, dl), res = new Response(r.body, { headers: r.h });
+  let sample: Uint8Array | undefined;
+  if (!dl && (/^application\/pdf\b/i.test(o.httpMetadata?.contentType || "") || /\.pdf$/i.test(fileName(o)))) {
+    const first = await c.env.RESULTS.get(`mfiles/${id}`, { range: { offset: 0, length: 5 } });
+    if (first) sample = new Uint8Array(await first.arrayBuffer());
+  }
+  const r = await headers(o, dl, sample), res = new Response(r.body, { headers: r.h });
   let ctx: { waitUntil(p: Promise<unknown>): void } | undefined; try { ctx = (c as unknown as { executionCtx: typeof ctx }).executionCtx; } catch { /* ctx 없는 시험 */ }
   if (cache && ctx && c.req.method === "GET" && o.size <= 8 * 1024 * 1024) {
     const ch = new Headers(r.h); ch.set("cache-control", "public, max-age=3600"); ch.set("x-bx-owner", encodeURIComponent(owner));
@@ -146,8 +224,8 @@ export async function fileLines(env: Env, me: string, base: string, ids: unknown
   const lines: string[] = []; let bad = 0;
   for (const x of ids.slice(0, FILES_PER_MSG)) {
     const id = String((x as { id?: unknown })?.id ?? x ?? ""), o = FID.test(id) ? await env.RESULTS.head(`mfiles/${id}`) : null;
-    if (!o || o.customMetadata?.owner !== me) { bad++; continue; }
-    lines.push(`📎 ${o.customMetadata?.name || "file"}: ${await fileLink(env.BETTER_AUTH_SECRET, base, id)}`);
+    if (!o || fileOwner(o) !== me) { bad++; continue; }
+    lines.push(`📎 ${fileName(o)}: ${await fileLink(env.BETTER_AUTH_SECRET, base, id)}`);
   }
   return { lines, bad };
 }
@@ -161,9 +239,9 @@ export async function draftFiles(bucket: R2Bucket, me: string, raw: unknown): Pr
   const hs = await Promise.all(ids.map(id => bucket.head(`mfiles/${id}`)));
   const out: DraftFile[] = [];
   for (const [i, o] of hs.entries()) {
-    if (!o || o.customMetadata?.owner !== me) return null;
+    if (!o || fileOwner(o) !== me) return null;
     const mime = (o.httpMetadata?.contentType || "application/octet-stream").slice(0, 100);
-    out.push({ id: ids[i], name: o.customMetadata?.name || "file", img: IMG.test(mime), mime, size: o.size });
+    out.push({ id: ids[i], name: fileName(o), img: IMG.test(mime), mime, size: o.size });
   }
   return out;
 }
