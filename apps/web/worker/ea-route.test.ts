@@ -252,3 +252,21 @@ test("UUID 주소: 받기는 늘 · 스위치 write_uid_links 켜면 옛 꼴 · 
   for (const p of fresh) { const r = await s.get(p); assert.equal(r.status, 200, p); const h = await r.text(); assert.ok(h.includes("window.HB_UIDGEN=1") && h.includes("window.HB_PATHS=1"), p); }
   await L.setFlag(s.env.DB as never, U.GEN_FLAG, false);
 });
+
+test("옛 /m/ 글 주소(스위치 켬): 36진 꼴은 계산으로 · 읽히는 번호 꼴은 주인 로그인만 D1 대응표로 301 새 UUID 주소, 회원 · 로그인 없음은 번호를 안 풂", async () => {
+  const U = await import("./uid.ts"), L = await import("./ledger.ts");
+  const s = setup(); await L.setFlag(s.env.DB as never, U.GEN_FLAG, true);
+  const R = "1793850000.638028", M = "1793862790.000100", cp = U.keyUid("c", "primary"), cn = U.keyUid("c", "company");
+  for (const [id, at, th] of [[R, 1793850000.638028, null], [M, 1793862790.0001, R]] as const) await s.env.DB.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, text, at, source) VALUES (?, 'primary', ?, 'owner', 'x', ?, 'board')").bind(id, th, at).run();
+  await s.env.DB.prepare("INSERT INTO wl_talk_alias(id, alias, at) VALUES (?, '2026-1105-38', ?)").bind(R, 1793850000).run();
+  const loc = (r: Response) => { const l = new URL(r.headers.get("location") || "/", "https://x"); return l.pathname + l.search; };
+  let r = await s.get("/m/2026-1105-38-" + encodeURIComponent("제목"));
+  assert.equal(r.status, 301); assert.equal(loc(r), `/chat/${cp}/${U.msgUid(R)}`, "번호 꼴(주인)");
+  r = await s.get("/m/2026-1105-38.1"); assert.equal(r.status, 301); assert.equal(loc(r), `/chat/${cp}/${U.msgUid(M)}?thread=${U.msgUid(R)}`, "답 번호");
+  r = await s.get(`/m/n${(1793850000638028).toString(36)}-x`, null); assert.equal(r.status, 301); assert.equal(loc(r), `/chat/${cn}/${U.msgUid(R)}`, "36진 꼴은 로그인 없이도(계산만)");
+  r = await s.get("/m/2026-1105-38", null); assert.notEqual(r.status, 301, "로그인 없음은 번호를 안 풂");
+  r = await s.get("/m/2026-1105-38", MEMBER); assert.notEqual(r.status, 301, "회원은 주인 번호를 안 풂");
+  r = await s.get("/m/2026-1105-99"); assert.notEqual(r.status, 301, "없는 번호는 화면 길 그대로");
+  await L.setFlag(s.env.DB as never, U.GEN_FLAG, false);
+  r = await s.get("/m/2026-1105-38"); assert.notEqual(r.status, 301, "스위치 꺼짐 = 예전 그대로");
+});

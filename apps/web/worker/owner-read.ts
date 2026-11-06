@@ -108,6 +108,15 @@ export async function aliasFind(db: D1Database, channels: Record<string, string>
   return { chan, ts: r.id, m: p.k ? r.rid : null };
 }
 
+export async function aliasRow(db: D1Database, x: string, now = Date.now() / 1000): Promise<{ chan: string; ts: string; m: string | null } | null> {
+  const p = aliasKey(x, now); if (!p) return null;
+  const r = await db.prepare(`SELECT a.id AS id, m.chan AS chan, m.thread AS th,
+      (SELECT x.id FROM wl_talk_msg x WHERE x.thread = a.id ORDER BY x.at, x.id LIMIT 1 OFFSET ?) AS rid
+    FROM wl_talk_alias a JOIN wl_talk_msg m ON m.id = a.id WHERE a.alias = ?`).bind(Math.max(p.k - 1, 0), p.key).first<{ id: string; chan: string; th: string | null; rid: string | null }>();
+  if (!r || r.th || (p.k && !r.rid)) return null;
+  return { chan: r.chan, ts: r.id, m: p.k ? r.rid : null };
+}
+
 // ── talk_db.as_slack · chat.norm ──
 const COLS = "m.id, m.thread, m.who, m.author, m.user, m.text, m.blocks, m.slack_ts, m.raw, m.edited_at, m.deleted_at, m.pane, m.ack";
 const LIVE_ROOT = "(m.deleted_at IS NULL OR EXISTS (SELECT 1 FROM wl_talk_msg r WHERE r.thread=m.id AND r.deleted_at IS NULL))";

@@ -54,6 +54,21 @@ export const DEFAULT_CH = ["primary", "company", "personal", "dgit", "shop"];
 export const GEN_FLAG = "write_uid_links";
 
 /** 옛 화면 주소 → 새 UUID 주소 | null(바꿀 것 없음). 디비 없이 되는 것만: /chat/<이름>[/<ts>][?thread=<ts>] · /canvas/<옛 id>[-꼬리] · 대문자 UUID */
+/** 채널 키 · 뿌리 ts · (스레드 속) 글 ts → 새 UUID 글 주소 | null(UUID 로 못 바꿈) */
+export function chatPath(chan: string, root: string, msg?: string | null): string | null {
+  const cu = CHAN_KEY.test(chan) ? keyUid("c", chan) : "", tu = msgUid(root), mu = msg && msg !== root ? msgUid(msg) : "";
+  if (!cu || !tu || (msg && msg !== root && !mu)) return null;
+  return mu ? `/chat/${cu}/${mu}?thread=${tu}` : `/chat/${cu}/${tu}`;
+}
+// 옛 36진 글 주소 /m/<채널 글자><뿌리 ts 36진>[_<글 ts 36진>][-<제목>] — 디비 없이 되돌림(board.html mHash 와 같은 셈)
+const M36 = /^\/m\/([a-z])([0-9a-z]{6,12})(?:_([0-9a-z]{6,12}))?(?:-[^/]*)?\/?$/i, MK: Record<string, string> = { p: "primary", n: "company", e: "personal", d: "dgit", o: "shop" };
+const unb36 = (x: string) => { const n = parseInt(x.toLowerCase(), 36); const d = Number.isSafeInteger(n) ? String(n).padStart(16, "0") : ""; return d.length === 16 ? d.slice(0, 10) + "." + d.slice(10) : ""; };
+/** /m/<36진 id> → 새 UUID 주소 | null. 읽히는 번호 꼴(/m/1105-38)은 디비가 있어야 해서 여기선 null(index.ts 가 로그인한 주인만 찾음) */
+export function m36Path(path: string): string | null {
+  const m = M36.exec(path); if (!m) return null;
+  const c = MK[m[1].toLowerCase()], t = c ? unb36(m[2]) : "", g = m[3] ? unb36(m[3]) : "";
+  return c && t && (!m[3] || g) ? chatPath(c, t, g || null) : null;
+}
 export function newPath(path: string, search: string): string | null {
   const sp = new URLSearchParams(search), th = sp.get("thread") || "";
   let m = /^\/chat\/([^/]+)(?:\/([^/]+))?\/?$/.exec(path);

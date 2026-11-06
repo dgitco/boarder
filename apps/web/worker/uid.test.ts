@@ -96,6 +96,9 @@ test("Worker: 옛 주소 → UUID 주소(301 대상) · 새 주소는 그대로 
   assert.equal(U.newPath(`/canvas/${a.toUpperCase()}`, "?x=1"), `/canvas/${a}?x=1`);
   assert.equal(U.newPath("/chat/i:unread", ""), null, "화면 열쇠는 안 건드림");
   assert.equal(U.newPath("/chat/primary/100.1", ""), null);
+  assert.equal(U.m36Path(`/m/n${(1793800000638028).toString(36)}-%EC%A0%9C%EB%AA%A9`), `/chat/${U.keyUid("c", "company")}/${t}`, "옛 36진 /m/");
+  assert.equal(U.m36Path(`/m/D${(1793800000638028).toString(36).toUpperCase()}_${(1793862790000100).toString(36)}`), `/chat/${U.keyUid("c", "dgit")}/${m}?thread=${t}`, "옛 36진 스레드 속 글 · 대문자");
+  assert.equal(U.m36Path("/m/1105-38"), null, "번호 꼴은 디비가 있어야 함");
   const once = U.newPath("/chat/primary", "?a=b%20c&x=1")!; assert.equal(U.newPath(once.split("?")[0], "?" + once.split("?")[1]), null, "두 번 넘기지 않음");
   for (const p of [`/chat/${c}`, `/chat/${c}/${t}`, `/chat/${c.toUpperCase()}/${t.toUpperCase()}`, `/canvas/${a}`, `/canvas/${a.toUpperCase()}`, `/canvas/${AID}`, `/chat/primary/${TS}`]) assert.ok(APP_PATH.test(p), p);
 });

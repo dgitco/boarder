@@ -2747,7 +2747,13 @@ export function msgPathLower(path: string): string | null {
 app.all("*", async c => {
   let url = new URL(c.req.url);
   if (c.req.method === "GET" || c.req.method === "HEAD") { const lo = msgPathLower(url.pathname); if (lo) return c.redirect(lo + url.search, 301); }
-  if (c.req.method === "GET" || c.req.method === "HEAD") { const to = uid.newPath(url.pathname, url.search); if (to && APP_PATH.test(to.split("?")[0]) && await ledger.f7On(c.env.DB, uid.GEN_FLAG).catch(() => false)) return c.redirect(to, 301); }   // 스위치 켠 뒤만(꺼짐 = 받기만)
+  if (c.req.method === "GET" || c.req.method === "HEAD") { const to = uid.newPath(url.pathname, url.search); if (to && APP_PATH.test(to.split("?")[0]) && await ledger.f7On(c.env.DB, uid.GEN_FLAG).catch(() => false)) return c.redirect(to, 301); }
+  if ((c.req.method === "GET" || c.req.method === "HEAD") && /^\/m\/[^/]+\/?$/i.test(url.pathname) && await ledger.f7On(c.env.DB, uid.GEN_FLAG).catch(() => false)) {
+    let to = uid.m36Path(url.pathname);
+    if (!to) { const s = await signedIn(c).catch(() => null), id = /^\/m\/([0-9.-]{1,24})(?:-[^/]*)?\/?$/i.exec(url.pathname)?.[1];
+      if (s && id && isOwner(c.env, s.user.email)) { const f = await ownerRead.aliasRow(c.env.DB, id).catch(() => null); if (f) to = uid.chatPath(f.chan, f.ts, f.m); } }
+    if (to && APP_PATH.test(to.split("?")[0])) { const q = new URLSearchParams(url.search); q.delete("thread"); const rest = q.toString(); return c.redirect(to + (rest ? (to.includes("?") ? "&" : "?") + rest : ""), 301); }
+  }
   if ((c.req.method === "GET" || c.req.method === "HEAD") && APP_PATH.test(url.pathname)) url = new URL("/", url);   // 보더 화면 경로 = 같은 보드(주소창은 그대로 — ?thread= 같은 물음 글은 화면이 읽음)
   // React 꾸러미(/assets, 해시 이름)와 기본 봇 그림은 누구에게나 Boarder 것 — 주인이 /device 를 열어도 빈 화면이 안 되게(보드에는 /assets 가 없음)
   if (/^\/(assets|landing)\//.test(url.pathname) || url.pathname === "/icons/primary-blob.svg" || url.pathname === "/node-rules.md") return c.env.ASSETS.fetch(c.req.raw);
