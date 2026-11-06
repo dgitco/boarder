@@ -56,7 +56,8 @@ function custom(def) {
   const ms = Math.min(600000, Math.max(5000, +def.timeout_ms || 60000));
   const call = (verb, input) => def.exec ? runExec(def.exec, verb, input, ms) : runUrl(def.url, verb, input, ms);
   return {
-    open: (_c, s) => call('open', s), send: (_c, id, text, a = {}) => call('send', { id, text, ...(a.test ? { test: true } : {}) }), state: (_c, id) => call('state', { id }),   // test: 서버 시험 글(어댑터가 시험 창에만 넣게)
+    open: (_c, s) => call('open', s), send: (_c, id, text, a = {}) => call('send', { id, text, ...(a.test ? { test: true } : {}), ...(a.owner ? { owner: true } : {}) }), state: (_c, id) => call('state', { id }),
+    log: (_c, id, a = {}) => call('log', { id, ...(a.name ? { name: String(a.name) } : {}) }),
     park: (_c, id) => call('park', { id }), reopen: (_c, handle, text, id) => call('reopen', { handle, text, id }), close: (_c, id) => call('close', { id }),
     list: async () => { let r; try { r = await call('list', {}); } catch (e) { if (e.code === 4) return []; throw e; } return Array.isArray(r) ? r : r.windows || []; },   // 404 = list 없는 엔진(선택 동사).   // 실패는 던짐 — listAll 이 failed 로 표시(빈 목록 = 창이 다 닫힘으로 보이지 않게)
   };
@@ -95,6 +96,7 @@ export async function run(verb, args = {}, cfg = loadCfg()) {
   else if (verb === 'park') r = await a.park(cfg, args.id);
   else if (verb === 'reopen') r = await a.reopen(cfg, args.handle, args.text, args.id);
   else if (verb === 'close') r = await a.close(cfg, args.id);
+  else if (verb === 'log') { if (!a.log) throw new EngineError(5, `engine ${name} cannot log`); r = await a.log(cfg, args.id, args); }   // 커스텀 엔진만(tmux · Herdr · SDK 는 기록 동사가 없음)
   else throw new EngineError(1, `unknown verb ${verb}`);
   if (verb === 'open' || verb === 'reopen') { const c = loadCfg(); (c.windows ||= {})[r.id || args.spec?.id || args.id] = name; saveCfg(c); }
   if (verb === 'park' && r?.handle) r.handle.engine = name;

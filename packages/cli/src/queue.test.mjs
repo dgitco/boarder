@@ -21,7 +21,8 @@ let inp = ''; process.stdin.on('data', d => inp += d); process.stdin.on('end', (
   if (verb === 'list') { if (s.nolist) { process.stderr.write('no list'); process.exit(4); } return out({ windows: Object.entries(s.windows).map(([id, x]) => ({ id, name: id, session_id: x.session_id })) }); }
   if (!w) { if (verb === 'state') return out({ id: a.id, state: 'none' }); process.stderr.write('no such window'); process.exit(4); }
   if (verb === 'state') { if (w.nostate) { process.stderr.write('no state'); process.exit(1); } return out({ id: a.id, state: w.state, session_id: w.session_id }); }
-  if (verb === 'send') { if (w.state === 'typing') { process.stderr.write('someone is typing'); process.exit(2); } (w.sent ||= []).push({ text: a.text, test: !!a.test }); fs.writeFileSync(f, JSON.stringify(s)); return out({ ok: true }); }
+  if (verb === 'send') { if (w.state === 'typing') { process.stderr.write('someone is typing'); process.exit(2); } (w.sent ||= []).push({ text: a.text, test: !!a.test, ...(a.owner ? { owner: true } : {}) }); fs.writeFileSync(f, JSON.stringify(s)); return out({ ok: true }); }
+  if (verb === 'log') return out({ messages: [{ who: 'agent', text: '기록 ' + a.id + ' ' + (a.name || '') }], kind: 'claude', live: true });
   process.exit(1);
 });
 `, { mode: 0o700 });
@@ -312,4 +313,25 @@ test('ownSend: stopped window errors are not queued as temporary typing', async 
   assert.equal(cmdPosts[0][1].ok, false);
   assert.match(cmdPosts[0][1].error, /stopped/);
   assert.equal(Q.makeQueue('import-queue.json').pending('herdr-own:h_stopped'), 0);
+});
+
+test('⑤ 보드 세션 화면 글(owner): 턴 중이어도 줄 세우지 않고 바로 엔진에(owner 를 넘김) · 바쁨(입력 중)은 줄에 안 두고 2 로 돌려 서버가 다시 보냄', async () => {
+  reset(); world({ ew_team01: { state: 'busy', session_id: SID } });
+  const r = await send('ew_team01', '세션에 바로 쓴 글', { owner: true });
+  assert.notEqual(r.queued, true);
+  assert.deepEqual(sent('ew_team01'), [{ text: '세션에 바로 쓴 글', test: false, owner: true }], '어댑터가 owner 를 받음');
+  assert.deepEqual(queued('ew_team01'), []);
+  setState('ew_team01', 'typing');
+  await assert.rejects(send('ew_team01', '입력 중일 때', { owner: true }), e => e.code === 2);
+  assert.deepEqual(queued('ew_team01'), [], '데몬 줄엔 안 둠(서버 줄이 owner 를 들고 다시 보냄)');
+  setState('ew_team01', 'busy');
+  assert.equal((await send('ew_team01', '[보드 · 예시 팀장] 보통 글')).queued, true, '보통 보드 글은 예전처럼 줄');
+});
+
+test('log(선택 동사): 커스텀 엔진은 어댑터 log 로 { id, name } — caps 에 없으면 · 기록 동사가 없는 엔진(tmux)은 5', async () => {
+  reset(); world({ ew_team01: { state: 'idle', session_id: SID } });
+  const cfg = E.loadCfg();
+  assert.deepEqual(await E.run('log', { id: 'ew_team01', name: '예시 팀장' }, cfg), { messages: [{ who: 'agent', text: '기록 ew_team01 예시 팀장' }], kind: 'claude', live: true });
+  await assert.rejects(E.run('log', { id: 'ew_team01' }, { ...cfg, caps: { fake: ['send', 'state'] } }), e => e.code === 5);
+  await assert.rejects(E.run('log', { id: 'ew_team01', engine: 'tmux' }, { ...cfg, tmux: process.execPath }), e => e.code === 5);
 });

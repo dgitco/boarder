@@ -33,7 +33,7 @@ function setup() {
   const { db, D1 } = d1();
   db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run(DEV, OWNER, "owner harness", "", "h1", T, T, "harness", T);
   // 가짜 어댑터: send 는 그 판에 넣음(busyOnce 에 든 판은 한 번 「바쁨」)
-  const dev = { got: [] as string[], up: true, busyOnce: new Set<string>() };
+  const dev = { got: [] as string[], args: [] as any[], up: true, busyOnce: new Set<string>() };
   const store = new Map<string, unknown>();
   let eng: any;
   const ws = {
@@ -46,7 +46,7 @@ function setup() {
       let ans: object;
       if (m.verb === "send") {
         if (dev.busyOnce.delete(a.id)) ans = { ok: false, code: 2, error: "busy" };
-        else { dev.got.push(a.text); ans = { ok: true, result: { to: "%7" } }; }
+        else { dev.got.push(a.text); dev.args.push(a); ans = { ok: true, result: { to: "%7" } }; }
       } else ans = { ok: true, result: {} };
       queueMicrotask(() => eng.webSocketMessage(ws, JSON.stringify({ id: m.id, ...ans })));
     },
@@ -90,4 +90,15 @@ test("하네스: 줄이 빈 정상 흐름은 그대로 바로 넣음(sent)", asy
   assert.equal(r.sent, true);
   assert.deepEqual(dev.got, ["바로 글"]);
   assert.deepEqual(hpending(), []);
+});
+
+test("하네스: 보드 세션 글(owner)은 어댑터에 owner 를 넘김 — 바빠 줄 선 뒤 넣을 때도 · 시험 글 · 다른 글엔 안 붙음", async () => {
+  const { dev, eng, say } = setup();
+  await eng.hsend(PANE, "바로 Owner 글", { queue: true, owner: true });
+  dev.busyOnce.add(PANE);
+  assert.deepEqual(await eng.hsend(PANE, "줄 선 Owner 글", { queue: true, owner: true }), { queued: true });
+  await say({ type: "event", id: PANE, state: "idle" });
+  await eng.hsend(PANE, "리드끼리 넘김 글", { queue: true });
+  await eng.hsend(PANE, "시험 글", { queue: true, owner: true, test: true });
+  assert.deepEqual(dev.args.map(a => [a.text, !!a.owner]), [["바로 Owner 글", true], ["줄 선 Owner 글", true], ["리드끼리 넘김 글", false], ["시험 글", false]]);
 });

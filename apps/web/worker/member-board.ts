@@ -942,7 +942,15 @@ export async function feedThreads(db: D1Database, me: string, body: unknown, opt
   return [200, { threads }];
 }
 export async function paneRows(db: D1Database, me: string, pane: string) {
-  return rowsOfPane(await load(db, me), pane).slice(0, 60).reverse().map(r => ({ id: r.id, at: Number(r.at) / 1000, kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 400) }));
+  const L = await load(db, me);
+  if (L.harness.some(w => harnessPane(String(w.id)) === pane)) return harnessPaneRows(db, pane);
+  return rowsOfPane(L, pane).slice(0, 60).reverse().map(r => ({ id: r.id, at: Number(r.at) / 1000, kind: KIND_KO[r.kind] || r.kind, msg: cut(r.text, 400) }));
+}
+export const HARNESS_PANE_ROWS_SQL = "SELECT id, at, kind, msg, ref, pane FROM (SELECT id, at, kind, msg, ref, pane FROM wl_log WHERE pane = ?1 AND at > ?2 UNION ALL SELECT id, at, kind, msg, ref, pane FROM wl_log WHERE pane = 'owner' AND at > ?2 AND substr(msg, 1, length(?3)) = ?3) ORDER BY id DESC LIMIT 60";
+async function harnessPaneRows(db: D1Database, pane: string, now = Date.now()) {
+  const pre = `보드 → ${pane}: `;
+  const rs = (await db.prepare(HARNESS_PANE_ROWS_SQL).bind(pane, now / 1000 - 2 * 86400, pre).all<R>()).results;
+  return rs.reverse().map(r => ({ id: r.id, at: Number(r.at), kind: String(r.kind), msg: cut(((m: string) => m.startsWith(pre) ? m.slice(pre.length) : m)(String(r.msg || "")), 2000), ref: r.ref ?? null, owner: r.pane === "owner" }));
 }
 export function rowsOfPane(L: Awaited<ReturnType<typeof load>>, pane: string): R[] {
   const mine = (r: R) => r.kind !== "me" && !OWN.test(r.win);
@@ -952,7 +960,7 @@ export function rowsOfPane(L: Awaited<ReturnType<typeof load>>, pane: string): R
     : ew ? L.logs.filter(r => !inPrim(r) && mine(r) && r.win === ew.name) : [];
 }
 
-export async function sessTarget(db: D1Database, me: string, pane: string) {
+export async function sessTarget(db: D1Database, me: string, pane: string, o: { harness?: boolean } = {}) {
   if (!/^%\d{1,12}$/.test(pane)) return null;
   const L = await load(db, me);
   if (pane === PRIMARY) return { L, pane, kind: "main" as const, name: L.mainWin ? String(L.mainWin.name) : "", state: L.mainWin ? String(L.mainWin.state) : "" };
@@ -960,17 +968,27 @@ export async function sessTarget(db: D1Database, me: string, pane: string) {
   if (n) return { L, pane, kind: "node" as const, name: n.name, state: String(n.state || ""), node: n };
   const ew = L.engineNodes.find(x => paneOfId(x.id) === pane);
   if (ew) return { L, pane, kind: "engine" as const, name: String(ew.name), state: String(ew.state || ""), ew };
+  const hw = o.harness ? L.harness.find(x => harnessPane(String(x.id)) === pane) : undefined;
+  if (hw) return { L, pane, kind: "harness" as const, name: String(json<R>(hw.handle, {}).win || hw.name || pane), state: String(hw.state || ""), hw };
   return null;
 }
 // 세션 로그(GET /api/sesslog?pane=) — 그 판의 글(사람 · 에이전트)을 오래된 것부터, 채팅 글 꼴(msg) 그대로. 최근 200줄
 export async function sessLog(db: D1Database, me: string, pane: string, mainName: string, my = ME) {
-  const s = await sessTarget(db, me, pane); if (!s) return null;
+  const s = await sessTarget(db, me, pane, { harness: true }); if (!s || s.kind === "harness") return null;
   const L = s.L, inCard = (r: R) => CARD_TS.test(String(r.thread || ""));
   const rows = s.kind === "main" ? (await primaryRows(db, me, undefined, L)).filter(r => r.win !== "보더")
     : L.logs.filter(r => !inPrim(r) && !inCard(r) && !OWN.test(r.win) && (s.kind === "node" ? L.nodeOfWin(r.win) === s.node || (r.kind === "me" && r.win === s.node!.name) : r.win === s.ew!.name));
   const messages = rows.slice(0, 200).map(r => msg(r, my, s.kind === "main" ? mainName : String(r.win))).reverse();
   const live = !["closed", "failed", "gone", "parked", "done"].includes(String(s.state || ""));
   return { pane, name: s.kind === "main" ? (s.name || mainName) : s.name, state: s.state, messages, channel: "s:" + pane, live, stale_min: 0, more: false };   // kind(엔진 claude · codex)는 회원 쪽에서 확실히 모르니 안 넣음
+}
+export async function sessLogHarness(db: D1Database, me: string, pane: string, name: string, read: (pane: string, name: string) => Promise<{ messages: unknown[]; kind: string | null; live: boolean } | null>) {
+  const s = /^%\d{1,12}$/.test(pane) ? await sessTarget(db, me, pane, { harness: true }) : null;
+  if (!s || s.kind !== "harness") return null;
+  const nm = String(name || "").replace(/[\x00-\x1f\x7f]/g, " ").split(/\s+/).filter(Boolean).join(" ").slice(0, 80) || s.name;   // server.py _sess_target 와 같은 이름 다듬기
+  const r = await read(pane, nm);
+  if (!r) return { status: 404, body: { error: "세션 기록이 없어요" } };
+  return { status: 200, body: { pane, name: s.name, state: s.state, messages: r.messages, channel: "s:" + pane, ...(r.kind ? { kind: r.kind } : {}), live: r.live, stale_min: 0, more: false } };
 }
 export async function sessFolders(db: D1Database, me: string) {
   const rs = (await db.prepare("SELECT cwd, MAX(COALESCE(state_at, seen_at, 0)) at FROM imp_item WHERE owner = ? AND cwd != '' AND (gone_at IS NULL OR gone_at > ?) GROUP BY cwd ORDER BY at DESC LIMIT 40").bind(me, Date.now() - 30 * 86_400_000).all<{ cwd: string }>()).results;
@@ -1205,7 +1223,9 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
   if (path === "/api/sess/send") {
     const pane = String(b.pane || ""), text = String(b.text || "").trim();
     if (!text) return { error: "내용을 적어요", status: 400 };
-    if (!(await sessTarget(db, me, pane))) return { error: "없는 판", status: 404 };
+    const s = await sessTarget(db, me, pane, { harness: true });
+    if (!s) return { error: "없는 판", status: 404 };
+    if (s.kind === "harness") return { path: "/api/me/harness/send", body: { pane, text } };
     return post(db, me, "/api/chat", { text, pane });
   }
   if (path === "/api/session/new") {

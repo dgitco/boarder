@@ -32,6 +32,7 @@ import { mountRoleEdit, toolError } from "./role-edit";
 import { mountWindows } from "./member-windows";
 import { mountTokenRevoke, ownDevice, auditStmt, NOT_BLOCKED, noBlockTable, noRevokeTables, type RevokeDeps } from "./token-revoke";
 import { engineOf, chatToMain, approveDraft, deliverTo, ownerCfg, sysLine, RULES, engineSend, ownerWindows, harnessDevice, liveDevice, openedLastHour, OPEN_PER_HOUR, type Engine } from "./engine";
+import { engineLog, hNote } from "./engine";
 import shellJs from "./legacy/shell.js?raw";
 import shellCss from "./legacy/shell.css?raw";
 import installSh from "./install/install.sh?raw";
@@ -1734,6 +1735,26 @@ app.post("/api/me/windows/:id/say", async c => {
   try { return c.json({ ok: true, ...(await deliverTo(c.env, me, c.req.param("id"), `${h}[Boarder chat] ${t}`) as object || {}) }); }
   catch (e) { return engErr(c, e); }
 });
+app.post("/api/me/harness/send", async c => {
+  const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
+  const b = await c.req.json<{ pane?: string; text?: string }>().catch(() => ({} as { pane?: string; text?: string }));
+  const pane = String(b.pane || ""), id = /^%\d{1,7}$/.test(pane) ? `ew_pane${pane.slice(1)}` : null, at = Date.now();   // engine.ts paneWid 와 같은 꼴 · at = 받은 때(note 시각)
+  const text = String(b.text || "").replace(/\r/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").trim().slice(0, 8000);   // 줄바꿈 · 탭 말고 제어문자는 뺌(server.py 와 같음)
+  if (!text) return c.json({ ok: false, error: "내용을 적어요" }, 400);
+  const d = id ? await harnessDevice(c.env.DB) : null;
+  const w = d ? await c.env.DB.prepare("SELECT 1 FROM engine_window WHERE id = ? AND owner = ? AND device_id = ? AND kind = 'harness' AND state NOT IN ('closed','gone')").bind(id, me, d.id).first() : null;
+  if (!w) return c.json({ ok: false, error: "없는 판" }, 404);
+  try {
+    const r = await engineSend(c.env, pane, text, { queue: true, owner: true });
+    return r.offline ? c.json({ ok: false, error: "하네스 기기가 꺼져 있어요" }, 503) : c.json({ ok: true, to: pane, ...r });
+  } catch (e) {
+    if ((e as { code?: number }).code === 4) return c.json({ ok: false, error: "없는 판" }, 404);
+    // 들어갔을 수 있음(어댑터 pane-tell 1 「may have been sent」 · 보낸 뒤 엔진 답을 못 받음): 옛 sess_send 처럼 받음(202) — 실패로 돌리면 화면이 다시 보내 두 번 들어감
+    const m = String((e as Error)?.message || "");
+    if (/may have been sent/.test(m) || m === "엔진 답 없음") { await hNote(c.env.DB, id!, m, at).catch(e2 => console.error("하네스 판 note", e2)); return c.json({ ok: true, to: pane, maybe: true }, 202); }
+    return engErr(c, e);
+  }
+});
 app.post("/api/me/windows/:id/:act", async c => {
   const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
   const id = c.req.param("id"), act = c.req.param("act");
@@ -2413,9 +2434,12 @@ async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: strin
   const named = new Map(((data as { agents?: unknown }).agents as { key?: string; name?: string; lead?: string | null }[] | undefined || []).filter(a => a && typeof a.key === "string").map(a => [a.key!, a]));
   const agents = chans.length > 1 ? chans.filter(k => !["primary", "company", "personal", "dgit", "shop"].includes(k)).map(k => ({ key: k, name: String(named.get(k)?.name || roster.get(k)?.name || k).slice(0, 60), lead: named.get(k)?.lead ?? null })) : null;
   const html = (await tplHtml(c.env, c.executionCtx, pg)).replace("__BX_DATA__", () => d.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(tag));
+  // 회원 값: 채널은 Primary 하나(보드 CH) · 내 이름 · 메인 봇 이름. 영역 칸이 하나라 트리 줄을 한 칸으로
+  // 사람 값(화면 갈래 통일 — ui-unify-contract.md): 차례 글은 사람 설정(node_setting.turn_label, 없으면 「내 차례」), 기능 문은 관리 권한(역할) · 스위치로, 회원 틀 CSS 는 트리 꼴이 stack 일 때만.
+  //   session_files: 켠 주인(관리 권한)은 참 — 세션 글(/api/chat/new · send)이 회원 길에서도 첨부를 링크 줄로 넘김(memberPost, 빠짐 4). 회원은 아직 거짓(지금 값 그대로)
   const ns = await c.env.DB.prepare("SELECT json_extract(data, '$.unit') u, json_extract(data, '$.turn_label') t FROM node_setting WHERE owner = ? AND json_valid(data)").bind(me).first<{ u: string | null; t: string | null }>().catch(() => null);
   const push = await ledger.f7On(c.env.DB, "member_push").catch(() => false), adm = W.isAdmin(c.env, me);
-  const caps = adm ? { invite: true, org_links: true, mainline: true, session_files: false, start_tab: false, push: true, push_wide: false } : { invite: false, org_links: false, mainline: false, session_files: false, start_tab: true, push, push_wide: true };   // push_wide: 알림 범위 글 · 넓힘 칸 — 켠 주인은 주인 구독 칸(급한 것만), 회원은 넓힘을 고름
+  const caps = adm ? { invite: true, org_links: true, mainline: true, session_files: true, start_tab: false, push: true, push_wide: false } : { invite: false, org_links: false, mainline: false, session_files: false, start_tab: true, push, push_wide: true };   // push_wide: 알림 범위 글 · 넓힘 칸 — 켠 주인은 주인 구독 칸(급한 것만), 회원은 넓힘을 고름
   const turn = typeof ns?.t === "string" && ns.t.trim() ? ns.t.trim().slice(0, 20) : "내 차례";
   const stack = (data as { tree_shape?: string }).tree_shape !== "cols";
   const member = `<script>window.HB_CH = ${JSON.stringify(chans).replace(/</g, "\\u003c")};${agents ? ` window.HB_AGENTS = ${JSON.stringify(agents).replace(/</g, "\\u003c")};` : ""} window.HB_CAPS = ${JSON.stringify(caps)}; window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name, turn, avatar: await memberBoard.myAvatar(c.env.DB, me).catch(() => null), push, unit: ns?.u === "agent" || ns?.u === "goal" ? ns.u : null }).replace(/</g, "\\u003c")}</script>${stack ? `<style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>` : ""}`;
@@ -2436,7 +2460,8 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   }
   try { const mi = await memberInbox.route(c as never, me, url, b); if (mi) return mi; } catch { return queue.retrySafe(c); }   // 반응 · 고치기 · 읽음 · 모아 보기 · 초안(member-inbox.ts)
   // 파일 붙은 글: 창이 받아 갈 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 보냄 — 내 파일만(member-files.ts)
-  if (url.pathname === "/api/chat" && Array.isArray(b.files) && b.files.length && !b.delete && !b.react && b.edit === undefined) {
+  //   「세션」 칸 글(/api/chat/new · /api/chat/send)도 같게 — 주인 server.py chat_new_post · chat_send_post 가 첨부를 받던 것(빠짐 4), 창은 같은 링크 줄로 받음
+  if ((url.pathname === "/api/chat" || url.pathname === "/api/chat/new" || url.pathname === "/api/chat/send") && Array.isArray(b.files) && b.files.length && !b.delete && !b.react && b.edit === undefined) {
     const f = await memberFiles.fileLines(c.env, me, c.env.PUBLIC_URL || url.origin, b.files as unknown[]);
     if (!f.lines.length) return c.json({ ok: false, error: "파일을 찾지 못했어요" }, 400);
     b.text = [String(b.text || "").trim(), ...f.lines].filter(Boolean).join("\n"); delete b.files;
@@ -2608,6 +2633,10 @@ app.all("*", async c => {
           if (url.pathname === "/api/topics" || url.pathname === "/api/history") return (await ownSnapRead(c, url)) ?? queue.retrySafe(c);
         }
         const fm = /^\/api\/file\/([0-9a-f]{32})$/.exec(url.pathname); if (fm) return memberFiles.fileGet(c as never, ownU ? ownerMails(c.env, s.user.email) : me, fm[1], url.searchParams.has("dl"));
+        if (url.pathname === "/api/sesslog") {
+          const hs = await memberBoard.sessLogHarness(c.env.DB, me, url.searchParams.get("pane") || "", url.searchParams.get("name") || "", (p, n) => engineLog(c.env, p, n));
+          if (hs) return c.json(hs.body, hs.status as 200, { "cache-control": "no-store" });
+        }
         if (url.pathname === "/api/voice/modes") return c.json(await memberVoice.modes(c.env.DB, me, url.searchParams.get("pane") || ""), 200, { "cache-control": "no-store" });
         const ao = /^\/api\/artowner\/([A-Za-z0-9]{16,40})$/.exec(url.pathname);
         if (ao) return c.json(await memberVoice.artOwner(c.env as never, me, ao[1]).catch(() => ({})), 200, { "cache-control": "no-store" });

@@ -118,8 +118,8 @@ export async function tickQueues(listed, { stateOf = id => E.run('state', { id }
 export async function handle(msg) {
   const { verb, args = {} } = msg;
   if (/^rtc_/.test(verb)) return V.handle(verb, args, voiceDeps);
-  if (REMOTE_VERBS.includes(verb)) return remoteVerb(verb, args);   // 보더 웹 설정 › 엔진: 계정 목록 · 로그인 주소 · 엔진 고르기
-  if (verb === 'send' && args.text && !args.test && args.id) return boardSend(args);
+  if (REMOTE_VERBS.includes(verb)) return remoteVerb(verb, args);
+  if (verb === 'send' && args.text && !args.test && args.id && !args.owner) return boardSend(args);
   if (verb === 'list') return { windows: await E.listAll() };
   if (verb === 'close') { const w = (await E.listAll()).find(x => x.id === args.id); if (w) await saveSession({ ...w, cwd: w.spec?.cwd ? w.spec.cwd.replace(/^~(?=$|\/)/, os.homedir()) : w.cwd }); }
   if (verb === 'open' && args.spec) args.spec = { ...args.spec, cwd: args.spec.cwd || path.join(E.engineHome(), 'work') };

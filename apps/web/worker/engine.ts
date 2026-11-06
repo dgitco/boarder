@@ -18,6 +18,8 @@ const LIVE = ["opening", "starting", "busy", "idle", "waiting", "background"];
 /** 봉투 스위치 이름의 사람(주인 메일들 → '' = envelope:owner) — 엔진 DO 는 기기 주인 메일을 들고 있음 */
 export const flagOwner = (env: { ALLOW_EMAILS?: string }, owner: string) => isAdmin(env, owner) ? "" : owner;
 const hhmm = (at: number) => new Date(at).toISOString().slice(11, 16) + " UTC";
+export const hNote = (db: D1Database, id: string, why: string, at: number) =>
+  db.prepare("UPDATE engine_window SET note = ? WHERE id = ? AND kind = 'harness'").bind(`보드 글을 못 넣었을 수 있어요(${String(why).slice(0, 60)}) — ${hhmm(at)} 에 보낸 글`, id).run();
 export const rid = (p: string) => p + [...crypto.getRandomValues(new Uint8Array(12))].map(b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
 export const engineOf = (env: EngEnv, device: string) => env.ENGINE.get(env.ENGINE.idFromName(`dev:${device}`));
 export class EngineError extends Error { constructor(public code: number, msg: string) { super(msg); } }
@@ -97,7 +99,7 @@ export async function deviceOk(db: D1Database, device: string, owner: string) { 
 export const paneWid = (pane: string) => /^%\d{1,7}$/.test(pane) ? `ew_pane${pane.slice(1)}` : null;
 export const widPane = (id: string) => { const m = /^ew_pane(\d{1,7})$/.exec(id); return m ? `%${m[1]}` : null; };
 const HSTATE = /^(busy|idle|waiting|background|starting|none|parked)$/;
-type HPend = { k?: string; id: string; text: string; at: number; test?: boolean; sending?: number };
+type HPend = { k?: string; id: string; text: string; at: number; test?: boolean; owner?: boolean; sending?: number };
 const HCMD_MS = 160_000;
 type Pend = { id: string; text: string; at: number; k?: string };
 /** 회원 화면에 남길 실패 이유: 제어문자 · 토큰 꼴(sk- · bxd_ · Bearer …) 가리고 80자 */
@@ -580,14 +582,15 @@ export class Engine extends DurableObject<EngEnv> {
     for (let i = 0; i < stmts.length; i += 50) await db.batch(stmts.slice(i, i + 50));
   }
   /** 주인 판에 글: 어댑터가 pane-tell 로 넣음. 바쁨(입력칸에 친 글 · 확인창)은 { busy } — queue 면 줄 세워 상태가 올 때마다 다시(10분) */
-  async hsend(id: string, text: string, o: { test?: boolean; queue?: boolean } = {}) {
+  async hsend(id: string, text: string, o: { test?: boolean; queue?: boolean; owner?: boolean } = {}) {
     if (!(await this.who()).harness) throw new EngineError(1, "하네스 기기가 아니에요");
-    if (!this.online()) { if (o.queue) return this.hpend({ id, text, at: Date.now(), test: o.test }); return { offline: true }; }
-    if (o.queue && ((await this.q<HPend>("hpending")) || []).some(p => p.id === id)) { const r = await this.hpend({ id, text, at: Date.now(), test: o.test }); this.hflush(); return r; }
-    try { const r = await this.cmd("send", { id, text, ...(o.test ? { test: true } : {}) }, HCMD_MS); return { sent: true, to: r?.to || widPane(id), ...(r?.reopening ? { reopening: true } : {}) }; }
+    const bob = o.owner && !o.test ? { owner: true } : {};
+    if (!this.online()) { if (o.queue) return this.hpend({ id, text, at: Date.now(), test: o.test, ...bob }); return { offline: true }; }
+    if (o.queue && ((await this.q<HPend>("hpending")) || []).some(p => p.id === id)) { const r = await this.hpend({ id, text, at: Date.now(), test: o.test, ...bob }); this.hflush(); return r; }
+    try { const r = await this.cmd("send", { id, text, ...(o.test ? { test: true } : {}), ...bob }, HCMD_MS); return { sent: true, to: r?.to || widPane(id), ...(r?.reopening ? { reopening: true } : {}) }; }
     catch (e) {
       if ((e as EngineError).code !== 2) throw e;
-      return o.queue ? this.hpend({ id, text, at: Date.now(), test: o.test }) : { busy: true };
+      return o.queue ? this.hpend({ id, text, at: Date.now(), test: o.test, ...bob }) : { busy: true };
     }
   }
   /** 운영 확인: 산 소켓 수 · 밀린 글 수(D1 engine_at 은 2분 늦을 수 있음 — 이게 진짜 붙음) */
@@ -605,7 +608,7 @@ export class Engine extends DurableObject<EngEnv> {
     try {
       const q = (await this.q<HPend>("hpending")) || [], held = new Set<string>();
       for (const p of q.filter(x => x.sending)) {
-        await this.env.DB.prepare("UPDATE engine_window SET note = ? WHERE id = ? AND kind = 'harness'").bind(`보드 글을 못 넣었을 수 있어요(보내는 중 서버가 다시 뜸) — ${hhmm(p.at)} 에 보낸 글`, p.id).run();
+        await hNote(this.env.DB, p.id, "보내는 중 서버가 다시 뜸", p.at);
         await this.hdrop(p.k);
       }
       for (const p of q.filter(x => !x.sending)) {
@@ -616,10 +619,10 @@ export class Engine extends DurableObject<EngEnv> {
           await this.hdrop(p.k); continue;
         }
         await this.hmark(p.k, Date.now());
-        try { await this.cmd("send", { id: p.id, text: p.text, ...(p.test ? { test: true } : {}) }, HCMD_MS); }
+        try { await this.cmd("send", { id: p.id, text: p.text, ...(p.test ? { test: true } : {}), ...(p.owner ? { owner: true } : {}) }, HCMD_MS); }
         catch (e) {
           if ((e as EngineError).code === 2 || (!this.online() && /꺼져/.test((e as Error).message))) { held.add(p.id); await this.hmark(p.k, undefined); continue; }   // 바쁨 · 보내기 전 끊김만 다시
-          await this.env.DB.prepare("UPDATE engine_window SET note = ? WHERE id = ? AND kind = 'harness'").bind(`보드 글을 못 넣었을 수 있어요(${String((e as Error).message).slice(0, 60)}) — ${hhmm(p.at)} 에 보낸 글`, p.id).run();
+          await hNote(this.env.DB, p.id, String((e as Error).message), p.at);
         }
         await this.hdrop(p.k);
       }
@@ -776,12 +779,20 @@ export async function sameGoalWindow(db: D1Database, owner: string, name: string
 export async function harnessDevice(db: D1Database) {
   return db.prepare("SELECT id, owner, engine_at FROM device WHERE scope = 'harness' AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1").first<{ id: string; owner: string; engine_at: number | null }>();
 }
-export async function engineSend(env: EngEnv, pane: string, text: string, o: { test?: boolean; queue?: boolean } = {}) {
+export async function engineSend(env: EngEnv, pane: string, text: string, o: { test?: boolean; queue?: boolean; owner?: boolean } = {}) {
   const id = paneWid(pane); if (!id) throw new EngineError(4, "판 번호(%N)만");
   const d = await harnessDevice(env.DB);
   if (!d || (!o.queue && Date.now() - (d.engine_at || 0) > 120_000)) return { offline: true };
   type Sent = { sent?: boolean; to?: string; busy?: boolean; queued?: boolean; offline?: boolean; reopening?: boolean };
   return (engineOf(env, d.id) as unknown as { hsend: (id: string, text: string, o: object) => Promise<Sent> }).hsend(id, text, o);   // RPC 스텁 형이 너무 깊어(TS2589) 모양만
+}
+export async function engineLog(env: EngEnv, pane: string, name = ""): Promise<{ messages: unknown[]; kind: string | null; live: boolean } | null> {
+  const id = paneWid(pane); if (!id) return null;
+  const d = await harnessDevice(env.DB); if (!d) return null;
+  try {
+    const r = await (engineOf(env, d.id) as unknown as { cmd(v: string, a: object): Promise<any> }).cmd("log", { id, ...(name ? { name } : {}) });
+    return r && Array.isArray(r.messages) ? { messages: r.messages, kind: typeof r.kind === "string" ? r.kind : null, live: !!r.live } : null;
+  } catch { return null; }
 }
 export async function ownerWindows(env: EngEnv) {
   const d = await harnessDevice(env.DB); if (!d) return { online: false, windows: [] };

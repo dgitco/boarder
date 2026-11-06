@@ -624,9 +624,9 @@ test("켬: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS
   const page = async (who: string) => (await t.req("GET", "/", undefined, await t.human(who))).text;
   const vals = (html: string) => ({ caps: JSON.parse((/window\.HB_CAPS = (\{[^\n]*?\});/.exec(html) || [])[1] || "null"), mem: JSON.parse((/window\.HB_MEMBER = (\{[^\n]*?\})<\/script>/.exec(html) || [])[1] || "null"), css: /id="hbm-css"/.test(html) });
   const o = vals(await page(OWNER)), m = vals(await page(MEMBER));
-  assert.deepEqual(o.caps, { invite: true, org_links: true, mainline: true, session_files: false, start_tab: false, push: true, push_wide: false }, "켠 주인(관리 권한)은 지금 주인 기능 문 — 세션 첨부만 아직 거짓(회원 세션 길이 첨부를 안 넘김)");
+  assert.deepEqual(o.caps, { invite: true, org_links: true, mainline: true, session_files: true, start_tab: false, push: true, push_wide: false }, "켠 주인(관리 권한)은 지금 주인 기능 문 — 세션 첨부도 참(회원 세션 길이 첨부를 링크 줄로 넘김, 빠짐 4) · 넓힘 칸은 거짓(주인 구독 칸)");
   assert.equal(o.css, true, "하네스 총괄 판이 없으면(이 시험 준비) 켠 주인도 회원 틀 CSS — 아래에서 총괄 판을 넣으면 빠짐");
-  assert.deepEqual([m.caps?.org_links, m.caps?.session_files, m.caps?.push], [false, false, false], "회원 org_links · session_files 거짓, push = member_push(꺼짐)");
+  assert.deepEqual([m.caps?.org_links, m.caps?.session_files, m.caps?.push, m.caps?.push_wide], [false, false, false, true], "회원 org_links · session_files 거짓, push = member_push(꺼짐), push_wide 참(넓힘을 고름)");
   const o2 = vals(await page(OWNER2)); assert.deepEqual(o2.caps, o.caps, "다른 주인 메일로 들어온 미리 보기도 canon 값");
   assert.equal(m.caps?.start_tab, true, "회원은 「시작하기」 그대로"); assert.equal(m.caps?.invite, false); assert.equal(m.caps?.mainline, false);
   assert.equal(m.mem?.turn, "내 차례"); assert.equal(m.css, true, "회원 틀 CSS 그대로(열 하나)");
@@ -641,6 +641,98 @@ test("켬: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS
   { const MBf = await import("./member-board.ts"); MBf.loadForget(OWNER); MBf.loadForget(MEMBER); }   // 회원 보드 읽기 캐시는 메일 열쇠(400ms) — 앞 준비(t)에서 읽은 값을 비움
   assert.equal(vals(await page2(OWNER)).css, false, "총괄 판이 있으면 회원 틀 CSS 안 넣음");
   assert.equal(vals(await page2(MEMBER)).css, true, "회원은 그대로");
+});
+
+let harnessCmds: [string, string, any][] = [];
+async function harnessOn(t: Awaited<ReturnType<typeof setup>>) {
+  const T = Date.now(), sent: [string, string, string, object][] = [];
+  t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devH", OWNER, "owner-host harness", "", "h1", T, T, "harness", T);
+  await new (Engine as any)({ setWebSocketAutoResponse() {} }, { DB: t.D1 }).hsync([
+    { id: "ew_pane40", state: "busy", name: "지어낸 일", meta: { pane: "%40", win: "5 지어낸 일", role: "리드" } },
+    { id: "ew_pane41", state: "parked", name: "주차한 일", meta: { pane: "%41", win: "6 주차한 일", role: "리드" } }], true, "devH", OWNER, T);
+  const cmds: [string, string, any][] = [];
+  t.env.ENGINE = { idFromName: (s: string) => s, get: (id: string) => ({ revoke: async () => 0, hsend: async (wid: string, text: string, o: object) => { sent.push([id, wid, text, o]);
+      if (text === "들어갔을 수도") throw Object.assign(new Error("pane-tell 1: may have been sent — not retrying (unconfirmed)"), { code: 1 });
+      if (text === "답 잃음") throw Object.assign(new Error("엔진 답 없음"), { code: 1 });
+      if (text === "안 들어감") throw Object.assign(new Error("not sent"), { code: 1 });
+      return { sent: true, to: "%" + wid.slice(7) }; },
+    cmd: async (verb: string, a: any) => { cmds.push([id, verb, a]); if (verb !== "log") throw Object.assign(new Error("모르는 동사"), { code: 5 }); if (a.id === "ew_pane41") throw Object.assign(new Error("engine harness cannot log"), { code: 5 }); return { messages: [{ ts: "1.000001", who: "owner", text: "기록 글" }], kind: "claude", live: true }; } }) };
+  harnessCmds = cmds;
+  return sent;
+}
+test("켬: 하네스 판 세션 글(/api/sess/send %N)은 하네스 기기 엔진 send(줄 세움)로 그 판에 — 주차 판도 · 다리 0 · 회원 · 모르는 판은 404 · 끄면 예전처럼 다리", async () => {
+  const t = await setup(), h = await t.human(OWNER), sent = await harnessOn(t);
+  t.reset();
+  const off = await t.req("POST", "/api/sess/send", { pane: "%40", name: "5 지어낸 일", text: "끈 상태 글" }, h);
+  assert.ok(off.status < 500, off.text);
+  assert.deepEqual(t.bridge, ["/api/sess/send"], "끔이면 다리(server.py sess_send) 그대로"); assert.deepEqual(sent, []);
+  assert.equal((await t.req("POST", "/api/me/harness/send", { pane: "%40", text: "안쪽 길" }, h)).status, 403, "끔이면 안쪽 길도 주인 거절(memberOnly)");
+  await t.flag("owner_unified", true); t.reset();
+  const r = await t.req("POST", "/api/sess/send", { pane: "%40", name: "5 지어낸 일", text: "판에 바로\n두 줄" }, h);
+  assert.equal(r.status, 200, r.text); assert.equal(r.j?.ok, true, r.text);
+  assert.deepEqual(sent, [["dev:devH", "ew_pane40", "판에 바로\n두 줄", { queue: true, owner: true }]], "하네스 기기 엔진 send · 줄바꿈 그대로 · owner(어댑터가 장부 줄)");
+  const p = await t.req("POST", "/api/sess/send", { pane: "%41", text: "주차 판에" }, h);
+  assert.equal(p.status, 200, p.text); assert.equal(sent.at(-1)![1], "ew_pane41", "주차 판은 어댑터가 다시 열며 넣음");
+  const note = () => (t.db.prepare("SELECT note FROM engine_window WHERE id = 'ew_pane40'").get() as { note: string | null }).note;
+  for (const [text, why] of [["들어갔을 수도", "pane-tell 1: may have been sent"], ["답 잃음", "엔진 답 없음"]]) {
+    t.db.prepare("UPDATE engine_window SET note = NULL WHERE id = 'ew_pane40'").run();
+    const x = await t.req("POST", "/api/sess/send", { pane: "%40", text }, h); assert.equal(x.status, 200, text + " " + x.text); assert.equal(x.j?.ok, true, text);
+    assert.match(String(note()), new RegExp(`^보드 글을 못 넣었을 수 있어요\\(${why}.*\\) — \\d\\d:\\d\\d UTC 에 보낸 글$`), text);
+  }
+  t.db.prepare("UPDATE engine_window SET note = NULL WHERE id = 'ew_pane40'").run();
+  const no = await t.req("POST", "/api/sess/send", { pane: "%40", text: "안 들어감" }, h); assert.equal(no.status, 400, no.text);
+  assert.equal(note(), null, "확실히 안 들어간 것은 note 없이 실패(화면이 글을 돌려놓음)");
+  sent.splice(2);
+  for (const pane of ["%99", "%1x", ""]) assert.equal((await t.req("POST", "/api/sess/send", { pane, text: "x" }, h)).status, 404, pane);
+  assert.equal((await t.req("POST", "/api/sess/send", { pane: "%40", text: " " }, h)).status, 400);
+  const hm = await t.human(MEMBER);
+  assert.equal((await t.req("POST", "/api/sess/send", { pane: "%40", text: "남의 판" }, hm)).status, 404);
+  assert.equal((await t.req("POST", "/api/me/harness/send", { pane: "%40", text: "남의 판" }, hm)).status, 404);
+  assert.equal(sent.length, 2); assert.deepEqual(t.bridge, [], "켬인데 다리 호출");
+  t.db.prepare("UPDATE device SET revoked_at = ? WHERE id = 'devH'").run(Date.now());
+  assert.equal((await t.req("POST", "/api/me/harness/send", { pane: "%40", text: "x" }, h)).status, 404, "폐기된 하네스 기기의 판 줄은 내 판이 아님");
+});
+
+// 빠짐 4: 회원 「세션」 칸 글(/api/chat/new · send)의 첨부 — 채널 글과 같은 서명 링크 줄(「📎 이름: 링크」)로 창에 넘김. 켠 주인 HB_CAPS.session_files 참
+test("켬: 세션 글 첨부(/api/chat/new · /api/chat/send files)는 내 파일 링크 줄을 붙여 창에 — 남의 · 모르는 파일만이면 400 · 창 안 엶", async () => {
+  const t = await setup(), h = await t.human(OWNER), T = Date.now();
+  t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devE", OWNER, "engine mac", "", "e".repeat(64), T, T, "full", T);
+  const FA = "0123456789abcdef0123456789abcdef", FB = "fedcba9876543210fedcba9876543210";
+  t.r2.set("mfiles/" + FA, { customMetadata: { owner: OWNER, name: "사진.png" } });
+  t.r2.set("mfiles/" + FB, { customMetadata: { owner: MEMBER, name: "남의.png" } });
+  t.env.RESULTS.head = async (k: string) => t.r2.get(k) ?? null;
+  let n = 0; const opened: any[] = [], delivered: [string, string][] = [];
+  t.env.ENGINE = { idFromName: (s: string) => s, get: (id: string) => ({ revoke: async () => 0, deliver: async (wid: string, text: string) => { delivered.push([wid, text]); return { sent: true }; },
+    open: async (w: any) => { opened.push(w); const wid = `ew_own${String(++n).padStart(6, "0")}`; t.db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, state_at, created_at) VALUES (?,?,?,?,?,?,?,?)").run(wid, w.owner, id.replace(/^dev:/, ""), w.kind, w.name, "starting", Date.now(), Date.now()); return { id: wid }; } }) };
+  await t.flag("owner_unified", true); t.reset();
+  const link = new RegExp(`^📎 사진\\.png: https://example\\.test/f/${FA}\\?e=\\d+&t=[0-9a-f]{32}$`);
+  const nw = await t.req("POST", "/api/chat/new", { text: "이 사진 봐 줘", files: [{ id: FA }] }, h);
+  assert.equal(nw.status, 200, nw.text);
+  const [first, ln] = String(opened[0]?.prompt || "").split("\n");
+  assert.equal(first, "이 사진 봐 줘"); assert.match(ln || "", link, "첫 입력에 링크 줄");
+  const sd = await t.req("POST", "/api/chat/send", { sid: nw.j.sid, text: "", files: [FA, FB] }, h);
+  assert.equal(sd.status, 200, sd.text);
+  assert.equal(delivered.length, 1); assert.match(delivered[0][1], link, "글 없이 첨부만 — 내 파일 줄만(남의 파일은 뺌)");
+  assert.equal((await t.req("POST", "/api/chat/new", { text: "남의 것", files: [FB] }, h)).status, 400, "내 파일이 하나도 없으면 400");
+  assert.equal(opened.length, 1, "창을 더 안 엶");
+  assert.deepEqual(t.bridge, []);
+});
+
+test("켬: 하네스 판 세션 기록(/api/sesslog %N)은 하네스 기기 엔진 log 동사 — 기록을 sess_log 꼴로 · log 를 모르는 옛 엔진은 404(빈 대화) · 회원 · 끄면 엔진 안 부름", async () => {
+  const t = await setup(), h = await t.human(OWNER), sent = await harnessOn(t), cmds = harnessCmds;
+  const q = (pane: string, name = "") => `/api/sesslog?pane=${encodeURIComponent(pane)}${name ? "&name=" + encodeURIComponent(name) : ""}`;
+  t.reset();
+  await t.req("GET", q("%40", "5 지어낸 일"), undefined, h);
+  assert.equal(t.bridge.length, 1, "끔이면 다리 그대로"); assert.match(t.bridge[0], /^\/api\/sesslog\?/); assert.deepEqual(cmds, [], "끔이면 엔진 안 부름");
+  await t.flag("owner_unified", true); t.reset();
+  const r = await t.req("GET", q("%40", "5 지어낸 일"), undefined, h);
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual([r.j.channel, r.j.kind, r.j.live, r.j.name, r.j.messages.map((m: any) => m.text)], ["s:%40", "claude", true, "5 지어낸 일", ["기록 글"]]);
+  assert.deepEqual(cmds, [["dev:devH", "log", { id: "ew_pane40", name: "5 지어낸 일" }]], "엔진 log 동사 · 판 id · 이름");
+  const old = await t.req("GET", q("%41"), undefined, h);
+  assert.equal(old.status, 404, "log 를 모르는 엔진(5) = 지금처럼 빈 대화");
+  assert.equal((await t.req("GET", q("%40"), undefined, await t.human(MEMBER))).status, 404, "회원은 남의 하네스 판 기록 없음");
+  assert.equal(cmds.length, 2, "회원 요청은 엔진을 안 부름"); assert.deepEqual(t.bridge, []);
 });
 
 // ── 켠 주인 회원 길의 빠짐 채우기(delete-plan.md 3절 5 · 9 · 12) ──
