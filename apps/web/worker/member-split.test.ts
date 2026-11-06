@@ -270,3 +270,18 @@ test("트리 나누기: 다른 가지에 같은 이름 노드가 있어도 허�
   assert.ok(r.splits.some((x: any) => x.node === "자료 정리"));
   assert.equal((db.prepare("SELECT node_id FROM member_split WHERE owner = ? ORDER BY log_id DESC LIMIT 1").get(A) as any).node_id, "n-dup0");
 });
+
+test("Owner 주인 별칭·통합 보드 chat_split은 쓰기·전달 전에 거절하고 일반 회원은 원글을 메인에 보존", async () => {
+  const { db, D1, root } = setup();
+  const sent: string[] = [];
+  const env = { ALLOW_EMAILS: `${A},owner@owner.example` } as any;
+  const count = () => Number(db.prepare("SELECT count(*) n FROM board_log").get()!.n), before = count();
+  for (const owner of [A, "OWNER@OWNER.EXAMPLE"])
+    await assert.rejects(localTools(D1, owner, "메인 봇", "https://x", "", undefined, async p => { sent.push(p); return { state: "in" }; }, undefined, env)("chat_split", { thread: root, parts: PARTS }), /Owner 대화는 메인에 그대로/);
+  assert.equal(count(), before);
+  assert.deepEqual(sent, []);
+  assert.equal(Number(db.prepare("SELECT count(*) n FROM member_split").get()!.n), 0);
+  const memberEnv = { ALLOW_EMAILS: "different-owner@example.com" } as any;
+  await localTools(D1, A, "메인 봇", "https://x", "", undefined, undefined, undefined, memberEnv)("chat_split", { thread: root, parts: PARTS });
+  assert.equal((await get(D1, A, "/api/chat/primary")).messages.some((m: any) => m.ts === root), true);
+});

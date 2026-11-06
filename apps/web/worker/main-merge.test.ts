@@ -289,3 +289,57 @@ test("전달 상자 일반 삭제 뒤에도 DM 원글 보임 · 뿌리 상자는
 });
 
 
+
+test("비서실장 모드: 노드 집·토픽·넘김 장부가 남아 있어도 Owner 대화는 메인에만, 에이전트 작업 글은 노드에", async () => {
+  const { db, d1 } = d1Of(); seed(db);
+  const root = "1703390701.000100", agent = "1703390702.000100", question = "1703390703.000100";
+  const m = db.prepare("INSERT INTO wl_talk_msg(id,chan,who,text,at,source) VALUES (?,'primary',?,?,?,'boarder')");
+  m.run(root, "owner", "옛 노드 대화", 1703390701);
+  m.run(agent, "agent", "원 스레드 링크로 받은 작업", 1703390702);
+  m.run(question, "agent", "옛 노드 질문", 1703390703);
+  db.prepare("INSERT INTO wl_talk_msg(id,chan,thread,who,text,at,source) VALUES ('1703390704.000100','primary',?,'owner','질문에 답',1703390704,'boarder')").run(question);
+  for (const ts of [root, agent, question]) db.prepare("INSERT INTO wl_card_home(ts,chan,pane,node,at) VALUES (?,'primary','%777','보더 최적화',?)").run(ts, Number(ts));
+  const cfg: OR.Cfg = { ...CFG, main_only: true, node_topics: { "%777": [{ ts: root, ch: "primary" }] }, node_index: { pane_win: { "%777": "보더 최적화" } } };
+  for (const path of ["/api/chat/main", "/api/chat/primary"]) {
+    const ids = tsOf(await OR.build(d1, cfg, OR.route(path)!, NOW, false, false, [OWNER]) as O);
+    assert.ok(ids.includes(root), path);
+    assert.ok(ids.includes(question), path);
+    assert.ok(!ids.includes(agent), path);
+  }
+  const out = await OR.build(d1, cfg, OR.route("/api/nodechat?w=" + encodeURIComponent("보더 최적화"))!, NOW, false, false, [OWNER]) as O;
+  for (const ts of [root, question]) {
+    const th = await OR.build(d1, cfg, OR.route("/api/chat/primary/" + ts)!, NOW, false, false, [OWNER]) as O;
+    assert.equal(th.body.home ?? "", "", "옛 노드 집·topics가 있어도 노드 화면으로 자동 이동하지 않음");
+  }
+  assert.ok(!tsOf(out).includes(root));
+  assert.ok(!tsOf(out).includes(question));
+  assert.ok(tsOf(out).includes(agent));
+});
+
+
+test("비서실장 모드: 옛 영역·노드 주소에서 쓴 새 글·답도 primary로 저장하고 총괄에 전달", async () => {
+  const { db, d1 } = d1Of(); seed(db);
+  db.prepare("INSERT INTO owner_job_beat(id,at) VALUES (1,?)").run(NOW * 1000);
+  const p = OC.plain({ rid: "main-route-001", channel: "company", text: "메인으로 답", pane: "%777", thread: "1703390002.000100" }, Object.keys(CFG.channels), [], { "%777": "다른 노드" }, true)!;
+  assert.equal(p.chan, "primary"); assert.equal(p.node, ""); assert.equal(p.pane, "");
+  const wrote = await OC.write(d1, p, NOW * 1000);
+  assert.equal(db.prepare("SELECT chan FROM wl_talk_msg WHERE id=?").get(wrote!.mid)!.chan, "primary");
+  const body = JSON.parse(String(db.prepare("SELECT body FROM owner_job WHERE rid=?").get(p.rid)!.body));
+  assert.equal(body.channel, "primary"); assert.equal(body.pane, "");
+  assert.equal(db.prepare("SELECT count(*) n FROM wl_card_home WHERE ts=?").get(wrote!.mid)!.n, 0);
+});
+
+
+test("비서실장 모드: 에이전트 전용 채널의 첫 Owner 답은 뿌리·기존 답·집과 함께 메인으로", async () => {
+  const { db, d1 } = d1Of(); seed(db);
+  const root = "1703390801.000100";
+  db.prepare("INSERT INTO wl_talk_msg(id,chan,who,text,at,source) VALUES (?,'dgit','agent','작업 질문',1703390801,'cli')").run(root);
+  db.prepare("INSERT INTO wl_talk_msg(id,chan,thread,who,text,at,source) VALUES ('1703390802.000100','dgit',?,'agent','후속',1703390802,'cli')").run(root);
+  db.prepare("INSERT INTO wl_card_home(ts,chan,pane,node,at) VALUES (?,'dgit','%777','보더 최적화',1703390801)").run(root);
+  db.prepare("INSERT INTO owner_job_beat(id,at) VALUES (1,?)").run(NOW * 1000);
+  const p = OC.plain({ rid: "main-first-reply", channel: "dgit", thread: root, text: "내 답" }, Object.keys(CFG.channels), [], {}, true)!;
+  const w = await OC.write(d1, p, NOW * 1000);
+  assert.equal(db.prepare("SELECT count(*) n FROM wl_talk_msg WHERE (id=?1 OR thread=?1) AND chan!='primary'").get(root)!.n, 0);
+  assert.equal(db.prepare("SELECT node FROM wl_card_home WHERE ts=?").get(root)!.node, "");
+  assert.equal(w!.root, root);
+});

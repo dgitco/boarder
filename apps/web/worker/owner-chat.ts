@@ -54,12 +54,16 @@ export function maybeSecret(text: string, ours: string[] = []) {
   return CHUNK.test(rest);
 }
 
-export type Plain = { rid: string; chan: string; thread: string; text: string; pane: string; node: string; body: Record<string, unknown> };
+export type Plain = { rid: string; chan: string; thread: string; text: string; pane: string; node: string; body: Record<string, unknown>; mainOnly?: boolean };
 /** 이 몸통이 D1 먼저로 쓸 「보통 글」인가 — 아니면 null(예전 길). channels = cfg 스냅숏의 채널 키 */
-export function plain(b: Record<string, unknown>, channels: string[], ours: string[] = [], paneWin: Record<string, string> = {}): Plain | null {
+export function plain(b: Record<string, unknown>, channels: string[], ours: string[] = [], paneWin: Record<string, string> = {}, mainOnly = false): Plain | null {
   for (const k of OTHER_KEYS) if (b[k] !== undefined && b[k] !== null && b[k] !== "" && b[k] !== false && !(Array.isArray(b[k]) && !(b[k] as unknown[]).length)) return null;
   const rid = String(b.rid ?? ""), chan = String(b.channel ?? ""), thread = String(b.thread ?? ""), ts = String(b.ts ?? "");
   if (!RID.test(rid) || !/^[\w-]{1,64}$/.test(rid) || !channels.includes(chan) || (thread && !TS.test(thread)) || (ts && ts !== thread)) return null;
+  if (mainOnly) {
+    const p = plain({ ...b, channel: "primary", pane: "", topic: "" }, channels, ours, paneWin);
+    return p ? { ...p, mainOnly: true } : null;
+  }
   const text = Array.from(String(b.text ?? "").replace(CTRL_KEEP_NL, " ").replace(PY_STRIP, "")).slice(0, MAX).join("");   // server.py 와 같은 자르기(코드 포인트)
   if (!text || SECRET_REJECT.test(text) || maybeSecret(text, ours) || SYNC.some(r => r.test(text))) return null;   // 비밀일 수 있음 — 예전 길(위)
   if (/^[\[{]/.test(text)) return null;   // JSON 꼴 글: 파이썬 redact 는 비밀 이름 키 값을 통째로 가림(JS 정규식은 못 잡음) — 예전 길   // 비밀 꼴: 판에는 원문이 가야 해 할 일 줄에 원문이 남음 — 예전 길(owner-jobs.accept 와 같음)
@@ -97,6 +101,10 @@ export async function write(db: D1Database, p: Plain, now = Date.now()): Promise
     const job = JSON.stringify({ ...p.body, text: p.text, thread: thread || "", _pre: { mid, root } });
     try {
       await db.batch([
+        ...(p.mainOnly && thread ? [
+          db.prepare("UPDATE wl_talk_msg SET chan='primary' WHERE (id=?1 OR thread=?1) AND chan!='primary'").bind(thread),
+          db.prepare("UPDATE wl_card_home SET chan='primary',pane='',node='' WHERE ts=? AND (chan!='primary' OR coalesce(node,'')!='')").bind(thread),
+        ] : []),
         ridRow(db, p.rid),
         db.prepare("INSERT INTO f7_rid(rid, at) VALUES (?, ?)").bind(preKey(p.rid, mid, root), now),
         // pull은 200줄 경계에서 잘릴 수 있음. 로컬에 원글이 오기 전에 집이 먼저 와야 이동을 거절함.

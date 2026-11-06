@@ -2917,7 +2917,7 @@ app.all("*", async c => {
     if (b && typeof b === "object" && !Array.isArray(b) && "_pre" in b) { delete b._pre; sent = new TextEncoder().encode(JSON.stringify(b)); }
     if (b && typeof b === "object" && !Array.isArray(b) && chOf(c) === "owner" && c.req.header("x-hb") === "1" && await ledger.f7On(c.env.DB, ownerChat.FLAG)) {
       const cfg = await ownerRead.cfgOf(() => snap(c.env).get("cfg")).catch(() => null);
-      const p = cfg ? ownerChat.plain(b, Object.keys(cfg.channels || {}), ours, cfg.node_index?.pane_win) : null;
+      const p = cfg ? ownerChat.plain(b, Object.keys(cfg.channels || {}), ours, cfg.node_index?.pane_win, cfg.main_only) : null;
       let w: ownerChat.Wrote | null = null;
       if (p) {
         try { w = await ownerChat.write(c.env.DB, p); }

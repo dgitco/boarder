@@ -1,7 +1,7 @@
 import type { FileRead } from "./member-files";
 
 
-export type Cfg = { node_index?: { pane_win?: Record<string, string> }; dm_node_roots?: boolean; channels: Record<string, string>; rep?: string; owners?: Record<string, string>; board_files?: string[]; drafts?: Record<string, { text?: string; at?: number }>; node_topics?: Record<string, { ts?: string; ch?: string }[]> };
+export type Cfg = { main_only?: boolean; node_index?: { pane_win?: Record<string, string> }; dm_node_roots?: boolean; channels: Record<string, string>; rep?: string; owners?: Record<string, string>; board_files?: string[]; drafts?: Record<string, { text?: string; at?: number }>; node_topics?: Record<string, { ts?: string; ch?: string }[]> };
 export type Route = { group: "chat" | "cards" | "art"; kind: "channel" | "thread" | "nodechat" | "frequent" | "inbox" | "artnotes" | "alias"; a?: string; b?: string };
 type R = Record<string, any>;
 type Out = { status: number; body: unknown };
@@ -299,7 +299,7 @@ async function channelOut(db: D1Database, cfg: Cfg, key: string, rows: R[], now:
   // 읽히는 id(aliasOf)는 같은 batch 에 안 넣고 나란히 — 표가 아직 없어도(이주 전) 글 읽기가 안 깨지게, 왕복 수는 그대로
   const [rs, al] = await Promise.all([db.batch<R>([...exStmts(db, ids), ...marksStmts(db, pre), cardsStmt(db, pre.map(m => m.ts)),
     db.prepare(`SELECT ts, node FROM wl_card_home WHERE node IS NOT NULL AND node != '' AND ts IN ${IN}`).bind(JSON.stringify(pre.map(m => m.ts))),   // 노드 일 카드 뿌리(server.node_card_roots)
-    db.prepare(`SELECT DISTINCT thread AS ref FROM wl_talk_msg WHERE thread IN ${IN} AND source = 'node-move' AND ref = thread`).bind(JSON.stringify(pre.map(m => m.ts)))]),
+    db.prepare(`SELECT DISTINCT thread AS ref FROM wl_talk_msg WHERE thread IN ${IN} AND ((source = 'node-move' AND ref = thread)${cfg.main_only ? " OR (who = 'owner' AND deleted_at IS NULL)" : ""})`).bind(JSON.stringify(pre.map(m => m.ts)))]),
     aliasOf(db, ids, now)]);
   const alTs = new Map(page.filter(r => al.has(r.id)).map(r => [String(r.slack_ts || r.id), al.get(r.id)!]));
   const ex = exOf(rs.slice(0, 4));
@@ -316,7 +316,7 @@ async function channelOut(db: D1Database, cfg: Cfg, key: string, rows: R[], now:
   const nodeTs = new Set(Object.values(cfg.node_topics || {}).flatMap(xs => Array.isArray(xs) ? xs.map(x => x?.ts) : []).filter(Boolean));
   for (const r of rs[8].results) if (!isChannelWindow(String(r.node))) nodeTs.add(r.ts);
   const movedFromDm = new Set(rs[9].results.map(r => String(r.ref)));
-  const shown = cfg.dm_node_roots ? out : out.filter(m => !nodeTs.has(m.ts) || movedFromDm.has(m.ts));
+  const shown = cfg.dm_node_roots ? out : out.filter(m => (cfg.main_only && m.who === "owner") || !nodeTs.has(m.ts) || movedFromDm.has(m.ts));
   await Promise.all([dlvNames(db, shown), fwdMarks(db, cfg, shown, read), splitMarks(db, shown)]);   // 서로 다른 칸만 채움 — 차례로 기다리면 태평양 왕복만 늚
   return { status: 200, body: { channel: key, messages: shown, more, cursor: msgs.length ? msgs[msgs.length - 1].ts : null, read_at: Math.floor(now), stale_min: 0 } };
 }
@@ -375,6 +375,7 @@ async function threads(db: D1Database, cfg: Cfg, list: { key: string; ts: string
 
 async function nodeHome(db: D1Database, cfg: Cfg, ts: string): Promise<string> {
   if (cfg.dm_node_roots) return "";
+  if (cfg.main_only && await db.prepare("SELECT 1 FROM wl_talk_msg WHERE (id=?1 OR thread=?1) AND who='owner' AND deleted_at IS NULL LIMIT 1").bind(ts).first()) return "";
   const r = await db.prepare("SELECT node FROM wl_card_home WHERE ts = ? AND node IS NOT NULL AND node != '' LIMIT 1").bind(ts).first<R>();
   if (r && !isChannelWindow(String(r.node))) return titleOf(r.node);
   const pane = Object.entries(cfg.node_topics || {}).find(([, xs]) => Array.isArray(xs) && xs.some(x => x?.ts === ts))?.[0];
@@ -510,7 +511,7 @@ async function nodechat(db: D1Database, cfg: Cfg, raw: string, now: number, cach
   const v = await nodeIndex(db, cfg, now, cache), lim = now - 14 * 86400;
   let xs = (v.by_node.get(t) || []).filter(x => x.last > lim);
   if (xs.length) {
-    const sp = new Set((await db.prepare(`SELECT DISTINCT ref FROM wl_talk_msg WHERE source = 'node-split' AND deleted_at IS NULL AND ref IN ${IN}`).bind(JSON.stringify(xs.map(x => x.ts))).all<R>()).results.map(r => String(r.ref)));
+    const sp = new Set((await db.prepare(`SELECT DISTINCT ref FROM wl_talk_msg WHERE source = 'node-split' AND deleted_at IS NULL AND ref IN (SELECT value FROM json_each(?1)) UNION SELECT id AS ref FROM wl_talk_msg WHERE ?2 = 1 AND id IN (SELECT value FROM json_each(?3)) AND (who = 'owner' OR EXISTS (SELECT 1 FROM wl_talk_msg r WHERE r.thread=wl_talk_msg.id AND r.who='owner' AND r.deleted_at IS NULL))`).bind(JSON.stringify(xs.map(x => x.ts)), cfg.main_only ? 1 : 0, JSON.stringify(xs.map(x => x.ts))).all<R>()).results.map(r => String(r.ref)));
     if (sp.size) xs = xs.filter(x => !sp.has(x.ts));
   }
   xs = [...xs].sort((a, b) => b.last - a.last).slice(0, 20).sort((a, b) => parseFloat(a.ts) - parseFloat(b.ts));

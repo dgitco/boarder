@@ -1,3 +1,4 @@
+import { isAdmin } from "./who";
 import { editRoleFromDevice, sameGoalWindow } from "./role-edit";
 import type { EngEnv } from "./engine";
 import { nodeRoot, primaryRoot, primaryThread } from "./member-board";
@@ -80,6 +81,8 @@ export function localTools(db: D1Database, owner: string, win: string, publicUrl
         await log("say", a.text, primaryThread(a.thread), { tool: "chat_say" }); return { ok: true };
       }
       case "chat_split": {
+        if (roleEnv && isAdmin(roleEnv as { ALLOW_EMAILS?: string }, owner))
+          throw new Error("Owner 대화는 메인에 그대로 둡니다. 에이전트 채널에 원 스레드 링크로 넘기고 결과는 비서실장에게 보고해 주세요");
         const { added, ...r } = await splitAdd(db, owner, a.thread, a.parts, { win, key, wid });
         if (!send) return r;
         const sent = [];
