@@ -915,3 +915,48 @@ test("가려진 첨부: 주인 노드 채팅·전달 상자·저장 글도 복�
   assert.match(ib.j.saved.find((m: any) => m.ts === root).text, /&t=[0-9a-f]{32}/);
   assert.ok(ib.j.saved.find((m: any) => m.ts === agent).text.includes("«가림»"));
 });
+
+test("모아 보기 로컬 사본(snap_inbox): 사본 번호가 D1 웹 바뀜 번호 이상이면 스냅숏, 낮음 · 방금 쓴 사람 · 끔 · 낡음이면 D1", async () => {
+  const t = await setup(), h = await t.human(OWNER), rl = { authorization: "Bearer relay-made-up" };
+  seedTalk(t.db);
+  await t.flag("owner_unified", true);
+  const web = () => Number(t.db.prepare("INSERT INTO wl_change(tbl, pk, op, at, origin) VALUES ('talk_seen', '[\"x\"]', 'up', ?, 'web')").run(Date.now()).lastInsertRowid);
+  const s1 = web();
+  const put = async (b: unknown) => { const r = await t.req("PUT", "/api/relay/snap/inbox", b, rl); assert.equal(r.status, 200, r.text); };
+  const os = t.db.prepare("INSERT INTO owner_state(k, v, at) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v, at = excluded.at");
+  os.run("drafts", "{}", 1); os.run("drafts:chan:primary", JSON.stringify({ text: "쓰던 글", at: 5000 }), 1); os.run("drafts:th:9.1", JSON.stringify({ text: "", at: 6000 }), 1);   // 빈 글 = 지움 표(목록에 안 나옴)
+  const D = [{ key: "chan:primary", text: "쓰던 글", at: 5, chan: "primary", thread: "", card: "", place: "" }];
+  await put({ _seq: s1, unread: [], drafts: D, saved: [], saved_ids: ["from-snap"] });
+  const d1 = await t.req("GET", "/api/inbox", undefined, h);
+  assert.equal(d1.h.get("x-f7"), "d1", "끔이면 D1");
+  await t.flag("read_inbox_snap", true); await ledger.f7On(t.D1, "__reset__");
+  const sn = await t.req("GET", "/api/inbox", undefined, h);
+  assert.equal(sn.status, 200, sn.text); assert.equal(sn.h.get("x-f7"), "snap"); assert.deepEqual(sn.j.saved_ids, ["from-snap"]);
+  assert.equal((await t.req("GET", "/api/inbox", undefined, { ...h, "if-none-match": sn.h.get("etag")! })).status, 304, "같은 ETag 면 304");
+  assert.equal((await t.req("GET", "/api/inbox", undefined, { ...h, cookie: h.cookie + "; bx_w=1" })).h.get("x-f7"), "d1", "방금 쓴 사람은 D1");
+  os.run("drafts:chan:primary", JSON.stringify({ text: "고친 글", at: 7000 }), 2);
+  assert.equal((await t.req("GET", "/api/inbox", undefined, h)).h.get("x-f7"), "d1", "초안 시각이 판과 다르면 D1(owner_state 는 바뀜 번호에 안 걸림)");
+  os.run("drafts:chan:primary", JSON.stringify({ text: "쓰던 글", at: 5000 }), 3);
+  await put({ _seq: s1, unread: [], drafts: D, saved: [{ text: "📎 a: «가림»" }], saved_ids: ["from-snap"] });
+  assert.equal((await t.req("GET", "/api/inbox", undefined, h)).h.get("x-f7"), "d1", "가린 첨부가 든 판은 D1(링크 되살리기)");
+  await put({ _seq: s1, unread: [], drafts: D, saved: [], saved_ids: ["from-snap"] });
+  const s2 = web();
+  const behind = await t.req("GET", "/api/inbox", undefined, h);
+  assert.equal(behind.h.get("x-f7"), "d1", "사본이 D1 보다 늦으면 D1"); assert.ok(!(behind.j.saved_ids as string[]).includes("from-snap"));
+  await put({ _seq: s2, unread: [], drafts: D, saved: [], saved_ids: ["from-snap-2"] });
+  assert.deepEqual((await t.req("GET", "/api/inbox", undefined, h)).j.saved_ids, ["from-snap-2"], "따라잡으면 다시 스냅숏");
+  assert.deepEqual(t.bridge, [], "다리 0");
+});
+
+test("모아 보기 로컬 사본(snap_inbox): owner_unified 를 끈 주인 길도 같은 판정", async () => {
+  const t = await setup(), h = await t.human(OWNER), rl = { authorization: "Bearer relay-made-up" };
+  seedTalk(t.db);
+  const seq = Number(t.db.prepare("INSERT INTO wl_change(tbl, pk, op, at, origin) VALUES ('talk_seen', '[\"x\"]', 'up', ?, 'web')").run(Date.now()).lastInsertRowid);
+  t.db.prepare("INSERT INTO owner_state(k, v, at) VALUES ('drafts', '{}', 1)").run();
+  assert.equal((await t.req("PUT", "/api/relay/snap/inbox", { _seq: seq, unread: [], drafts: [], saved: [], saved_ids: ["from-snap"] }, rl)).status, 200);
+  await t.flag("read_inbox_snap", true); await ledger.f7On(t.D1, "__reset__");
+  const r = await t.req("GET", "/api/inbox", undefined, h);
+  assert.equal(r.h.get("x-f7"), "snap", r.text); assert.deepEqual(r.j.saved_ids, ["from-snap"]);
+  t.db.prepare("INSERT INTO wl_change(tbl, pk, op, at, origin) VALUES ('talk_seen', '[\"y\"]', 'up', ?, 'web')").run(Date.now());
+  assert.notEqual((await t.req("GET", "/api/inbox", undefined, h)).h.get("x-f7"), "snap", "사본이 늦으면 예전 길");
+});

@@ -148,7 +148,7 @@ app.use("*", async (c, next) => {
   // 화면 ETag 와 같으면 맡기기와 상관없이 304 로(쿠키 갱신 · 다리 답도 — set-cookie 는 그대로 둠). c.res 를 비운 뒤 넣어야 Hono 가 옛 머리를 덮어 붙이지 않음
   if (inm && res.status === 200 && et && inm === et) { const h2 = new Headers(res.headers); h2.delete("content-length"); h2.delete("content-encoding"); c.res = undefined as unknown as Response; c.res = new Response(null, { status: 304, headers: h2 }); }
 });
-const KEYS = new Set(["data", "topics", "page", "cfg", "history", "emoji", "chats"]);
+const KEYS = new Set(["data", "topics", "page", "cfg", "history", "emoji", "chats", "inbox"]);
 const bridge = (env: Env, ch = "owner") => env.BRIDGE.get(env.BRIDGE.idFromName(ch === "test" ? "test@wnam" : "owner@wnam"), { locationHint: "wnam" });
 const boardCall = async (env: Env, ch: string, r: { method: string; path: string; headers: Record<string, string>; body?: Uint8Array }) => (hosted.exec && await hosted.exec.on(env.DB)) ? hosted.exec.call(env, ch, r) : bridge(env, ch).call(r);
 // 에이전트 도구(받은편지함 · 감시 줄 · 웹훅 깨우기)도 같은 스위치로 — 실행기가 bridge.mjs 와 같은 명령 · 같은 인자 검사(relay-tools.mjs)
@@ -2450,7 +2450,43 @@ async function ledgerAges(env: Env) {
 const OWN_CHAT_POST = new Set([...ownerJobs.PATHS, "/api/draft", "/api/nodepri"].filter(p => p !== "/api/clientlog"));
 /** 켠 주인(ownU)의 대화 · 카드 읽기: owner-read 답(주인 길과 같은 몸통 · ETag · 나이 머리). 다리로 안 감 — cfg 가 아직 없거나 D1 오류면 503(다시 읽기), 등록 안 된 채널은 404.
  *  owners = 주인 메일 넷(끈 주인 길과 같게 — #메인 줄기의 「켠 시각」 거름 user_pref mainmerge_at 을 찾음, 빠짐 5) */
+const SNAP_INBOX_SHADOW = 20;
+let snapInboxN = 0;
+/** D1 초안 줄(owner-read inbox 와 같은 거름: 빈 글 · 모르는 꼴 · 「card:…|」 빼기)과 판의 초안이 키 · 시각까지 같은가. 「drafts」 줄이 없으면(write_state 전) 아님 — D1 길은 cfg 초안을 씀 */
+function draftsSame(rows: { k: string; v: string }[], snapDrafts: unknown) {
+  if (!rows.some(r => r.k === "drafts")) return false;
+  const want = new Map<string, number>();
+  for (const r of rows) {
+    if (r.k === "drafts") continue;
+    const v = JSON.parse(r.v) as { text?: unknown; at?: unknown } | null, key = r.k.slice(7), i = key.indexOf(":"), kind = i < 0 ? key : key.slice(0, i);
+    if (!String(v?.text ?? "").trim() || !["chan", "th", "card"].includes(kind) || (kind === "card" && key.endsWith("|"))) continue;
+    want.set(key, Number(v?.at || 0) / 1000);
+  }
+  if (!Array.isArray(snapDrafts) || snapDrafts.length !== want.size) return false;
+  return snapDrafts.every((d: { key?: string; at?: number }) => want.has(String(d?.key)) && Math.abs(want.get(String(d.key))! - Number(d?.at)) < 1e-6);
+}
+async function inboxSnap(c: Context<{ Bindings: Env }>, rd: ownerRead.Route, owners: string[]): Promise<Response | null> {
+  if (rd.kind !== "inbox" || cookieOf(c, "bx_w") || !(await ledger.f7Peek(c.env.DB, "read_inbox_snap", peekWait(c)))) return null;
+  const sn = await snap(c.env).get("inbox").catch(() => null);
+  const m = sn && snapAge(sn) < 15_000 && !sn.body.includes("«가림»") ? /^\{"_seq":(\d+)[,}]/.exec(sn.body) : null;
+  const b = m ? await c.env.DB.batch<Record<string, unknown>>([c.env.DB.prepare("SELECT max(seq) n FROM wl_change WHERE origin = 'web'"),
+    c.env.DB.prepare("SELECT k, v FROM owner_state WHERE k >= 'drafts' AND k < 'drafts;'")]).catch(() => null) : null;
+  let ok = !!(m && b && Number((b[0].results[0] as { n?: number } | undefined)?.n || 0) <= Number(m[1]));
+  if (ok) { try { ok = draftsSame(b![1].results as unknown as { k: string; v: string }[], JSON.parse(sn!.body).drafts); } catch { ok = false; } }
+  hit(c.req.raw, "inbox_snap", ok);
+  if (!ok || !sn) return null;
+  if (++snapInboxN % SNAP_INBOX_SHADOW === 0) c.executionCtx.waitUntil((async () => {
+    const ag = await ledgerAges(c.env);
+    const o = await ownerRead.build(c.env.DB, await ownerRead.cfgOf(async () => ag.cfg), rd, undefined, true, true, owners, memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || new URL(c.req.url).origin));
+    const { _seq: _s, ...mine } = JSON.parse(sn.body); void _s;
+    console.log(JSON.stringify({ snap_inbox: "shadow", diff: o ? ownerRead.firstDiff(o.body, mine) : "no-d1", n: Array.isArray(mine.unread) ? mine.unread.length : -1 }));
+  })().catch(e => console.error("snap_inbox shadow", String(e).slice(0, 160))));
+  const h = { etag: sn.etag, "cache-control": "no-store", "x-content-type-options": "nosniff", "x-snap-age": String(snapAge(sn)), "x-f7": "snap" };
+  if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === sn.etag) return new Response(null, { status: 304, headers: h });
+  return new Response(sn.body, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
+}
 async function ownerD1(c: Context<{ Bindings: Env }>, rd: ownerRead.Route, owners: string[]) {
+  const sr = await inboxSnap(c, rd, owners).catch(() => null); if (sr) return sr;
   const ag = await ledgerAges(c.env).catch(() => null);
   const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;   // 주인 길과 같음(자주 쓰는 반응만 복제본)
   const get = ag ? async () => ag.cfg : () => snap(c.env).get("cfg");
@@ -2975,6 +3011,7 @@ app.all("*", async c => {
   }
   const rd = c.req.method === "GET" && chOf(c) === "owner" ? ownerRead.route(url.pathname + url.search) : null;
   const flag = (n: string) => rd?.kind === "inbox" ? ledger.f7Peek(c.env.DB, n, peekWait(c)) : ledger.f7On(c.env.DB, n);
+  if (rd?.kind === "inbox") { const sr = await inboxSnap(c, rd, ownerMails(c.env, s.user.email)).catch(() => null); if (sr) return sr; }
   const shadowRd = !!rd && await flag("shadow_" + rd.group);
   if (rd && (rd.kind === "alias" || await flag("read_" + rd.group))) {
     const st = rd.kind === "inbox";
