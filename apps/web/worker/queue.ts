@@ -57,12 +57,17 @@ function mark(c: C, v: string) {
   catch { const r = c.res; c.res = new Response(r.body, { status: r.status, statusText: r.statusText, headers: new Headers(r.headers), ...((r as { encodeBody?: "manual" }).encodeBody ? { encodeBody: "manual" as const } : {}) }); c.res.headers.set("x-rid", v); }
 }
 /** 쓰기 POST 미들웨어 — 스위치 · 로그인은 부른 쪽이 먼저(email). seg = Server-Timing 「claim」 칸 */
-export async function idem(c: C, email: string, next: Next, seg: (ms: number) => void) {
-  let rid = ""; try { rid = String((JSON.parse(await c.req.text()) as { rid?: unknown }).rid ?? ""); } catch {}
+export async function idem(c: C, email: string, next: Next, seg: (ms: number) => void, prepare?: (body: unknown) => void) {
+  let rid = "", body: unknown; try { body = JSON.parse(await c.req.text()); rid = String((body as { rid?: unknown }).rid ?? ""); } catch {}
   if (!RID.test(rid)) return next();   // rid 없는 쓰기는 예전처럼(화면은 늘 붙여 보냄)
   let st: ReturnType<typeof ridOf>, got: Awaited<ReturnType<BoardSnap["claim"]>>;
   const t0 = Date.now();
-  try { st = ridOf(c.env, email); got = await st.claim(rid, c.req.path); }
+  try {
+    st = ridOf(c.env, email);
+    const pending = st.claim(rid, c.req.path);
+    try { prepare?.(body); } catch {}   // 선행 읽기는 선택 사항. 실패해도 기존 claim 결과·오류를 바꾸지 않음.
+    got = await pending;
+  }
   catch (e) {
     seg(Date.now() - t0);
     // 배포 직후 옛 코드 DO(새 메서드 없음 — 「does not implement」): 이 층 없이 그대로(예전과 같음) · 관리 길 /api/admin/rid/drop 으로 내리면 새 코드로

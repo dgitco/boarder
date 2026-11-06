@@ -1,5 +1,6 @@
 // Boarder API(Hono) — /api/* 만 Worker 가 받고, 나머지는 React 정적 자산(SPA)
 import { Hono, type Context } from "hono";
+import { readFrontDoor as readChatFront } from "./front-door";
 import { z } from "zod";
 import { METRICS_MAX_BYTES, putMetrics, listDevices, readCapped, tooSoon, deviceByHash, noteMachine, MACHINE_HEADER } from "./devices";
 import * as devCard from "./device-card";
@@ -276,7 +277,7 @@ app.use("*", async (c, next) => {
   if ((queue.FAULT.d1 || queue.FAULT.d1after) && !/^\/api\/(admin\/fault|relay\/)/.test(c.req.path)) c.env = { ...c.env, DB: queue.FAULT.d1 ? queue.brokenDB(c.env.DB) : queue.lostDB(c.env.DB) };
   if (c.req.method !== "POST" || !(queue.QPATHS.has(c.req.path) || hosted.qpath?.(c.req.path)) || !(await ledger.f7On(c.env.DB, "write_queue"))) return next();
   const s = await signedIn(c); if (!s) return next();
-  return queue.idem(c as never, s.user.email, next, ms => seg(c.req.raw, "claim", ms));
+  return queue.idem(c as never, s.user.email, next, ms => seg(c.req.raw, "claim", ms), body => prepareChatRead(c, s.user.email, body));
 });
 app.get("/api/arttok/:id", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
@@ -2655,6 +2656,22 @@ async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: strin
   const res = new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "frame-ancestors 'self'", "x-frame-options": "SAMEORIGIN", "x-boarder-src": "member" } });
   return boardShell(c, res, me, member, await ledger.f7On(c.env.DB, "write_queue"), ea);
 }
+// claim과 겹칠 수 있는 읽기 한 개만 요청 안에서 보관. 회원 post/load는 정리 쓰기도 있어 미리 실행하지 않음.
+type ChatRead = { front?: ReturnType<typeof readChatFront>; cfg?: ReturnType<typeof ownerRead.cfgOf> };
+const CHAT_READ = new WeakMap<Request, ChatRead>();
+function prepareChatRead(c: Context<{ Bindings: Env }>, email: string, body: unknown) {
+  if (c.req.path !== "/api/chat" || !sameSite(c) || !body || typeof body !== "object" || Array.isArray(body)) return;
+  const b = body as Record<string, unknown>;
+  // 별도 동작·스레드·첨부는 읽기 전에 끝나거나 쓰기를 할 수 있으므로 기존 순서를 유지.
+  if (Object.keys(b).some(k => !["rid", "text", "channel", "pane"].includes(k)) || !String(b.text || "").trim()) return;
+  const read: ChatRead = {}; CHAT_READ.set(c.req.raw, read);
+  if (!isOwner(c.env, email)) {
+    read.front = readChatFront(c.env.DB, email.trim().toLowerCase());
+  } else if (chOf(c) === "owner" && c.req.header("x-hb") === "1") {
+    read.cfg = (async () => await ledger.f7On(c.env.DB, ownerChat.FLAG) ? ownerRead.cfgOf(() => snap(c.env).get("cfg")).catch(() => null) : null)();
+    read.cfg.catch(() => {});   // claim이 먼저 거절돼도 미처리 거부가 남지 않음.
+  }
+}
 // 회원 쓰기: 보드 몸통을 회원 길(/api/me/*)로 바꿔 같은 앱에 다시 부름(같은 쿠키 · 같은 문 검사) — 답은 보드 꼴(rid · state ok)
 async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
@@ -2680,7 +2697,7 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   }
   const rid = String(b.rid || "").slice(0, 64);
   let hop: Awaited<ReturnType<typeof memberBoard.post>>;
-  try { hop = await memberBoard.post(c.env.DB, me, url.pathname, b); } catch { return queue.retrySafe(c); }   // 읽기만(쓰기 전) — D1 실패는 다시 보내도 됨
+  try { hop = await memberBoard.post(c.env.DB, me, url.pathname, b, CHAT_READ.get(c.req.raw)?.front); } catch { return queue.retrySafe(c); }   // 읽기만(쓰기 전) — D1 실패는 다시 보내도 됨
   if ("error" in hop) return c.json({ ok: false, error: hop.error }, hop.status as 400);
   if ("ok" in hop) return c.json({ rid, ...hop.ok });
   const qrid = hop.log ? queue.ridOfBody(b) : "";
@@ -2982,7 +2999,7 @@ app.all("*", async c => {
     if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
     if (b && typeof b === "object" && !Array.isArray(b) && "_pre" in b) { delete b._pre; sent = new TextEncoder().encode(JSON.stringify(b)); }
     if (b && typeof b === "object" && !Array.isArray(b) && chOf(c) === "owner" && c.req.header("x-hb") === "1" && await ledger.f7On(c.env.DB, ownerChat.FLAG)) {
-      const cfg = await ownerRead.cfgOf(() => snap(c.env).get("cfg")).catch(() => null);
+      const cfg = await (CHAT_READ.get(c.req.raw)?.cfg ?? ownerRead.cfgOf(() => snap(c.env).get("cfg")).catch(() => null));
       const p = cfg ? ownerChat.plain(b, Object.keys(cfg.channels || {}), ours, cfg.node_index?.pane_win, cfg.main_only) : null;
       let w: ownerChat.Wrote | null = null;
       if (p) {

@@ -1269,7 +1269,7 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
 }
 
 export type Hop = { path: string; body: unknown; log?: { win: string; text: string; ch?: string; thread?: string } } | { error: string; status: number } | { ok: R };
-export async function post(db: D1Database, me: string, path: string, b: R): Promise<Hop> {
+export async function post(db: D1Database, me: string, path: string, b: R, front?: ReturnType<typeof readFrontDoor>): Promise<Hop> {
   loadForget(me);
   if (path === "/api/sess/send") {
     const pane = String(b.pane || ""), text = String(b.text || "").trim();
@@ -1331,7 +1331,7 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     const bk = /^w:(\d+)$/.exec(String((b.blocker as R | undefined)?.ref || ""));
     if (bk) return post(db, me, "/api/answer", { item: "w" + bk[1], text });
     let pane = String(b.pane || "");
-    const FL = await readFrontDoor(db, me) ? await load(db, me) : null, alias = FL?.front && (pane && pane !== PRIMARY ? FL.front.nodes.some(n => n.pane === pane) : FL.front.aliases.includes(String(b.channel || "").replace(/^n:/, "")));
+    const FL = await (front ?? readFrontDoor(db, me)) ? await load(db, me) : null, alias = FL?.front && (pane && pane !== PRIMARY ? FL.front.nodes.some(n => n.pane === pane) : FL.front.aliases.includes(String(b.channel || "").replace(/^n:/, "")));
     if (alias && !b.thread) return { path: "/api/me/chat", body: { text } };
     let L0: Awaited<ReturnType<typeof load>> | null = null;
     if (/^n:/.test(String(b.channel || "")) && CARD_TS.test(String(b.thread || ""))) {
