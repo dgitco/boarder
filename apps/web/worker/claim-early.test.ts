@@ -236,3 +236,25 @@ test("선행 준비가 잘못된 text로 실패해도 claim을 버리지 않고 
     assert.equal(r.status, 503); assert.equal(r.headers.get("x-retry-safe"), "1"); assert.equal(r.headers.get("x-rid"), "new");
   }
 });
+
+
+test("replay·busy·claim 실패의 선행 읽기는 설정 SELECT 한 번·D1 쓰기0", async t => {
+  for (const state of ["replay", "busy", "fail"] as const) await t.test(state, async () => {
+    const { db, env, post, st, sent } = setup();
+    const ctl = claimControl(env), rid = `early-read-bound-${state}`;
+    // 다른 회원 설정이 많아도 owner 기본키 한 줄만 읽는 질의. 실제 D1 계수는 별도 읽기 전용 탐침으로 확인.
+    for (let i = 0; i < 100; i++) db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?, '{}', ?)").run(`other-${i}@example.test`, Date.now());
+    db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?, '{}', ?)").run(MEMBER, Date.now());
+    if (state === "replay") assert.equal((await post("/api/chat", body(rid))).status, 200);
+    if (state === "busy") await env.SNAP.get(env.SNAP.idFromName(`rid:${MEMBER}@apac`)).claim(rid, "/api/chat");
+    if (state === "fail") ctl.fail();
+    st.queries.length = 0;
+    const before = (db.prepare("SELECT total_changes() n").get() as any).n, deliveries = sent.length;
+    const response = await post("/api/chat", body(rid));
+    await new Promise(r => setImmediate(r));
+    assert.equal(response.status, { replay: 200, busy: 409, fail: 503 }[state]);
+    assert.equal(st.queries.filter(q => q.sql === "SELECT data FROM node_setting WHERE owner = ?").length, process.env.CLAIM_BASELINE ? 0 : 1);
+    assert.equal((db.prepare("SELECT total_changes() n").get() as any).n, before);
+    assert.equal(sent.length, deliveries);
+  });
+});
