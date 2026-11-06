@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "abfa455a7414";
+window.HB_VER = "0f900c4f660f";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -5770,7 +5770,7 @@ const MAIN5 = ["primary", "company", "personal", "dgit", "shop"], MAIN_ONE = { c
 for (const a of AGENT_CH) MAIN_ONE[a.key] ??= [...String(a.name).trim()][0] || a.key[0];
 const mainOn = () => {
   try {
-    return window.HB_MAIN_ONLY || (window.HB_CAPS?.mainline ?? !(window.HB_CH || window.HB_MEMBER)) && !(CS.mainNo && Date.now() - CS.mainNo < 6e4) && localStorage.getItem("hb-mainmerge") === "1";
+    return !(CS.mainNo && Date.now() - CS.mainNo < 6e4) && (window.HB_MAIN_ONLY || (window.HB_CAPS?.mainline ?? !(window.HB_CH || window.HB_MEMBER)) && localStorage.getItem("hb-mainmerge") === "1");
   } catch (e) {
     return false;
   }
