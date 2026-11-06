@@ -78,7 +78,7 @@ test("고치기: 파일 붙은 글을 고쳐도 첨부 줄(「📎 이름: 서�
   assert.equal(s.q("SELECT text FROM board_log WHERE id = ?", me)[0].text, `다시 고침\n${link}`);
 });
 
-test("초안: 내 것만 보임, 빈 글은 지움, 4000자에서 자름", async () => {
+test("초안: 내 것만 보임, 빈 글은 빈 표 줄(다른 기기가 비우게), 4000자에서 자름", async () => {
   const s = setup();
   await MI.draftPost(s.db, A, { key: "chan:n:예시 팀 영업", text: "쓰던 글" });
   await MI.draftPost(s.db, A, { key: "th:1793400000.000001", text: "x".repeat(5000) });
@@ -86,7 +86,7 @@ test("초안: 내 것만 보임, 빈 글은 지움, 4000자에서 자름", async
   assert.equal(m["chan:n:예시 팀 영업"].text, "쓰던 글"); assert.equal(m["th:1793400000.000001"].text.length, 4000);
   assert.deepEqual(await MI.draftMap(s.db, B), {});
   await MI.draftPost(s.db, A, { key: "chan:n:예시 팀 영업", text: "" });
-  assert.equal(Object.keys(await MI.draftMap(s.db, A)).length, 1);
+  { const m2 = await MI.draftMap(s.db, A); assert.equal(Object.keys(m2).length, 2); assert.equal(m2["chan:n:예시 팀 영업"].text, ""); assert.ok(m2["chan:n:예시 팀 영업"].at > 0); }
   const ib = await MI.inbox(s.db, A); assert.equal(ib.drafts.length, 1); assert.equal(ib.drafts[0].thread, "1793400000.000001");
   assert.equal((await MI.draftPost(s.db, A, { key: "", text: "a" })).status, 400);
 });
@@ -317,4 +317,40 @@ test("저장한 답 뿌리 찾기 한도 없음 — 서로 다른 카드 25개�
   for (const ts of replies) assert.equal(sv.find((x: any) => x.ts === ts)?.chan, "n:예시 팀 영업", ts);
   const plan = (s.q("EXPLAIN QUERY PLAN SELECT j.key AS k, b.win FROM json_each(?) j CROSS JOIN board_log b WHERE b.owner = ? AND b.at >= json_extract(j.value, '$.s') AND b.at < json_extract(j.value, '$.s') + 1000 AND b.id % 1000000 = json_extract(j.value, '$.i')", "[]", A) as any[]).map(r => r.detail).join(" | ");
   assert.match(plan, /SEARCH b USING INDEX/, plan);
+});
+
+const fakeR2 = (rows: Record<string, { owner: string; name: string; mime: string; size: number }>) => ({
+  head: async (k: string) => { const r = rows[k.replace(/^mfiles\//, "")]; return r ? { size: r.size, customMetadata: { owner: r.owner, name: r.name }, httpMetadata: { contentType: r.mime } } : null; },
+}) as unknown as R2Bucket;
+const FA = "a".repeat(32), FB = "b".repeat(32), FC = "c".repeat(32);
+const R2F = fakeR2({ [FA]: { owner: A, name: "사진.png", mime: "image/png", size: 1234 }, [FC]: { owner: A, name: "표.pdf", mime: "application/pdf", size: 99 }, [FB]: { owner: B, name: "남의.png", mime: "image/png", size: 5 } });
+
+test("초안 첨부: 내 파일만 저장(이름 · 꼴 · 크기는 R2 값), 글만 고친 저장은 첨부 그대로, [] 면 비움, 보냄이면 글 · 첨부 다 비움", async () => {
+  const s = setup(), k = "chan:n:예시 팀 영업";
+  assert.equal((await MI.draftPost(s.db, A, { key: k, text: "", files: [{ id: FA, name: "속임.exe", img: false, mime: "x", size: 1 }, FC] }, R2F)).status, 200);
+  let m = await MI.draftMap(s.db, A);
+  assert.equal(m[k].text, ""); assert.deepEqual(m[k].files, [{ id: FA, name: "사진.png", img: true, mime: "image/png", size: 1234 }, { id: FC, name: "표.pdf", img: false, mime: "application/pdf", size: 99 }]);
+  await MI.draftPost(s.db, A, { key: k, text: "글 붙임" }, R2F);   // 첨부를 모르는 다른 기기의 글 저장
+  m = await MI.draftMap(s.db, A); assert.equal(m[k].text, "글 붙임"); assert.equal(m[k].files.length, 2);
+  await MI.draftPost(s.db, A, { key: k, text: "" }, R2F);   // 글만 지움 — 첨부는 남음
+  m = await MI.draftMap(s.db, A); assert.equal(m[k].text, ""); assert.equal(m[k].files.length, 2);
+  await MI.draftPost(s.db, A, { key: k, text: "다시", files: [FC] }, R2F);
+  m = await MI.draftMap(s.db, A); assert.deepEqual(m[k].files.map((f: { id: string }) => f.id), [FC]);
+  await MI.draftPost(s.db, A, { key: k, text: "", at: Date.now(), sent: "다시" }, R2F);
+  m = await MI.draftMap(s.db, A); assert.equal(m[k].text, ""); assert.equal(m[k].files, undefined);
+  await MI.draftPost(s.db, A, { key: k, text: "x", files: [FA] }, R2F); await MI.draftPost(s.db, A, { key: k, text: "x", files: [] }, R2F);
+  m = await MI.draftMap(s.db, A); assert.equal(m[k].files, undefined);
+  assert.deepEqual(await MI.draftMap(s.db, B), {});
+});
+
+test("초안 첨부: 남의 · 없는 · 꼴이 틀린 파일 id 는 400 이고 저장된 초안은 그대로", async () => {
+  const s = setup(), k = "th:1793400000.000001";
+  await MI.draftPost(s.db, A, { key: k, text: "쓰던 답", files: [FA] }, R2F);
+  for (const files of [[FB], [FA, FB], ["d".repeat(32)], ["../x"], "abc", Array(11).fill(FA).map((_, i) => i.toString(16).padStart(32, "0"))]) {
+    const r = await MI.draftPost(s.db, A, { key: k, text: "바꿈", files }, R2F);
+    assert.equal(r.status, 400, JSON.stringify(files));
+  }
+  assert.equal((await MI.draftPost(s.db, A, { key: k, text: "바꿈", files: [FA] })).status, 400);   // R2 없이 부르면 첨부 저장 거절
+  const m = await MI.draftMap(s.db, A); assert.equal(m[k].text, "쓰던 답"); assert.deepEqual(m[k].files.map((f: { id: string }) => f.id), [FA]);
+  assert.equal((await MI.inbox(s.db, A)).drafts.length, 1);
 });

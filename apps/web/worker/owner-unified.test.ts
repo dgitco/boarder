@@ -360,7 +360,8 @@ test("켬: 주인 채널 · 스레드 · 노드 채팅 · 모아 보기 · 자�
     const r = await t.req("GET", p, undefined, h);
     assert.equal(r.status, 200, `${p} ${r.text}`);
     assert.equal(r.h.get("x-f7"), "d1", p);
-    assert.deepEqual(r.j, JSON.parse(want[p]), `${p}: 주인 길 답과 몸통이 다름`);
+    const noAt = (o: any) => { const { read_at: _a, ...x } = o ?? {}; return x; };   // read_at = 부른 시각(초) — 두 번 읽는 사이 초가 넘어가면 1 다름(서버 ETag 도 이 칸을 뺌)
+    assert.deepEqual(noAt(r.j), noAt(JSON.parse(want[p])), `${p}: 주인 길 답과 몸통이 다름`);
     assert.deepEqual(t.bridge, [], `${p}: 다리 호출`);
   }
   const ch = await t.req("GET", "/api/chat/primary", undefined, h);

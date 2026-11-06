@@ -63,8 +63,8 @@ function setup() {
 test("화면 설정: 쓴 값을 다른 기기(같은 계정)에서 받음 · 남의 계정엔 안 보임", async () => {
   const { req } = setup();
   assert.deepEqual((await req("GET", "/api/me/ui", MEMBER)).j, {}, "처음은 빈 값(화면이 지금 브라우저 값을 올림)");
-  for (const [k, v] of [["theme", "dark"], ["accent", "#12ab34"], ["still", "1"], ["favblink", "0"], ["tapthread", "1"], ["unreadkeep", "1"], ["canvasback", "1"], ["ibboth", "1"]]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k, v })).status, 200, k);
-  assert.deepEqual((await req("GET", "/api/me/ui", MEMBER)).j, { theme: "dark", accent: "#12ab34", still: "1", favblink: "0", tapthread: "1", unreadkeep: "1", canvasback: "1", ibboth: "1" });
+  for (const [k, v] of [["theme", "dark"], ["accent", "#12ab34"], ["still", "1"], ["favblink", "0"], ["tapthread", "1"], ["unreadkeep", "1"], ["canvasback", "1"], ["ibboth", "1"], ["newsb", "1"]]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k, v })).status, 200, k);
+  assert.deepEqual((await req("GET", "/api/me/ui", MEMBER)).j, { theme: "dark", accent: "#12ab34", still: "1", favblink: "0", tapthread: "1", unreadkeep: "1", canvasback: "1", ibboth: "1", newsb: "1" });
   assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "theme", v: "light" })).status, 200);
   assert.equal((await req("GET", "/api/me/ui", MEMBER)).j.theme, "light", "고치면 바뀜(줄 하나)");
   assert.deepEqual((await req("GET", "/api/me/ui", OTHER)).j, {}, "남의 계정");
@@ -83,7 +83,7 @@ test("화면 설정 sbw(사이드바 폭): 200~480 정수 · 0(기본)만, 그 �
 
 test("화면 설정: 정해 둔 키 · 꼴만, 다른 사이트 글 · 로그인 없음은 막음", async () => {
   const { req, db } = setup();
-  for (const [k, v] of [["theme", "pink"], ["accent", "red"], ["accent", "#12AB3"], ["still", "yes"], ["favblink", "off"], ["tapthread", "true"], ["unreadkeep", "true"], ["unreadkeep", "2"], ["canvasback", "true"], ["canvasback", "2"], ["ibboth", "true"], ["ibboth", "2"], ["primary_win", "window:x"], ["", ""], ["toString", "x".repeat(5000)], ["constructor", "1"], ["__proto__", "1"], ["hasOwnProperty", "1"]]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k, v })).status, 400, `${k}=${v}`);
+  for (const [k, v] of [["theme", "pink"], ["accent", "red"], ["accent", "#12AB3"], ["still", "yes"], ["favblink", "off"], ["tapthread", "true"], ["unreadkeep", "true"], ["unreadkeep", "2"], ["newsb", "true"], ["newsb", "2"], ["canvasback", "true"], ["canvasback", "2"], ["ibboth", "true"], ["ibboth", "2"], ["primary_win", "window:x"], ["", ""], ["toString", "x".repeat(5000)], ["constructor", "1"], ["__proto__", "1"], ["hasOwnProperty", "1"]]) assert.equal((await req("POST", "/api/me/ui", MEMBER, { k, v })).status, 400, `${k}=${v}`);
   assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "theme", v: "dark" }, { "sec-fetch-site": "cross-site", "x-hb": "1" })).status, 403, "다른 사이트");
   assert.equal((await req("POST", "/api/me/ui", MEMBER, { k: "theme", v: "dark" }, {})).status, 403, "x-hb 없음");
   assert.equal((await req("POST", "/api/me/ui", null, { k: "theme", v: "dark" })).status, 401);

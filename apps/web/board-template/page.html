@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "7239af496e61";
+window.HB_VER = "293a9c58a7f0";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -696,6 +696,9 @@ html.mlock body{position:fixed;left:0;right:0;width:100%}
 .toast{white-space:pre-line;position:fixed;left:0;right:0;margin:0 auto;width:max-content;bottom:max(20px,env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:8px;font-size:13px;z-index:40;max-width:min(480px,calc(100% - 32px))}
 
 @media (max-width:640px){.toast{left:16px;right:16px;width:auto;max-width:none}}
+.toast.nvt{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 14px;z-index:70}.toast.nvt[hidden]{display:none}
+body:has(#ans:not([hidden])) .toast.nvt{top:calc(var(--vvt,0px) + max(60px,env(safe-area-inset-top,0px) + 52px));bottom:auto!important}   
+.toast.nvt .nvgo{background:var(--bg);color:var(--ink);border-radius:8px;padding:5px 10px;font-weight:600;font-size:13px}.toast.nvt .nvx{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;color:inherit;opacity:.7}
 
 .ans.modal{width:min(720px,calc(100% - 32px));max-height:min(840px,calc(100% - 48px))}
 .ab{padding:24px 28px 12px;gap:20px}
@@ -1182,7 +1185,8 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
 .msg .mh{display:flex;gap:8px;align-items:baseline;font-size:13px;flex-wrap:wrap}
 .msg .mh b{font-weight:600}
 .msg .mh .tm,.msg .mh .tag{color:var(--muted);font-size:11.5px}
-.msg .mh .ackst{align-self:center;display:inline-flex;color:var(--muted);line-height:0}.msg .mh .ackst svg{width:13px;height:13px}
+.msg .mh > .tm:not(.own){display:inline-flex;align-items:center;gap:5px;white-space:nowrap;flex:none}   
+.msg .mh .ackst{align-self:center;display:inline-flex;align-items:center;justify-content:center;flex:none;width:13px;height:13px;color:var(--muted);line-height:0}.msg .mh .ackst svg{width:13px;height:13px}
 .msg .mh .tag{border:1px solid var(--line);border-radius:4px;padding:0 5px}
 .msg .mh .ar{color:var(--muted);font-size:11px;font-weight:600;line-height:1}   
 .msg .mh .tag.k-막힘,.msg .mh .tag.k-결정{color:var(--accent);border-color:var(--accent)}
@@ -1328,7 +1332,7 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
 .msg .mh .snd{margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:4px;font-size:11.5px;line-height:16px;color:var(--muted)}
 .msg .mh .snd .g{width:13px;height:13px}
 
-.msg .mh .snd:not(.bad){margin-left:0;line-height:0}.msg .mh .snd:not(.bad) .g-spin{width:13px;height:13px;box-sizing:border-box;border-width:1.5px}
+.msg .mh .snd:not(.bad){margin-left:0;width:13px;height:13px;flex:none;justify-content:center;line-height:0}.msg .mh .snd:not(.bad) .g-spin{width:13px;height:13px;box-sizing:border-box;border-width:calc(13px / 12);border-top-color:currentColor}
 .msg .mh .snd.bad{color:var(--accent)}
 .msg .mh .snd .resend{display:inline-flex;align-items:center;height:20px;padding:0 4px;border:0;border-radius:10px;background:none;color:var(--accent);cursor:pointer}.msg .mh .snd .resend:hover{background:var(--hover)}.msg .mh .snd .resend i{display:none}.msg .mh .snd .resend svg{width:14px;height:14px}
 .dlv{margin-top:3px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
@@ -2088,6 +2092,7 @@ html.hb-unkeep .inbr:first-child:has(> .ibun) .rtools{right:132px}
 
 #ibptr{position:fixed;left:50%;transform:translateX(-50%);z-index:65;display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;background:var(--surface);box-shadow:0 4px 16px var(--shadow),0 0 0 1px var(--line);color:var(--muted);font-size:13px;pointer-events:none;transition:opacity .12s}
 #ibptr[hidden]{display:none}
+#ibptr b:empty{display:none}   
 #ibptr i{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent,#3b82f6)}
 #ibptr.spin i{animation:ibptrspin .7s linear infinite}
 @keyframes ibptrspin{to{transform:rotate(360deg)}}
@@ -2979,10 +2984,12 @@ const drPost = (b, keep, n = 0) => fetch("api/draft", { method: "POST", keepaliv
     if (n < 3 && DR[b.key]?.at === b.at) setTimeout(() => drPost(b, keep, n + 1), [1e3, 3e3, 7e3][n]);
   }
 );
-function draftSet(key, text) {
+const drFiles = {};
+function draftSet(key, text, files) {
   if (!key) return;
-  if (text) DR[key] = { text, at: Date.now() };
-  else DR[key] = { text: "", at: Date.now() };
+  const fs = files !== void 0 ? files : DR[key]?.files || [];
+  if (files !== void 0) drFiles[key] = 1;
+  DR[key] = { text: text || "", at: Date.now(), ...fs.length ? { files: fs } : {} };
   if (key.startsWith("th:")) repDraftMark(key.slice(3));
   try {
     localStorage.setItem("hb-drafts", JSON.stringify(DR));
@@ -2990,7 +2997,13 @@ function draftSet(key, text) {
   }
   clearTimeout(drTimer[key]);
   drTimer[key] = setTimeout(() => {
-    if (window.HB_LIVE) drPost({ key, text: DR[key].text, at: DR[key].at });
+    if (!window.HB_LIVE) return;
+    const b = { key, text: DR[key].text, at: DR[key].at };
+    if (drFiles[key]) {
+      b.files = DR[key].files || [];
+      delete drFiles[key];
+    }
+    drPost(b);
   }, 700);
 }
 const REP_DR = '<span class="rdr" title="쓰던 답글이 있어요" aria-label="쓰던 답글 있음"></span>';
@@ -3008,6 +3021,7 @@ function draftSent(key, sent) {
   const at = Date.now();
   DR[key] = { text: "", at, sent: at };
   drTyped[key] = 0;
+  delete drFiles[key];
   if (key.startsWith("th:")) repDraftMark(key.slice(3));
   try {
     localStorage.setItem("hb-drafts", JSON.stringify(DR));
@@ -3019,6 +3033,7 @@ function draftSent(key, sent) {
 const isSaved = (ts) => !!window.HBInbox?.isSaved(ts);
 const chatSave = (ts, on) => window.HBInbox?.save(ts, on);
 const draftGet = (key) => key && DR[key]?.text || "";
+const drHas = (x) => !!(x?.text || x?.files?.length);
 async function draftPull() {
   try {
     const j = await (await fetch("api/drafts", { cache: "no-store" })).json(), gone = [];
@@ -3027,17 +3042,17 @@ async function draftPull() {
       if (k.startsWith("th:")) queueMicrotask(() => {
         if (was !== !!(DR[k]?.text || "").trim()) repDraftMark(k.slice(3));
       });
-      if (v.text) {
+      if (drHas(v)) {
         if (!mine || (v.at || 0) > (mine.at || 0)) DR[k] = v;
         continue;
       }
-      if (!mine?.text) {
+      if (!drHas(mine)) {
         if (!mine || (v.at || 0) > (mine.at || 0)) DR[k] = v;
         continue;
       }
       if (Date.now() - (drTyped[k] || 0) < 3e4) continue;
-      const st = String(v.sent_text || "").trim();
-      if (st && !drTyped[k] && st.startsWith(mine.text.trim()) || (v.at || 0) >= (mine.at || 0)) {
+      const st = String(v.sent_text || "").trim(), mt = String(mine.text || "").trim();
+      if (st && mt && !drTyped[k] && st.startsWith(mt) || (v.at || 0) >= (mine.at || 0)) {
         gone.push([k, mine.text]);
         DR[k] = v;
       }
@@ -3047,6 +3062,7 @@ async function draftPull() {
     } catch (e) {
     }
     if (gone.length) draftGone(gone);
+    attFill();
   } catch (e) {
   }
 }
@@ -3986,7 +4002,8 @@ function viewTree() {
   viewTree.ax = 0;
   const peers = undefined || "";
   const tidy2 = !!(nodeTree() && D.tree_tidy), seatK = seatKeys();
-  const shownA = tidy2 ? AREAS.filter((k) => seatK.has(k)) : AREAS, xA = tidy2 ? AREAS.filter((k) => !seatK.has(k)) : [];
+  const scA = "";
+  const shownA = scA ? AREAS.filter((k) => k === scA) : tidy2 ? AREAS.filter((k) => seatK.has(k)) : AREAS, xA = !scA && tidy2 ? AREAS.filter((k) => !seatK.has(k)) : [];
   const unQ = tidy2 ? big.filter((b) => b.park && b.area === "unsorted") : [], unN = tidy2 ? deepOf("unsorted").length + unQ.length : 0;
   const xN = xA.reduce((n, k) => n + 1 + deepOf(k).length + bigOf(leadPane(k)).length, 0) + unN, xOpen = opened.has("xcols");
   const colOf = (k) => {
@@ -4002,7 +4019,7 @@ function viewTree() {
   $("#v-tree").innerHTML = `<div class="canvas${peers ? " orgs" : ""}${peers && !AREAS.length ? " solo" : ""}"><div class="tree">
     <div class="rootwrap">${meNode()}</div><div class="drop"></div>${mtree ? `
     <div class="mprim">${primCol}</div><div class="drop"></div>${grp}` : ""}
-    <div class="areas">${mtree ? "" : `<div class="col">${primCol}</div>`}${shownA.map(colOf).join("")}</div>${xCols}</div>${peers}${noNodes() && !peers ? emptyHTML({ ic: "node", t: "아직 노드가 없어요", p: "기기에서 AI 창에 일을 맡기면 그 일이 노드로 여기 떠요.", fill: true }) : ""}</div>`;
+    <div class="areas">${mtree || scA ? "" : `<div class="col">${primCol}</div>`}${shownA.map(colOf).join("")}</div>${xCols}</div>${peers}${noNodes() && !peers ? emptyHTML({ ic: "node", t: "아직 노드가 없어요", p: "기기에서 AI 창에 일을 맡기면 그 일이 노드로 여기 떠요.", fill: true }) : ""}</div>`;
   keepAv();
   const ar = $("#v-tree .areas");
   if (ar && sl) ar.scrollLeft = sl;
@@ -5203,15 +5220,40 @@ let newVer = "";
 function verSeen(ver) {
   if (!ver || !window.HB_VER || ver === window.HB_VER) return;
   newVer = ver;
-  $("#h-new").hidden = false;
+  nvShow();
+}
+let nvHid = "";
+function nvShow() {
+  if (!LIVE || !newVer || nvHid === newVer) return;
+  let el = document.getElementById("hb-newver");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "hb-newver";
+    el.className = "toast nvt";
+    el.setAttribute("role", "status");
+    el.innerHTML = '<span>새 판이 나왔어요</span><button type="button" class="nvgo" data-nvgo>새로고침</button><button type="button" class="nvx" data-nvx aria-label="닫기" title="닫기"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>';
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("[data-nvgo]")) {
+        if (!reloadKeep()) {
+          const sp = el.querySelector("span");
+          sp.textContent = "새로고침하지 못했어요";
+          setTimeout(() => {
+            sp.textContent = "새 판이 나왔어요";
+          }, 4e3);
+        }
+      } else if (e.target.closest("[data-nvx]")) {
+        nvHid = newVer;
+        el.hidden = true;
+      }
+    });
+    document.body.appendChild(el);
+  }
+  el.hidden = false;
 }
 let lastInput = Date.now();
 for (const t of ["pointerdown", "keydown", "wheel", "touchstart", "input"]) document.addEventListener(t, () => {
   lastInput = Date.now();
 }, { capture: true, passive: true });
-setInterval(() => {
-  if (LIVE && newVer && !document.hidden && Date.now() - lastInput > 12e4 && reloadAuto()) reloadKeep();
-}, 3e4);
 const busyNow = () => sending || !!window.HBV?.memo || !!window.HBV?.call || Object.keys(CS.pend).some((k) => /spin| acked"/.test(CS.pend[k])) || Object.values(CS.mark).some((x) => x.st === "spin");
 const pageSc = () => {
   const w = document.querySelector(".wrap");
@@ -6444,7 +6486,7 @@ document.addEventListener("visibilitychange", () => {
     return;
   }
   HB_VIS = Date.now();
-  if (newVer && reloadAuto() && reloadKeep()) return;
+  if (newVer) nvShow();
   evOpen();
   refresh();
   loadTopics().then((ch) => {
@@ -6806,7 +6848,7 @@ function msgHTML(m, k, inThread) {
   const sp = splitImgs(vtext(m));
   const body = m.deleted ? `<div class="bd">이 글은 삭제됐어요</div>` : ed ? `<div class="medit"><textarea id="medit" rows="2" aria-label="글 고치기">${esc(CS.edit.text)}</textarea><div class="mea"><button data-ecancel>취소</button><button class="pri" data-esave>저장</button></div></div>` : m.fwd ? fwdHTML(m) : m.split_from ? quoteHTML(m) : m.tools ? `<details class="stools"><summary>${LU("terminal", 14)}<span>도구 ${m.tools.length}개 · ${esc([...new Set(m.tools.map((x) => x.split(" — ")[0]))].slice(0, 4).join(" · "))}</span></summary><ol>${m.tools.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></details>` : `${voiceOf(m.files, m.who === "owner")}${sp.text ? `<div class="bd${voiceOf(m.files) ? " vtr" : ""}">${edTag(md(sp.text, m.who !== "owner"), m.edited && m.who === "owner")}</div>` : ""}${filesHTML(m.files, sp.imgs)}${btns}${cstHTML(m)}${splitsHTML(m)}`;
   return `<div class="msg${m.who === "owner" ? " me" : ""}${m.deleted ? " gone" : ""}${CS.hl === m.ts ? " hl" : ""}${CS.pick === m.ts ? " pick" : ""}${!inThread && CS.th?.ts === m.ts ? " thon" : ""}${CS.flash?.ts === m.ts && Date.now() < CS.flash.until ? " flash" : ""}" data-mts="${m.ts}" data-mk="${k}" data-mroot="${root}" data-min="${inThread ? 1 : ""}">${m.deleted ? `<span class="av">${ICON.trash}</span>` : avatar(m.name, initials(m.name))}<div class="mbody" style="min-width:0">
-    ${!m.deleted && isSaved(m.ts) ? `<div class="svd">${ICON.saved}저장함</div>` : ""}${movedHTML(m)}${m.deleted ? "" : `<div class="mh"><b>${esc(m.who === "owner" ? ME_NAME : m.name)}</b>${k0 === "primary" && !inThread && MAIN_ONE[m.ch] ? `<span class="ar" title="#${esc(m.ch)}" aria-label="#${esc(m.ch)}">${MAIN_ONE[m.ch]}</span>` : ""}${m.tag ? `<span class="tag">${esc(m.tag)}</span>` : ""}${cardTag(m)}<span class="tm">${when(m.ts)}</span>${!inThread && m.owner ? `<span class="tm own">→ ${esc(ownerName(m.owner))}</span>` : ""}${markOf(m.ts)}${ackHTML(m)}</div>`}
+    ${!m.deleted && isSaved(m.ts) ? `<div class="svd">${ICON.saved}저장함</div>` : ""}${movedHTML(m)}${m.deleted ? "" : `<div class="mh"><b>${esc(m.who === "owner" ? ME_NAME : m.name)}</b>${k0 === "primary" && !inThread && MAIN_ONE[m.ch] ? `<span class="ar" title="#${esc(m.ch)}" aria-label="#${esc(m.ch)}">${MAIN_ONE[m.ch]}</span>` : ""}${m.tag ? `<span class="tag">${esc(m.tag)}</span>` : ""}${cardTag(m)}${tmMark(when(m.ts), markOf(m.ts) || ackHTML(m), !inThread && m.owner ? `<span class="tm own">→ ${esc(ownerName(m.owner))}</span>` : "")}</div>`}
     ${body}${dlvHTML(m)}${reacts(m, k, root)}${rep}${inThread || CS.th?.ts !== root ? pendFor(m.ts) + pendFor("r" + m.ts) : ""}</div>
     ${m.ledger || m.deleted || ed ? "" : toolsHTML(m, k, root, inThread)}</div>`;
 }
@@ -6912,8 +6954,8 @@ const cstHTML = (m) => !m.card?.shown || m.deleted || /✔ 닫힘/.test(m.text |
 const dlvTo = (d) => d?.to || d?.pane && ((p) => p ? nodeTitle(p) : "")(byPane[d.pane] || parkBy[d.pane] || (D.closed || []).find((x) => x.pane === d.pane)) || "";
 const ACK = { got: ["check", "창에 전달됨"], wait: ["clock", "기다리는 중"], done: ["check", "창에 전달됨"] };
 const ackHTML = (m) => {
-  const a = m.who === "owner" && !m.deleted && ACK[m.ack];
-  return a ? `<span class="ackst ${m.ack}" role="img" aria-label="${a[1]}" title="${a[1]}">${LU(a[0], 13)}</span>` : "";
+  const a = m.who === "owner" && !m.deleted && (ACK[m.ack] || ["check", "서버에 보냄"]);
+  return a ? `<span class="ackst ${m.ack || "sent"}" role="img" aria-label="${a[1]}" title="${a[1]}">${LU(a[0], 13)}</span>` : "";
 };
 const dlvHTML = (m) => m.dlv?.ok !== false || !dlvTo(m.dlv) || m.deleted ? "" : `<div class="dlv" title="이 글을 받은 창">→ ${esc(dlvTo(m.dlv))} · 못 넣음</div>`;
 const edTag = (html, on) => on ? /<\/p>\s*$/.test(html) ? html.replace(/<\/p>\s*$/, ' <span class="edt">(수정됨)</span></p>') : html + ' <span class="edt">(수정됨)</span>' : html;
@@ -7653,10 +7695,41 @@ async function upOne(a) {
   }
 }
 function attChanged(id) {
+  attSave(id);
   const box = document.querySelector(`#ans .box[data-mbox="${id}"], #mchatbox .box[data-mbox="${id}"]`);
   if (!box) return viewChat(true);
   box.querySelector(".att").innerHTML = attChips(id);
   grow(document.getElementById(id));
+}
+const drFile = (a) => ({ id: a.id, name: String(a.f?.name || "file").slice(0, 120), img: !!a.url, mime: String(a.f?.type || "").slice(0, 100), size: +a.f?.size || 0 });
+function attSave(id) {
+  const ta = document.getElementById(id), k = ta && taKey(ta);
+  if (!k) return;
+  const fs = (CS.att[id] || []).filter((a) => a.id && (!a.dk || a.dk === k)).map(drFile), old = DR[k]?.files || [];
+  if (fs.map((f) => f.id).join() === old.map((f) => f.id).join()) return;
+  drTyped[k] = Date.now();
+  draftSet(k, DR[k]?.text || "", fs);
+}
+const drAtt = (f, dk) => ({ f: { name: f.name || "file", type: f.mime || "", size: f.size || 0 }, url: f.img ? "api/file/" + f.id : "", id: f.id, dk, k: Math.random().toString(36).slice(2, 10), done: Promise.resolve() });
+function attFill() {
+  for (const ta of document.querySelectorAll("[data-mbox] textarea")) {
+    const id = ta.id, k = id && taKey(ta);
+    if (!k) continue;
+    const cur0 = CS.att[id] || [], mine = cur0.filter((a) => !a.dk || a.dk === k), want = DR[k]?.files || [];
+    const up = mine.filter((a) => a.id);
+    if (mine.length === cur0.length && up.map((a) => a.id).join() === want.map((f) => f.id).join()) continue;
+    for (const a of cur0) if (!mine.includes(a)) {
+      if (!a.id) a.xhr?.abort();
+      if (a.url?.startsWith("blob:")) URL.revokeObjectURL(a.url);
+    }
+    const by = new Map(up.map((a) => [a.id, a]));
+    CS.att[id] = [...want.map((f) => by.get(f.id) || drAtt(f, k)), ...mine.filter((a) => !a.id)].slice(0, 10);
+    const att = ta.closest("[data-mbox]")?.querySelector(".att");
+    if (att) {
+      att.innerHTML = attChips(id);
+      grow(ta);
+    }
+  }
 }
 const COMPOSER_ONE_LINE = false, COMPOSER_EXPAND = false;
 document.documentElement.classList.toggle("cmp1", COMPOSER_ONE_LINE);
@@ -7764,7 +7837,8 @@ function addFiles(id, list) {
   if (!fs.length) return;
   const big2 = fs.filter((f) => f.size > 25 * 1024 * 1024);
   if (big2.length) toast("25MB 넘는 파일은 못 올려요: " + big2.map((f) => f.name).join(", "));
-  const add = fs.filter((f) => f.size <= 25 * 1024 * 1024).map((f) => ({ f, url: /^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(f.type) ? URL.createObjectURL(f) : "", k: Math.random().toString(36).slice(2, 10) }));
+  const dk = taKey(document.getElementById(id));
+  const add = fs.filter((f) => f.size <= 25 * 1024 * 1024).map((f) => ({ f, url: /^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(f.type) ? URL.createObjectURL(f) : "", k: Math.random().toString(36).slice(2, 10), dk }));
   CS.att[id] = [...CS.att[id] || [], ...add].slice(0, 10);
   if (LIVE) {
     for (const a of add) if (CS.att[id].includes(a)) preUp(id, a);
@@ -8375,6 +8449,7 @@ function viewChat(keepScroll) {
       grow(ta, true);
     }
   }
+  attFill();
   if (CS.edit && !document.getElementById("medit")) CS.edit = null;
   if (CS.fedit && !document.getElementById("fedit")) {
     const k = CS.fedit.key;
@@ -8545,12 +8620,13 @@ async function openThread(k, ts, focus, side) {
   if (focus) document.getElementById("cth")?.focus();
 }
 const pendHTML = (cls, t) => (t === ERR && window.hbErr?.("inline " + errSite()), `<div class="state ${cls}">${cls === "" ? '<i class="g g-spin"></i>' : ""}${t}</div>`);
-const sndMark = (st, key) => st === "bad" ? `<span class="snd bad" role="alert">${key ? resendBtn(key) : ""}<span>${ERR}</span></span>` : st ? '<span class="snd" role="status" aria-label="보내는 중" title="보내는 중"><i class="g g-spin"></i></span>' : "";
+const sndMark = (st, key) => st === "bad" ? `<span class="snd bad" role="alert">${key ? resendBtn(key) : ""}<span>${ERR}</span></span>` : st ? '<span class="snd" role="status" aria-label="보내는 중" title="보내는 중"><i class="g g-spin"></i></span>' : ackHTML({ who: "owner" });
+const tmMark = (tm, mark, mid = "") => mark.startsWith('<span class="snd bad"') ? `<span class="tm">${tm}</span>${mid}${mark}` : `<span class="tm">${tm}${mark}</span>${mid}`;
 const markOf = (ts) => {
   const x = CS.mark[ts];
   return x ? sndMark(x.st, x.key) : "";
 };
-const mineHead = (mark, at) => `${avatar(ME_NAME, initials(ME_NAME))}<div class="mbody" style="min-width:0"><div class="mh"><b>${esc(ME_NAME)}</b><span class="tm">${when((at || Date.now()) / 1e3)}</span>${mark}</div>`;
+const mineHead = (mark, at) => `${avatar(ME_NAME, initials(ME_NAME))}<div class="mbody" style="min-width:0"><div class="mh"><b>${esc(ME_NAME)}</b>${tmMark(when((at || Date.now()) / 1e3), mark)}</div>`;
 const pimHTML = (pim) => pim?.length ? `<div class="mfiles mmedia${pim.length > 1 ? " grid" : ""}">${pim.map((x) => `<img src="${x.url}" width="${x.w}" height="${x.h}" alt="${esc(x.name)}" data-media data-kind="i" data-src="${x.url}" data-name="${esc(x.name)}">`).join("")}</div>` : "";
 const mineHTML = (text, nfiles, st, key, vnl, pim, o = {}) => vnl ? `<div class="msg me sending${st === "bad" ? " bad" : st ? "" : " acked"}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${vnHTML(vnl, true)}${text ? `<div class="bd vtr">${md(text.replace(/^\s*🎙\s*/, ""), false)}</div>` : ""}${pimHTML(pim)}${nfiles - 1 - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - 1 - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>` : `<div class="msg me sending${st === "bad" ? " bad" : st ? "" : " acked"}"${o.id ? ` id="${o.id}"` : ""}>${mineHead(o.mark ?? sndMark(st, key), o.at)}${text ? `<div class="bd">${md(text, false)}</div>` : ""}${pimHTML(pim)}${nfiles - (pim?.length || 0) > 0 ? `<div class="pst">첨부 ${nfiles - (pim?.length || 0)}개</div>` : ""}${o.bar || ""}</div></div>`;
 const FAIL_WHY = { net: "", srv: "", unk: "받았는지 확인하지 못했어요", unk2: "올라갔을 수 있어요 — 새로고침으로 확인해 주세요", slow: "", big: "글이나 첨부가 너무 커요", node: "노드를 다시 열지 못했어요", maybe: "올라갔을 수 있어요 · 채널에 보이면 지워 주세요" };
@@ -8787,7 +8863,7 @@ async function sessSend(ta, text) {
     if (chatOn()) viewChat(true);
   }
 }
-async function chatPost(body, base, rid0, oldKey, again, at0) {
+async function chatPost(body, base, rid0, oldKey, again, at0, onAccepted) {
   if (oldKey) {
     delete CS.pend[oldKey];
     delete CS.fail[oldKey];
@@ -8920,7 +8996,7 @@ async function chatPost(body, base, rid0, oldKey, again, at0) {
       errLog("replayed old failure · new rid");
       undo();
       pmDrop(key);
-      return chatPost(body, base, null, key, true, tAt);
+      return chatPost(body, base, null, key, true, tAt, onAccepted);
     }
     if (!a || a.state === "none") return fail(j ? "server " + st : "no answer", a?.state === "none");
     j = { ok: true, ...a };
@@ -8929,10 +9005,12 @@ async function chatPost(body, base, rid0, oldKey, again, at0) {
     delete CS.pend[key];
     return chatLoad();
   }
-  if (!body.label && CS.pend[key]) {
+  const took = !(j.state === "fail" && !j.posted);
+  if (took && !body.label && CS.pend[key]) {
     CS.pend[key] = mine("");
     viewChat(true);
   }
+  if (took) onAccepted?.(j);
   if (body.label) unmark();
   const msgOf = (ts) => [...CS.thr[body.thread || ts]?.messages || [], ...CS.ch[body.channel]?.messages || [], ...isNodeCh(CS.at) ? CS.ch[CS.at]?.messages || [] : []].find((m) => m.ts === ts);
   const vf = (m) => (m?.files || []).find(isAudio);
@@ -11959,9 +12037,10 @@ setInterval(() => {
     });
   }
   const dropDraft = (key) => {
-    draftSet(key, "");
+    draftSet(key, "", []);
     if (typeof drTimer === "object") clearTimeout(drTimer[key]);
-    if (typeof drPost === "function" && window.HB_LIVE) drPost({ key, text: "", at: DR[key]?.at || Date.now() }, true);
+    if (typeof drFiles === "object") delete drFiles[key];
+    if (typeof drPost === "function" && window.HB_LIVE) drPost({ key, text: "", at: DR[key]?.at || Date.now(), files: [] }, true);
     S.drafts = S.drafts.filter((x) => x.key !== key);
     emit();
   };
@@ -13203,8 +13282,8 @@ setInterval(() => {
     document.body.appendChild(d);
     return d;
   })();
-  const ptrShow = (dy, msg, spin) => {
-    const d = ptrEl(), f = document.getElementById("cfeed"), top = f ? f.getBoundingClientRect().top : 0;
+  const ptrShow = (dy, msg, spin, el) => {
+    const d = ptrEl(), f = el || ptr?.f || document.getElementById("cfeed"), top = f ? f.getBoundingClientRect().top : 0;
     d.style.top = `${Math.round(top + Math.min(dy, PTR_MAX) - 40)}px`;
     d.style.opacity = String(Math.min(1, dy / PTR_GO));
     d.classList.toggle("spin", !!spin);
@@ -13219,13 +13298,16 @@ setInterval(() => {
     }
   };
   const ptrFeed = (t) => {
-    const f = t && t.closest ? t.closest("#cfeed") : null;
-    return f && typeof CS === "object" && /^i:/.test(CS.at || "") && !document.getElementById("mview") ? f : null;
+    if (!t || !t.closest || document.getElementById("mview")) return null;
+    const f = t.closest("#cfeed");
+    if (f && typeof CS === "object" && CS.at) return /^i:/.test(CS.at) ? { f, k: "ib" } : typeof chatOn === "function" && chatOn() && typeof loadCh === "function" ? { f, k: "ch", at: CS.at } : null;
+    const x = t.closest('#bxx .xv[data-v="home"]');
+    return x && document.documentElement.classList.contains("bx-x") && window.BXFeed?.refresh ? { f: x, k: "x" } : null;
   };
   document.addEventListener("touchstart", (e) => {
     ptrTouch = Date.now();
-    const f = ptrFeed(e.target);
-    ptr = !ptrBusy && f && f.scrollTop <= 0 && e.touches.length === 1 ? { f, y: e.touches[0].clientY, dy: 0 } : null;
+    const g = ptrFeed(e.target);
+    ptr = !ptrBusy && g && g.f.scrollTop <= 0 && e.touches.length === 1 ? { ...g, y: e.touches[0].clientY, dy: 0 } : null;
   }, { passive: true });
   document.addEventListener("touchmove", (e) => {
     if (!ptr) return;
@@ -13246,7 +13328,7 @@ setInterval(() => {
       return;
     }
     ptrBusy = true;
-    ptrShow(PTR_GO, "새로고침 중…", true);
+    ptrShow(PTR_GO, "", true, p.f);
     const t0 = Date.now(), done = () => setTimeout(() => {
       ptrBusy = false;
       ptrHide();
@@ -13254,17 +13336,25 @@ setInterval(() => {
     const pinTop = () => {
       const at = Date.now(), go = () => {
         if (ptrTouch > at) return;
-        const f = document.getElementById("cfeed");
+        const f = p.k === "x" ? p.f : document.getElementById("cfeed");
         if (f && f.scrollTop > 0) f.scrollTop = 0;
         if (Date.now() - at < 1500) requestAnimationFrame(go);
       };
       go();
     };
-    Promise.allSettled([load(), typeof refresh === "function" ? refresh() : null]).then(() => {
+    const job = p.k === "ch" ? Promise.allSettled([loadCh(p.at), load()]).then(() => {
+      if (typeof CS === "object" && CS.at === p.at && typeof viewChat === "function") viewChat(true);
+      emit();
+    }) : p.k === "x" ? Promise.allSettled([load(), typeof refresh === "function" ? refresh() : null]).then(() => window.BXFeed.refresh()).then(() => {
       turnSync();
       emit();
       pinTop();
-    }).finally(done);
+    }) : Promise.allSettled([load(), typeof refresh === "function" ? refresh() : null]).then(() => {
+      turnSync();
+      emit();
+      pinTop();
+    });
+    job.finally(done);
   };
   document.addEventListener("touchend", ptrEnd, { passive: true });
   document.addEventListener("touchcancel", () => {

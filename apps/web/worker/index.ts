@@ -1557,7 +1557,7 @@ app.get("/api/me/onboarding", async c => {
   const s = await signedIn(c), me = s ? await boardWho(c.env, s.user.email) : null; if (!me) return c.json({ error: "no" }, 403);   // owner_unified 가 켜지면 주인도 canon
   return c.json(await onboarding(c.env.DB, me, { server: c.env.PUBLIC_URL, push: await ledger.f7On(c.env.DB, "member_push").catch(() => false) }), 200, { "cache-control": "no-store" });
 });
-const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1", unreadkeep: v => v === "0" || v === "1", canvasback: v => v === "0" || v === "1", ibboth: v => v === "0" || v === "1", mainmerge: v => v === "0" || v === "1", sbw: v => v === "0" || v === "72" || (/^[1-9]\d{2}$/.test(v) && +v >= 200 && +v <= 480) }
+const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1", newsb: v => v === "0" || v === "1", unreadkeep: v => v === "0" || v === "1", canvasback: v => v === "0" || v === "1", ibboth: v => v === "0" || v === "1", mainmerge: v => v === "0" || v === "1", sbw: v => v === "0" || v === "72" || (/^[1-9]\d{2}$/.test(v) && +v >= 200 && +v <= 480) }
 app.get("/api/me/ui", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const rs = (await c.env.DB.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(s.user.email.toLowerCase()).all<{ k: string; v: string }>()).results || [];
@@ -2714,6 +2714,11 @@ app.all("*", async c => {
     let b: Record<string, unknown> | null = null;
     try { b = raw.length > (url.pathname === "/api/draft" ? 200000 : 20000) ? null : JSON.parse(new TextDecoder().decode(raw) || "{}"); } catch { b = null; }
     if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
+    if (url.pathname === "/api/draft" && b.files != null) {
+      const f = await memberFiles.draftFiles(c.env.RESULTS, s.user.email.toLowerCase(), b.files).catch(() => null);
+      if (!f) return c.json({ ok: false, error: "파일을 찾지 못했어요" }, 400);
+      b.files = f;
+    }
     const r = await (url.pathname === "/api/draft" ? OS.draft : OS.nodePri)(c.env.DB, b as Record<string, any>).catch(() => null);
     return r ? c.json(r[1], r[0] as 200) : c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" });
   }

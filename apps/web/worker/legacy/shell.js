@@ -39,10 +39,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     listv: '<svg class="lu" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   };
   // PC 사이드바 안 A · B 아이콘(시안 hbFFjcBL1iHHtFRprbZczQ1q Icons 판): 피드 = 원래 홈(lucide house, 고르면 채움), 노드 = 보드 둥글이 선 그림(고르면 채움 · 눈 비움), 새 글 = lucide square-pen, 에이전트 = lucide bot
-  const sv24 = (d, w = 20) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const sv24 = (d, w = 18) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
   const HOUSE = (on) => sv24(`<path${on ? ' fill="currentColor"' : ''} d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path${on ? ' stroke="var(--surface)"' : ''} d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/>`);
   const BLOB_D = 'M80.44 48.88C80.16 56.94 78.39 67.04 73.42 72.2C68.46 77.36 58.73 79.31 50.64 79.82C42.55 80.33 30.61 80.39 24.89 75.24C19.17 70.08 16.4 57.74 16.33 48.88C16.26 40.02 18.75 27.78 24.47 22.09C30.19 16.41 42.2 14.49 50.64 14.77C59.08 15.06 70.16 18.13 75.12 23.82C80.09 29.5 80.72 40.82 80.44 48.88Z';
-  const NODEI = (on, w = 20) => `<svg width="${w}" height="${w}" viewBox="10 8 78 78" fill="none" aria-hidden="true"><path d="${BLOB_D}" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/><g stroke="${on ? 'var(--surface)' : 'currentColor'}" stroke-width="6.5" stroke-linecap="round"><line x1="40.5" y1="38" x2="40.5" y2="49"/><line x1="58" y1="38" x2="58" y2="48.5"/></g></svg>`;
+  const NODEI = (on, w = 18) => `<svg width="${w}" height="${w}" viewBox="10 8 78 78" fill="none" aria-hidden="true"><path d="${BLOB_D}" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/><g stroke="${on ? 'var(--surface)' : 'currentColor'}" stroke-width="6.5" stroke-linecap="round"><line x1="40.5" y1="38" x2="40.5" y2="49"/><line x1="58" y1="38" x2="58" y2="48.5"/></g></svg>`;
   const IA = {house: HOUSE(false), houseOn: HOUSE(true), node: NODEI(false), nodeOn: NODEI(true),
     pen: sv24('<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>'),
     search: sv24('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>'),
@@ -87,11 +87,14 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const rz = mk('div', 'bx-sbrz'); rz.setAttribute('role', 'separator'); rz.setAttribute('aria-orientation', 'vertical'); rz.setAttribute('aria-label', '사이드바 폭 — 끌어서 목록 · 아이콘 막대 · 숨김, 두 번 누르면 기본'); rz.title = '끌어서 사이드바 폭 바꾸기(좁히면 아이콘 막대 · 더 좁히면 숨김) · 두 번 누르면 기본'; rz.tabIndex = 0;
   const sbwNow = () => parseInt(getComputedStyle(R).getPropertyValue('--bx-sbw')) || 264, clampW = w => Math.round(Math.min(SBW[1], Math.max(SBW[0], w)));
   const feedOn = () => R.classList.contains('bx-x') && !R.classList.contains('xnodes');
-  const stepOf = x => !feedOn() ? clampW(x) : x < TO_HIDE ? 0 : x < TO_A ? RAIL : clampW(x);   // 0 = 숨김
+  const NSK = 'hb-newsb:' + String(window.HB_MEMBER?.email || 'owner').toLowerCase();
+  const newsbPref = () => { try { return localStorage.getItem(NSK) === '1'; } catch { return false; } };
+  const newOn = () => feedOn() || newsbPref();
+  const stepOf = x => !newOn() ? clampW(x) : x < TO_HIDE ? 0 : x < TO_A ? RAIL : clampW(x);   // 0 = 숨김
   const keepW = w => sbwKeep(w === 264 ? 0 : w);
   rz.addEventListener('pointerdown', e => {
     if (e.button !== 0) return; e.preventDefault(); rz.setPointerCapture(e.pointerId); R.classList.add('bx-sbdrag');
-    const w0 = sbwNow(), fd = feedOn();
+    const w0 = sbwNow(), fd = newOn();
     if (!fd && w0 === RAIL){ sbwSet(0); }   // 피드 밖은 막대가 없음 — 보이는 폭(기본)에서 끌기 시작
     // 숨김은 끄는 동안 미리 보기만(bx-colpv — 손잡이는 남아 계속 끌 수 있음), 놓을 때 접음
     const mv = ev => { const s = stepOf(ev.clientX); R.classList.toggle('bx-colpv', !s); if (s) sbwSet(s); tipOff(); };
@@ -102,7 +105,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   });
   rz.addEventListener('dblclick', () => { sbwSet(0); sbwKeep(0); });
   rz.addEventListener('keydown', e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; e.preventDefault();
-    const w = sbwNow(), n = !feedOn() ? clampW(w + (e.key === 'ArrowRight' ? 16 : -16)) : e.key === 'ArrowRight' ? (w === RAIL ? SBW[0] : clampW(w + 16)) : (w === RAIL ? 0 : w <= SBW[0] ? RAIL : clampW(w - 16));
+    const w = sbwNow(), n = !newOn() ? clampW(w + (e.key === 'ArrowRight' ? 16 : -16)) : e.key === 'ArrowRight' ? (w === RAIL ? SBW[0] : clampW(w + 16)) : (w === RAIL ? 0 : w <= SBW[0] ? RAIL : clampW(w - 16));
     if (!n) return setCol(true); sbwSet(n); keepW(n); });
   window.BXSideW = w => sbwSet(isW(w) ? w : 0);   // settings.js 가 계정 값을 받으면 부름
   // 막대(안 B)에서 마우스를 올리면 이름(시안 「마우스 올리면 이름」) — 사이드바는 굴림 칸이라 밖(body)에 하나 띄움
@@ -124,7 +127,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   ibox.after(agBox);
   document.body.append(sb, rz, scrim, dr, cmb, tip);
   sb.addEventListener('pointerover', e => {
-    if (!R.classList.contains('bx-rail') || !feedOn() || R.classList.contains('bx-sbdrag')) return tipOff();
+    if (!R.classList.contains('bx-rail') || !newOn() || R.classList.contains('bx-sbdrag')) return tipOff();
     const b = e.target.closest?.('.bx-it, .lgb, .bx-me, .bx-tools button'); if (!b || !sb.contains(b)) return tipOff();
     const t = (b.querySelector(':scope > span')?.textContent || b.getAttribute('aria-label') || b.title || '').trim(), n = b.querySelector(':scope > .n')?.textContent || '';
     if (!t) return tipOff();
@@ -252,7 +255,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       return head('primary', (D.areas || []).map(a => a.key).filter(k => k !== 'primary' && AREA_NAME[k]).map(k => head(k, col(k))).join('') + col('primary'));
     })();
     if (S.ag) agDraw({a: DG !== null ? `<div class="bx-dgs">${DG}</div>` : org ? `<div class="bx-dgs bx-org">${org}</div>` : ch, c: (DG !== null ? '' : TS ? tks : nd) + ss, x: xc});
-    const sbH = !feedOn() ? `<div class="top">${logo}<span class="tr">${fb}<button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + body + foot
+    const sbH = !newOn() ? `<div class="top">${logo}<span class="tr">${fb}<button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + body + foot
       : `<div class="top">${logo}<span class="tr"><button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + sbA + foot;
     const drH = `<div class="top">${logo}<span class="tr">${fb}</span></div>` + body + foot;
     if (lists.html !== sbH + drH){ lists.html = sbH + drH; const k1 = window.HBKeepAv?.(sb), k2 = window.HBKeepAv?.(dr); sb.innerHTML = sbH; dr.innerHTML = drH; k1?.(); k2?.(); }   // 같은 아바타는 애니메이션을 이어서(다시 안 틂, 보드 HBKeepAv)
@@ -352,7 +355,10 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   window.HB_VIEW_OFF = () => on() && (R.classList.contains('bx-chat') || R.classList.contains('bx-route') || R.classList.contains('bx-set') || R.classList.contains('bx-stpg') || !!S.ib || !!S.ag || !!document.querySelector('#mview.full'));
   let wakeQ = 0; const wakeLater = () => { if (!wakeQ) wakeQ = requestAnimationFrame(() => { wakeQ = 0; window.HBViewWake?.(); }); };
   new MutationObserver(wakeLater).observe(R, {attributes: true, attributeFilter: ['class']});
-  let wasFeed = feedOn(); new MutationObserver(() => { const f = feedOn(); if (f !== wasFeed){ wasFeed = f; if (on()) lists(); } }).observe(R, {attributes: true, attributeFilter: ['class']});   // 피드 ↔ 다른 화면: 사이드바 목록이 바뀜(한 줄 목록은 피드에서만)
+  // 피드 ↔ 다른 화면 · 설정을 바꿈: bx-newsb(새 사이드바 CSS)와 목록을 맞춤 — 클래스만 바뀌면 같은 값이라 다시 안 돎
+  const newApply = () => { const v = newOn(); if (R.classList.contains('bx-newsb') === v) return; R.classList.toggle('bx-newsb', v); if (on()) lists(); };
+  window.BXNewSb = newApply;   // settings.js 가 스위치 · 계정 값을 바꾸면 부름
+  new MutationObserver(newApply).observe(R, {attributes: true, attributeFilter: ['class']}); R.classList.toggle('bx-newsb', newOn());   // 피드 ↔ 다른 화면: 사이드바 목록이 바뀜(한 줄 목록은 피드에서만)
   new MutationObserver(wakeLater).observe(document.body, {childList: true});
 
   const show0 = window.show, chan0 = window.openChan;

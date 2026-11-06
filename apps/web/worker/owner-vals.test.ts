@@ -377,7 +377,9 @@ test("스냅숏에만 있던 칸: 상시 에이전트 표 · 판 agent/aname · 
     H.relinks = { OldArtifactId01: "NewArtifactId01", "bad id!": "NewArtifactId02" };
     H.dclass = { "dgit|Q-1": { size: "작업", work: "지어낸 일 이름", ai: true, why: "지어낸 배경" } };
     H.panes["%41"].up = "%40"; H.panes["%40"].up = "not-a-pane";
+    H.promises = [...H.promises, { n: 9, due: "2020-01-01", to: "동료", what: "기한 지난 지어낸 약속", watch: "감시", pane: "%40" }];
     assert.equal((await s.up(H)).status, 200);
+    const mine = Number(s.db.prepare("INSERT INTO member_promise(owner, win, wid, who, what, check_by, due, at) VALUES (?,?,?,?,?,?,?,?)").run(OWNER, "5 지어낸 일", "ew_pane40", "동료", "회원 길로 적은 지난 약속", "감시", "2020-01-02", Date.now()).lastInsertRowid);
     const D: any = await s.owner();
     assert.deepEqual(D.roster.map((r: any) => [r.key, r.state]), [["primary", "open"], ["dg_x", "open"], ["nx_y", "idle"]], "이름 없는 줄은 버림");
     assert.equal(D.roster[0].last.ago, 2, "마지막 줄은 at → ago(분)");
@@ -391,6 +393,9 @@ test("스냅숏에만 있던 칸: 상시 에이전트 표 · 판 agent/aname · 
     assert.equal(D.panes.find((p: any) => p.pane === "%41").up, "%40", "맡긴 쪽 판(org_layers ②) 그대로");
     assert.equal(D.panes.find((p: any) => p.pane === "%40").up, undefined, "판 번호 꼴이 아니면 버림");
     assert.deepEqual(D.relinks, { OldArtifactId01: "NewArtifactId01" }, "꼴이 틀린 id 는 버림");
+    assert.ok(D.promises.some((x: any) => x.n === 9), "기한 지난 하네스 약속도 약속 목록엔 그대로");
+    assert.ok(!D.to_check.some((x: any) => /^hp\d/.test(String(x.id))), "하네스 약속은 기한이 지나도 「확인 필요」에 안 올림(주인 스냅숏과 같게)");
+    assert.ok(D.to_check.some((x: any) => x.id === "p" + mine), "회원 길로 적은 지난 약속(p<id>)은 그대로 「확인 필요」");
     assert.ok(!D.panes.some((p: any) => p.pane === "%1"), "하네스 총괄이 있으면 회원 메인 봇 판은 뺌(보드에 총괄 둘)");
     assert.equal(D.panes.filter((p: any) => p.kind === "primary").length, 1);
     assert.deepEqual(D.areas.slice(1, 5).map((a: any) => a.lead_name), ["회사 리드", "퍼스널 리드", "DGit 리드", "가게 리드"], "열 머리 이름(화면 HB_CH 갈래가 이 값으로 AREA_NAME 을 덮음)");

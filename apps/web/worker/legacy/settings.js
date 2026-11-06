@@ -40,8 +40,11 @@
   }
   applyAccent();
   if (!window.HB_BLOB) document.addEventListener('DOMContentLoaded', applyAccent);
-  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '1'], ['unreadkeep', 'hb-unreadkeep', '0'], ['canvasback', 'hb-canvasback', '0'], ['sbw', 'hb-sbw', '0'], ['ibboth', 'hb-ib-both', '0'], ['mainmerge', 'hb-mainmerge', '0']];
+  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '1'], ['unreadkeep', 'hb-unreadkeep', '0'], ['canvasback', 'hb-canvasback', '0'], ['sbw', 'hb-sbw', '0'], ['ibboth', 'hb-ib-both', '0'], ['newsb', 'hb-newsb', '0'], ['mainmerge', 'hb-mainmerge', '0']];
   const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+  const NSK = 'hb-newsb:' + String(window.HB_MEMBER?.email || 'owner').toLowerCase();   // 새 사이드바 사본 열쇠 = 계정마다(shell.js 와 같음)
+  const UI_OWN = new Set(['newsb']);   // 계정 값만 따르는 열쇠(이 브라우저 값을 첫 값으로 올리지 않음)
+  for (const u of UIK) if (u[0] === 'newsb') u[1] = NSK;   // UIK 의 사본 열쇠를 계정마다로
   const uiSave = (k, v) => fetch('api/me/ui', {method: 'POST', credentials: 'include', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({k, v})}).catch(() => {});
   window.bxUiSave = uiSave;   // 보드 위 테마 단추(board.html)도 같은 길
   const uiApply = () => {
@@ -52,12 +55,14 @@
     window.HBInbox?.keepApply?.();   // 읽지 않음 켬 · 끔을 받은 목록 · 수에 바로(inbox.js)
     applyAccent();
     window.BXSideW?.(+(lsGet('hb-sbw') || 0));   // 사이드바 폭(계정 값을 받아 바뀌었을 때)
+    window.BXNewSb?.();   // 새 사이드바 켬 · 끔(다른 기기에서 바꿨을 때)
   };
   fetch('api/me/ui', {credentials: 'include'}).then(r => r.ok ? r.json() : null).then(j => {
     if (!j || typeof j !== 'object') return;
     let changed = false;
     for (const [k, ls, dflt] of UIK) {
       const sv = typeof j[k] === 'string' ? j[k] : null, lv = lsGet(ls);
+      if (sv == null && UI_OWN.has(k)){ if (lv != null && lv !== dflt){ try { localStorage.setItem(ls, dflt); } catch {} changed = true; } continue; }
       if (sv == null){ if (lv != null) uiSave(k, lv); continue; }   // 계정에 없음 — 이 브라우저에서 고른 값이 있으면 올림
       if (sv === (lv ?? dflt)) continue;
       try { if (k === 'accent' && sv === 'bot') localStorage.removeItem(ls); else localStorage.setItem(ls, sv); } catch {}
@@ -927,10 +932,12 @@
     const unk = () => { try { return localStorage.getItem('hb-unreadkeep') === '1'; } catch { return false; } };   // 읽지 않음 뒤로 가기 되살림 · 「읽지 않음으로」(기본 꺼짐)
     const canvasBack = () => { try { return localStorage.getItem('hb-canvasback') === '1'; } catch { return false; } };
     const mainM = () => { try { return localStorage.getItem('hb-mainmerge') === '1'; } catch { return false; } };
+    const newsb = () => { try { return localStorage.getItem(NSK) === '1'; } catch { return false; } };
     let draw = () => {
       el.innerHTML = header('모양', '내 계정에 저장돼 다른 기기에서도 같아요.')
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>테마</b><p class="bxs-mut">시스템은 기기 설정(라이트 · 다크)을 따라요</p></div><div class="bxs-seg" role="radiogroup" aria-label="테마">${TH.map(([k, v]) => `<button type="button" role="radio" aria-checked="${cur() === k}" data-th="${k}">${v}</button>`).join('')}</div></div></div>`
         + accCard()
+        + `<div class="bxs-card"><div class="bxs-row between"><div><b>새 사이드바(모든 화면)</b><p class="bxs-mut">피드에서 쓰는 한 줄 목록 · 아이콘 막대를 노드 · 채팅 · 캔버스에서도 써요. 에이전트 · 채널은 「에이전트」를 누르면 위 탭에서 골라요. 끄면 피드에서만 새 사이드바예요. 컴퓨터 화면만 바뀌어요</p></div>${sw(newsb(), `data-ns="${newsb() ? 0 : 1}"`, '새 사이드바(모든 화면)')}</div></div>`
         + '<div class="bxs-card" data-tops></div>'
         + '<div class="bxs-card" data-pins></div>'
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>움직임 줄이기</b><p class="bxs-mut">블롭 · 파비콘 깜빡임 · 화면 전환 움직임을 멈춰요(기기의 움직임 줄이기도 따라요)</p></div>${sw(still(), `data-st="${still() ? 0 : 1}"`, '움직임 줄이기')}</div></div>`
@@ -962,6 +969,8 @@
       if (uk){ try { localStorage.setItem('hb-unreadkeep', uk.dataset.uk); } catch {} uiSave('unreadkeep', uk.dataset.uk); window.HBInbox?.keepApply?.(); return draw(); }
       const mm = e.target.closest('[data-mm]');
       if (mm){ try { localStorage.setItem('hb-mainmerge', mm.dataset.mm); } catch {} uiSave('mainmerge', mm.dataset.mm); return draw(); }   // 다음 채널 읽기(20초 · 열 때)부터 — 보드 loadCh 가 바뀐 줄기를 알아채고 옛 쪽을 버림
+      const ns = e.target.closest('[data-ns]');
+      if (ns){ try { localStorage.setItem(NSK, ns.dataset.ns); } catch {} uiSave('newsb', ns.dataset.ns); window.BXNewSb?.(); return draw(); }
       const cb = e.target.closest('[data-cb]');
       if (cb){ try { localStorage.setItem('hb-canvasback', cb.dataset.cb); } catch {} uiSave('canvasback', cb.dataset.cb); return draw(); }
       const m = e.target.closest('[data-st]');

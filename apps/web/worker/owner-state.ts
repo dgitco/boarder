@@ -33,6 +33,7 @@ const cut = (s: string, n: number) => { const a = Array.from(s); return a.length
 
 export async function draft(db: DB, b: V): Promise<[number, object] | null> {
   const key = String(b.key || ""), text = String(b.text || ""), dev = cut(String(b.dev || ""), 40), sent = b.sent;
+  const files = Array.isArray(b.files) ? b.files as V[] : undefined;
   if (!/^(?:chan|th|card):[^\x00-\x1f\x7f]{1,200}$/.test(key) || text.length > 100000) return [400, { ok: false, error: "bad draft" }];   // 노드 채널 키(chan:n:<노드 이름>)는 띄어쓰기(6d4a1f93)
   const at0 = Number(b.at || 0) || 0, k = DP + key;
   for (let i = 0; i < 20; i++) {
@@ -40,7 +41,7 @@ export async function draft(db: DB, b: V): Promise<[number, object] | null> {
     const q = await db.prepare("SELECT (SELECT 1 FROM owner_state WHERE k = 'drafts') AS seeded, (SELECT count(*) FROM owner_state WHERE k > 'drafts:' AND k < 'drafts;') AS n, o.v AS v, o.ver AS ver FROM (SELECT 1) AS one LEFT JOIN owner_state AS o ON o.k = ?").bind(k).first<{ seeded: number | null; n: number; v: string | null; ver: number | null }>();
     if (!q?.seeded) return null;   // seed 전
     const row = q.v != null ? { v: q.v, ver: Number(q.ver) } : null;
-    const [out, next] = draftStep(row ? JSON.parse(row.v) : {}, text, dev, sent, at0);
+    const [out, next] = draftStep(row ? JSON.parse(row.v) : {}, text, dev, sent, at0, files);
     if (!next) return out;
     const now = Date.now(), nv = JSON.stringify(next);
     const r = await db.batch([
@@ -53,18 +54,18 @@ export async function draft(db: DB, b: V): Promise<[number, object] | null> {
   }
   throw new Error("동시 저장이 계속 겹침");
 }
-// 한 칸 판정(server.py draft_post 의 칸 규칙): [답, 새 칸 | null]
-function draftStep(old: V, text: string, dev: string, sent: unknown, at0: number): [[number, object], V | null] {
+function draftStep(old: V, text: string, dev: string, sent: unknown, at0: number, files?: V[]): [[number, object], V | null] {
   const now = Date.now() / 1000, at = at0 || now * 1000;
   if (sent !== undefined && sent !== null) return [[200, { ok: true }], { text: "", at: Math.max(at, old.at || 0), dev, sent: at, sent_text: cut(String(sent), 4000), sent_srv: now }];
   const t = text.trim(), st = String(old.sent_text || "").trim(), same = !!dev && old.dev === dev, fresh = now - Number(old.sent_srv || 0) < 3600;
-  if (t && old.sent && ((same && at <= old.sent) || (!same && fresh && st && st.startsWith(t)))) return [[200, { ok: true, stale: true }], null];
+  // 보낸 기기의 늦게 온 저장은 첨부만 있어도 버림. 앞부분 규칙(다른 기기)은 글에만 — 빈 글은 모든 글의 앞부분이라 첨부만 붙인 저장까지 버리게 됨
+  if (old.sent && ((same && at <= old.sent && (t || files?.length)) || (t && !same && fresh && st && st.startsWith(t)))) return [[200, { ok: true, stale: true }], null];
   if ((old.at || 0) > at) return [[200, { ok: true, stale: true }], null];
-  return [[200, { ok: true }], t ? { text, at, dev } : { text: "", at, dev }];
+  const fs = files ?? (Array.isArray(old.files) ? old.files : []);
+  return [[200, { ok: true }], { text: t ? text : "", at, dev, ...(fs.length ? { files: fs } : {}) }];
 }
 // 지움 표 7일 · 300칸(지움 표부터 · 옛것부터) — server.py 는 저장마다 거름. 줄을 지우는 한 문장씩이라 줄이 커도 안 막힘. 300칸을 넘겨 거르면 남은 줄 순서도 그 정렬로(server.py dict(sorted(…)))
-const EMPTY = "trim(coalesce(json_extract(v, '$.text'), ''), ' ' || char(9, 10, 11, 12, 13)) = ''";
-// 지움 표 7일(빈 글 · 7일 지남)만 지우고, 지웠으면 표시 줄 · 내려쓰기 — 저장 batch 끝에 붙이는 세 문장
+const EMPTY = "trim(coalesce(json_extract(v, '$.text'), ''), ' ' || char(9, 10, 11, 12, 13)) = '' AND coalesce(json_array_length(v, '$.files'), 0) = 0";
 const pruneOld = (db: DB, now: number) => [
   db.prepare(`DELETE FROM owner_state WHERE k > 'drafts:' AND k < 'drafts;' AND ${EMPTY} AND coalesce(json_extract(v, '$.at'), 0) <= ?`).bind(now - 7 * 86400 * 1000),
   db.prepare("UPDATE owner_state SET at = ?, ver = ver + 1 WHERE k = 'drafts' AND changes() > 0").bind(now),

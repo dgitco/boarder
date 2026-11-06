@@ -151,6 +151,22 @@ export async function fileLines(env: Env, me: string, base: string, ids: unknown
   }
   return { lines, bad };
 }
+export type DraftFile = { id: string; name: string; img: boolean; mime: string; size: number };
+const IMG = /^image\/(png|jpe?g|gif|webp|avif|bmp)$/;   // 틀(addFiles)이 그림 칩으로 보이는 꼴과 같게
+export async function draftFiles(bucket: R2Bucket, me: string, raw: unknown): Promise<DraftFile[] | null | undefined> {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.length > FILES_PER_MSG) return null;
+  const ids = [...new Set(raw.map(x => String((x as { id?: unknown })?.id ?? x ?? "")))];
+  if (ids.some(id => !FID.test(id))) return null;
+  const hs = await Promise.all(ids.map(id => bucket.head(`mfiles/${id}`)));
+  const out: DraftFile[] = [];
+  for (const [i, o] of hs.entries()) {
+    if (!o || o.customMetadata?.owner !== me) return null;
+    const mime = (o.httpMetadata?.contentType || "application/octet-stream").slice(0, 100);
+    out.push({ id: ids[i], name: o.customMetadata?.name || "file", img: IMG.test(mime), mime, size: o.size });
+  }
+  return out;
+}
 /** POST /api/voice/stt — 틀은 audio/wav(16kHz) 몸통, 답 { text }. Workers AI Whisper(쓰기 칸에 넣기만 — 보내기는 사람이) */
 export async function stt(c: C, me: string) {
   const buf = await readCapped(c.req.raw, VOICE_MAX);

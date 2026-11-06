@@ -7,8 +7,9 @@ import { editRef } from "./task-convo";
 import { shows } from "./inbox-rules";
 import { verCache } from "./ver-cache";
 export const SEEN = verCache("member_seen_ver", "SELECT v FROM member_seen_ver WHERE owner = ?", "SELECT pane, at FROM member_seen WHERE owner = ?");
+import { draftFiles } from "./member-files";
 
-type Env = { DB: D1Database };
+type Env = { DB: D1Database; RESULTS: R2Bucket };
 type C = Context<{ Bindings: Env }>;
 type R = Record<string, any>;
 
@@ -53,7 +54,7 @@ export async function inbox(db: D1Database, me: string, ctx?: Ctx | null) {
   let ss: ReturnType<typeof SEEN.stmts> | ReturnType<typeof SEEN.plain> = SEEN.stmts(db, me);
   const mk = (x: { stmts: D1PreparedStatement[] }) => [x.stmts[0],
     db.prepare("SELECT kind, ref, at FROM member_saved WHERE owner = ? ORDER BY at DESC LIMIT ?").bind(me, SAVED_MAX),
-    db.prepare("SELECT pane AS key, text, at FROM member_draft WHERE owner = ? ORDER BY at DESC LIMIT 100").bind(me),
+    db.prepare("SELECT pane AS key, text, at FROM member_draft WHERE owner = ? AND text != '' ORDER BY at DESC LIMIT 100").bind(me),
     ...x.stmts.slice(1)];
   let B: D1Result[];
   try { B = await db.batch(mk(ss)); } catch (e) { if (!SEEN.noTable(e)) throw e; ss = SEEN.plain(db, me); B = await db.batch(mk(ss)); }
@@ -167,16 +168,25 @@ async function threadUnread(db: D1Database, me: string, seen: Map<string, number
   return out;
 }
 
-// ── 초안(/api/drafts · /api/draft) ──
+const filesOf = (v: unknown) => { try { const a = JSON.parse(String(v || "[]")); return Array.isArray(a) ? a : []; } catch { return []; } };
 export async function draftMap(db: D1Database, me: string) {
-  const rs = (await db.prepare("SELECT pane AS key, text, at FROM member_draft WHERE owner = ? ORDER BY at DESC LIMIT 100").bind(me).all<R>()).results;
-  return Object.fromEntries(rs.map(r => [String(r.key), { text: String(r.text), at: Number(r.at) }]));
+  const rs = (await db.prepare("SELECT pane AS key, text, at, files FROM member_draft WHERE owner = ? ORDER BY at DESC LIMIT 300").bind(me).all<R>()).results;
+  return Object.fromEntries(rs.map(r => { const f = filesOf(r.files); return [String(r.key), { text: String(r.text), at: Number(r.at), ...(f.length ? { files: f } : {}) }]; }));
 }
-export async function draftPost(db: D1Database, me: string, b: R): Promise<{ status: number; body: R }> {
+// files: 안 오면 저장된 첨부 그대로(글만 고친 저장 — 첨부를 모르는 다른 기기가 지우지 않게), [] 면 비움. 보냄(sent)이면 글 · 첨부 다 비움.
+//   지움 · 보냄은 줄을 지우지 않고 빈 표 줄(글 '' · 첨부 없음, at = 지금)로 7일 — 다른 기기가 받아 그 칸을 비움(주인 초안과 같은 규칙, 전에는 줄을 지워 다른 기기에 옛 초안이 남았음)
+//   남의 · 없는 파일 id 가 섞이면 400(R2 주인 대조, member-files draftFiles). bucket 없이 부르면 첨부 저장은 거절
+export async function draftPost(db: D1Database, me: string, b: R, bucket?: R2Bucket): Promise<{ status: number; body: R }> {
   const key = String(b.key || "").replace(CTRL, "").slice(0, 200), text = String(b.text ?? "").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "").slice(0, DRAFT_MAX);
   if (!key) return { status: 400, body: { ok: false, error: "열쇠" } };
-  if (!text.trim()) await db.prepare("DELETE FROM member_draft WHERE owner = ? AND pane = ?").bind(me, key).run();
-  else await db.prepare("INSERT INTO member_draft(owner, pane, text, at) VALUES (?,?,?,?) ON CONFLICT(owner, pane) DO UPDATE SET text = excluded.text, at = excluded.at").bind(me, key, text, Date.now()).run();
+  const sent = b.sent !== undefined && b.sent !== null;
+  const files = sent || b.files == null ? undefined : bucket ? await draftFiles(bucket, me, b.files) : null;
+  if (files === null) return { status: 400, body: { ok: false, error: "파일을 찾지 못했어요" } };
+  const now = Date.now(), fj = files?.length ? JSON.stringify(files) : null;
+  await db.batch([
+    db.prepare("INSERT INTO member_draft(owner, pane, text, at, files) VALUES (?,?,?,?,?) ON CONFLICT(owner, pane) DO UPDATE SET text = excluded.text, at = excluded.at, files = CASE WHEN ? THEN excluded.files ELSE member_draft.files END")
+      .bind(me, key, !sent && text.trim() ? text : "", now, fj, sent || files !== undefined ? 1 : 0),
+    db.prepare("DELETE FROM member_draft WHERE owner = ? AND text = '' AND files IS NULL AND at < ?").bind(me, now - 7 * 86_400_000)]);   // 빈 표 줄은 7일만
   return { status: 200, body: { ok: true, state: "ok" } };
 }
 
@@ -237,7 +247,7 @@ export async function route(c: C, me: string, url: URL, body?: R | null): Promis
   }
   if (c.req.method !== "POST" || !body) return null;
   if (p === "/api/inbox") { const r = await inboxPost(db, me, body); return J(r.body, r.status); }
-  if (p === "/api/draft") { const r = await draftPost(db, me, body); return J(r.body, r.status); }
+  if (p === "/api/draft") { const r = await draftPost(db, me, body, c.env.RESULTS); return J(r.body, r.status); }
   if (p === "/api/chat") { const r = await chatPost(db, me, body); return r ? J({ rid: String(body.rid || "").slice(0, 64), ...r.body }, r.status) : null; }
   return null;
 }

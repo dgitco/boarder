@@ -579,7 +579,8 @@ export async function data(db: D1Database, me: string, bot: { name?: string } | 
   // 약속(member_promise, 0047): 열린 것 = 주인 D.promises 꼴, 기한이 지난 것은 to_check(「지켰는지 확인」) — 표가 아직 없으면(이주 전) 빈 꼴
   const promPane = (w: string) => { if (L.harness.length && /^%\d{1,7}$/.test(w)) return w;
     const ew = L.engineNodes.find(x => x.name === w), p = ew ? paneOfId(ew.id) : ""; return p && known.has(p) ? p : toPane(w); };
-  const { promises, to_check } = await promiseRows(db, me, promPane, nowMin);
+  const { promises, to_check: overdue } = await promiseRows(db, me, promPane, nowMin);
+  const to_check = L.harness.length ? overdue.filter(x => !/^hp\d/.test(String(x.id))) : overdue;
   const seatName = new Map(L.nodes.filter(n => L.seatIds.has(n.id)).map(n => [n.id, L.seatRole.get(n.id)!]));
   const seatId = new Map([...seatName].map(([id, nm]) => [nm, id]));
   const seatOrder = L.roleNames.map((nm, i) => ({ nm, i })).sort((a, b) => rank(seatId.get(a.nm) || "") - rank(seatId.get(b.nm) || "") || a.i - b.i).map(x => x.nm);
