@@ -164,6 +164,14 @@ a.bxs-li:hover{background:var(--hover)}
   .bxs-dh{padding:12px}
 }
 
+@media (max-width:520px){
+  .bxs-dh{flex-wrap:wrap;row-gap:8px}
+  .bxs-dh .t{flex:1 1 calc(100% - 92px)}
+  .bxs-dh > .bxs-more{order:2}
+  .bxs-dh > .bxs-badge{order:3}
+  .bxs-dh > .bxs-badge:first-of-type{margin-left:46px}
+}
+
 .bxs-seg{display:inline-flex;gap:2px;padding:3px;border-radius:12px;background:var(--sunk);align-self:flex-start}
 .bxs-seg button{height:30px;padding:0 14px;border:0;border-radius:9px;background:none;color:var(--soft);font:inherit;font-size:13.5px;cursor:pointer}
 .bxs-seg button[aria-checked="true"]{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--line)}
