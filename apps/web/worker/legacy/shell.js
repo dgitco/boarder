@@ -1,3 +1,5 @@
+// 껍데기 판: /bxs/<해시> 로 실린 이 파일의 해시(인라인으로 실리면 null)
+var SHELL_VER = (() => { try { return ((document.currentScript && document.currentScript.src) || '').match(/\/bxs\/([^/?#.]+)/)?.[1] || null; } catch { return null; } })();
 window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in navigator)) return;
   try { const reg = await navigator.serviceWorker.getRegistration(), sub = await reg?.pushManager.getSubscription(); if (!sub) return;
     await fetch('api/push/unsubscribe', {method: 'POST', headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify({endpoint: sub.endpoint})}).catch(() => {}); await sub.unsubscribe(); } catch (e) {} };
@@ -961,7 +963,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   if (!window.HB_LIVE) return;
   const PCQ = matchMedia('(min-width: 861px)');
   const net = () => { const n = navigator.connection; return n ? {net: n.effectiveType, net_type: n.type, rtt: n.rtt} : {}; };
-  const send = (action, ms, x) => { try { window.posthog?.capture('boarder_ui', {action, ms: Math.round(ms), mobile: !PCQ.matches, pwa: matchMedia('(display-mode: standalone)').matches, ...net(), ...x}); } catch {} };
+  const VER = { hb_ver: (() => { try { return String(window.HB_VER || '') || null; } catch { return null; } })(), bx_ver: SHELL_VER };
+  const send = (action, ms, x) => { try { window.posthog?.capture('boarder_ui', {action, ms: Math.round(ms), mobile: !PCQ.matches, pwa: matchMedia('(display-mode: standalone)').matches, ...net(), ...VER, ...x}); } catch {} };
   window.BX_UI = send;   // 다시 연결(LiveES) 도 같은 꼴로
   const paint = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));   // 그린 다음 프레임까지
   const wrap = (name, action, until, every = 1) => {
@@ -1010,7 +1013,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   })();
   (() => { let lt = 0; try { new PerformanceObserver(l => { lt += l.getEntries().length; }).observe({type: 'longtask', buffered: false}); } catch (e) {}
     setInterval(() => { const m = performance.memory; const n = lt; lt = 0;
-      try { window.posthog?.capture('boarder_ui', {action: 'idle_cost', ms: m ? Math.round(m.usedJSHeapSize / 1048576) : -1, longtasks: n, hidden: document.hidden, focus: document.hasFocus(), mobile: !PCQ.matches}); } catch (e) {} }, 300000); })();
+      try { window.posthog?.capture('boarder_ui', {...VER, action: 'idle_cost', ms: m ? Math.round(m.usedJSHeapSize / 1048576) : -1, longtasks: n, hidden: document.hidden, focus: document.hasFocus(), mobile: !PCQ.matches}); } catch (e) {} }, 300000); })();
   // 노드 트리 그리기: 바뀔 때마다 도니 10번에 1번만(고르게)
   { const f = window.redraw; if (typeof f === 'function') window.redraw = function (...a){ if (Math.random() >= 0.1) return f.apply(this, a); const t = performance.now(), out = f.apply(this, a); send('tree_draw', performance.now() - t, {sample: 10}); return out; }; }
   // 찾기 · 글 보내기 왕복: 서버 답까지(화면에 보인 때는 send_visible)

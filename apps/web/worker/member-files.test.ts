@@ -34,6 +34,16 @@ function setup() {
 const up = async (s: ReturnType<typeof setup>, who: string, name: string, type: string, body = "내용") =>
   await (await s.upload(who, name, type, body)).json() as { ok: boolean; id: string; name: string };
 
+test("음성메모: 지정한 내 WAV만 받아쓰고 빈 성공·남의 파일·지정 안 된 첨부는 거절", async () => {
+  const s = setup(), a = await up(s, A, "음성메모.wav", "audio/wav"), other = await up(s, B, "남의.wav", "audio/wav");
+  assert.equal(await F.memoText(s.env as never, A, { stt: a.id, files: [a.id] }), "들린 글 6");
+  const n = s.ai.n;
+  for (const b of [{stt:other.id, files:[other.id]}, {stt:a.id, files:[]}]) await assert.rejects(F.memoText(s.env as never, A, b));
+  assert.equal(s.ai.n, n);
+  s.env.AI.run = async () => ({text:" "});
+  await assert.rejects(F.memoText(s.env as never, A, {stt:a.id, files:[a.id]}), /받아쓴 글/);
+});
+
 test("올리기 → 보기: 올린 사람만(남은 404), 빈 몸통 400, 이름의 「/」는 바꿈", async () => {
   const s = setup(), a = await up(s, A, "a/보고서.pdf", "application/pdf");
   assert.ok(a.ok); assert.match(a.id, /^[0-9a-f]{32}$/); assert.equal(a.name, "a_보고서.pdf");

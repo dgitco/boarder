@@ -229,6 +229,19 @@ export async function fileLines(env: Env, me: string, base: string, ids: unknown
   }
   return { lines, bad };
 }
+/** 녹음 첨부의 받아쓰기. files를 링크로 바꾸기 전에 내 파일·지정한 녹음만 읽는다. */
+export async function memoText(env: Env, me: string, b: Record<string, unknown>) {
+  if (!b.stt) return "";
+  const id = String(b.stt), ids = Array.isArray(b.files) ? b.files.slice(0, FILES_PER_MSG).map(x => String((x as { id?: unknown })?.id ?? x ?? "")) : [];
+  if (!FID.test(id) || !ids.includes(id)) throw new Error("받아쓸 녹음이 첨부에 없어요");
+  const o = await env.RESULTS.get(`mfiles/${id}`);
+  if (!o || fileOwner(o) !== me || !/\.wav$/i.test(fileName(o)) || !o.size || o.size > VOICE_MAX) throw new Error("받아쓸 녹음을 찾지 못했어요");
+  if (await quotaTake(env.DB, me, "stt", 0, DAY_STT, Number.MAX_SAFE_INTEGER) !== true) throw new Error("오늘 받아쓰기 한도를 넘었어요");
+  const r = await env.AI.run("@cf/openai/whisper", { audio: [...new Uint8Array(await o.arrayBuffer())] }) as { text?: string };
+  const text = String(r?.text || "").trim();
+  if (!text) throw new Error("받아쓴 글이 없어요");
+  return text;
+}
 export type DraftFile = { id: string; name: string; img: boolean; mime: string; size: number };
 const IMG = /^image\/(png|jpe?g|gif|webp|avif|bmp)$/;   // 틀(addFiles)이 그림 칩으로 보이는 꼴과 같게
 export async function draftFiles(bucket: R2Bucket, me: string, raw: unknown): Promise<DraftFile[] | null | undefined> {

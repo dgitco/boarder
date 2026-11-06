@@ -2583,9 +2583,12 @@ async function memberPost(c: Context<{ Bindings: Env }>, me: string, url: URL) {
   // 파일 붙은 글: 창이 받아 갈 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 보냄 — 내 파일만(member-files.ts)
   //   「세션」 칸 글(/api/chat/new · /api/chat/send)도 같게 — 주인 server.py chat_new_post · chat_send_post 가 첨부를 받던 것(빠짐 4), 창은 같은 링크 줄로 받음
   if ((url.pathname === "/api/chat" || url.pathname === "/api/chat/new" || url.pathname === "/api/chat/send") && Array.isArray(b.files) && b.files.length && !b.delete && !b.react && b.edit === undefined) {
+    let memo = "";
+    try { memo = await memberFiles.memoText(c.env, me, b); }
+    catch (e) { console.error("음성메모 받아쓰기 실패", String(e).slice(0, 200)); return c.json({ ok: false, error: "받아쓰기를 못 했어요 · 녹음은 보존했어요. 다시 보내 주세요" }, 502); }
     const f = await memberFiles.fileLines(c.env, me, c.env.PUBLIC_URL || url.origin, b.files as unknown[]);
     if (!f.lines.length) return c.json({ ok: false, error: "파일을 찾지 못했어요" }, 400);
-    b.text = [String(b.text || "").trim(), ...f.lines].filter(Boolean).join("\n"); delete b.files;
+    b.text = [String(b.text || "").trim(), memo, ...f.lines].filter(Boolean).join("\n"); delete b.files; delete b.stt;
   }
   const rid = String(b.rid || "").slice(0, 64);
   let hop: Awaited<ReturnType<typeof memberBoard.post>>;

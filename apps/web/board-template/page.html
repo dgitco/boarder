@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "afa39689491d";
+window.HB_VER = "80e234900d95";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -6931,6 +6931,7 @@ function repNew(m) {
 }
 const picked = {};
 function msgHTML(m, k, inThread) {
+  m = voiceMessage(m);
   const k0 = k;
   if (m.ch) k = m.ch;
   if (CS.vhide?.has(m.ts)) return "";
@@ -7184,6 +7185,18 @@ function vnHTML(id, me) {
   return `<div class="vn${me ? " me" : ""}${on ? " on" : ""}${e?.bad ? " bad" : ""}" data-vn="${esc(id)}"><button class="vnp" data-vnplay="${esc(id)}" data-on="${on}" aria-label="${on ? "멈춤" : "음성 메모 재생" + (e?.dur ? ", " + mmss(e.dur) : "")}">${on ? VNI.pause : VNI.play}</button><span class="vnw" data-vnseek="${esc(id)}" aria-hidden="true">${bars2}</span><span class="vnt">${e?.bad ? ERR : e?.dur ? mmss(on || at > 0 ? at : e.dur) : "–:––"}</span></div>`;
 }
 const voiceOf = (fs, me) => LIVE ? (fs || []).filter(isAudio).map((f) => vnHTML(f.id, me)).join("") : "";
+function voiceMessage(m) {
+  const files = [...m?.files || []], lines = [];
+  for (const line of String(m?.text || "").split("\n")) {
+    const a = /^\s*📎\s*(.+?\.(?:wav|webm|m4a|ogg|mp3)):\s*https:\/\/(?:boarder\.dgit\.co|boarder\.dgit\.workers\.dev)\/f\/([0-9a-f]{32})(?:\/[^\s?]+)?\?\S*\s*$/i.exec(line);
+    if (!a) {
+      lines.push(line);
+      continue;
+    }
+    if (!files.some((f) => f.id === a[2])) files.push({ id: a[2], name: a[1], mime: "audio/" + a[1].split(".").pop() });
+  }
+  return { ...m, files, text: lines.join("\n").trim() };
+}
 const vtext = (m) => LIVE && (m.files || []).some(isAudio) ? (m.text || "").replace(/^\s*(?:🎙\s*|:studio_microphone:\s*)+/, "") : m.text || "";
 let VAC = null;
 function vnPeaks(d) {
@@ -9143,7 +9156,7 @@ async function chatPost(body, base, rid0, oldKey, again, at0, onAccepted) {
   if (took) onAccepted?.(j);
   if (body.label) unmark();
   const msgOf = (ts) => [...CS.thr[body.thread || ts]?.messages || [], ...CS.ch[body.channel]?.messages || [], ...isNodeCh(CS.at) ? CS.ch[CS.at]?.messages || [] : []].find((m) => m.ts === ts);
-  const vf = (m) => (m?.files || []).find(isAudio);
+  const vf = (m) => voiceMessage(m).files.find(isAudio);
   const nk = base?.startsWith("new:n:") && !body.thread && !body.label ? base.slice(4) : null;
   const keep = () => {
     if (!nk || !j.posted) return;
