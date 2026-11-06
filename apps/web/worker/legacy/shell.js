@@ -969,6 +969,61 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const send = (action, ms, x) => { try { window.posthog?.capture('boarder_ui', {action, ms: Math.round(ms), mobile: !PCQ.matches, pwa: matchMedia('(display-mode: standalone)').matches, ...net(), ...VER, ...x}); } catch {} };
   window.BX_UI = send;   // 다시 연결(LiveES) 도 같은 꼴로
   const paint = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));   // 그린 다음 프레임까지
+  // Same five-minute event, disjoint visible windows and bounded, content-free frame attribution.
+  const frameCost = (() => {
+    const origin = performance.now(), empty = () => ({channel: 0, thread: 0, cards: 0, scroll: 0, other: 0});
+    let since = origin, last = origin, visible = !document.hidden, visibleMs = 0, counts = empty(), top = null, topBlock = -1, topDuration = -1, complete = true;
+    const visibility = [{at: origin, visible}], spans = [];
+    const account = now => { if (visible) visibleMs += Math.max(0, now - last); last = now; };
+    const change = value => { const now = performance.now(); account(now); visible = value;
+      if (visibility[visibility.length - 1].visible !== value){ visibility.push({at: now, visible: value}); if (visibility.length > 1024) visibility.shift(); } };
+    document.addEventListener('visibilitychange', () => change(!document.hidden));
+    addEventListener('pagehide', () => change(false)); addEventListener('pageshow', () => change(!document.hidden));
+    const span = (start, end, kind) => { spans.push({start, end, kind}); if (spans.length > 512) spans.shift(); };
+    const track = (name, kind) => { const fn = window[name]; if (typeof fn !== 'function') return;
+      const measured = function (...args){ const start = performance.now(); let k = 'other';
+        try { k = typeof kind === 'function' ? kind(args) : kind; } catch {}
+        try { return fn.apply(this, args); } finally { span(start, performance.now(), k); } };
+      Object.assign(measured, fn); window[name] = measured;
+    };
+    track('openChan', args => args[1] ? 'thread' : 'channel'); track('openThread', 'thread'); track('cardRows', 'cards');
+    track('viewChat', () => typeof CS !== 'undefined' && CS.th ? 'thread' : 'channel');
+    document.addEventListener('scroll', () => { const now = performance.now(); span(now, now, 'scroll'); }, {capture: true, passive: true});
+    const functions = new Set(['viewChat', 'openChan', 'openThread', 'cardRows', 'slackAsks', 'patchKids', 'redraw', 'render', 'chatLoad', 'loadTopics', 'headPills']);
+    const invokers = new Set(['classic-script', 'module-script', 'user-callback', 'event-listener', 'resolve-promise', 'reject-promise']);
+    const cause = (f, kind) => { let sc;
+      for (const script of f.scripts || []) if (!sc || script.duration > sc.duration) sc = script;
+      let src = 'other';
+      try { if (!sc?.sourceURL) throw 0; const u = new URL(sc.sourceURL, location.href);
+        if (u.origin === location.origin) src = /^\/bxs\/[a-f0-9]{32}\.js$/.test(u.pathname) ? u.pathname.split('/').pop() : 'inline'; } catch {}
+      return {kind, ms: Math.round(f.duration), block_ms: Math.round(f.blockingDuration || 0), script_ms: Math.round(sc?.duration || 0),
+        layout_ms: Math.round(sc?.forcedStyleAndLayoutDuration || 0), fn: functions.has(sc?.sourceFunctionName) ? sc.sourceFunctionName : 'other',
+        invoker: invokers.has(sc?.invokerType) ? sc.invokerType : 'other', src};
+    };
+    const add = f => {
+      const start = f.startTime, end = start + f.duration;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || f.duration < 150 || start < origin || end <= since) return;
+      let state;
+      for (const v of visibility){ if (v.at <= start) state = v.visible; else if (v.at < end && !v.visible) return; }
+      if (state === undefined){ complete = false; return; } if (!state) return;
+      let kind = 'other', overlap = -1;
+      for (const s of spans){ if (s.start > end || s.end < start) continue;
+        const n = Math.max(0, Math.min(s.end, end) - Math.max(s.start, start)); if (n > overlap){ overlap = n; kind = s.kind; } }
+      if (kind === 'other' && (f.scripts || []).some(s => /\.onscroll$/.test(s.invoker || ''))) kind = 'scroll';
+      counts[kind]++;
+      if ((f.blockingDuration || 0) > topBlock || ((f.blockingDuration || 0) === topBlock && f.duration > topDuration)){ topBlock = f.blockingDuration || 0; topDuration = f.duration; top = cause(f, kind); }
+    };
+    const flush = () => {
+      try { frameCost.consume?.(frameCost.observer.takeRecords()); } catch { if (frameCost.supported) complete = false; }
+      const now = performance.now(); account(now);
+      const result = {visible_ms: Math.round(visibleMs), observed_ms: Math.round(now - since), lf_supported: frameCost.supported, lf_complete: frameCost.supported && complete,
+        lf_channel: frameCost.supported ? counts.channel : null, lf_thread: frameCost.supported ? counts.thread : null,
+        lf_cards: frameCost.supported ? counts.cards : null, lf_scroll: frameCost.supported ? counts.scroll : null,
+        lf_other: frameCost.supported ? counts.other : null, lf_top: frameCost.supported ? top : null};
+      since = now; visibleMs = 0; counts = empty(); top = null; topBlock = topDuration = -1; complete = true; return result;
+    };
+    return {add, flush, supported: false, observer: null, consume: null};
+  })();
   const wrap = (name, action, until, every = 1) => {
     const f = window[name]; if (typeof f !== 'function') return;
     window[name] = function (...a){
@@ -1008,14 +1063,16 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (!window.PerformanceObserver?.supportedEntryTypes?.includes('long-animation-frame')) return;
     let worst = null, cnt = 0, inAt = 0;
     for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart']) addEventListener(ev, () => { inAt = performance.now(); }, {capture: true, passive: true});
-    try { new PerformanceObserver(l => { for (const f of l.getEntries()) { if (f.duration < 150) continue; cnt++; if (!worst || f.duration > worst.duration) worst = f; } }).observe({type: 'long-animation-frame'}); } catch { return; }
+    const consume = entries => { for (const f of entries){ if (f.duration < 150) continue; frameCost.add(f); cnt++; if (!worst || f.duration > worst.duration) worst = f; } };
+    try { const observer = new PerformanceObserver(l => consume(l.getEntries())); observer.observe({type: 'long-animation-frame'});
+      frameCost.observer = observer; frameCost.consume = consume; frameCost.supported = true; } catch { return; }
     setInterval(() => { const w = worst, n = cnt; worst = null; cnt = 0; if (!w || document.hidden) return;
       const sc = [...(w.scripts || [])].sort((a, b) => b.duration - a.duration)[0];
       send('long_frame', w.duration, {n, idle_s: inAt ? Math.round((performance.now() - inAt) / 1000) : -1, block: Math.round(w.blockingDuration || 0), fn: String(sc?.sourceFunctionName || sc?.invoker || '').slice(0, 60), src: String(sc?.sourceURL || '').split('/').pop().split('?')[0].slice(0, 40)}); }, 60000);
   })();
   (() => { let lt = 0; try { new PerformanceObserver(l => { lt += l.getEntries().length; }).observe({type: 'longtask', buffered: false}); } catch (e) {}
     setInterval(() => { const m = performance.memory; const n = lt; lt = 0;
-      try { window.posthog?.capture('boarder_ui', {...VER, action: 'idle_cost', ms: m ? Math.round(m.usedJSHeapSize / 1048576) : -1, longtasks: n, hidden: document.hidden, focus: document.hasFocus(), mobile: !PCQ.matches}); } catch (e) {} }, 300000); })();
+      try { window.posthog?.capture('boarder_ui', {...VER, action: 'idle_cost', ms: m ? Math.round(m.usedJSHeapSize / 1048576) : -1, longtasks: n, hidden: document.hidden, focus: document.hasFocus(), mobile: !PCQ.matches, ...frameCost.flush()}); } catch (e) {} }, 300000); })();
   // 노드 트리 그리기: 바뀔 때마다 도니 10번에 1번만(고르게)
   { const f = window.redraw; if (typeof f === 'function') window.redraw = function (...a){ if (Math.random() >= 0.1) return f.apply(this, a); const t = performance.now(), out = f.apply(this, a); send('tree_draw', performance.now() - t, {sample: 10}); return out; }; }
   // 찾기 · 글 보내기 왕복: 서버 답까지(화면에 보인 때는 send_visible)
