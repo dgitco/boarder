@@ -160,7 +160,7 @@ async function codexTurn(cfg, w, text, onSession) {
   const cdir = accountDir(cfg, 'codex', w);
   if (!w.thread) {
     const codex = new Codex({ env: { ...process.env, ...agentEnv(), BOARDER_WINDOW: w.id, BOARDER_WINDOW_NAME: w.name, ...(cdir ? { CODEX_HOME: cdir } : {}) } });
-    const opt = { workingDirectory: w.cwd, skipGitRepoCheck: true, ...(w.model ? { model: w.model } : {}), ...(w.perm === 'bypass' ? { sandboxMode: 'danger-full-access', approvalPolicy: 'never' } : { sandboxMode: 'workspace-write', approvalPolicy: 'never' }) };
+    const opt = { workingDirectory: w.cwd, skipGitRepoCheck: true, ...(w.model ? { model: w.model } : {}), ...(w.perm === 'bypass' ? { sandboxMode: 'danger-full-access', approvalPolicy: 'never' } : { sandboxMode: 'workspace-write', networkAccessEnabled: true, approvalPolicy: 'never' }) };
     w.thread = w.session_id ? codex.resumeThread(w.session_id, opt) : codex.startThread(opt);
   }
   const ac = new AbortController(); w.abort = ac;

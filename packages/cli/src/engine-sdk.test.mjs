@@ -50,6 +50,14 @@ test('로그인: 계정을 안 고른 창은 기본 로그인 → 로그인된 �
   assert.ok(!d.account, '기본 로그인이 있으면 계정을 안 씌움');
 });
 
+test('Codex 창(자동 허용)은 작업 폴더 샌드박스에서도 네트워크를 켬 — 답 명령(boarder chat)이 보더에 닿게', async () => {
+  const c = { sdk: { accounts: {} } };
+  await S.open(c, { id: 'ew_net1', name: 'net', cwd: path.join(home, 'wnet1'), prompt: 'hi', provider: 'codex', perm: 'auto' });
+  await wait(() => calls.some(x => x.p === 'codex'));
+  const t = calls.find(x => x.p === 'codex');
+  assert.equal(t.opt.sandboxMode, 'workspace-write'); assert.equal(t.opt.networkAccessEnabled, true);
+});
+
 test('되살린 창(계정 비어 있음)도 글마다 로그인된 계정을 고름 · 없으면 이유가 state.error 에', async () => {
   const c = { sdk: { accounts: {} } };
   fs.mkdirSync(path.join(home, 'cfg', 'sdk-accounts', 'claude', 'me'), { recursive: true });
