@@ -631,7 +631,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   menu.addEventListener('click', openDr);
   scrim.addEventListener('click', closeDr);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && R.classList.contains('bx-dron')){ e.stopPropagation(); closeDr(); menu.focus(); } }, true);
-  const ROUTE = /^#(chat\/|art\/|node\/|w\/|inbox$|agents(\/|$))/;
+  const ROUTE = /^#(chat\/|m\/|art\/|node\/|w\/|inbox$|agents(\/|$))/;   // m/ = 화면이 아직 모르는 읽히는 id 주소(apply 가 찾음)
   const MVv = () => MV.el && document.body.contains(MV.el) && MV.el === S.artEl ? S.art : null;
   const nodeKey = p => { if (/^g:/.test(p || '')) return p.slice(2); const x = (typeof byPane !== 'undefined' && byPane[p]) || (typeof parkBy !== 'undefined' && parkBy[p]); const n = x && typeof nodeTitle === 'function' ? nodeTitle(x) : ''; return n || p; };   // 닫힌 노드(g:<이름>)는 이름만
   const nodePane = a => { const alias = typeof D !== 'undefined' && D?.node_aliases?.[a]; if (alias && typeof byPane !== 'undefined' && byPane[alias]) return alias; return (typeof byPane !== 'undefined' && byPane[a]) ? a : (typeof liveNode === 'function' && liveNode(a)?.pane) || ''; };
@@ -693,6 +693,11 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     if (backing){ clearTimeout(backing); backing = 0; }
     if (history.state?.bxRoot) history.replaceState(null, '', '#tree');   // 뒤로 가서 딥링크 밑 첫 화면 칸에 닿음 = 트리(사용자가 간 곳)
     if (HBR.hash() === '#chat') history.replaceState(history.state, '', '#chat/primary');
+    if (/^#m\//.test(HBR.hash()) && HBR.mFind){ const g = ++G, sp = setTimeout(() => linkSpin(true), 300); let to = ''; applying++;
+      try { to = await HBR.mFind(decodeURIComponent(HBR.hash().slice(3))); } finally { clearTimeout(sp); linkSpin(false); applying--; }
+      if (g !== G || !/^#m\//.test(HBR.hash())) return;   // 기다리는 사이 다른 데로 감
+      if (!to){ R.classList.remove('bx-route'); linkFail(); return recLater(); }
+      history.replaceState(history.state, '', to); }
     const h = HBR.hash(), qi = h.indexOf('?'), hq = new URLSearchParams(qi >= 0 ? h.slice(qi + 1) : ''), [k, a, b] = (qi >= 0 ? h.slice(0, qi) : h).slice(1).split('/').map(x => decodeURIComponent(x || ''));   // #unread?msg=<글> — 물음표 뒤는 열쇠가 아님(설정 주소는 위에서 돌아감)
     const gen = ++G;
     let moved = false;   // 글 링크를 서버가 알려 준 자리로 옮겼으면 끝에서 주소를 링크로 되돌리지 않음

@@ -258,7 +258,12 @@ test("읽지 않음: 다른 노드 창이 카드 스레드에 단 답 — 채널
   const j = (await res!.json()) as any;
   assert.ok(j.messages.some((m: any) => /제가 맡을게요/.test(m.text || "")), "스레드에 그 답이 보임");
   const bad = await MB.get(s.db, A, { name: "메인 봇" }, new URL(`https://x/api/chat/${encodeURIComponent("n:회사")}/1793000000.000777`), async () => null);
-  assert.equal(((await bad!.json()) as any).messages.length, 0, "예전 채널(답한 창 쪽)로는 글 0 — 화면의 「없는 스레드예요」(고치기 전 꼴)");
+  const bj = (await bad!.json()) as any;
+  assert.equal(bj.orphan, true);
+  assert.ok(bj.messages.some((m: any) => /제가 맡을게요/.test(m.text || "")), "그 채널로 불러도 그 답이 보임");
+  // 남의 계정은 어느 채널로 불러도 글 0
+  const other = await MB.get(s.db, B, { name: "메인 봇" }, new URL(`https://x/api/chat/${encodeURIComponent("n:회사")}/1793000000.000777`), async () => null);
+  assert.equal(((await other!.json()) as any).messages.length, 0, "남의 카드 스레드");
 });
 
 test("모아 보기 GET: ETag 이 붙고 같은 ETag(W/ 꼴 포함)이면 304, 글이 늘면 200", async () => {

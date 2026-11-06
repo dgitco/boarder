@@ -634,6 +634,9 @@ export async function nodeRoot(db: D1Database, me: string, ts: string) {
   const r = await db.prepare("SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? AND id % 1000000 = ? AND at >= ? AND at < ? LIMIT 1").bind(me, Number(m[2]), Number(m[1]) * 1000, Number(m[1]) * 1000 + 1000).first<R>();
   return r && !r.thread && !OWN.test(String(r.win)) ? r : null;
 }
+export async function threadRootOk(db: D1Database, me: string, ts: string) {
+  return CARD_TS.test(ts) && !!((await nodeRoot(db, me, ts)) || (await cardBy(db, me, ts)) || (await db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND thread = ? LIMIT 1").bind(me, ts).first()));
+}
 /** Primary 채팅의 사람 글 하나(스레드 뿌리) — 내가 Primary 에 쓴 줄(win 나 · thread primary)만. 봇 · 보더 글 · 스레드 답 줄 · 남의 줄은 null */
 export async function primaryRoot(db: D1Database, me: string, ts: string) {
   const m = /^(\d{10})\.(\d{6})$/.exec(String(ts || "")); if (!m) return null;
@@ -886,6 +889,40 @@ async function nodeThread(db: D1Database, me: string, raw: string, ts: string, m
   const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, ts).all<R>()).results;
   return { channel: ch, root: ts, owner: null, home, messages: await splitMarks(db, me, [{ ...withThread(msg(r, my, String(r.win)), said, my), ch }, ...said.map(x => ({ ...msg(x, my, String(x.win)), thread: ts, ch }))], my, L) };   // 나눠 온 몫 글이면 split_from
 }
+async function orphanThread(db: D1Database, me: string, raw: string, ts: string, my = ME): Promise<R | null> {
+  const ch = "n:" + raw, card = await cardBy(db, me, ts), r = card ? null : await nodeRoot(db, me, ts);
+  const said = (await db.prepare("SELECT id, win, kind, text, at FROM board_log WHERE owner = ? AND thread = ? ORDER BY at, id LIMIT 200").bind(me, ts).all<R>()).results;
+  if (!card && !r) {
+    if (!said.length) return null;
+    return { channel: ch, root: ts, owner: null, orphan: true, messages: await withReacts(db, me, said.map(x => ({ ...msg(x, my, String(x.win)), thread: ts, ch }))) };
+  }
+  if (card) {
+    const replies = [...said.map(x => ({ at: Number(x.at), m: { ...msg(x, my, String(x.win)), thread: ts } })), ...(card.answer ? [{ at: Number(card.answered_at || card.at), m: cardReply(card, my) }] : [])].sort((a, b) => a.at - b.at).map(x => ({ ...x.m, ch }));
+    return { channel: ch, root: ts, owner: null, orphan: true, messages: await withReacts(db, me, [{ ...cardMsg(card, said, my), ch }, ...replies]) };
+  }
+  return { channel: ch, root: ts, owner: null, orphan: true, messages: await withReacts(db, me, [{ ...withThread(msg(r!, my, String(r!.win)), said, my), ch }, ...said.map(x => ({ ...msg(x, my, String(x.win)), thread: ts, ch }))]) };
+}
+const nodeWin = (L: Awaited<ReturnType<typeof load>>, n: Node) => L.agentUnit ? n.windows.find(x => x.key === L.mains.get(n.id)) || (n.id.startsWith("tk_") && !L.mains.get(n.id) ? n.windows[0] : undefined) : n.windows[0];
+export async function orphanReply(db: D1Database, me: string, L: Awaited<ReturnType<typeof load>>, root: string, chName: string, text: string): Promise<Hop | null> {
+  const card = await cardBy(db, me, root), r = card ? null : await nodeRoot(db, me, root);
+  const said = (await db.prepare("SELECT win, kind FROM board_log WHERE owner = ? AND thread = ? ORDER BY at DESC, id DESC LIMIT 50").bind(me, root).all<R>()).results;
+  if (!card && !r && !said.length) return null;
+  const wins = [...said.filter(x => x.kind !== "me" && x.win !== ME && !OWN.test(String(x.win)) && x.win !== "보더").map(x => String(x.win)), ...(card || r ? [String((card || r)!.win)] : [])];
+  const head = boardHead({ channel: chName, thread: root });
+  for (const win of [...new Set(wins)]) {
+    if (L.isPrimWin(win) || L.mainWin?.name === win) break;
+    const n = L.nodeOfWin(win), w = n ? nodeWin(L, n) : undefined;
+    if (n && w) return { path: "/api/me/nodes/cmd", body: { verb: w.state === "parked" ? "reopen" : "send", item: w.key, text: withHead(head, text) }, log: { win: String(w.win || n.name), text, ch: chName, thread: root } };
+    const cands = n ? [] : L.engineNodes.filter(x => x.name === win && !["closed", "failed"].includes(String(x.state)));
+    let ew = cands.find(x => x.state !== "gone") || null;
+    for (const g of ew ? [] : cands) {
+      const h = await db.prepare("SELECT handle FROM engine_window WHERE id = ? AND owner = ?").bind(g.id, me).first<{ handle: string | null }>().catch(() => null);
+      if (json<{ session_id?: string }>(h?.handle, {}).session_id) { ew = g; break; }
+    }
+    if (ew) return { path: `/api/me/windows/${ew.id}/say`, body: { text, head }, log: { win: String(ew.name), text, ch: chName, thread: root } };
+  }
+  return { path: "/api/me/chat", body: { text, nthread: root, ch: chName }, log: { win: chName || ME, text, ch: chName, thread: root } };
+}
 async function primaryRows(db: D1Database, me: string, before?: string, pre?: Awaited<ReturnType<typeof load>> | null) {
   const m = before ? /^(\d{10})\.(\d{6})$/.exec(before) : null, sec = m ? Number(m[1]) * 1000 : 0;
   const wins = [...(pre?.front?.wins || [])];
@@ -1125,7 +1162,7 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
   const nm = /^\/api\/chat\/n:(.{1,200})\/(\d{10}\.\d{6})$/.exec(dp);
   const nL = nm ? await loadShared(db, me, ctx) : null;
   if (nm && nL && PEER_TS.test(nm[2])) { const f = await nodePeerThread(db, me, nL, nm[1], nm[2], my, mainName, String(url.searchParams.get("id") || "")); if (f) return j(f); }
-  if (nm) return j(await nodeThread(db, me, nm[1], nm[2], my, String(url.searchParams.get("id") || ""), true, nL) ?? { channel: "n:" + nm[1], root: nm[2], owner: null, messages: [] });
+  if (nm) return j(await nodeThread(db, me, nm[1], nm[2], my, String(url.searchParams.get("id") || ""), true, nL) ?? await orphanThread(db, me, nm[1], nm[2], my) ?? { channel: "n:" + nm[1], root: nm[2], owner: null, messages: [] });
   let m = /^\/api\/chat\/(\w+)(?:\/(\d{10}\.\d{6}))?$/.exec(p);
   if (m) {
     if (m[1] !== "primary") return j({ channel: m[1], messages: [], more: false, cursor: null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
@@ -1282,8 +1319,9 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
     let pane = String(b.pane || "");
     const FL = await readFrontDoor(db, me) ? await load(db, me) : null, alias = FL?.front && (pane && pane !== PRIMARY ? FL.front.nodes.some(n => n.pane === pane) : FL.front.aliases.includes(String(b.channel || "").replace(/^n:/, "")));
     if (alias && !b.thread) return { path: "/api/me/chat", body: { text } };
+    let L0: Awaited<ReturnType<typeof load>> | null = null;
     if (/^n:/.test(String(b.channel || "")) && CARD_TS.test(String(b.thread || ""))) {
-      const raw = String(b.channel).slice(2), t = raw.replace(/^\d+\s+/, "").trim(), L0 = await load(db, me);
+      const raw = String(b.channel).slice(2), t = raw.replace(/^\d+\s+/, "").trim(); L0 = await load(db, me);
       const oldNodes = [...L0.nodes, ...(L0.front?.nodes || [])], n0 = L0.resolveNode(raw) || L0.resolveNode(t) || oldNodes.find(x => x.name === raw) || oldNodes.find(x => x.name === t), e0 = n0 ? null : L0.engineNodes.find(x => x.name === raw || x.name === t);
       pane = n0 ? n0.pane : e0 ? paneOfId(e0.id) : pane;
     }
@@ -1299,10 +1337,11 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
       const chName = n ? n.name : ew0 ? String(ew0.name) : "";
       const inChan = (r: R) => n ? L.nodeOfWin(String(r.win)) === n || (r.kind === "me" && (r.win === n.name || n.aliases?.some(a => a.name === r.win))) : ew0 ? r.win === ew0.name : false;
       const thread = root && inChan(root) ? String(b.thread) : undefined;
-      if (b.thread && !thread && !FOLD_TS.test(String(b.thread))) return { error: "없는 스레드예요", status: 404 };   // 들여온 대화 접은 글 스레드는 예전처럼 채널로
+      if (b.thread && !thread && !FOLD_TS.test(String(b.thread))) return (await orphanReply(db, me, L, String(b.thread), chName, text)) || { error: "없는 스레드예요", status: 404 };
       const head = boardHead({ channel: chName, thread });
       if (n) {
-        const w = L.agentUnit ? n.windows.find(x => x.key === L.mains.get(n.id)) || (n.id.startsWith("tk_") && !L.mains.get(n.id) ? n.windows[0] : undefined) : n.windows[0];
+        const w = nodeWin(L, n);
+        if (!w && thread && !n.id.startsWith("tk_")) { const o = await orphanReply(db, me, L, thread, chName, text); if (o) return o; }
         if (!w) {
           if (n.id.startsWith("tk_")) return { path: "/api/me/tasks/assign", body: { node: n.id, text: withHead(head, text), ...(thread ? { thread } : {}) }, log: { win: n.name, text, ch: chName, ...(thread ? { thread } : {}) } };
           return { error: "이 노드엔 글을 넣을 창이 없어요", status: 404 };
@@ -1313,6 +1352,9 @@ export async function post(db: D1Database, me: string, path: string, b: R): Prom
       const ew = ew0;
       if (!ew) return { error: "없는 노드", status: 404 };
       return { path: `/api/me/windows/${ew.id}/say`, body: { text, head }, log: { win: String(ew.name), text, ch: chName, ...(thread ? { thread } : {}) } };
+    }
+    if (/^n:/.test(String(b.channel || "")) && CARD_TS.test(String(b.thread || ""))) {
+      const o = await orphanReply(db, me, L0 || await load(db, me), String(b.thread), String(b.channel).slice(2), text); if (o) return o;
     }
     if (b.channel && b.channel !== "primary") return { error: "아직 안 돼요", status: 400 };
     if (b.thread && await primaryRoot(db, me, String(b.thread))) return { path: "/api/me/chat", body: { text, thread: String(b.thread) } };

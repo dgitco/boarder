@@ -55,3 +55,87 @@ test("이력은 마지막 이력 줄에서 4분 30초마다 — 1분마다 올�
   for (let i = 0; i < 4; i++) await D.putMetrics(db, { id: "w1", owner: "m@example.com" }, { mem: { total_mb: 100, avail_mb: i } }, t0 + i * 280_000);
   assert.equal(n("w1"), 4, "5분(흔들림 -20초) 타이머는 매번");
 });
+
+const K1 = "a".repeat(32), K2 = "b".repeat(32);
+function devs(db: ReturnType<typeof d1>, now: number) {
+  return (id: string, owner: string, scope: string, o: { machine?: string | null; name?: string; engine_at?: number | null; created?: number; revoked?: number | null } = {}) =>
+    db.raw.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, revoked_at, scope, engine_at, machine) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, owner, o.name ?? id, "[]", "h" + id, o.created ?? now, o.created ?? now, o.revoked ?? null, scope, o.engine_at ?? null, o.machine ?? null);
+}
+test("열쇠 적기: 꼴이 맞고 줄 값과 다를 때만 한 번 씀 · 같은 값 · 틀린 꼴 · 칸 없는 D1 은 안 씀", async () => {
+  const db = d1(), now = Date.now(); devs(db, now)("x1", "m@example.com", "full");
+  const writes: string[] = [], spy = { ...db, prepare: (sql: string) => { if (/^UPDATE device SET machine/.test(sql)) writes.push(sql); return db.prepare(sql); } } as unknown as D1Database;
+  const row = (await D.deviceByHash(spy, "hx1"))!;
+  assert.equal(row.machine, null, "옛 줄은 NULL");
+  assert.equal(await D.noteMachine(spy, row, K1), true);
+  assert.equal((db.raw.prepare("SELECT machine FROM device WHERE id = 'x1'").get() as { machine: string }).machine, K1);
+  const again = (await D.deviceByHash(spy, "hx1"))!;
+  assert.equal(await D.noteMachine(spy, again, K1), false, "같은 값이면 안 씀");
+  for (const bad of [undefined, "", "A".repeat(32), "a".repeat(31), "a".repeat(33), "/etc/machine-id", "g".repeat(32)]) assert.equal(await D.noteMachine(spy, again, bad), false, `틀린 꼴 ${bad}`);
+  assert.equal(await D.noteMachine(spy, { id: "x1", machine: undefined }, K2), false, "0087 전(칸 없음)이면 안 씀");
+  assert.equal(writes.length, 1, "쓰기는 바뀐 한 번뿐");
+  assert.equal(await D.noteMachine(spy, again, K2), true, "컴퓨터가 바뀌면(토큰을 옮김) 새 값");
+  assert.equal(writes.length, 2);
+});
+test("열쇠 적기: 0087 가 아직인 D1 은 예전 질의로 기기를 찾고 · 적지 않음", async () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE device (id TEXT PRIMARY KEY, owner TEXT, name TEXT, tools TEXT, token_hash TEXT, scope TEXT, revoked_at INTEGER)");
+  db.prepare("INSERT INTO device VALUES ('o1','m@example.com','n','[]','ho1','full',NULL)").run();
+  const stmt = (sql: string, args: unknown[] = []): any => ({ bind: (...a: unknown[]) => stmt(sql, a), first: async () => { const r = db.prepare(sql).get(...(args as never[])); return r ? { ...(r as object) } : null; }, run: async () => db.prepare(sql).run(...(args as never[])) });
+  const old = { prepare: (sql: string) => stmt(sql) } as unknown as D1Database;
+  const r = (await D.deviceByHash(old, "ho1"))!;
+  assert.equal(r.id, "o1"); assert.equal(r.machine, undefined);
+  assert.equal(await D.noteMachine(old, r, K1), false);
+});
+test("기기 목록 묶기: 같은 사람 · 같은 컴퓨터 → 한 항목(이름은 상태 보내는 기기 · 둘 다 하는 일 · members), 기기 수 = 컴퓨터 수", async () => {
+  const db = d1(), now = Date.now(), add = devs(db, now);
+  add("hrn", "owner-a@example.com", "harness", { machine: K1, name: "owner-host harness", engine_at: now - 30_000, created: now - 1000 });
+  add("srv", "owner-a@example.com", "full", { machine: K1, name: "owner-host (linux)", created: now - 5000 });
+  add("mac", "owner-a@example.com", "full", { machine: K2, name: "mac" });
+  add("old", "owner-a@example.com", "watch", { name: "옛 기기" });   // machine 없음 → 따로
+  await D.putMetrics(db, { id: "srv", owner: "owner-a@example.com" }, { mem: { total_mb: 100, avail_mb: 50 } }, now);
+  const L = await D.listDevices(db, ["owner-a@example.com", "owner-b@example.com"], now, { fold: true }) as any[];
+  assert.equal(L.length, 3, "컴퓨터 셋(묶음 · mac · 옛 기기)");
+  const g = L.find(d => d.members)!;
+  assert.equal(g.id, "srv"); assert.equal(g.name, "owner-host (linux)", "이름은 상태 보내는 기기 먼저");
+  assert.equal(g.scope, "full"); assert.equal(g.metrics.mem.avail_mb, 50); assert.equal(g.engine_at, now - 30_000, "엔진 시각은 묶음 안 가장 늦은 것");
+  assert.deepEqual(g.roles.sort(), ["engine", "metrics"]);
+  assert.deepEqual(g.members.map((m: any) => [m.id, m.scope, m.roles.join("+")]), [["srv", "full", "metrics"], ["hrn", "harness", "engine"]]);
+  assert.equal("machine" in g || "owner" in g, false, "열쇠 · 메일은 화면에 안 나감");
+  for (const d of L.filter(d => !d.members)) assert.equal("machine" in d || "owner" in d, false, "혼자인 줄도 열쇠 · 메일은 안 나감");
+  assert.deepEqual(L.filter(d => !d.members).map(d => [d.id, d.roles.join("+")]).sort(), [["mac", "metrics"], ["old", "metrics"]], "혼자인 줄은 members 없이 그 줄 roles");
+  assert.deepEqual(L.filter(d => !d.members).map(d => d.id).sort(), ["mac", "old"]);
+  // 주인 메일 넷 = 한 사람: 다른 주인 메일로 승인한 같은 컴퓨터 줄도 묶음
+  add("srv2", "owner-b@example.com", "ownercli", { machine: K1, name: "owner-host cli" });
+  const g2 = (await D.listDevices(db, ["owner-a@example.com", "owner-b@example.com"], now, { fold: true }) as any[]).find(d => d.members)!;
+  assert.deepEqual(g2.members.map((m: any) => m.id), ["srv", "srv2", "hrn"], "full → ownercli → harness 차례");
+});
+test("기기 목록 묶기: 남의 기기는 같은 열쇠여도 안 묶음 · 폐기된 줄 빠짐 · fold 없으면(CLI 목록) 줄마다 그대로", async () => {
+  const db = d1(), now = Date.now(), add = devs(db, now);
+  add("mine", "m@example.com", "full", { machine: K1 }); add("theirs", "x@example.com", "full", { machine: K1 });
+  add("cut", "m@example.com", "full", { machine: K1, revoked: now });
+  const mine = await D.listDevices(db, "m@example.com", now, { fold: true }) as any[];
+  assert.deepEqual(mine.map(d => [d.id, !!d.members]), [["mine", false]], "내 줄 하나 — 남의 줄 · 폐기 줄과 안 묶임");
+  // 같은 목록에 남의 owner 가 섞여 와도(부른 쪽 메일 밖) 사람 열쇠가 달라 안 묶음
+  const mixed = D.foldMachines([
+    { id: "a", owner: "m@example.com", machine: K1, name: "a", tools: "[]", scope: "full", created_at: 1, last_at: 1, engine_at: null, metrics_at: null, metrics: null, history: [] },
+    { id: "b", owner: "x@example.com", machine: K1, name: "b", tools: "[]", scope: "harness", created_at: 1, last_at: 1, engine_at: 1, metrics_at: null, metrics: null, history: [] },
+  ]) as any[];
+  assert.deepEqual(mixed.map(d => [d.id, !!d.members]), [["a", false], ["b", false]]);
+  add("hrn", "m@example.com", "harness", { machine: K1, engine_at: now });
+  const raw = await D.listDevices(db, "m@example.com", now) as any[];
+  assert.deepEqual(raw.map(d => d.id).sort(), ["hrn", "mine"], "CLI 목록 · 폐기 대상은 줄마다");
+  assert.equal(raw.some(d => "members" in d || "machine" in d || "roles" in d || "owner" in d), false, "CLI 목록은 예전 꼴 그대로");
+});
+
+test("줄 하나인 맥 · 윈도우 회원 기기(엔진 · 감시가 한 토큰): 그 줄 roles 에 엔진 연결 · 상태 보내기 둘 다", async () => {
+  const db = d1(), now = Date.now(), add = devs(db, now);
+  add("mac", "m@example.com", "full", { machine: K1, name: "MacBook (macOS)", engine_at: now - 5000 });   // engine.ts hello 가 같은 줄에 engine_at
+  add("win", "m@example.com", "full", { name: "PC (windows)", engine_at: now - 5000 });                   // 열쇠 전 옛 줄도 같은 규칙
+  add("only", "m@example.com", "full", { machine: K2 });                                                    // 엔진 안 켠 기기
+  await D.putMetrics(db, { id: "mac", owner: "m@example.com" }, { mem: { total_mb: 100, avail_mb: 50 } }, now);
+  const L = await D.listDevices(db, "m@example.com", now, { fold: true }) as any[];
+  const r = Object.fromEntries(L.map(d => [d.id, d.roles.join("+")]));
+  assert.deepEqual(r, { mac: "engine+metrics", win: "engine+metrics", only: "metrics" });
+  assert.equal(L.some(d => d.members), false);
+});

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, appendFileSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { dir, loadDevice, server, readJson } from '../config.mjs';
+import { installMachineHeader, machineKey, MACHINE_HEADER } from '../machine.mjs';
 import * as E from './index.mjs';
 import { markTurn, hasMark, FRESH } from '../turn.mjs';
 import * as Q from './queue.mjs';
@@ -151,6 +152,8 @@ export async function runDaemon({ hostStops = false } = {}) {
   if (typeof globalThis.WebSocket !== 'function') { console.error('boarder engine needs Node 22 or newer (built-in WebSocket).'); process.exit(1); }
   const dev = loadDevice();
   if (!dev?.token) { console.error('not signed in — run `boarder setup --yes` first'); process.exit(REVOKED_EXIT); }
+  installMachineHeader();
+  const mk = machineKey();
   const pidf = path.join(dir(), 'engine.pid');
   // macOS 엔 /proc 가 없어 그 pid 의 명령을 ps 로 봄(재부팅 뒤 남은 pid 를 남의 프로세스가 쓰면 막지 않게)
   const cmdOf = pid => existsSync(`/proc/${pid}/cmdline`) ? readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ') : (() => { try { return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 3000 }); } catch { return ''; } })();
@@ -167,7 +170,7 @@ export async function runDaemon({ hostStops = false } = {}) {
   for (;;) {
     let ws, lastFull = 0, alive = true;
     const opened = await new Promise(resolve => {
-      ws = new WebSocket(url, { headers: { Authorization: `Bearer ${dev.token}`, 'User-Agent': `boarder-engine/${VERSION}` } });
+      ws = new WebSocket(url, { headers: { Authorization: `Bearer ${dev.token}`, 'User-Agent': `boarder-engine/${VERSION}`, ...(mk ? { [MACHINE_HEADER]: mk } : {}) } });   // 붙을 때 컴퓨터 열쇠(서버가 바뀐 때만 적음)
       ws.onopen = () => resolve(true);
       ws.onerror = () => resolve(false);
       ws.onclose = e => { alive = false; if (e.code === 4401) revoked = true; resolve(false); };

@@ -81,19 +81,60 @@ export async function putMetrics(db: DB, dev: { id: string; owner: string }, raw
   return { ok: true, at: now, kept: hist };
 }
 
-export async function listDevices(db: DB, me: string | string[], now = Date.now()) {
+export const MACHINE_HEADER = "x-boarder-machine";
+export const MACHINE_RE = /^[0-9a-f]{32}$/;
+const noMachineCol = (e: unknown) => /no such column: machine/i.test(String((e as Error)?.message || e));
+export type DeviceRow = { id: string; owner: string; name: string; tools: string; scope: string; machine?: string | null };
+/** 기기 토큰 해시로 산 기기 줄(machine 칸 포함). 0087 가 아직이면 예전 질의 — machine 칸 없음(undefined = 적지 않음) */
+export async function deviceByHash(db: DB, hash: string): Promise<DeviceRow | null> {
+  try { return await db.prepare("SELECT id, owner, name, tools, scope, machine FROM device WHERE token_hash = ? AND revoked_at IS NULL").bind(hash).first<DeviceRow>(); }
+  catch (e) { if (!noMachineCol(e)) throw e; }
+  return db.prepare("SELECT id, owner, name, tools, scope FROM device WHERE token_hash = ? AND revoked_at IS NULL").bind(hash).first<DeviceRow>();
+}
+/** 요청에 실린 열쇠가 그 줄 값과 다를 때만 적음(요청마다 쓰지 않음). 꼴이 틀린 값 · 칸이 없는 D1 은 그냥 지나감. 적었으면 true */
+export async function noteMachine(db: DB, d: Pick<DeviceRow, "id" | "machine">, key: string | null | undefined) {
+  if (!key || !MACHINE_RE.test(key) || d.machine === undefined || d.machine === key) return false;
+  try { await db.prepare("UPDATE device SET machine = ? WHERE id = ? AND machine IS NOT ?").bind(key, d.id, key).run(); d.machine = key; return true; }
+  catch (e) { console.error("기기 컴퓨터 열쇠", String(e).slice(0, 200)); return false; }
+}
+
+type Dev = { id: string; owner: string; machine: string | null; name: string; tools: string; scope: string; created_at: number; last_at: number; engine_at: number | null; metrics_at: number | null; metrics: unknown; history: unknown[] };
+const rolesOf = (d: Dev) => [...(d.scope === "harness" || d.engine_at ? ["engine"] : []), ...(d.scope !== "harness" || d.metrics_at ? ["metrics"] : [])];
+const RANK: Record<string, number> = { full: 0, ownercli: 1, watch: 2, harness: 3 };
+export function foldMachines(list: Dev[], person: (owner: string) => string = o => o) {
+  const out: (Dev | Dev[])[] = [], at = new Map<string, Dev[]>();
+  for (const d of list) {
+    if (!d.machine) { out.push(d); continue; }
+    const k = person(d.owner) + "\n" + d.machine, g = at.get(k);
+    if (g) g.push(d); else { const n = [d]; at.set(k, n); out.push(n); }
+  }
+  const bare = ({ owner: _o, machine: _m, ...d }: Dev) => d;
+  return out.map(x => {
+    if (!Array.isArray(x) || x.length === 1) { const d = Array.isArray(x) ? x[0] : x; return { ...bare(d), roles: rolesOf(d) }; }
+    const ms = [...x].sort((a, b) => (RANK[a.scope] ?? 9) - (RANK[b.scope] ?? 9) || (b.metrics_at || 0) - (a.metrics_at || 0) || b.created_at - a.created_at);
+    const main = ms[0], max = (k: "last_at" | "engine_at") => ms.reduce<number | null>((v, d) => d[k] != null && (v == null || d[k]! > v) ? d[k] : v, null);
+    const members = ms.map(d => ({ id: d.id, name: d.name, scope: d.scope, roles: rolesOf(d), created_at: d.created_at, last_at: d.last_at, engine_at: d.engine_at, metrics_at: d.metrics_at }));
+    return { ...bare(main), last_at: max("last_at") ?? main.last_at, engine_at: max("engine_at"), roles: [...new Set(members.flatMap(m => m.roles))], members };
+  });
+}
+
+export async function listDevices(db: DB, me: string | string[], now = Date.now(), opt: { fold?: boolean } = {}) {
   const ms = (Array.isArray(me) ? me : [me]).slice(0, 8), q = ms.map(() => "?").join(",");
-  const [dv, mt, hs] = await db.batch([
-    db.prepare(`SELECT id, name, tools, scope, created_at, last_at, engine_at FROM device WHERE owner IN (${q}) AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 50`).bind(...ms),
+  const rest = (cols: string) => db.batch([
+    db.prepare(`SELECT ${cols} FROM device WHERE owner IN (${q}) AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 50`).bind(...ms),
     db.prepare(`SELECT m.device_id, m.at, m.data FROM device_metric m JOIN device d ON d.id = m.device_id WHERE d.owner IN (${q}) AND d.revoked_at IS NULL`).bind(...ms),
     db.prepare(`SELECT h.device_id, h.at, h.mem_avail_mb, h.cpu_pct, h.disk_pct, h.agents FROM device_metric_hist h JOIN device d ON d.id = h.device_id WHERE d.owner IN (${q}) AND d.revoked_at IS NULL AND h.at > ? ORDER BY h.at`).bind(...ms, now - 24 * 3600_000),
   ]);
+  const COLS = "id, owner, name, tools, scope, created_at, last_at, engine_at";
+  const [dv, mt, hs] = await rest(COLS + ", machine").catch(e => { if (noMachineCol(e)) return rest(COLS); throw e; });   // 0087 전 D1 은 묶지 않음
   const met = new Map((mt.results as { device_id: string; at: number; data: string }[]).map(r => [r.device_id, r]));
   const hist = new Map<string, unknown[]>();
   for (const r of hs.results as { device_id: string }[]) { const { device_id, ...p } = r; (hist.get(device_id) || hist.set(device_id, []).get(device_id)!).push(p); }
-  return (dv.results as { id: string; name: string; tools: string; scope: string; created_at: number; last_at: number; engine_at: number | null }[]).map(d => {
+  const all = (dv.results as Omit<Dev, "metrics_at" | "metrics" | "history">[]).map(d => {
     const m = met.get(d.id);
     let metrics = null; try { metrics = m ? JSON.parse(m.data) : null; } catch {}
-    return { ...d, metrics_at: m?.at ?? null, metrics, history: hist.get(d.id) || [] };
+    return { ...d, machine: d.machine ?? null, metrics_at: m?.at ?? null, metrics, history: hist.get(d.id) || [] };
   });
+  const own = new Set(ms.map(x => x.toLowerCase()));   // 부른 쪽 메일들 = 한 사람(주인 넷 · 회원 하나) — 그 밖 owner 는 따로(남의 기기와 안 묶음)
+  return opt.fold ? foldMachines(all, o => own.has(o.toLowerCase()) ? "@me" : o) : all.map(({ owner: _o, machine: _m, ...d }) => d);   // CLI 목록은 예전 꼴 그대로
 }

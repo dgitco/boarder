@@ -67,5 +67,5 @@ test("에이전트 화면 주소: #agents ↔ /agents(/channels · /a2a), Worker
   const re = new Function(`return ${m[1]}`)() as RegExp;
   for (const p of ["/agents", "/agents/", "/agents/channels", "/agents/a2a"]) assert.ok(re.test(p), p);
   for (const p of ["/agents/x", "/agentsx"]) assert.ok(!re.test(p), p);
-  assert.match(shell, /const ROUTE = \/\^#\(chat\\\/\|art\\\/\|node\\\/\|w\\\/\|inbox\$\|agents\(\\\/\|\$\)\)\/;/);
+  assert.match(shell, /const ROUTE = \/\^#\(chat\\\/\|m\\\/\|art\\\/\|node\\\/\|w\\\/\|inbox\$\|agents\(\\\/\|\$\)\)\/;/);
 });

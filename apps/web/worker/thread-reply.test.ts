@@ -110,6 +110,20 @@ test("노드 채널 글 스레드: 노드 채팅 글 ch = n:<노드>(그 주소�
     assert.equal(hop.body.text, `[보드 · ${NODE} · 스레드 ${root}] 읽지 않음에서 쓴 답`);
     assert.equal(hop.log.thread, root);
   }
-  // 남의 노드 이름 · 없는 노드는 예전처럼 막힘(다른 채널로 새지 않음)
-  assert.equal((await MB.post(D1, A, "/api/chat", { channel: "n:없는 노드", thread: root, text: "x" }) as any).status, 400);
+  const moved = await MB.post(D1, A, "/api/chat", { channel: "n:없는 노드", thread: root, text: "옮겨 간 스레드에 답" }) as any;
+  assert.equal(moved.path, "/api/me/nodes/cmd", JSON.stringify(moved));
+  assert.equal(moved.body.item, "window:d1:%3");
+  assert.equal(moved.body.text, `[보드 · 없는 노드 · 스레드 ${root}] 옮겨 간 스레드에 답`);
+  assert.deepEqual(moved.log, { win: WIN, text: "옮겨 간 스레드에 답", ch: "없는 노드", thread: root });
+  // 그 스레드를 쓴 창이 이제 어느 노드 · 역할 창도 아님 = 메인 봇(/api/me/chat nthread)
+  const lone = line(A, "사라진 창", "progress", "옛 창 글");
+  const toMain = await MB.post(D1, A, "/api/chat", { channel: "n:없는 노드", thread: lone, text: "옛 창 글에 답" }) as any;
+  assert.deepEqual(toMain.path, "/api/me/chat", JSON.stringify(toMain));
+  assert.deepEqual(toMain.body, { text: "옛 창 글에 답", nthread: lone, ch: "없는 노드" });
+  // 남의 뿌리 · 모르는 ts 는 예전처럼 막힘(다른 채널 · 남의 창으로 새지 않음): 없는 노드 채널은 400, 내 노드 판은 404
+  const other = line(B, WIN, "progress", "B 의 글");
+  for (const t of [other, "1793000000.000999"]) {
+    assert.equal((await MB.post(D1, A, "/api/chat", { channel: "n:없는 노드", thread: t, text: "x" }) as any).status, 400, t);
+    assert.equal((await MB.post(D1, A, "/api/chat", { channel: "n:" + NODE, thread: t, text: "x" }) as any).status, 404, t);
+  }
 });

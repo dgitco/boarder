@@ -43,7 +43,7 @@
   const DK = 'bx-x-done', ld = () => { try { const o = JSON.parse(localStorage.getItem(DK) || '{}'), cut = Date.now() - 14 * 864e5; return new Map(Object.entries(o).filter(([, t]) => t > cut)); } catch { return new Map(); } };
   const FLK = 'bx-x-fl', flLoad = () => { try { const v = localStorage.getItem(FLK) || 'all'; return /^(ask|un|info)$/.test(v) ? 'all' : v; } catch { return 'all'; } };
   const OWN_SC = [{id: 'all', label: '전체'}, {id: 'company', label: '회사'}, {id: 'personal', label: '퍼스널'}, {id: 'shop', label: '가게'}];
-  const scTabs = () => { try { return window.HB_CH ? [] : OWN_SC; } catch { return []; } };
+  const scTabs = () => { try { return (window.HB_CAPS?.area_tabs ?? !window.HB_CH) ? OWN_SC : []; } catch { return []; } };
   const inSc = (t, k) => { try { return t === 'all' || k === t; } catch { return true; } };
   const X = {fl: flLoad(), tab: 'home', th: null, sel: chs()[0] || 'primary', done: ld(), sv: new Map(), undo: null, seenT: new Map(), pend: new Map(), kids: new Map(), ready: false, page: 10, shown: null, shownFl: '', paintAt: 0, unKeep: new Set()};   // sv = 방금 누른 저장 표시(서버 목록이 따라올 때까지)
   addEventListener('hbside', () => { if (X.ready && JSON.stringify(scTabs()) !== X.tbSig) drawHome(true); });

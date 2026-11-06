@@ -1,7 +1,7 @@
 // Boarder API(Hono) — /api/* 만 Worker 가 받고, 나머지는 React 정적 자산(SPA)
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { METRICS_MAX_BYTES, putMetrics, listDevices, readCapped, tooSoon } from "./devices";
+import { METRICS_MAX_BYTES, putMetrics, listDevices, readCapped, tooSoon, deviceByHash, noteMachine, MACHINE_HEADER } from "./devices";
 import * as devCard from "./device-card";
 import * as connReq from "./connect-request";
 import * as devSettings from "./device-settings";
@@ -714,6 +714,7 @@ app.get("/api/agent/result/:id", async c => {
   return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 });
 app.get("/f/:id{[0-9a-f]{32}}", c => memberFiles.signedGet(c as never, c.req.param("id")));
+app.get("/f/:id{[0-9a-f]{32}}/:name", c => memberFiles.signedGet(c as never, c.req.param("id")));
 app.route("/", legal);   // 개인정보 처리방침 · 약관(legal.ts) — 구글 동의 화면 링크
 app.post("/mcp", async c => { const ctx = await agentCtx(c); if (ctx === "mismatch") return c.json({ error: "신원 불일치" }, 403); if (!ctx) return c.json({ error: "토큰" }, 401);
   const m = await c.req.raw.clone().json().catch(() => null) as { method?: string; params?: { name?: unknown } } | null, tn = String(m?.params?.name || "");
@@ -736,14 +737,15 @@ const CTRL_ALL = /[\x00-\x1f\x7f-\x9f]/g;
 const clean = (v: unknown, n: number) => String(v ?? "").replace(CTRL_ALL, "").trim().slice(0, n);
 const docNav = (c: { req: { method: string; header(k: string): string | undefined } }, url: URL) =>
   c.req.method === "GET" && c.req.header("sec-fetch-dest") === "document" && !url.pathname.startsWith("/api/") && url.pathname !== "/";
-export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/[A-Za-z0-9]{16,40})?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/\d{10}\.\d{6})?|m\/[a-z][0-9a-z]{6,12}(?:_[0-9a-z]{6,12})?(?:-[^/]{0,400})?|w\/[^/]+|settings(?:\/[^/]+){0,2}|task-status(?:\/[\w.-]{1,40})?|device-sessions|agents(?:\/(?:channels|a2a))?)\/?$/;
+export const APP_PATH = /^\/(?:nodes(?:\/[^/]+)?|timeline|canvas(?:\/[A-Za-z0-9]{16,40}(?:-[^/]{0,400})?)?|unread|saved|drafts|inbox|nf|chat\/[^/]+(?:\/\d{10}\.\d{6})?|m\/(?:[a-z][0-9a-z]{6,12}(?:_[0-9a-z]{6,12})?|\d{1,8}(?:-\d{1,4}){0,2}(?:\.\d{1,5})?)(?:-[^/]{0,400})?|w\/[^/]+|settings(?:\/[^/]+){0,2}|task-status(?:\/[\w.-]{1,40})?|device-sessions|agents(?:\/(?:channels|a2a))?)\/?$/;
 const NOFRAME = { "cache-control": "no-store", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" };
 const sameSite = (c: Context<{ Bindings: Env }>) => c.req.header("x-hb") === "1" && ["same-origin", "none", undefined].includes(c.req.header("sec-fetch-site"));
 async function deviceOf(c: Context<{ Bindings: Env }>, opt: { watch?: boolean; harness?: boolean; ownercli?: boolean } = {}) {
   const tok = (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "");
   if (!/^bxd_[A-Za-z0-9_-]{30,80}$/.test(tok)) return null;
-  const d = await c.env.DB.prepare("SELECT id, owner, name, tools, scope FROM device WHERE token_hash = ? AND revoked_at IS NULL").bind(await sha(tok)).first<{ id: string; owner: string; name: string; tools: string; scope: string }>();
+  const d = await deviceByHash(c.env.DB, await sha(tok));
   if (!d || (d.scope !== "full" && !(opt.watch && d.scope === "watch") && !(opt.harness && d.scope === "harness") && !(opt.ownercli && d.scope === "ownercli"))) return null;
+  await noteMachine(c.env.DB, d, c.req.header(MACHINE_HEADER));   // 같은 컴퓨터 묶기(0087): 열쇠가 바뀐 때만 한 번 씀 · 인증과 무관
   const rec = REC.get(c.req.raw); if (rec) rec.dev = d.owner;
   return d;
 }
@@ -1149,7 +1151,7 @@ async function ownerReopen(c: Context<{ Bindings: Env }>, me: string, raw: strin
 const ownerMails = (env: Env, email: string) => { const me = email.toLowerCase(); return isOwner(env, me) ? env.ALLOW_EMAILS.split(",").map(x => x.trim().toLowerCase()).filter(Boolean) : [me]; };
 app.get("/api/me/devices", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  return c.json({ devices: await listDevices(c.env.DB, ownerMails(c.env, s.user.email)) }, 200, { "cache-control": "no-store" });
+  return c.json({ devices: await listDevices(c.env.DB, ownerMails(c.env, s.user.email), Date.now(), { fold: true }) }, 200, { "cache-control": "no-store" });   // 같은 컴퓨터 줄은 한 카드(members)
 });
 app.post("/api/me/cards/:id/answer", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
@@ -1591,9 +1593,15 @@ const settingsWho = async (c: Context<{ Bindings: Env }>) => {
 const engErr = (c: Context<{ Bindings: Env }>, e: unknown) => c.json({ ok: false, error: e instanceof Error && /^[가-힣]/.test(e.message) ? e.message : "일시적인 오류가 발생했어요" }, 400);
 app.post("/api/me/chat", async c => {
   const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
-  const { text, rid: rid0, thread } = await c.req.json<{ text?: string; rid?: string; thread?: string }>().catch(() => ({} as { text?: string; rid?: string; thread?: string }));
+  const { text, rid: rid0, thread, nthread, ch } = await c.req.json<{ text?: string; rid?: string; thread?: string; nthread?: string; ch?: string }>().catch(() => ({} as { text?: string; rid?: string; thread?: string; nthread?: string; ch?: string }));
   const t = String(text || "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").trim().slice(0, 4000), rid = queue.ridOfBody({ rid: rid0 });
   if (!t) return c.json({ ok: false, error: "내용을 적어요" }, 400);
+  if (nthread !== undefined && nthread !== null && nthread !== "") {
+    const root = String(nthread);
+    if (!(await memberBoard.threadRootOk(c.env.DB, me, root))) return c.json({ ok: false, error: "없는 스레드예요" }, 404);
+    try { const r = await primarySend(c.env, me, t, boardHead({ channel: String(ch || ""), thread: root })); return c.json({ ok: true, ...(r as object || {}) }); }
+    catch (e) { return engErr(c, e); }
+  }
   const root = thread === undefined || thread === null || thread === "" ? undefined : String(thread);
   if (root !== undefined && !(await memberBoard.primaryRoot(c.env.DB, me, root))) return c.json({ ok: false, error: "없는 스레드예요" }, 404);
   try { if (!(await queue.ridBatch(c.env.DB, rid, [c.env.DB.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").bind(me, "나", "chat", t, root ? memberBoard.primaryThread(root) : "primary", Date.now())], p => c.executionCtx.waitUntil(p))) && await queue.sentSeen(c.env.DB, rid)) return c.json({ ok: true, already: true }); }
@@ -1609,14 +1617,14 @@ app.get("/api/me/onboarding", async c => {
   const ownerSubs = isOwner(c.env, s!.user.email) && await ledger.f7On(c.env.DB, "write_push") ? await pusher(c.env).nSubs().catch(() => undefined) : undefined;
   return c.json(await onboarding(c.env.DB, me, { server: c.env.PUBLIC_URL, push: ownerSubs !== undefined || await ledger.f7On(c.env.DB, "member_push").catch(() => false), ownerSubs }), 200, { "cache-control": "no-store" });
 });
-const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1", newsb: v => v === "0" || v === "1", unreadkeep: v => v === "0" || v === "1", canvasback: v => v === "0" || v === "1", ibboth: v => v === "0" || v === "1", mainmerge: v => v === "0" || v === "1", sbw: v => v === "0" || v === "72" || (/^[1-9]\d{2}$/.test(v) && +v >= 200 && +v <= 480) }
+const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1", newsb: v => v === "0" || v === "1", unreadkeep: v => v === "0" || v === "1", copybits: v => v === "0" || v === "1", canvasback: v => v === "0" || v === "1", ibboth: v => v === "0" || v === "1", mainmerge: v => v === "0" || v === "1", sbw: v => v === "0" || v === "72" || (/^[1-9]\d{2}$/.test(v) && +v >= 200 && +v <= 480) }
 app.get("/api/me/ui", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const rs = (await c.env.DB.prepare("SELECT k, v FROM user_pref WHERE owner = ? AND k LIKE 'ui:%'").bind(s.user.email.toLowerCase()).all<{ k: string; v: string }>()).results || [];
   const out: Record<string, string> = {}; for (const r of rs) { const k = r.k.slice(3); if (Object.hasOwn(UI_PREF, k) && UI_PREF[k](r.v)) out[k] = r.v; }
   return c.json(out, 200, { "cache-control": "no-store" });
 });
-app.post("/api/me/ui", async c => {   // { k: "theme" | "accent" | "still" | "favblink" | "tapthread" | "unreadkeep", v }
+app.post("/api/me/ui", async c => {   // { k: "theme" | "accent" | "still" | "favblink" | "tapthread" | "unreadkeep" | "copybits" | …, v }
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const { k, v } = await c.req.json<{ k?: string; v?: string }>().catch(() => ({} as { k?: string; v?: string }));
@@ -2485,7 +2493,7 @@ async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: strin
   //   session_files: 켠 주인(관리 권한)은 참 — 세션 글(/api/chat/new · send)이 회원 길에서도 첨부를 링크 줄로 넘김(memberPost, 빠짐 4). 회원은 아직 거짓(지금 값 그대로)
   const ns = await c.env.DB.prepare("SELECT json_extract(data, '$.unit') u, json_extract(data, '$.turn_label') t FROM node_setting WHERE owner = ? AND json_valid(data)").bind(me).first<{ u: string | null; t: string | null }>().catch(() => null);
   const push = await ledger.f7On(c.env.DB, "member_push").catch(() => false), adm = W.isAdmin(c.env, me);
-  const caps = adm ? { invite: true, org_links: true, mainline: true, session_files: true, start_tab: false, push: true, push_wide: false } : { invite: false, org_links: false, mainline: false, session_files: false, start_tab: true, push, push_wide: true };   // push_wide: 알림 범위 글 · 넓힘 칸 — 켠 주인은 주인 구독 칸(급한 것만), 회원은 넓힘을 고름
+  const caps = adm ? { invite: true, org_links: true, mainline: true, session_files: true, start_tab: false, push: true, push_wide: false, area_tabs: true } : { invite: false, org_links: false, mainline: false, session_files: false, start_tab: true, push, push_wide: true , area_tabs: false};   // push_wide: 알림 범위 글 · 넓힘 칸 — 켠 주인은 주인 구독 칸(급한 것만), 회원은 넓힘을 고름
   const turn = typeof ns?.t === "string" && ns.t.trim() ? ns.t.trim().slice(0, 20) : "내 차례";
   const stack = (data as { tree_shape?: string }).tree_shape !== "cols";
   const member = `<script>window.HB_CH = ${JSON.stringify(chans).replace(/</g, "\\u003c")};${agents ? ` window.HB_AGENTS = ${JSON.stringify(agents).replace(/</g, "\\u003c")};` : ""} window.HB_CAPS = ${JSON.stringify(caps)}; window.HB_MEMBER = ${JSON.stringify({ email: me, name: String(name || me.split("@")[0]).slice(0, 40), bot: bot.name, turn, avatar: await memberBoard.myAvatar(c.env.DB, me).catch(() => null), push, unit: ns?.u === "agent" || ns?.u === "goal" ? ns.u : null }).replace(/</g, "\\u003c")}</script>${stack ? `<style id="hbm-css">.areas{grid-template-columns:minmax(0,320px)!important;justify-content:center}</style>` : ""}`;
@@ -2560,7 +2568,7 @@ async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: s
   const emb = new URL(c.req.url).searchParams.has("embed");
   return new HTMLRewriter()
       .on('meta[name="apple-mobile-web-app-title"]', { element: e => { e.setAttribute("content", "보더"); } })
-      .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (!/^#(chat|art\\/|arts|node\\/|tree|w\\/|inbox|unread|saved|drafts|timeline|nf|settings|t=|board)/.test(location.hash) && location.pathname && location.pathname !== '/') { var hp = location.pathname, hq = new URLSearchParams(location.search), hm; if (hp === '/nodes') HB_HASH0 = '#tree'; else if (hm = /^\\/nodes\\/([^/]+)$/.exec(hp)) HB_HASH0 = '#node/' + hm[1] + (/^\\d{10}\\.\\d{6}$/.test(hq.get('thread') || '') ? '/' + hq.get('thread') : ''); else if (hm = /^\\/canvas\\/([A-Za-z0-9]{16,40})$/.exec(hp)) HB_HASH0 = '#art/' + hm[1]; else if (hp === '/canvas') HB_HASH0 = '#arts'; else if (hm = /^\\/chat\\/([^/]+)(?:\\/([^/]+))?$/.exec(hp)) HB_HASH0 = '#chat/' + hm[1] + (hm[2] ? (hq.get('thread') ? '/' + hq.get('thread') + '/' + hm[2] : '/' + hm[2]) : ''); else if (hp === '/unread' && /^\\d{10}\\.\\d{6}$/.test(hq.get('msg') || '')) HB_HASH0 = '#unread?msg=' + hq.get('msg'); else if (hm = /^\\/(inbox|unread|saved|drafts|timeline|nf|w\\/.+|settings(?:\\/.*)?)$/.exec(hp)) HB_HASH0 = '#' + hm[1]; } document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000); if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|unread(\\?msg=\\d{10}\\.\\d{6})?$|saved$|drafts$|settings(\\/|$|\\?))/.test(window.HB_HASH0)) { document.documentElement.classList.add('bx-route'); setTimeout(function(){ document.documentElement.classList.remove('bx-route') }, 35000) }</script>", { html: true });
+      .on("head", { element: async e => { if (member) e.prepend(member, { html: true }); e.prepend(`<script>window.BX_Q = ${q ? 1 : 0}; window.BX_FLAGS_OFF = ${JSON.stringify(String((c.env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF || "").split(",").map(x => x.trim()).filter(Boolean))}</script>`, { html: true }); e.prepend("<script>window.HB_HASH0 = location.hash; if (!/^#(chat|art\\/|arts|node\\/|tree|w\\/|inbox|unread|saved|drafts|timeline|nf|settings|t=|board)/.test(location.hash) && location.pathname && location.pathname !== '/') { var hp = location.pathname, hq = new URLSearchParams(location.search), hm; if (hp === '/nodes') HB_HASH0 = '#tree'; else if (hm = /^\\/nodes\\/([^/]+)$/.exec(hp)) HB_HASH0 = '#node/' + hm[1] + (/^\\d{10}\\.\\d{6}$/.test(hq.get('thread') || '') ? '/' + hq.get('thread') : ''); else if (hm = /^\\/canvas\\/([A-Za-z0-9]{16,40})(?:-[^/]*)?$/.exec(hp)) HB_HASH0 = '#art/' + hm[1]; else if (hp === '/canvas') HB_HASH0 = '#arts'; else if (hm = /^\\/chat\\/([^/]+)(?:\\/([^/]+))?$/.exec(hp)) HB_HASH0 = '#chat/' + hm[1] + (hm[2] ? (hq.get('thread') ? '/' + hq.get('thread') + '/' + hm[2] : '/' + hm[2]) : ''); else if (hp === '/unread' && /^\\d{10}\\.\\d{6}$/.test(hq.get('msg') || '')) HB_HASH0 = '#unread?msg=' + hq.get('msg'); else if (hm = /^\\/(inbox|unread|saved|drafts|timeline|nf|w\\/.+|settings(?:\\/.*)?)$/.exec(hp)) HB_HASH0 = '#' + hm[1]; } document.documentElement.classList.add('bx-boot'); setTimeout(function(){ document.documentElement.classList.remove('bx-boot') }, 4000); if (/^#(chat\\/|art\\/|node\\/|w\\/|inbox$|unread(\\?msg=\\d{10}\\.\\d{6})?$|saved$|drafts$|settings(\\/|$|\\?))/.test(window.HB_HASH0)) { document.documentElement.classList.add('bx-route'); setTimeout(function(){ document.documentElement.classList.remove('bx-route') }, 35000) }</script>", { html: true });
         e.prepend(`<script>window.HBR=window.HBR||{hash:function(){return location.hash},same:function(a,b){return a===b},go:function(h){location.hash=h},toHash:function(){return ''},toPath:function(){return null},isApp:function(){return false},url:function(h){return location.origin+'/'+h}}</script>`, { html: true });
         if (!ea && !emb) e.prepend(`<base href="/"><script>window.HB_PATHS=1</script>`, { html: true });
         const pg0 = ({ "/task-status": "tasks", "/device-sessions": "devices" } as Record<string, string>)[new URL(c.req.url).pathname.replace(/^(\/task-status)\/[\w.-]{1,40}$/, "$1").replace(/\/$/, "")];   // /task-status/<요청 id> = 그 요청 세부
@@ -2571,8 +2579,15 @@ async function boardShell(c: Context<{ Bindings: Env }>, res: Response, email: s
       .on("body", { element: e => { e.append((bx ? bx.body : `<script>${shellJs.replace(/<\//g, "<\\/")}</script><script>${botPickJs.replace(/<\//g, "<\\/")}</script><script>${settingsJs.replace(/<\//g, "<\\/")}</script><script>${statusJs.replace(/<\//g, "<\\/")}</script>`) + (ea === "x" ? (bx ? bx.xBody : `<script>${xJs.replace(/<\//g, "<\\/")}</script>`) : ea ? (bx ? bx.eaBody : `<script>${eaJs.replace(/<\//g, "<\\/")}</script><script>${eaSecretJs.replace(/<\//g, "<\\/")}</script>`) : "") + `<script>document.documentElement.classList.remove('bx-boot')</script>` + (ov?.body || ""), { html: true }); } })
     .transform(res);
 }
+export function msgPathLower(path: string): string | null {
+  const m = /^\/m\/([a-z][0-9a-z]{6,12}(?:_[0-9a-z]{6,12})?(?=-|$))?/i.exec(path);
+  if (!m) return null;
+  const to = "/m/" + (m[1] || "").toLowerCase() + path.slice(m[0].length);
+  return to !== path && APP_PATH.test(to) ? to : null;
+}
 app.all("*", async c => {
   let url = new URL(c.req.url);
+  if (c.req.method === "GET" || c.req.method === "HEAD") { const lo = msgPathLower(url.pathname); if (lo) return c.redirect(lo + url.search, 301); }
   if ((c.req.method === "GET" || c.req.method === "HEAD") && APP_PATH.test(url.pathname)) url = new URL("/", url);   // 보더 화면 경로 = 같은 보드(주소창은 그대로 — ?thread= 같은 물음 글은 화면이 읽음)
   // React 꾸러미(/assets, 해시 이름)와 기본 봇 그림은 누구에게나 Boarder 것 — 주인이 /device 를 열어도 빈 화면이 안 되게(보드에는 /assets 가 없음)
   if (/^\/(assets|landing)\//.test(url.pathname) || url.pathname === "/icons/primary-blob.svg" || url.pathname === "/node-rules.md") return c.env.ASSETS.fetch(c.req.raw);
@@ -2875,7 +2890,7 @@ app.all("*", async c => {
   const rd = c.req.method === "GET" && chOf(c) === "owner" ? ownerRead.route(url.pathname + url.search) : null;
   const flag = (n: string) => rd?.kind === "inbox" ? ledger.f7Peek(c.env.DB, n, peekWait(c)) : ledger.f7On(c.env.DB, n);
   const shadowRd = !!rd && await flag("shadow_" + rd.group);
-  if (rd && await flag("read_" + rd.group)) {
+  if (rd && (rd.kind === "alias" || await flag("read_" + rd.group))) {
     const st = rd.kind === "inbox";
     const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;
     const ag = await ledgerAges(c.env).catch(() => null);

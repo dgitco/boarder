@@ -19,6 +19,7 @@ import { engineCommand, ENGINE_HELP } from './engine/cmd.mjs';
 import { enable, disable, uninstall, VIEW_HELP } from './view.mjs';
 import { secretCommand, SECRET_HELP } from './secret.mjs';
 import { deviceCommand, DEVICE_HELP } from './device.mjs';
+import { installMachineHeader } from './machine.mjs';
 
 const VERSION = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version;
 const KIND = { 시작: 'start', 진행: 'progress', 막힘: 'blocked', 기다림: 'waiting', 끝: 'done', 결정: 'decision', 장애: 'incident', 마감: 'deadline', 세션시작: 'session_start', 세션끝: 'session_end' };
@@ -219,6 +220,7 @@ async function status() {
 
 export async function main(argv) {
   const [cmd, ...rest] = argv, { flags, pos } = parse(rest);
+  installMachineHeader();   // 기기 토큰 요청마다 컴퓨터 열쇠(x-boarder-machine) — 설정 › 기기가 같은 컴퓨터 줄을 한 카드로
   try {
     if (!cmd || cmd === '--help' || cmd === '-h') return console.log(HELP);
     if (cmd === 'help') return console.log(SECTION_HELP[pos[0]] || HELP);

@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "7f34052871a0";
+window.HB_VER = "9356b9ed752c";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -20,9 +20,57 @@ window.HB_DTAG = "__BX_DTAG__";
     }
   };
   const slug = (t) => Array.from(String(t || "").split("\n")[0].replace(/<[^>|]*\|([^>]*)>/g, "$1").replace(/<[^>]*>/g, "").replace(/:[a-z0-9_+'-]+:/g, "").replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+/, "")).slice(0, 30).join("").replace(/-+$/, "");
+  const ALIAS_MODE = "A", ALIAS_A = "(?:(\\d{4})-)?((?:0[1-9]|1[0-2])(?:0[1-9]|[12]\\d|3[01]))-([1-9]\\d{0,3})(?:\\.([1-9]\\d{0,4}))?", ALIAS_B = "()()([1-9]\\d{0,7})(?:\\.([1-9]\\d{0,4}))?";
+  const AID = new RegExp("^(" + (ALIAS_MODE === "A" ? ALIAS_A : ALIAS_B).replace(/\((?!\?)/g, "(?:") + ")(?:-([^/]*))?$");
+  const AL = {}, ALr = {}, aSeen = {}, aWait = {};
+  const aK = (c, t, m) => c + "/" + t + "/" + (m && m !== t ? m : "");
+  const aPut = (id, c, t, m) => {
+    if (!id || !c || !t) return;
+    AL[id] = [c, t, m && m !== t ? m : ""];
+    ALr[aK(c, t, m)] = id;
+  };
+  const aOf = (c, t, m) => {
+    let a = ALr[aK(c, t, m)];
+    if (!a) {
+      try {
+        a = window.HB_MALIAS?.(c, t, m) || "";
+      } catch (e) {
+        a = "";
+      }
+      if (a) aPut(a, c, t, m);
+    }
+    return a || "";
+  };
+  const aHash = (id) => {
+    const x = AL[id];
+    return x ? "#chat/" + x[0] + "/" + x[1] + (x[2] ? "/" + x[2] : "") : "";
+  };
+  const aFind = (id) => {
+    if (!AL[id]) {
+      let f = null;
+      try {
+        f = window.HB_MFIND?.(id);
+      } catch (e) {
+      }
+      if (f) aPut(id, f.c, f.t, f.m);
+    }
+    return aHash(id);
+  };
+  function mFind(id) {
+    const h = aFind(id);
+    if (h) return Promise.resolve(h);
+    return aWait[id] ||= fetch("/api/m/" + encodeURIComponent(id), { credentials: "same-origin" }).then((r) => r.ok ? r.json() : null).then((j) => {
+      delete aWait[id];
+      if (j && j.chan && j.ts) aPut(id, j.chan, j.ts, j.m);
+      return aHash(id);
+    }, () => {
+      delete aWait[id];
+      return "";
+    });
+  }
   function mPath(c, t, m) {
-    const id = MK[c] && b36(t), m36 = m && m !== t ? b36(m) : "";
-    if (!id || m && m !== t && !m36) return null;
+    const al = aOf(c, t, m), id = MK[c] && b36(t), m36 = m && m !== t ? b36(m) : "";
+    if (!al && (!id || m && m !== t && !m36)) return null;
     let s = "";
     try {
       s = slug(window.HB_MTITLE?.(c, t));
@@ -35,12 +83,17 @@ window.HB_DTAG = "__BX_DTAG__";
         e = encodeURIComponent(s);
       }
       s = e;
-    } else s = mSeen[c + "/" + t] || "";
-    return "/m/" + MK[c] + id + (m36 ? "_" + m36 : "") + (s ? "-" + s : "");
+    } else s = al && aSeen[al] || mSeen[c + "/" + t] || "";
+    return al ? "/m/" + al + (s ? "-" + s : "") : "/m/" + MK[c] + id + (m36 ? "_" + m36 : "") + (s ? "-" + s : "");
   }
   const mSeen = {};
   function mHash(x) {
-    const r = /^([a-z])([0-9a-z]{6,12})(?:_([0-9a-z]{6,12}))?(?:-([^/]*))?$/.exec(x || ""), c = r && KM[r[1]], t = c && unb36(r[2]), m = r && r[3] ? unb36(r[3]) : "";
+    const a = AID.exec(x || "");
+    if (a) {
+      if (a[2]) aSeen[a[1]] = a[2];
+      return aFind(a[1]) || "#m/" + a[1];
+    }
+    const r = /^([a-z])([0-9a-z]{6,12})(?:_([0-9a-z]{6,12}))?(?:-([^/]*))?$/i.exec(x || ""), c = r && KM[r[1].toLowerCase()], t = c && unb36(r[2].toLowerCase()), m = r && r[3] ? unb36(r[3].toLowerCase()) : "";
     if (t && r[4]) mSeen[c + "/" + t] = r[4];
     return t && (!r[3] || m) ? "#chat/" + c + "/" + t + (m ? "/" + m : "") : "";
   }
@@ -52,10 +105,26 @@ window.HB_DTAG = "__BX_DTAG__";
     if (!p[0]) return "/" + qs;
     if (p.length === 1 && ONE[p[0]]) return ONE[p[0]] + qs;
     if (p[0] === "node" && p[1]) return p[2] && /^\d{10}\.\d{6}$/.test(p[2]) ? "/nodes/" + seg(p[1]) + "?thread=" + p[2] + (qs ? "&" + qs.slice(1) : "") : "/nodes/" + seg(p.slice(1).join("/")) + qs;
-    if (p[0] === "art" && p[1] && p.length === 2) return "/canvas/" + seg(p[1]) + qs;
+    if (p[0] === "art" && p[1] && p.length === 2) {
+      let s = "";
+      try {
+        s = slug(window.HB_ATITLE?.(p[1]));
+      } catch (e) {
+      }
+      if (s) {
+        let e = encodeURIComponent(s);
+        while (e.length > 180 && s.length) {
+          s = Array.from(s).slice(0, -1).join("").replace(/-+$/, "");
+          e = encodeURIComponent(s);
+        }
+        s = e;
+      }
+      return "/canvas/" + seg(p[1]) + (s ? "-" + s : "") + qs;
+    }
     if (p[0] === "w" && p[1]) return "/w/" + seg(p.slice(1).join("/")) + qs;
     if (p[0] === "agents" && (p.length === 1 || p.length === 2 && /^(channels|a2a)$/.test(p[1]))) return "/" + p.join("/") + qs;
     if (p[0] === "settings") return "/" + p.map(seg).join("/") + qs;
+    if (p[0] === "m" && p[1] && p.length === 2 && AID.test(p[1])) return "/m/" + p[1] + (aSeen[p[1]] ? "-" + aSeen[p[1]] : "") + qs;
     if (p[0] === "chat" && p[1] && p.length <= 4) {
       if (p[2] && !qs && mOn()) {
         const mp = mPath(p[1], p[2], p[3]);
@@ -77,11 +146,11 @@ window.HB_DTAG = "__BX_DTAG__";
       if (k) return "#" + k + (p[0] === "settings" ? qs : p[0] === "unread" && /^\d{10}\.\d{6}$/.test(m) ? "?msg=" + m : "");
     }
     if (p[0] === "nodes" && p[1]) return "#node/" + p.slice(1).join("/") + (t && /^\d{10}\.\d{6}$/.test(t) ? "/" + t : "");
-    if (p[0] === "canvas" && p[1]) return "#art/" + p[1];
+    if (p[0] === "canvas" && p[1]) return "#art/" + p[1].replace(/-.*$/, "");
     if (p[0] === "w" && p[1]) return "#w/" + p.slice(1).join("/");
     if (p[0] === "agents") return "#agents" + (/^(channels|a2a)$/.test(p[1] || "") ? "/" + p[1] : "");
     if (p[0] === "settings") return "#" + p.join("/") + qs;
-    if (p[0] === "m" && p[1] && p.length === 2) return mHash(p[1]);
+    if ((p[0] === "m" || p[0] === "M") && p[1] && p.length === 2) return mHash(p[1]);
     if (p[0] === "chat" && p[1]) return t && p[2] ? "#chat/" + p[1] + "/" + encodeURIComponent(t) + "/" + p[2] : "#chat/" + p.slice(1, 3).join("/");
     return "";
   }
@@ -90,6 +159,8 @@ window.HB_DTAG = "__BX_DTAG__";
     toPath,
     toHash,
     isApp,
+    mFind,
+    aPut,
     hash: () => {
       const h = location.hash;
       if (!window.HB_PATHS) return h && h !== "#" ? h : "";
@@ -172,7 +243,7 @@ window.HB_DTAG = "__BX_DTAG__";
   }
   de.classList.add("bx-boot");
   setTimeout(() => de.classList.remove("bx-boot"), 4e3);
-  if (/^#(chat\/|art\/|node\/|w\/|inbox$|unread$|saved$|drafts$|settings(\/|$|\?))/.test(h0)) {
+  if (/^#(chat\/|m\/|art\/|node\/|w\/|inbox$|unread$|saved$|drafts$|settings(\/|$|\?))/.test(h0)) {
     de.classList.add("bx-route");
     setTimeout(() => de.classList.remove("bx-route"), 35e3);
   }
@@ -5569,7 +5640,7 @@ const MAIN5 = ["primary", "company", "personal", "dgit", "shop"], MAIN_ONE = { p
 for (const a of AGENT_CH) MAIN_ONE[a.key] ??= [...String(a.name).trim()][0] || a.key[0];
 const mainOn = () => {
   try {
-    return (window.HB_CAPS?.mainline ?? !(window.HB_CH || window.HB_MEMBER)) && !CS.mainNo && localStorage.getItem("hb-mainmerge") === "1";
+    return (window.HB_CAPS?.mainline ?? !(window.HB_CH || window.HB_MEMBER)) && !(CS.mainNo && Date.now() - CS.mainNo < 6e4) && localStorage.getItem("hb-mainmerge") === "1";
   } catch (e) {
     return false;
   }
@@ -5916,6 +5987,7 @@ function tkIco(k) {
 }
 function tkLab(tl, x) {
   const w = x && (tkCut(x.text) || x.name);
+  if (x?.alias) return "#" + x.alias + (w ? " " + w : "");
   return "#" + tl.c + " · " + (w ? (tl.m && tl.m !== tl.t || x.replies ? "스레드 · " : "") + w : "스레드");
 }
 function tkCut(s) {
@@ -5935,6 +6007,22 @@ function tkName(u) {
   const ai = artId(u);
   return ai ? ARTS[ai].title || "아티팩트" : "";
 }
+window.HB_MALIAS = (c, t, m) => {
+  const x = tkMsg({ c, t, m }) || (!m || m === t ? (CS.ch[c]?.messages || []).find((y) => y.ts === t) || (CS.ch.primary?.messages || []).find((y) => y.ts === t && y.ch === c) : null);
+  return x && !x.deleted ? x.alias || "" : "";
+};
+window.HB_MFIND = (id) => {
+  for (const [k, v] of Object.entries(CS.ch || {})) if (!k.includes(":")) {
+    for (const x of v?.messages || []) if (x.alias === id) return { c: x.ch || k, t: x.ts, m: "" };
+  }
+  for (const [t, v] of Object.entries(CS.thr || {})) {
+    const c = v?.channel;
+    if (c && !String(c).includes(":")) {
+      for (const x of v.messages || []) if (x.alias === id) return { c, t, m: x.ts === t ? "" : x.ts };
+    }
+  }
+  return null;
+};
 window.HB_MTITLE = (c, t) => {
   const x = tkMsg({ c, t }) || (CS.ch.primary?.messages || []).find((y) => y.ts === t && y.ch === c);
   return x && !x.deleted ? x.text || "" : "";
@@ -5975,9 +6063,22 @@ async function goLink(l) {
     if (await flashAt("cfeed", want, none) || !chatOn() || CS.at !== at) return;
     await openThread(l.c, want);
   } else if (isNodeCh(l.c) && !(chatOn() && CS.at === l.c)) {
-    openNode(l.c.slice(2));
-    if (!chatOn() || !isNodeCh(CS.at)) return;
-    await openThread(l.c, l.t);
+    const t = nodeName(l.c.slice(2));
+    if (window.HB_MEMBER && t && !knownNode(t) && !byPane[l.c.slice(2)] && !parkBy[l.c.slice(2)]) {
+      if (!chatOn()) openChan("primary", void 0, true);
+      if (!chatOn()) return;
+      const row = CS.at === "i:unread" && [...document.querySelectorAll("#cfeed .ibi[data-ibch][data-ibth]")].find((x) => x.dataset.ibch === l.c && x.dataset.ibth === l.t);
+      if (row) {
+        await openThread(l.c, l.t);
+        await flashAt("cfeed", want);
+        return;
+      }
+      await openThread(l.c, l.t, false, true);
+    } else {
+      openNode(l.c.slice(2));
+      if (!chatOn() || !isNodeCh(CS.at)) return;
+      await openThread(l.c, l.t);
+    }
   } else if (chatOn() && (CS.at === l.c || CS.at === "primary" && inMainAt(l.c, l.t))) await openThread(l.c, l.t);
   else openChan(l.c, l.t);
   await flashAt("cthfeed", want);
@@ -6695,16 +6796,20 @@ async function loadCh(k) {
     return;
   }
   const ka = chApi(k);
-  if (k === "primary" && CS.mainAt !== ka) {
-    if (CS.mainAt !== void 0) {
-      delete CS.old[k];
-      delete CS.chTop[k];
-      delete CW[k];
-    }
-    CS.mainAt = ka;
-  }
   try {
     const j = await getJSON("api/chat/" + ka);
+    if (k === "primary" && CS.mainAt !== ka) {
+      const was = CS.mainAt;
+      CS.mainAt = ka;
+      if (was !== void 0) {
+        delete CS.old[k];
+        delete CW[k];
+        rxFix(j);
+        CS.chTop[k] = j;
+        CS.ch[k] = j;
+        return;
+      }
+    }
     if (j === CS.chTop[k] && CS.ch[k]) {
       if (CS.ch[k].err) {
         const { err, errStatus, ...ok } = CS.ch[k];
@@ -6716,8 +6821,8 @@ async function loadCh(k) {
     CS.chTop[k] = j;
     CS.ch[k] = CS.old[k]?.messages.length ? mergeOld(j, CS.old[k]) : j;
   } catch (e) {
-    if (ka === "main" && (e.status === 404 || e.status === 400)) {
-      CS.mainNo = 1;
+    if (ka === "main" && (e.status === 404 || e.status === 400 || e.status === 410)) {
+      CS.mainNo = Date.now();
       return loadCh(k);
     }
     CS.ch[k] = { ...CS.ch[k] || { messages: [] }, err: e.message, errStatus: e.status };
@@ -6974,7 +7079,7 @@ function toolsHTML(m, k, root, inThread) {
 function splitImgs(text) {
   const imgs = [], out = [];
   for (const line of String(text || "").split("\n")) {
-    const fl = /^\s*📎\s*(.+?):\s*https?:\/\/[^\s/]+\/f\/([0-9a-f]{32})\?\S*\s*$/.exec(line);
+    const fl = /^\s*📎\s*(.+?):\s*https?:\/\/[^\s/]+\/f\/([0-9a-f]{32})(?:\/[^\s?/]+)?\?\S*\s*$/.exec(line);
     if (fl && /\.(png|jpe?g|webp|gif)$/i.test(fl[1])) {
       imgs.push({ src: "api/file/" + fl[2], name: fl[1], cap: "" });
       continue;
@@ -9776,6 +9881,23 @@ window.addEventListener("keydown", (e) => {
     }
   }
 }, true);
+const copyBits = (m) => {
+  const t = String(m?.src || m?.text || "");
+  const out = [];
+  for (const x of t.matchAll(/https?:\/\/[^\s<>()「」\]\["'`|]+|\b(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z0-9]{2,}(?:-[A-Z0-9]{2,})+\b/g)) {
+    const v = x[0].replace(/[.,;:!?。、*]+$/, "");
+    if (v && !out.includes(v)) out.push(v);
+    if (out.length >= 4) break;
+  }
+  return out;
+};
+const copyBitsOn = () => {
+  try {
+    return localStorage.getItem("hb-copybits") === "1";
+  } catch (e) {
+    return false;
+  }
+};
 const sheetEl = Object.assign(document.createElement("div"), { id: "msheetbox", hidden: true });
 document.body.appendChild(sheetEl);
 function sheetOpen(g, pick) {
@@ -9811,7 +9933,13 @@ function sheetDraw() {
   const grp = (bs) => bs.length ? `<div class="grp">${bs.join("")}</div>` : "";
   const rows = [
     grp([`<button data-sa="reply">${ICON.reply}<span>회신</span></button>`, ...LIVE && !m.ledger ? [`<button data-sa="save">${isSaved(s.ts) ? ICON.saved : ICON.save}<span>${isSaved(s.ts) ? "저장 풀기" : "저장"}</span></button>`] : []]),
-    grp([`<button data-sa="copy">${ICON.copy}<span>글 복사</span></button>`, `<button data-sa="select">${ICON.select}<span>글 선택</span></button>`, `<button data-sa="link">${ICON.link}<span>링크 복사</span></button>`]),
+    grp([
+      `<button data-sa="copy">${ICON.copy}<span>글 복사</span></button>`,
+      `<button data-sa="select">${ICON.select}<span>글 선택</span></button>`,
+      `<button data-sa="link">${ICON.link}<span>링크 복사</span></button>`,
+      ...(copyBitsOn() ? copyBits(m) : []).map((v) => `<button data-sa="copyv" data-v="${esc(v)}">${ICON.copy}<span>「${esc(v.length > 34 ? v.slice(0, 33) + "…" : v)}」 복사</span></button>`)
+    ]),
+    // 글 속 코드 · 주소 바로 복사
     ...mineMsg(m) ? [grp([`<button data-sa="edit">${ICON.pen}<span>수정</span></button>`, `<button data-sa="del" class="danger">${ICON.trash}<span>${s.confirm ? "한 번 더 누르면 지워져요" : "삭제"}</span></button>`])] : []
   ];
   sheetEl.innerHTML = `<div class="sscrim" data-sx></div><div class="msheet glass" role="dialog" aria-modal="true" aria-label="글 메뉴" data-modal><div class="grab" data-sx aria-hidden="true"></div>
@@ -9854,6 +9982,10 @@ sheetEl.addEventListener("click", (e) => {
   if (a === "copy") {
     const t = bdText(document.querySelector(`#mchatbox .msg[data-mts="${ts}"] .bd`)) || m?.src || m?.text || "";
     return navigator.clipboard?.writeText(t).then(() => toast("글을 복사했어요"), () => toast(ERR));
+  }
+  if (a === "copyv") {
+    const v = e.target.closest("[data-v]")?.dataset.v || "";
+    return navigator.clipboard?.writeText(v).then(() => toast("복사했어요"), () => toast(ERR));
   }
   if (a === "link") return navigator.clipboard?.writeText(msgLink(k, inTh ? root : ts, ts)).then(() => toast("링크를 복사했어요"), () => toast(ERR));
   if (a === "select") {
@@ -10436,6 +10568,7 @@ const lpCancel = () => {
 document.addEventListener("touchstart", (e) => {
   lpCancel();
   lpAt = 0;
+  if (e.target.closest?.("#mchatbox .msg.selecting")) return;
   const g = e.touches.length === 1 && chatOn() && !CS.edit && e.target.closest?.("#mchatbox .cfeed .msg[data-mts]");
   if (!g || g.classList.contains("sending") || g.classList.contains("gone") || findMsgs(g.dataset.mts)[0]?.ledger || e.target.closest("button, a, textarea, input, .vn, .medit")) return;
   const t0 = e.touches[0];
@@ -10465,7 +10598,7 @@ document.addEventListener("touchcancel", () => {
 }, { passive: true });
 document.addEventListener("scroll", lpCancel, { capture: true, passive: true });
 document.addEventListener("contextmenu", (e) => {
-  if (touchUI() && e.target.closest?.("#mchatbox .cfeed .msg[data-mts]")) e.preventDefault();
+  if (touchUI() && e.target.closest?.("#mchatbox .cfeed .msg[data-mts]") && !e.target.closest?.(".msg.selecting")) e.preventDefault();
 }, true);
 window.addEventListener("click", (e) => {
   if (lpAt === -1 || lpAt && Date.now() - lpAt < 500) {
@@ -10616,6 +10749,7 @@ document.addEventListener("touchmove", (e) => {
 }, { passive: false });
 syncScrollLock();
 let ARTS = {};
+window.HB_ATITLE = (id) => ARTS[id]?.title || "";
 let ARTS_OK = false;
 const loadArts = () => LIVE ? fetch("api/arts").then((r) => r.json()).then((j) => {
   const first = !Object.keys(ARTS).length;

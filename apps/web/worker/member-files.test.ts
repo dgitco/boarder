@@ -29,6 +29,7 @@ function setup() {
   app.post("/api/voice/stt", c => F.stt(c as never, c.req.header("x-test-user") || A));
   app.get("/api/file/:id", c => F.fileGet(c as never, c.req.header("x-test-user")!, c.req.param("id"), c.req.query("dl") !== undefined));
   app.get("/f/:id", c => F.signedGet(c as never, c.req.param("id")));
+  app.get("/f/:id/:name", c => F.signedGet(c as never, c.req.param("id")));   // index.ts 의 이름 꼬리 길과 같게(아래 시험이 index.ts 에 그 길이 있는지 봄)
   const call = async (method: string, path: string, h: Record<string, string> = {}, body?: BodyInit) => {
     const r = await app.fetch(new Request("https://b.example" + path, { method, headers: h, body, ...(body instanceof ReadableStream ? { duplex: "half" } : {}) } as RequestInit), env);
     return { status: r.status, h: r.headers, t: await r.text() };
@@ -66,8 +67,13 @@ test("글 링크 줄: 내 파일만 「📎 이름: 서명 링크」, 남의 · 
   const s = setup(), a = await up(s, A, "보고서.pdf", "application/pdf"), b = await up(s, B, "남의.pdf", "application/pdf");
   const f = await F.fileLines(s.env as never, A, "https://b.example/", [a.id, b.id, "nope"]);
   assert.equal(f.bad, 2); assert.equal(f.lines.length, 1);
-  const m = /^📎 보고서\.pdf: https:\/\/b\.example(\/f\/[0-9a-f]{32}\?e=(\d+)&t=([0-9a-f]{32}))$/.exec(f.lines[0]); assert.ok(m, f.lines[0]);
+  const m = /^📎 보고서\.pdf: https:\/\/b\.example(\/f\/[0-9a-f]{32}\/([^?/]+)\?e=(\d+)&t=([0-9a-f]{32}))$/.exec(f.lines[0]); assert.ok(m, f.lines[0]);
+  assert.equal(decodeURIComponent(m![2]), "보고서.pdf", "주소에 파일 이름 꼬리");
+  m!.splice(2, 1);   // 아래 줄은 예전 칸 번호(e = 2 · t = 3) 그대로
   assert.equal((await s.call("GET", m![1])).t, "내용");
+  assert.equal((await s.call("GET", m![1].replace(/\/[^/?]+\?/, "?"))).t, "내용", "이름 없는 옛 링크 /f/<id>?e=&t= 도 그대로");
+  assert.equal((await s.call("GET", m![1].replace(/\/[^/?]+\?/, "/" + encodeURIComponent("다른 이름.pdf") + "?"))).t, "내용", "이름 꼬리는 꾸밈 — 달라도 서명은 그대로");
+  assert.match(readFileSync(new URL("./index.ts", import.meta.url), "utf8"), /app\.get\("\/f\/:id\{\[0-9a-f\]\{32\}\}\/:name", c => memberFiles\.signedGet/, "Worker 에 이름 꼬리 길");
   assert.equal((await s.call("GET", m![1].replace(/t=[0-9a-f]/, "t=" + (m![3][0] === "0" ? "1" : "0")))).status, 403);
   const old = await F.fileLink(SECRET, "https://b.example", a.id, Date.now() - 8 * 86400_000);
   assert.equal((await s.call("GET", old.replace("https://b.example", ""))).status, 403, "7일 지난 링크");
@@ -140,4 +146,13 @@ test("PDF: 맨 앞이 %PDF- 면 화면 안 보기(inline · application/pdf · s
   assert.match(x.h.get("content-disposition") || "", /^attachment/); assert.equal(x.h.get("content-security-policy"), "sandbox");
   assert.equal((await s.call("GET", `/api/file/${a.id}`, { "x-test-user": B })).status, 404);
   assert.equal((await s.call("GET", `/api/file/${a.id}?dl`, { "x-test-user": B })).status, 404);
+});
+
+test("이름 꼬리 길이: 긴 한글 · 한자 이름도 첨부 줄 정규식(member-inbox FILE_LINE)에 맞음 · 인코딩 180자 이하", async () => {
+  const src = readFileSync(new URL("./member-inbox.ts", import.meta.url), "utf8"), re = new RegExp(/const FILE_LINE = \/(.+)\/u;/.exec(src)![1], "u");
+  for (const name of ["가".repeat(44) + ".png", "가".repeat(45) + ".png", "漢".repeat(80) + ".pdf", "보고서 (최종) v2.pdf", "", "..", "😀😀"]) {
+    const u = await F.fileLink(SECRET, "https://b.example", "0".repeat(32), Date.now(), name), tail = /\/f\/0{32}(?:\/([^?]+))?\?/.exec(u)![1] || "";
+    assert.ok(tail.length <= 180, name + " → " + tail.length);
+    assert.ok(re.test(`📎 ${name || "file"}: ${u}`), name);
+  }
 });

@@ -1,4 +1,5 @@
 import { SECRET_PATTERNS } from "../session/redact";
+import { withFloor, floorPlaceholder, floorCode } from "./log-filter-floor";
 
 export const MARK = "[가림]";
 export type Reject = "pem" | "jwt" | "env" | "residue" | "long";
@@ -33,7 +34,7 @@ const benign = (m: string) => /^\d+$/.test(m) || (BENIGN.test(m) && m.split("-")
 export const SHARED_KEPT = SECRET_PATTERNS.filter(re => !re.source.includes("(?<="));
 const BEARER = /(?<=\bbearer\s{1,8})[A-Za-z0-9._~+\/=-]{16,}/gi;   // 소문자 bearer 도(HTTP 머리 이름은 대소문자 안 가림)
 const URL_PW = /(?<=:\/\/[^\s/:@]{1,64}:)[^\s/@]{6,256}(?=@)/g;
-const KEYVAL = new RegExp(`(?<=\\b(${NAME_AROUND})["']?\\s{0,16}((?::=|=>|[:=])(?:\\s{0,4}[=>]){0,4})\\s{0,16}["']?)(?![=>])[^\\s"'\`,;]{8,}`, "gi");
+const KEYVAL = new RegExp(`(?<=\\b(${NAME_AROUND})["'”’」]?\\s{0,16}((?::=|=>|[:=])(?:\\s{0,4}[=>]){0,4})\\s{0,16}["']?)(?![=>])[^\\s"'\`,;]{8,}`, "gi");
 const PART = "(?:은|는|이|가|을|를)?";
 const KO_PW = `(?:비밀번호|비번|암호|패스워드|패스코드|인증번호|인증키|접속키|비밀키|시크릿|API ?키)${PART}`;
 const KO_TOK = `토큰${PART}`;
@@ -44,7 +45,7 @@ const KO_TOK_ANY = new RegExp(`(?<=${KO_TOK}\\s{0,8}[:=：]?\\s{0,8}["'「]?)(?=
 const QUOTED_ANY = `(?:"[^"\\n]{1,200}"|'[^'\\n]{1,200}'|“[^”\\n]{1,200}”|‘[^’\\n]{1,200}’|「[^」\\n]{1,200}」)`;
 const QUOTED = `${QUOTED_ANY}(?!(?<=[^A-Za-z0-9_]${NAME_AROUND}["'”’」])[ \\t]{0,4}[:=：][ \\t]{0,16}["'“‘「])`;
 const NAME_END = new RegExp(`(?:^|[^A-Za-z0-9_])${NAME_AROUND}$`, "i");
-const Q_SEP = `["']?\\s{0,16}(?:=>|:=|[:=：])(?:\\s{0,4}[=>]){0,4}\\s{0,16}`, Q_SP = `\\s{1,16}`;
+const Q_SEP = `["'”’」]?\\s{0,16}(?:=>|:=|[:=：])(?:\\s{0,4}[=>]){0,4}\\s{0,16}`, Q_SP = `\\s{1,16}`;
 //   붙은 꼴(password"x" · 비밀번호「x」로)도 받되, 닫는 따옴표 바로 뒤에 구분 기호 · 빈칸이 오는 자리(JSON 「": 」)는 값으로 안 잡음
 const Q_NOT_CLOSE = `(?!["'][\\s:=：,\\]})])`;   // 사이가 빈 경우에만 — 배열 「["password", "token"]」 도
 const Q_PW_NAME = `(?:${KO_PW}|\\bpw|\\bpasswd|\\bpassword(?:\\s{1,4}is)?)`;
@@ -73,7 +74,8 @@ const codeLike = (v: string, name = "") => { const t = v.replace(/[)\];,]+$/, ""
   return /^(?:undefined|null|true|false|nil|none|empty|blank|nullorempty|isempty)$/i.test(t) || t.toLowerCase() === name.toLowerCase() ||
     (/^[A-Za-z_$][\w$]*(?:\.[\w$]+)+(?:\(\)?)?$/.test(t) && (head === name.toLowerCase() || ["process", "this", "self"].includes(head))); };
 const cmpSep = (sep: string) => /==|=>/.test(sep);
-const okKeyval = (m: string, name: string, sep = "") => !metaOk(m, name) && !(cmpSep(sep) && codeLike(m, name));
+const LITERAL = /^(?:undefined|null|true|false|nil|none)[)\];,]*$/i;
+const okKeyval = (m: string, name: string, sep = "") => !metaOk(m, name) && !LITERAL.test(m) && !(cmpSep(sep) && codeLike(m, name));
 const RULES: [RegExp, ((m: string, name: string, sep?: string) => boolean)?, boolean?, boolean?][] = [
   ...SHARED_KEPT.map(re => [re] as [RegExp]), [BEARER], [URL_PW],
   [Q_PW, quotedValue], [Q_NAME, okQuoted, true], [Q_NAME_SP, okQuotedSp, true],   // 따옴표 통째 — 낱말 하나만 보는 꼴보다 먼저
@@ -85,16 +87,36 @@ const hit = (m: string, ok?: (m: string, name: string, sep?: string) => boolean,
 // 갈래 이름: 뒤돌아보기 안 갈래 가운데 잡힌 것(Q_NAME 은 갈래가 둘)
 const groupName = (g: unknown[]) => (g.find(x => typeof x === "string") as string | undefined) ?? "";
 
-const PW_NAME = `(?:${KO_PW}|\\bpw|\\bpasswd)`;   // 따옴표 값이면 늘 가리는 이름(Q_PW 와 같음 — password 는 NAME_AROUND 로도 걸림)
-const NAME_SEP = new RegExp(`(?:(${PW_NAME}|${KO_TOK})|\\b(${NAME_AROUND}))(?:\\s{1,4}is)?(?:["']?\\s{0,16}(?:=>|:=|[:=：])(?:\\s{0,4}[=>]){0,4}\\s{0,16}|\\s{1,16}(?=["'“‘「]))`, "gi");
+const PW_NAME = `(?:${KO_PW}|\\bpw|\\bpasswd)`;
+const NAME_SCAN = `(?=[A-Za-z0-9_]*?${NAMES})[A-Za-z0-9_]+`;
+const NAME_SEP = new RegExp(`(?:(${PW_NAME}|${KO_TOK})|\\b(${NAME_SCAN}))(?:\\s{1,4}is)?(?:["'”’」]?\\s*(?:=>|:=|[:=：])[\\s=>]*|\\s+(?=["'“‘「]))`, "gi");
+// 뒤 값에 앞서 앞 따옴표 글귀부터 가림. 앞 방향 꼴이라 이름·공백의 뒤돌아보기 상한도 넘겨 받음.
+// 이름과 여는 따옴표는 첫 갈래로 보존하고, 다음 비밀 이름 앞 글귀(둘째 갈래)만 바꿈.
+const Q_TRAIL = new RegExp(`((?:${KO_PW}|${KO_TOK}|\\b${NAME_SCAN})(?:["'”’」]?\\s*(?:=>|:=|[:=：])[\\s=>]*|\\s+)["'“‘「])([^"'“”‘’「」\\n]{1,200}?)(?=[\\s,&;]{1,4}${NAME_SCAN}["'”’」]?[ \\t]*(?:=>|==|:=|[:=：]))`, "gi");
+const quotedPrefix = (m: string) => !isPlaceholder(m.trim()) && /[^\s가-힣ㄱ-ㅣ]/.test(m);
+// 닫힌 따옴표 끝 이름 앞은 전부 가림 — 다른 기호·따옴표 글자·안 이름 둘·pw/password is도 같은 값으로 봄.
+const QT_LEAD = `((?:${KO_PW}|${KO_TOK}|\\bpw|\\b${NAME_SCAN})(?:\\s{1,4}is)?(?:["'”’」]?\\s*(?:=>|:=|[:=：])[\\s=>]*|\\s+))`;
+const QT_BODY = [['"', '"'], ["'", "'"], ["“", "”"], ["‘", "’"], ["「", "」"]].map(([o, c]) =>
+  `${o}([^${c}\\n]{0,199}?[^A-Za-z0-9_${c}])(?=${NAME_SCAN}${c}[ \\t]*(?:=>|==|:=|[:=：]))`).join("|");
+const Q_TRAIL_END = new RegExp(`${QT_LEAD}(?:${QT_BODY})`, "gi");
+const trailEnd = (s: string, count: () => void) => s.replace(Q_TRAIL_END, (m: string, lead: string, ...g: unknown[]) => {
+  const v = g.slice(0, 5).find(x => typeof x === "string") as string | undefined;
+  return v !== undefined && quotedPrefix(v) ? (count(), lead + m[lead.length] + MARK) : m; });
 const CLOSE: Record<string, string> = { '"': '"', "'": "'", "“": "”", "‘": "’", "「": "」" };
 type Named = { name: string; sep: string; value: string; quoted: boolean; spaceOnly: boolean; pw: boolean; en: boolean };
+//   같은 글을 한 번 거를 때 원문 · 거른 글로 여러 번 부름(.env 셈 · 원문 짝 · 뒷조각) — 마지막 둘을 기억(시간만, 돌려준 배열은 고치지 않음)
+let nvMemo: [string, Named[]][] = [];
 function namedValues(raw: string): Named[] {
+  const hitm = nvMemo.find(([k]) => k === raw); if (hitm) return hitm[1];
+  const out = scanNamed(raw); nvMemo = [[raw, out] as [string, Named[]], ...nvMemo].slice(0, 2); return out;
+}
+function scanNamed(raw: string): Named[] {
   const out: Named[] = [];
   for (const m of raw.matchAll(NAME_SEP)) {
-    const name = m[1] ?? m[2], en = m[2] !== undefined, pw = !en && !name.startsWith("토큰") || /^password$/i.test(name);
+    //   passwd 는 PW_NAME 갈래로 잡혀도 영문 비밀 이름(NAMES 의 PASSWD — KEYVAL 이 맨 값도 가림)이라 맨 값도 짝으로 봄 — 안 그러면 상한 밖(빈칸 17자)의 「passwd = 값」이 남음
+    const name = m[1] ?? m[2], en = m[2] !== undefined || /^passwd$/i.test(name), pw = /^(?:password|passwd)$/i.test(name) || (!en && !name.startsWith("토큰"));
     const sep = m[0].slice(name.length), at = m.index! + m[0].length, spaceOnly = !/[:=：]/.test(m[0].slice(name.length)), head = raw.slice(at, at + 4096);
-    const q = CLOSE[head[0]], end = q ? head.indexOf(q, 1) : -1;
+    const q = CLOSE[head[0]], end = q ? head.slice(0, 202).indexOf(q, 1) : -1;   // 201자 밖 닫는 따옴표는 아래 조건에서 어차피 버림 — 4,096자를 자리마다 훑지 않음(시간만)
     if (q && end > 1 && end <= 201 && !head.slice(1, end).includes("\n") && !(/^[ \t]{0,4}[:=：][ \t]{0,16}["'“‘「]/.test(head.slice(end + 1)) && NAME_END.test(head.slice(0, end)))) { out.push({ name, sep, value: head.slice(0, end + 1), quoted: true, spaceOnly, pw, en }); continue; }
     if (spaceOnly || !en) continue;   // 따옴표 없는 값은 영문 이름 = 값만(한국어 낱말 뒤 맨 값은 KO_SEP · KO_SPACE 몫) · 닫히지 않은 따옴표는 따옴표 없는 값으로 읽음
     const v = /^["']?([^\s"'`,;]{8,})/.exec(head); if (v) out.push({ name, sep, value: v[1], quoted: false, spaceOnly, pw, en });
@@ -102,14 +124,20 @@ function namedValues(raw: string): Named[] {
   return out;
 }
 const shouldMask = (x: Named) => x.quoted ? (x.pw ? hit(x.value, quotedValue) : hit(x.value, x.spaceOnly ? okQuotedSp : okQuoted, x.name)) : hit(x.value, okKeyval, x.name, x.sep);
+//   상한 안 짝인지(앞 방향 꼴 KEYVAL · Q_* 가 볼 수 있는 이름 · 사이) — 상한 밖 짝은 원문에서 먼저 가림(filterText). 나중에 원문 짝으로 맞추면 값 덩어리 속 뒤 값이
+//   다른 꼴로 먼저 가려져(「password=⎵×17 Xk9…=정답&ADMIN_PASSWORD==“…”」) 원문 값과 안 맞아 앞 값이 그대로 남음
+const NAME_IN = new RegExp(`^${NAME_AROUND}$`, "i"), SEP_IN = new RegExp(`^(?:\\s{1,4}is)?(?:["'”’」]?\\s{0,16}(?:=>|:=|[:=：])(?:\\s{0,4}[=>]){0,4}\\s{0,16}|\\s{1,16})$`, "i");
+const overflow = (x: Named) => (x.en && !NAME_IN.test(x.name)) || !SEP_IN.test(x.sep);
 const assigns = (s: string) => namedValues(s).filter(x => x.en && !x.spaceOnly && shouldMask(x)).length;
 
 function maskSecrets(s: string): { s: string; n: number } {
   let n = 0;
+  s = s.replace(Q_TRAIL, (m: string, lead: string, value: string) => quotedPrefix(value) ? (n++, lead + MARK) : m);
+  s = trailEnd(s, () => n++);
   for (const [re, ok, grp, sg] of RULES) s = s.replace(re, (m: string, ...g: unknown[]) => (hit(m, ok, grp ? groupName(g) : "", sg ? String(g[1] ?? "") : "") ? (n++, MARK) : m));
   return { s, n };
 }
-const leftover = (s: string) => RULES.some(([re, ok, grp, sg]) => [...s.matchAll(re)].some(m => hit(m[0], ok, grp ? groupName(m.slice(1)) : "", sg ? String(m[2] ?? "") : "")));
+const leftover = (s: string) => trailEnd(s, () => {}) !== s || [...s.matchAll(Q_TRAIL)].some(m => quotedPrefix(m[2])) || RULES.some(([re, ok, grp, sg]) => [...s.matchAll(re)].some(m => hit(m[0], ok, grp ? groupName(m.slice(1)) : "", sg ? String(m[2] ?? "") : "")));
 // 원문 기준으로 가릴 값 가운데 거른 글에 그대로 남은 것(값 글자 그대로)
 //   따옴표 값은 안쪽 글자로 봄 — 앞 따옴표 값이 다음 값의 여는 따옴표까지 먹은 꼴(「비밀번호": "x" 비밀번호 "y z"」)에서 안쪽만 남는 일
 const bare = (x: Named) => (x.quoted ? x.value.slice(1, -1) : x.value);
@@ -127,11 +155,19 @@ const maskAt = (s: string, x: Named): string | null => {
 const marks = (s: string, x: Named) => (s.match(new RegExp(`(?<![A-Za-z0-9_])${esc(x.name)}${esc(x.sep)}["'“‘「]?${esc(MARK)}`, "gi")) || []).length;
 const rejectOf = (s: string): Reject | null => PEM.test(s) ? "pem" : JWT.test(s) ? "jwt" : assigns(s) >= 3 ? "env" : null;
 
-/** 글 하나 거르기 — 거절 까닭 또는 거른 글 · 가린 개수. 전화는 저장 때 안 가림(읽을 때 registry view.mask 가 가림) */
 export function filterText(raw: string): Filtered {
   if (raw.length > MAX_FIELD) return { reject: "long" };
+  return withFloor(raw, filterOwn(raw), MARK, floorGate);
+}
+const shortHyphen = (m: string) => /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+$/.test(m) && m.split("-").every(p => /^[A-Za-z]{1,12}$/.test(p) || /^\d{1,4}$/.test(p) || p.length <= 2);
+const floorMeta = (v: string, name: string) => { const k = metaName(name); return k === true ? /^\d+$/.test(v) || shortHyphen(v) : k === "tokens" ? /^\d+$/.test(v) : false; };
+const floorGate = (v: string, name: string, sep: string) => v.length > 0 && !floorPlaceholder(v) && !LITERAL.test(v) && !floorMeta(v, name) && !(cmpSep(sep) && floorCode(v, name));
+function filterOwn(raw: string): Filtered {
   const why = rejectOf(raw); if (why) return { reject: why };
-  let { s, n } = maskSecrets(raw);
+  let pre = raw, n0 = 0;
+  //   맨 값만 — 따옴표 값은 끝 이름이 다음 값의 이름일 수 있어(「“sk-… SECRET”=>“값”」) 먼저 통째로 가리면 뒤 값이 이름 없이 남음, 원래대로 뒤에서 원문 짝 · 뒷조각 검사로
+  for (const x of namedValues(raw)) if (!x.quoted && overflow(x) && shouldMask(x)) { const t = maskAt(pre, x); if (t !== null) { pre = t; n0++; } }   // 상한 밖 짝 먼저(원문 그대로일 때)
+  let { s, n } = maskSecrets(pre); n += n0;
   if (leftover(s)) { const again = maskSecrets(s); s = again.s; n += again.n; }   // 가린 뒤 다시 검사(같은 꼴)
   for (const x of residueAt(raw, s)) { const t = maskAt(s, x); if (t !== null) { s = t; n++; } }   // 다른 길: 원문의 「비밀 이름 → 값」 짝으로 다시 — 그 이름 바로 뒤 한 자리만
   if (leftover(s) || residueAt(raw, s).length || tailLeft(raw, s) || rejectOf(s)) return { reject: "residue" };

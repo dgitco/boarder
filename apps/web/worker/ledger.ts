@@ -3,7 +3,7 @@ import SPEC from "./ledger-schema";
 type Spec = Record<string, { cols: string[]; pk: string[] }>;
 const S = SPEC as Spec;
 // 사본(worklog.db)의 UNIQUE 칸 — D1 도 0024 부터 같은 UNIQUE
-const UNIQ: Record<string, string[]> = { talk_msg: ["slack_ts"], talk_file: ["slack_file"], talk_chan: ["slack_channel"] };
+const UNIQ: Record<string, string[]> = { talk_msg: ["slack_ts"], talk_file: ["slack_file"], talk_chan: ["slack_channel"], talk_alias: ["alias"] };
 export type Change = { t: string; op: "up" | "del"; row?: Record<string, unknown>; pk?: Record<string, unknown> };
 type Val = string | number | null;
 

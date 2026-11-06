@@ -624,7 +624,7 @@ test("켬: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS
   const page = async (who: string) => (await t.req("GET", "/", undefined, await t.human(who))).text;
   const vals = (html: string) => ({ caps: JSON.parse((/window\.HB_CAPS = (\{[^\n]*?\});/.exec(html) || [])[1] || "null"), mem: JSON.parse((/window\.HB_MEMBER = (\{[^\n]*?\})<\/script>/.exec(html) || [])[1] || "null"), css: /id="hbm-css"/.test(html) });
   const o = vals(await page(OWNER)), m = vals(await page(MEMBER));
-  assert.deepEqual(o.caps, { invite: true, org_links: true, mainline: true, session_files: true, start_tab: false, push: true, push_wide: false }, "켠 주인(관리 권한)은 지금 주인 기능 문 — 세션 첨부도 참(회원 세션 길이 첨부를 링크 줄로 넘김, 빠짐 4) · 넓힘 칸은 거짓(주인 구독 칸)");
+  assert.deepEqual(o.caps, { invite: true, org_links: true, mainline: true, session_files: true, start_tab: false, push: true, push_wide: false, area_tabs: true }, "켠 주인(관리 권한)은 지금 주인 기능 문 — 세션 첨부도 참(회원 세션 길이 첨부를 링크 줄로 넘김, 빠짐 4) · 넓힘 칸은 거짓(주인 구독 칸)");
   assert.equal(o.css, true, "하네스 총괄 판이 없으면(이 시험 준비) 켠 주인도 회원 틀 CSS — 아래에서 총괄 판을 넣으면 빠짐");
   assert.deepEqual([m.caps?.org_links, m.caps?.session_files, m.caps?.push, m.caps?.push_wide], [false, false, false, true], "회원 org_links · session_files 거짓, push = member_push(꺼짐), push_wide 참(넓힘을 고름)");
   const o2 = vals(await page(OWNER2)); assert.deepEqual(o2.caps, o.caps, "다른 주인 메일로 들어온 미리 보기도 canon 값");
@@ -705,7 +705,7 @@ test("켬: 세션 글 첨부(/api/chat/new · /api/chat/send files)는 내 파�
   t.env.ENGINE = { idFromName: (s: string) => s, get: (id: string) => ({ revoke: async () => 0, deliver: async (wid: string, text: string) => { delivered.push([wid, text]); return { sent: true }; },
     open: async (w: any) => { opened.push(w); const wid = `ew_own${String(++n).padStart(6, "0")}`; t.db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, state_at, created_at) VALUES (?,?,?,?,?,?,?,?)").run(wid, w.owner, id.replace(/^dev:/, ""), w.kind, w.name, "starting", Date.now(), Date.now()); return { id: wid }; } }) };
   await t.flag("owner_unified", true); t.reset();
-  const link = new RegExp(`^📎 사진\\.png: https://example\\.test/f/${FA}\\?e=\\d+&t=[0-9a-f]{32}$`);
+  const link = new RegExp(`^📎 사진\\.png: https://example\\.test/f/${FA}(?:/[^?\\s]+)?\\?e=\\d+&t=[0-9a-f]{32}$`);   // 링크 끝에 파일 이름이 붙는 꼴(다른 PR)도
   const nw = await t.req("POST", "/api/chat/new", { text: "이 사진 봐 줘", files: [{ id: FA }] }, h);
   assert.equal(nw.status, 200, nw.text);
   const [first, ln] = String(opened[0]?.prompt || "").split("\n");

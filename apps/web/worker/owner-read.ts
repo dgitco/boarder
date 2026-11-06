@@ -1,6 +1,6 @@
 
 export type Cfg = { dm_node_roots?: boolean; channels: Record<string, string>; rep?: string; owners?: Record<string, string>; board_files?: string[]; drafts?: Record<string, { text?: string; at?: number }>; node_topics?: Record<string, { ts?: string; ch?: string }[]> };
-export type Route = { group: "chat" | "cards" | "art"; kind: "channel" | "thread" | "nodechat" | "frequent" | "inbox" | "artnotes"; a?: string; b?: string };
+export type Route = { group: "chat" | "cards" | "art"; kind: "channel" | "thread" | "nodechat" | "frequent" | "inbox" | "artnotes" | "alias"; a?: string; b?: string };
 type R = Record<string, any>;
 type Out = { status: number; body: unknown };
 
@@ -53,7 +53,57 @@ export function route(path: string): Route | null {
   if (p === "/api/emoji/frequent") return { group: "chat", kind: "frequent" };
   if (p === "/api/inbox") return { group: "cards", kind: "inbox" };
   if ((m = /^\/api\/artnotes\/([A-Za-z0-9]{16,40})$/.exec(p))) return { group: "art", kind: "artnotes", a: m[1] };
+  if ((m = /^\/api\/m\/([0-9.-]{1,24})$/.exec(p))) return { group: "chat", kind: "alias", a: m[1] };   // 읽히는 id → 글 자리 — 꼴 검사는 aliasKey(아래 읽히는 id 칸)
   return null;
+}
+
+export const ALIAS_MODE: "A" | "B" = "A";
+// 정규식 글자(앵커 없음 — 화면 주소 /m/<id>[-<첫 줄>] 를 가를 때도 씀). 달은 01–12 만이라 다른 해 꼴 YYYY-MMDD-n 의 앞 넷이 MMDD 로 읽히지 않음(2025-1106-3 ≠ 「2025」월)
+export const ALIAS_A = "(?:(\\d{4})-)?((?:0[1-9]|1[0-2])(?:0[1-9]|[12]\\d|3[01]))-([1-9]\\d{0,3})(?:\\.([1-9]\\d{0,4}))?";
+export const ALIAS_B = "()()([1-9]\\d{0,7})(?:\\.([1-9]\\d{0,4}))?";   // 빈 묶음 둘 — 묶음 번호를 A 와 같게(해 · 날짜 · 순번 · 답)
+export const ALIAS_RE = new RegExp(`^(?:${ALIAS_MODE === "A" ? ALIAS_A : ALIAS_B})$`);
+
+const kst = (now: number) => { const d = new Date((now + 9 * 3600) * 1000); return { y: d.getUTCFullYear(), md: (d.getUTCMonth() + 1) * 100 + d.getUTCDate() }; };
+
+/** 전체 키 → 보이는 꼴(안 A: 올해면 MMDD-n, 다른 해면 그대로). 모르는 꼴은 그대로 */
+export function aliasShow(full: string, now = Date.now() / 1000): string {
+  const m = /^(\d{4})-(\d{4}-\d+)$/.exec(String(full || ""));
+  return m && +m[1] === kst(now).y ? m[2] : String(full || "");
+}
+
+/** 보이는 꼴 · 전체 키(뒤에 .k 붙을 수 있음) → { key: 표의 alias, k: 답 번호(0 = 뿌리) }. 모르면 null.
+ *  안 A 에서 해가 빠진 꼴은 「그 날짜가 오늘(KST) 이하인 가장 가까운 해」 — 12월에 복사한 1231-5 를 1월에 열어도 지난해 글.
+ *  (한 해 넘게 묵은 해 없는 링크는 올해 같은 날짜 글로 감 — 보이는 꼴의 한계, 화면 복사 링크도 이 꼴) */
+export function aliasKey(x: string, now = Date.now() / 1000): { key: string; k: number } | null {
+  const m = ALIAS_RE.exec(String(x || "").toLowerCase()); if (!m) return null;
+  const k = m[4] ? +m[4] : 0;
+  if (ALIAS_MODE === "B") return { key: m[3], k };
+  const t = kst(now), y = m[1] ? +m[1] : +m[2] <= t.md ? t.y : t.y - 1;
+  return { key: `${y}-${m[2]}-${m[3]}`, k };
+}
+
+/** 뿌리 글 id 들의 보이는 id(id → 보이는 꼴). 표가 아직 없거나(이주 전) D1 오류면 빈 표 — 글 읽기는 막지 않음(주소만 지금 꼴) */
+export async function aliasOf(db: D1Database, ids: string[], now = Date.now() / 1000): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!ids.length) return out;
+  try {
+    const rs = await db.prepare(`SELECT id, alias FROM wl_talk_alias WHERE id IN ${IN}`).bind(JSON.stringify([...new Set(ids)])).all<{ id: string; alias: string }>();
+    for (const r of rs.results) out.set(r.id, aliasShow(r.alias, now));
+  } catch (e) { console.error("talk_alias 읽기 실패", String(e).slice(0, 160)); }
+  return out;
+}
+
+/** /api/m/<보이는 id 또는 전체 키>[.k] → 그 글 자리. 채널 키는 cfg.channels(slack_channel → 키)에서 — 등록 안 된 채널 글이면 null(없는 것과 같게, 남의 글 안 샘) */
+export async function aliasFind(db: D1Database, channels: Record<string, string>, x: string, now = Date.now() / 1000): Promise<{ chan: string; ts: string; m: string | null } | null> {
+  const p = aliasKey(x, now); if (!p) return null;
+  const r = await db.prepare(`SELECT a.id AS id, c.slack_channel AS sc, m.thread AS th,
+      (SELECT x.id FROM wl_talk_msg x WHERE x.thread = a.id ORDER BY x.at, x.id LIMIT 1 OFFSET ?) AS rid
+    FROM wl_talk_alias a JOIN wl_talk_msg m ON m.id = a.id JOIN wl_talk_chan c ON c.id = m.chan WHERE a.alias = ?`).bind(Math.max(p.k - 1, 0), p.key).first<{ id: string; sc: string; th: string | null; rid: string | null }>();
+  if (!r || r.th) return null;   // 표 줄이 뿌리가 아닌 글을 가리키면(서버 실수) 없음으로
+  const chan = Object.keys(channels).find(k => channels[k] === r.sc);
+  if (!chan) return null;
+  if (p.k && !r.rid) return null;
+  return { chan, ts: r.id, m: p.k ? r.rid : null };
 }
 
 // ── talk_db.as_slack · chat.norm ──
@@ -237,12 +287,15 @@ async function channelOut(db: D1Database, cfg: Cfg, key: string, rows: R[], now:
   const ids = page.map(r => r.id);
   // 두 번째 왕복: 꾸밈 넷 + 표시(db_marks) 셋 — 표시는 뿌리 꼴(답 수 · 단추)이 있어야 해서 꾸밈 결과로 먼저 꼴을 만든 뒤 묻지 않고, 뿌리 전부로 물어 둠
   const pre = page.map(r => ({ ts: r.slack_ts || r.id, replies: 1, buttons: r.deleted_at ? [] : buttonsOf(T(r.blocks) ? loads(r.blocks) : null), deleted: !!r.deleted_at }));
-  const rs = await db.batch<R>([...exStmts(db, ids), ...marksStmts(db, pre), cardsStmt(db, pre.map(m => m.ts)),
-    db.prepare(`SELECT ts, node FROM wl_card_home WHERE node IS NOT NULL AND node != '' AND ts IN ${IN}`).bind(JSON.stringify(pre.map(m => m.ts)))]);   // 노드 일 카드 뿌리(server.node_card_roots)
+  // 읽히는 id(aliasOf)는 같은 batch 에 안 넣고 나란히 — 표가 아직 없어도(이주 전) 글 읽기가 안 깨지게, 왕복 수는 그대로
+  const [rs, al] = await Promise.all([db.batch<R>([...exStmts(db, ids), ...marksStmts(db, pre), cardsStmt(db, pre.map(m => m.ts)),
+    db.prepare(`SELECT ts, node FROM wl_card_home WHERE node IS NOT NULL AND node != '' AND ts IN ${IN}`).bind(JSON.stringify(pre.map(m => m.ts)))]),   // 노드 일 카드 뿌리(server.node_card_roots)
+    aliasOf(db, ids, now)]);
+  const alTs = new Map(page.filter(r => al.has(r.id)).map(r => [String(r.slack_ts || r.id), al.get(r.id)!]));
   const ex = exOf(rs.slice(0, 4));
   const msgs = page.map(r => asSlack(r, ex));
   const out: R[] = [...msgs].sort((a, b) => parseFloat(a.ts) - parseFloat(b.ts)).filter(seenByPeople)
-    .map(m => ({ ...norm(m, rep, bf), owner: has(own, m.ts) ? own[m.ts] : null, ...(key === MAIN ? { ch: chOf.get(String(m.ts)) || "primary" } : {}) }));   // 합친 줄기 글 = 진짜 채널(화면이 반응 · 스레드 · 답을 그 채널로, 노드 채팅과 같은 칸)
+    .map(m => ({ ...norm(m, rep, bf), owner: has(own, m.ts) ? own[m.ts] : null, ...(key === MAIN ? { ch: chOf.get(String(m.ts)) || "primary" } : {}), ...(alTs.has(String(m.ts)) ? { alias: alTs.get(String(m.ts)) } : {}) }));   // 합친 줄기 글 = 진짜 채널(화면이 반응 · 스레드 · 답을 그 채널로, 노드 채팅과 같은 칸)
   // db_marks: 읽지 않음은 답 있는 뿌리만(물은 것은 모든 뿌리라 여기서 거름), 단추 카드는 꼴이 같으니 그대로
   const withReplies = new Set(out.filter(m => T(m.replies) && !T(m.ledger)).map(m => m.ts));
   const rs0 = { ...rs[4], results: rs[4].results.filter(r => withReplies.has(r.th)) } as D1Result<R>;
@@ -268,7 +321,8 @@ function ledgerMsg(at: number, msg: string) {   // chat.ledger_msg
   const tag = msg.startsWith("버튼:") ? "버튼" : "음성 받아쓰기", text = tag === "버튼" ? strip(msg.slice(3)) : msg;
   return { ts: f6(Number(at)), thread: null, who: "owner", name: "Owner", board: false, tag, text: clean(text, 3000), buttons: [], files: [], replies: 0, latest: null, reactions: [], ledger: true } as R;
 }
-const repliesStmt = (db: D1Database, ts: string) => db.prepare(`SELECT ${COLS} FROM wl_talk_msg m WHERE ((m.id=? AND ${LIVE_ROOT}) OR (m.thread=? AND m.deleted_at IS NULL)) ORDER BY (m.thread IS NOT NULL), m.at`).bind(ts, ts);
+// _n = 그 스레드 답의 차례(1부터, (at, id) 순 · 지운 답도 셈) — 읽히는 id <뿌리>.<n>(aliasOf). 뿌리는 0. 색인 wl_talk_msg_thread(thread, at)
+const repliesStmt = (db: D1Database, ts: string) => db.prepare(`SELECT ${COLS}, CASE WHEN m.thread IS NULL THEN 0 ELSE (SELECT count(*) FROM wl_talk_msg x WHERE x.thread = m.thread AND (x.at < m.at OR (x.at = m.at AND x.id <= m.id))) END AS _n FROM wl_talk_msg m WHERE ((m.id=? AND ${LIVE_ROOT}) OR (m.thread=? AND m.deleted_at IS NULL)) ORDER BY (m.thread IS NOT NULL), m.at`).bind(ts, ts);
 const ownerStmt = (db: D1Database, ts: string) => db.prepare("SELECT at, msg FROM wl_log WHERE pane = 'owner' AND ref = ? ORDER BY id").bind(ts);
 
 async function threads(db: D1Database, cfg: Cfg, list: { key: string; ts: string }[]) {
@@ -278,12 +332,14 @@ async function threads(db: D1Database, cfg: Cfg, list: { key: string; ts: string
   const rowsOf = list.map((_, i) => r1[2 * i].results), ledOf = list.map((_, i) => r1[2 * i + 1].results);
   const all = rowsOf.flat(), ids = [...new Set(all.map(r => r.id))];
   const btn = all.filter(r => !r.deleted_at && buttonsOf(T(r.blocks) ? loads(r.blocks) : null).length).map(r => r.slack_ts || r.id);
-  const r2 = await db.batch<R>([...exStmts(db, ids), db.prepare(`SELECT msg, label FROM wl_talk_pick WHERE who='owner' AND msg IN ${IN} ORDER BY at`).bind(JSON.stringify(btn)),
-    cardsStmt(db, [...new Set(all.map(r => r.slack_ts || r.id))])]);
+  const [r2, al] = await Promise.all([db.batch<R>([...exStmts(db, ids), db.prepare(`SELECT msg, label FROM wl_talk_pick WHERE who='owner' AND msg IN ${IN} ORDER BY at`).bind(JSON.stringify(btn)),
+    cardsStmt(db, [...new Set(all.map(r => r.slack_ts || r.id))])]), aliasOf(db, list.map(x => x.ts))]);   // 읽히는 id 는 나란히(channelOut 과 같음)
   const ex = exOf(r2.slice(0, 4));
   const res = list.map((x, i) => {
     const msgs = rowsOf[i].map(r => asSlack(r, ex));
     const out = msgs.map(m => norm(m, rep, bf));
+    const ra = al.get(x.ts);   // 뿌리의 보이는 id — 답은 <뿌리>.<차례>
+    if (ra) rowsOf[i].forEach((r, j) => { out[j].alias = r.thread ? `${ra}.${r._n}` : ra; });
     const said = out.map(m => m.text).join(" ").replace(/\*/g, "");
     for (const { at, msg } of ledOf[i] as { at: number; msg: string }[]) {
       const lb = strip(msg.slice(3));
@@ -644,6 +700,8 @@ export async function build(db: D1Database, cfg: Cfg | null, rt: Route, now = Da
   if (rt.kind === "artnotes") return artnotes(db, rt.a!);
   if (!cfg || !cfg.channels) return null;
   if (rt.kind === "inbox") return inbox(db, cfg, now, state);
+  if (rt.kind === "alias") { const f = await aliasFind(db, Object.fromEntries(channelsOf(cfg).filter(k => has(cfg.channels, k)).map(k => [k, cfg.channels[k]])), rt.a!, now);
+    return f ? { status: 200, body: f } : { status: 404, body: { error: "없는 글이에요" } }; }
   if (rt.kind === "channel" && rt.a === MAIN) return CHANNELS.some(k => has(cfg.channels, k)) ? channel(db, cfg, MAIN, rt.b, now, owners) : null;
   if (!has(cfg.channels, rt.a || "") && rt.kind !== "nodechat") return null;
   if (rt.kind === "channel") return channel(db, cfg, rt.a!, rt.b, now);

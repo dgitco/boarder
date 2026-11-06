@@ -40,7 +40,7 @@
   }
   applyAccent();
   if (!window.HB_BLOB) document.addEventListener('DOMContentLoaded', applyAccent);
-  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '1'], ['unreadkeep', 'hb-unreadkeep', '0'], ['canvasback', 'hb-canvasback', '0'], ['sbw', 'hb-sbw', '0'], ['ibboth', 'hb-ib-both', '0'], ['newsb', 'hb-newsb', '0'], ['mainmerge', 'hb-mainmerge', '0']];
+  const UIK = [['theme', 'hb-theme', 'system'], ['accent', 'hb-accent', 'bot'], ['still', 'hb-still', '0'], ['favblink', 'hb-favblink', '1'], ['tapthread', 'hb-tapthread', '1'], ['unreadkeep', 'hb-unreadkeep', '0'], ['copybits', 'hb-copybits', '0'], ['canvasback', 'hb-canvasback', '0'], ['sbw', 'hb-sbw', '0'], ['ibboth', 'hb-ib-both', '0'], ['newsb', 'hb-newsb', '0'], ['mainmerge', 'hb-mainmerge', '0']];
   const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
   const NSK = 'hb-newsb:' + String(window.HB_MEMBER?.email || 'owner').toLowerCase();   // 새 사이드바 사본 열쇠 = 계정마다(shell.js 와 같음)
   const UI_OWN = new Set(['newsb']);   // 계정 값만 따르는 열쇠(이 브라우저 값을 첫 값으로 올리지 않음)
@@ -664,10 +664,30 @@
     return `<div class="bxs-q"><div class="bxs-row between"><span>${name}</span><b class="${c}">${left}% 남음</b></div>${bar(left, c)}<span>리셋 ${esc(kst(r))}</span></div>`; };
   const codexRow = x => { const sub = [x.balance != null ? `크레딧 잔액 ${Math.round(x.balance).toLocaleString('ko-KR')}` : '', x.at ? `기록 ${kst(x.at)}` : ''].filter(Boolean).map(esc).join(' · ');
     return `<div class="bxs-acct"><div class="bxs-q"><div class="em"><b>Codex${x.plan ? ' · ' + esc(x.plan) : ''}</b></div>${sub ? `<span>${sub}</span>` : ''}</div>${qcell('5시간', x.p5, x.r5)}${qcell('주간', x.p7, x.r7)}</div>`; };
+  const ROLE_T = {engine: '엔진 연결', metrics: '상태 보내기'};
+  const devGroup = d => Array.isArray(d?.members) && d.members.length > 1 ? d.members : null;
+  const roleTxt = m => (m.roles || []).map(r => ROLE_T[r] || r).join(' · ') || '기기';
+  const memberSeen = m => [(m.roles || []).includes('engine') ? (m.engine_at ? '엔진 ' + ago(m.engine_at) : '엔진이 붙은 적 없음') : '', (m.roles || []).includes('metrics') ? '상태 ' + ago(m.metrics_at) : ''].filter(Boolean).join(' · ');
+  const devRoles = d => d.roles || (devGroup(d) ? [...new Set(d.members.flatMap(m => m.roles || []))] : [...(d.scope === 'harness' || d.engine_at ? ['engine'] : []), ...(d.scope !== 'harness' || d.metrics_at ? ['metrics'] : [])]);
+  const groupBadges = d => { const roles = devRoles(d), on = !!d.engine_at && Date.now() - d.engine_at < 5 * 60000, quiet = !d.metrics_at || Date.now() - d.metrics_at > 15 * 60000;
+    return (roles.includes('engine') ? `<span class="bxs-badge"><i class="${on ? 'ok' : ''}"></i>${on ? '엔진 연결됨' : '엔진 끊김'}</span>` : '') + (roles.includes('metrics') ? `<span class="bxs-badge"><i class="${quiet ? '' : 'ok'}"></i>${quiet ? (d.metrics_at ? '상태 조용' : '상태 아직 안 보냄') : '상태 보내는 중'}</span>` : ''); };
+  const groupRows = ms => `<div class="bxs-acs"><div class="h">이 컴퓨터의 연결 ${ms.length}</div>${ms.map(m => `<div class="bxs-li"><div><b>${esc(m.name || '기기')}</b><span>${esc(roleTxt(m) + (memberSeen(m) ? ' · ' + memberSeen(m) : ''))}</span></div></div>`).join('')}</div>`;
+  /** 폐기 메뉴 · 확인 글: pick = '*'(컴퓨터째) 또는 줄 id. 끊을 id 와 확인 글(이름 · 하는 일 · 남는 줄)을 돌려줌 — 묶음이 아니면 예전 한 줄 */
+  const revokePlan = (d, pick = '*') => {
+    const ms = devGroup(d);
+    if (!ms) return {ids: [d.id], msg: `<b>${esc(d.name || '이 기기')}</b> 를 폐기할까요? 그 기기는 더 값을 못 보내요${d.scope === 'watch' ? '' : ' · AI 도구는 다시 설치해야 해요'}.`};
+    if (pick === '*') return {ids: ms.map(m => m.id), msg: `<b>${esc(d.name || '이 컴퓨터')}</b> 의 연결 ${ms.length}개를 모두 폐기할까요?<br>${ms.map(m => `· ${esc(m.name || '기기')} — ${esc(roleTxt(m))}`).join('<br>')}<br>엔진 연결 · 상태 보내기가 모두 멈추고, AI 도구는 다시 설치해야 해요.`};
+    const m = ms.find(x => x.id === pick); if (!m) return {ids: [], msg: ''};
+    const rest = ms.filter(x => x.id !== pick);
+    return {ids: [m.id], msg: `<b>${esc(m.name || '기기')}</b>(${esc(roleTxt(m))})만 끊을까요?<br>같은 컴퓨터의 ${rest.map(x => `${esc(x.name || '기기')}(${esc(roleTxt(x))})`).join(' · ')} 는 그대로예요.`};
+  };
+  const revokeMenu = d => { const ms = devGroup(d);
+    return ms ? `<button type="button" class="danger" data-rv="*">이 컴퓨터 모두 폐기</button><hr>${ms.map(m => `<button type="button" class="danger" data-rv="${esc(m.id)}">${esc(roleTxt(m))}만 끊기 — ${esc(m.name || '기기')}</button>`).join('')}` : `<button type="button" class="danger" data-rv="*">기기 폐기</button>`; };
   const deviceCard = d => {
     const m = d.metrics || {}, mem = m.mem || {}, cpu = m.cpu || {}, disk = m.disk || {}, ag = m.agents || {}, host = m.host || {};
     const quiet = !d.metrics_at || Date.now() - d.metrics_at > 15 * 60000;
-    if (d.scope === 'harness'){ const on = d.engine_at && Date.now() - d.engine_at < 5 * 60000;
+    const grp = devGroup(d);
+    if (d.scope === 'harness' && !grp){ const on = d.engine_at && Date.now() - d.engine_at < 5 * 60000;
       return `<div class="bxs-dev"><div class="bxs-dh"><div class="ic">${IC.devices}</div><div class="t"><div class="bxs-row"><b>${esc(d.name || '하네스')}</b><span class="bxs-badge">엔진</span></div><span>${esc(d.engine_at ? '엔진 ' + ago(d.engine_at) : '엔진이 붙은 적 없음')}</span></div>`
         + `<span class="bxs-badge"><i class="${on ? 'ok' : ''}"></i>${on ? '연결됨' : '끊김'}</span><button type="button" class="bxs-more" data-dm="${esc(d.id)}" aria-label="${esc(d.name || '기기')} 메뉴" aria-haspopup="menu">${IC.more}</button></div>`
         + `<p class="bxs-mut pad">보더가 이 서버의 창을 열고 넣는 길이에요. 메모리 · CPU · 계정 한도는 같은 서버의 감시 기기가 보내요.</p></div>`; }
@@ -676,8 +696,8 @@
     const os = {linux: 'Linux', darwin: 'macOS', win32: 'Windows'}[host.os] || host.os || '';
     const head = `<div class="bxs-dh"><div class="ic">${IC.devices}</div><div class="t"><div class="bxs-row"><b>${esc(d.name || host.name || '기기')}</b>${d.scope === 'watch' ? '<span class="bxs-badge">감시만</span>' : ''}</div>`
       + `<span>${[os, cpu.cores ? cpu.cores + '코어' : '', ago(d.metrics_at)].filter(Boolean).map(esc).join(' · ')}</span></div>`
-      + `<span class="bxs-badge"><i class="${quiet ? '' : 'ok'}"></i>${quiet ? (d.metrics_at ? '조용' : '아직 안 보냄') : '보내는 중'}</span><button type="button" class="bxs-more" data-dm="${esc(d.id)}" aria-label="${esc(d.name || '기기')} 메뉴" aria-haspopup="menu">${IC.more}</button></div>`;
-    if (!d.metrics) return `<div class="bxs-dev">${head}<p class="bxs-mut pad">그 기기에서 <code>boarder watch --once</code> 를 돌리면 값이 떠요.</p></div>`;
+      + (grp || devRoles(d).includes('engine') ? groupBadges(d) : `<span class="bxs-badge"><i class="${quiet ? '' : 'ok'}"></i>${quiet ? (d.metrics_at ? '조용' : '아직 안 보냄') : '보내는 중'}</span>`) + `<button type="button" class="bxs-more" data-dm="${esc(d.id)}" aria-label="${esc(d.name || '기기')} 메뉴" aria-haspopup="menu">${IC.more}</button></div>`;
+    if (!d.metrics) return `<div class="bxs-dev">${head}<p class="bxs-mut pad">그 기기에서 <code>boarder watch --once</code> 를 돌리면 값이 떠요.</p>${grp ? groupRows(grp) : ''}</div>`;
     const tiles = tile('가용 메모리', gb(mem.avail_mb), `${gb(mem.total_mb)} 중 · 기준 ${gb(mem.min_mb)}`, bar(memPct, low ? 'bad' : 'blue', mem.total_mb && mem.min_mb ? mem.min_mb / mem.total_mb * 100 : null))
       + tile('CPU', cpu.pct != null ? Math.round(cpu.pct) + '%' : '?', `load ${cpu.load1 ?? '?'}${cpu.cores ? ' · ' + cpu.cores + '코어' : ''}`, bar(cpu.pct))
       + tile('디스크 /', disk.pct != null ? disk.pct + '%' : '?', `${disk.free_gb ?? '?'} GB 남음${m.tmp?.pct != null ? ' · /tmp ' + m.tmp.pct + '%' : ''}`, bar(disk.pct, disk.pct >= 90 ? 'bad' : '', 90))
@@ -685,7 +705,7 @@
     const accts = (m.accounts || []).slice().sort((x, y) => String(x.acct || '~').localeCompare(String(y.acct || '~')));
     return `<div class="bxs-dev">${head}<div class="bxs-tiles">${tiles}</div>${spark(d.history || [], mem.min_mb || 6144)}`
       + (accts.length ? `<div class="bxs-acs"><div class="h">Claude 계정 ${accts.length}</div>${accts.map(acct).join('')}</div>` : '')
-      + (m.codex ? `<div class="bxs-acs"><div class="h">Codex</div>${codexRow(m.codex)}</div>` : '') + '</div>';
+      + (m.codex ? `<div class="bxs-acs"><div class="h">Codex</div>${codexRow(m.codex)}</div>` : '') + (grp ? groupRows(grp) : '') + '</div>';
   };
   const NRULES = [['check_min', '점검 주기', '이 간격마다 노드 대화 · 일감을 다시 봐요', '분'], ['split_at', '나누기 기준', '열린 일감이 이만큼이면 나누기 · 보내기 · 합치기', '개 이상'],
     ['move_h', '옮기기 간격', '한 노드에서 나누기 · 합치기는 이 간격에 한 번', '시간'], ['rename_h', '이름 바꾸기 간격', '한 노드 이름은 이 간격에 한 번', '시간']];
@@ -995,6 +1015,7 @@
     const favb = () => { try { return localStorage.getItem('hb-favblink') !== '0'; } catch { return true; } };   // 파비콘 눈 깜빡(기본 켜짐)
     const tapt = () => { try { return localStorage.getItem('hb-tapthread') !== '0'; } catch { return true; } };
     const unk = () => { try { return localStorage.getItem('hb-unreadkeep') === '1'; } catch { return false; } };   // 읽지 않음 뒤로 가기 되살림 · 「읽지 않음으로」(기본 꺼짐)
+    const cpb = () => { try { return localStorage.getItem('hb-copybits') === '1'; } catch { return false; } };
     const canvasBack = () => { try { return localStorage.getItem('hb-canvasback') === '1'; } catch { return false; } };
     const mainM = () => { try { return localStorage.getItem('hb-mainmerge') === '1'; } catch { return false; } };
     const newsb = () => { try { return localStorage.getItem(NSK) === '1'; } catch { return false; } };
@@ -1008,6 +1029,7 @@
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>움직임 줄이기</b><p class="bxs-mut">블롭 · 파비콘 깜빡임 · 화면 전환 움직임을 멈춰요(기기의 움직임 줄이기도 따라요)</p></div>${sw(still(), `data-st="${still() ? 0 : 1}"`, '움직임 줄이기')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>파비콘 눈 깜빡</b><p class="bxs-mut">브라우저 탭 아이콘이 5초마다 눈을 깜빡여요. 끄면 탭 아이콘만 멈추고 다른 움직임은 그대로예요</p></div>${sw(favb(), `data-fb="${favb() ? 0 : 1}"`, '파비콘 눈 깜빡')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>폰에서 글을 누르면 스레드 열기</b><p class="bxs-mut">휴대폰에서 채널 글을 짧게 누르면 그 글 스레드가 열려요. 끄면 길게 눌러 메뉴에서 회신해요. 컴퓨터(마우스)는 그대로예요</p></div>${sw(tapt(), `data-tt="${tapt() ? 0 : 1}"`, '폰에서 글을 누르면 스레드 열기')}</div></div>`
+        + `<div class="bxs-card"><div class="bxs-row between"><div><b>폰 글 메뉴에 코드 · 주소 복사</b><p class="bxs-mut">휴대폰에서 글을 길게 누르면 나오는 메뉴에, 글 속 코드(예: 0H60-MF90X)와 주소를 바로 복사하는 단추가 더 붙어요. 컴퓨터(마우스)는 그대로예요</p></div>${sw(cpb(), `data-cpb="${cpb() ? 0 : 1}"`, '폰 글 메뉴에 코드 · 주소 복사')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>읽지 않음에서 읽은 글 남기기</b><p class="bxs-mut">뒤로 가기로 돌아오면 아까 목록과 보던 자리가 그대로이고, 읽은 글은 「읽음」으로 남아 「읽지 않음으로」 되돌릴 수 있어요. 되돌린 글은 이 기기에만 남아요</p></div>${sw(unk(), `data-uk="${unk() ? 0 : 1}"`, '읽지 않음에서 읽은 글 남기기')}</div></div>`
         + `<div class="bxs-card"><div class="bxs-row between"><div><b>캔버스를 닫으면 앞 화면으로</b><p class="bxs-mut">캔버스를 열기 직전 화면으로 돌아가요. 주소로 바로 연 캔버스는 홈으로 가요</p></div>${sw(canvasBack(), `data-cb="${canvasBack() ? 0 : 1}"`, '캔버스를 닫으면 앞 화면으로')}</div></div>`
         + (isMem() || !(window.HB_CAPS?.mainline ?? true) ? '' : `<div class="bxs-card"><div class="bxs-row between"><div><b>#메인 한 줄기</b><p class="bxs-mut">Primary 채널을 열면 다섯 채널(Primary · 회사 · 퍼스널 · DGit · 가게) 글이 시간순 한 줄로 보여요. 답은 원래 채널 스레드로, 새 글은 Primary 로 가요. 글 주소도 /m/… 꼴로 읽혀요</p></div>${sw(mainM(), `data-mm="${mainM() ? 0 : 1}"`, '#메인 한 줄기')}</div></div>`);
@@ -1030,6 +1052,8 @@
       if (fb){ try { localStorage.setItem('hb-favblink', fb.dataset.fb); } catch {} uiSave('favblink', fb.dataset.fb); return draw(); }
       const tt = e.target.closest('[data-tt]');
       if (tt){ try { localStorage.setItem('hb-tapthread', tt.dataset.tt); } catch {} uiSave('tapthread', tt.dataset.tt); R.classList.toggle('hb-tapth', tt.dataset.tt === '1'); return draw(); }
+      const cp = e.target.closest('[data-cpb]');
+      if (cp){ try { localStorage.setItem('hb-copybits', cp.dataset.cpb); } catch {} uiSave('copybits', cp.dataset.cpb); return draw(); }
       const uk = e.target.closest('[data-uk]');
       if (uk){ try { localStorage.setItem('hb-unreadkeep', uk.dataset.uk); } catch {} uiSave('unreadkeep', uk.dataset.uk); window.HBInbox?.keepApply?.(); return draw(); }
       const mm = e.target.closest('[data-mm]');
@@ -1152,14 +1176,17 @@
       const b = e.target.closest('[data-dm]'); if (!b) return;
       const d = devices.find(x => x.id === b.dataset.dm); if (!d) return;
       document.querySelector('.bxs-pop')?.remove();
-      const pop = mk('div', 'bxs-pop', `<button type="button" class="danger" data-rv>기기 폐기</button>`), r = b.getBoundingClientRect();
+      const pop = mk('div', 'bxs-pop', revokeMenu(d)), r = b.getBoundingClientRect();
       pop.style.top = (r.bottom + 6) + 'px'; pop.style.left = Math.max(8, r.right - 190) + 'px'; document.body.append(pop);
+      if (pop.offsetWidth > 190) pop.style.left = Math.max(8, r.right - pop.offsetWidth) + 'px';   // 묶인 카드 메뉴는 줄 이름이 길어 넓음 — 단추 오른쪽 끝에 맞춤
       const close = ev => { if (!pop.contains(ev.target)) { pop.remove(); removeEventListener('pointerdown', close, true); } }; setTimeout(() => addEventListener('pointerdown', close, true));
-      pop.querySelector('[data-rv]').onclick = async () => {
+      pop.querySelectorAll('[data-rv]').forEach(x => { x.onclick = async () => {
         pop.remove();
-        if (!await confirmBox(`<b>${esc(d.name || '이 기기')}</b> 를 폐기할까요? 그 기기는 더 값을 못 보내요${d.scope === 'watch' ? '' : ' · AI 도구는 다시 설치해야 해요'}.`, '폐기')) return;
-        try { await api('POST', 'api/me/devices/' + encodeURIComponent(d.id) + '/revoke'); toast('폐기했어요'); render(); } catch (err) { toast(err.message); }
-      };
+        const plan = revokePlan(d, x.dataset.rv); if (!plan.ids.length) return;
+        if (!await confirmBox(plan.msg, plan.ids.length > 1 ? '모두 폐기' : '폐기')) return;
+        let done = 0; try { for (const id of plan.ids) { await api('POST', 'api/me/devices/' + encodeURIComponent(id) + '/revoke'); done++; } toast('폐기했어요'); } catch (err) { toast(done ? `${plan.ids.length}개 중 ${done}개만 폐기했어요 — ${err.message}` : err.message); }
+        render();
+      }; });
     };
     el.onclick = async e => { if (await engClick(e)) return; return prevClick(e); };
     el.querySelectorAll('[data-eng]').forEach(b => engLoad(b));

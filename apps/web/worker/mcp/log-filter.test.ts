@@ -438,3 +438,229 @@ test("닫는 따옴표 빠진 값이 다음 이름을 먹어도 뒷조각 · 같
     const f = filterText(t); assert.ok("reject" in f || vs.every(v => !f.text.includes(v)), t.slice(0, 18));
   }
 });
+
+for (const n of [15, 16, 17, 20]) {
+  for (const side of ["left", "right", "both"] as const) {
+    test(`상한 경계: 구분 기호 ${side} 빈칸 ${n}칸은 맨 값 · 따옴표 값 모두 가림`, () => {
+      const hp = jj("Hunter2", "Pass99"), phrase = jj("Hunter2 ", "Pass99");
+      const left = side === "right" ? " " : " ".repeat(n), right = side === "left" ? " " : " ".repeat(n);
+      for (const [v, q] of [[hp, ""], [phrase, '"'], [phrase, "'"], [phrase, "“"], [phrase, "「"]]) {
+        const close = q === "“" ? "”" : q === "「" ? "」" : q;
+        const t = `DB_PASSWORD${left}=${right}${q}${v}${close}`, f = masked(t);
+        assert.ok(!f.text.includes("Hunter2") && !f.text.includes("Pass99"), t);
+        assert.ok(f.redacted >= 1);
+      }
+    });
+  }
+}
+for (const n of [79, 80, 81, 90]) {
+  for (const side of ["prefix", "suffix"] as const) {
+    test(`상한 경계: 비밀 이름 ${side} ${n}자는 맨 값 · 따옴표 값 모두 가림`, () => {
+      const hp = jj("Hunter2", "Pass99"), phrase = jj("Hunter2 ", "Pass99");
+      const name = side === "prefix" ? "A".repeat(n) + "PASSWORD" : "DB_PASSWORD" + "Z".repeat(n);
+      for (const [v, q] of [[hp, ""], [phrase, '"']]) {
+        const f = masked(`${name}=${q}${v}${q}`);
+        assert.ok(!f.text.includes("Hunter2") && !f.text.includes("Pass99"));
+        assert.ok(f.text.startsWith(name + "="), "이름은 남김");
+      }
+      const reviewName = side === "prefix" ? "A".repeat(n) + "_PASSWORD" : "DB_PASSWORD_" + "Z".repeat(n);
+      assert.ok(!masked(`${reviewName}=${hp}`).text.includes(hp));
+    });
+  }
+}
+for (const n of [17, 20]) {
+  test(`상한 밖 ${n}칸으로 줄 맞춘 세 줄 .env는 거절하거나 셋 다 가림`, () => {
+    const values = [jj("Hunter2", "Pass99"), jj("Xk9mQ2", "vL8pZ"), jj("q7Rt", "Zx2mWp")];
+    const t = ["DB_PASSWORD", "API_KEY", "SECRET"].map((name, i) => `${name}${" ".repeat(n)}=${" ".repeat(n)}${values[i]}`).join("\n");
+    const f = filterText(t); assert.ok("reject" in f || values.every(v => !f.text.includes(v)));
+  });
+}
+test("이름 81자 밖 세 줄 .env도 거절하거나 셋 다 가림", () => {
+  const v = jj("Hunter2", "Pass99");
+  const t = ["PASSWORD", "API_KEY", "SECRET"].map(name => `${"A".repeat(81)}_${name}=${v}`).join("\n");
+  const f = filterText(t); assert.ok("reject" in f || !f.text.includes(v));
+});
+test("상한 밖에서도 자리표 · 개수 이름 · 코드 · 정상 글과 release 노트는 통과", () => {
+  const pad = " ".repeat(20), name = "A".repeat(81) + "_TOKEN";
+  for (const t of [`${name}${pad}=${pad}<값>`, `${name}_COUNT${pad}=${pad}12345678`, `password${pad}===${pad}undefined`, `token${pad}=>${pad}token.trim()`, "release 노트 정리 · main 브랜치에 머지", `API_KEY=${pad}<값>`]) assert.equal(masked(t).text, t, t);
+  assert.equal(masked(`SECRET:${pad}"release" · release 노트 배포`).text, `SECRET:${pad}"[가림]" · release 노트 배포`);
+});
+
+for (const [label, tail] of [["자리표", '"<값>"'], ["영문 자리표", '"<your_token>"'], ["빈 값", '""'], ["환경 이름", '"OPENAI_API_KEY"'], ["기존 가림", '"[가림]"'], ["한글 낱말", '"재설정"'], ["미닫힌 뒤 값", '"' + jj("Xk9mQ2", "vL8pZ")]]) {
+  test(`따옴표 앞 글귀: 뒤 ${label}와 무관하게 가림`, () => {
+    const t = `TOKEN: "${jj("Hunter2 ", "Pass99")} api_token": ${tail}`, f = masked(t);
+    assert.ok(!f.text.includes("Hunter2") && !f.text.includes("Pass99"), t);
+    if (label === "미닫힌 뒤 값") assert.ok(!f.text.includes(jj("Xk9mQ2", "vL8pZ")));
+    else assert.ok(f.text.includes(tail), "뒤 정상 값은 보존");
+  });
+}
+for (const [name, value] of [["SECRET_TTL", "3600"], ["max_tokens", "4096"], ["TOKEN_COUNT", "12"], ["HMAC_VERSION", "2"]]) {
+  test(`따옴표 앞 글귀: 뒤 개수 이름 ${name}도 앞 값은 가림`, () => {
+    const f = masked(`TOKEN: "${jj("Hunter2 ", "Pass99")} ${name}": "${value}"`);
+    assert.ok(!f.text.includes("Hunter2") && !f.text.includes("Pass99"));
+    assert.ok(f.text.includes(`"${value}"`), "개수는 보존");
+  });
+}
+for (const [open, close] of [['"', '"'], ["'", "'"], ["“", "”"], ["‘", "’"], ["「", "」"]]) {
+  for (const sep of [":", "=", ":=", "==", "=>"]) {
+    test(`따옴표 앞 글귀: ${open}${close} 뒤 ${sep}에서 앞 · 뒤 진짜 값 가림`, () => {
+      const v = jj("Xk9mQ2", "vL8pZ");
+      const f = masked(`TOKEN: ${open}${jj("Hunter2 ", "Pass99")} api_token${close}${sep} ${open}${v}${close}`);
+      assert.ok(!f.text.includes("Hunter2") && !f.text.includes("Pass99") && !f.text.includes(v));
+    });
+  }
+}
+test("보안장 원문 JSON · 한국어 비밀번호 · 여러 낱말 앞 값도 가림", () => {
+  for (const t of [`{"password": "${jj("Hunter2 ", "Pass99")} api_token": "<값>"}`, `password: "${jj("dragonfly ", "sesame42")} token": "<값>"`, `비밀번호: "${jj("dragon ", "fly")} secret": "<값>"`]) {
+    const f = masked(t);
+    for (const v of ["Hunter2", "Pass99", "dragonfly", "sesame42", "dragon", "fly"]) assert.ok(!f.text.includes(v), t);
+  }
+});
+test("미닫힌 바깥 따옴표 안 password == 보다 앞 글귀를 먼저 가림", () => {
+  const t = `ADMIN_PASSWORD=> “${jj("Qorvath7 ", "Plimzex9k")}, password == “release”`, f = masked(t);
+  assert.ok(!f.text.includes("Qorvath7") && !f.text.includes("Plimzex9k"));
+});
+test("따옴표 후퇴 고침 뒤에도 코드 · 정상 글 · release 노트는 그대로", () => {
+  for (const t of ["if (password === undefined) throw", ".map(token => token.trim())", "secret => secret.length", "return password === this.password", "if (TOKEN == process.env.TOKEN)", 'tokens.filter(token => token.kind === "a")', "release 노트 정리 · main 브랜치에 머지", 'the secret "rotation-plan" 문서']) assert.equal(masked(t).text, t, t);
+  assert.equal(masked('SECRET: "release" · release 노트에 적어 둠').text, 'SECRET: [가림] · release 노트에 적어 둠');
+});
+
+test("두 후속의 결합: 이름·공백 상한 밖 따옴표 앞 글귀와 미닫힌 바깥 값도 가림", () => {
+  for (const name of ["TOKEN", "A".repeat(81) + "_TOKEN"]) {
+    for (const n of [1, 17, 20]) {
+      const pad = " ".repeat(n);
+      for (const t of [`${name}:${pad}"${jj("Hunter2 ", "Pass99")} api_token": "<값>"`, `${name}=>${pad}“${jj("Qorvath7 ", "Plimzex9k")}, password == “release”`]) {
+        const f = masked(t);
+        for (const v of ["Hunter2", "Pass99", "Qorvath7", "Plimzex9k"]) assert.ok(!f.text.includes(v), t);
+      }
+    }
+  }
+});
+
+const reviewPhrase = jj("Hunter2 ", "Pass99"), reviewValue = jj("Xk9mQ2", "vL8pZ");
+const reviewMasked = (t: string, values = ["Hunter2", "Pass99"]) => {
+  const f = masked(t);
+  for (const v of values) assert.ok(!f.text.includes(v), t);
+  if (t.endsWith('"<값>"')) assert.ok(f.text.endsWith('"<값>"'), "뒤 자리표 보존");
+};
+test("닫힌 따옴표 끝 이름 앞이 빈칸 이외 기호여도 앞 글귀 전부 가림", () => {
+  for (const ch of ["/", ".", "-", "|", "(", "+", "#", "@", "!", "?", "*", ":", "=", "~", ")", "[", "<", "\\", " ("]) {
+    reviewMasked(`TOKEN: "${reviewPhrase}${ch}api_token": "<값>"`);
+  }
+  reviewMasked(`{"password": "${reviewPhrase}/api_token": "<값>"}`);
+  reviewMasked(`TOKEN = "${reviewPhrase}.api_token" = "<값>"`);
+  reviewMasked(`TOKEN: "${reviewPhrase}/api_token": "${reviewValue}"`, ["Hunter2", "Pass99", reviewValue]);
+});
+test("닫힌 따옴표 안 다른 종류 따옴표 글자도 앞 글귀에 포함해 가림", () => {
+  for (const q of ["'", "’", "“", "”", "‘", "「", "」"]) {
+    reviewMasked(`TOKEN: "Hunter2 it${q}s Pass99 api_token": "<값>"`);
+  }
+  reviewMasked(`password: "Hunter2 it's Pass99 api_token": "${reviewValue}"`, ["Hunter2", "Pass99", reviewValue]);
+});
+test("password is · pw · passwd 머리 뒤 닫힌 따옴표 앞 글귀도 가림", () => {
+  for (const head of ['password is ', 'password  is  ', 'pw: ', 'passwd: ']) {
+    reviewMasked(`${head}"${reviewPhrase} api_token": "<값>"`);
+  }
+  reviewMasked(`the password is "${reviewPhrase} api_token": "${reviewValue}"`, ["Hunter2", "Pass99", reviewValue]);
+  reviewMasked(`pw="${jj("Zorblat7", " the\tcredential")}"="OPENAI_API_KEY"`, ["Zorblat7"]);
+});
+test("닫힌 따옴표 안 이름 둘이면 첫 조각이 한글 · 자리표여도 끝 이름 앞 전부 가림", () => {
+  for (const prefix of ["abc", "가나", "<값>"]) {
+    reviewMasked(`TOKEN: "${prefix} api_key: ${reviewPhrase} secret": "<값>"`);
+  }
+  reviewMasked(`TOKEN: "abc secret ${jj("correct horse ", "battery")} api_token": "<값>"`, ["correct", "horse", "battery"]);
+  reviewMasked(`TOKEN: "abc api_key: ${reviewPhrase} secret": "${reviewValue}"`, ["Hunter2", "Pass99", reviewValue]);
+});
+for (const [i, t, values] of [
+  [1, `the password is “${jj("Zorblat7", "/SERVICE_ACCOUNT_TOKEN api_key: ", "Vexnar9q", "/SERVICE_ACCOUNT_TOKEN”:")}  “${jj("Hunter2", "Pass99")}”`, ["Zorblat7", "Vexnar9q", jj("Hunter2", "Pass99")]],
+  [2, `pw:=「${jj("Quixmo42", " it's, HMAC api_key: ", "Vexnar9q", "&SERVICE_ACCOUNT_TOKEN」：")}  「${reviewValue}」`, ["Quixmo42", "Vexnar9q", reviewValue]],
+  [3, `{pw=> 「${jj("Vexnar9q", ":SECRET_KEY api_key: ", "Quixmo42", "-secret」：")}   「${jj("Qorvath7", "Plimzex9k")}」}`, ["Vexnar9q", "Quixmo42", jj("Qorvath7", "Plimzex9k")]],
+] as [number, string, string[]][]) {
+  test(`보안장 main 대비 후퇴 ${i}: 안쪽 값보다 앞 글귀를 먼저 가림`, () => reviewMasked(t, values));
+}
+test("상한 밖 passwd 맨 값과 뒤 값이 붙은 맨 값 덩어리도 가림", () => {
+  const hp = jj("Hunter2", ".Pass99"), xk = jj("Xk9mQ2", "vL8pZ"), pad = " ".repeat(17), name = "TOKEN" + "X".repeat(81);
+  for (const [t, vs] of [
+    [`passwd${pad}= ${hp}`, [hp]], [`passwd"${pad}: ${hp}`, [hp]], [`PASSWD${pad}=${xk}`, [xk]],
+    [`password=${pad}${xk}=정답&ADMIN_PASSWORD==“${hp}”`, [xk, hp]],
+    [`${name}\t\t\t\t\t= ${hp}&TOKEN:=${xk} · 끝`, [hp, xk]],
+    [`PROMPT_TOKEN"${pad}: ${xk}&passwd===${hp}=정답`, [xk, hp]],
+  ] as [string, string[]][]) {
+    const f = filterText(t); assert.ok("reject" in f || vs.every(v => !f.text.includes(v)), t);
+  }
+  const t = `secret_key:\n${pad}“${jj("sk-", "abcdefghijklmnopqrstuv")} SECRET”=>“${xk}”`, f = filterText(t);
+  assert.ok("reject" in f || !f.text.includes(xk), t);
+});
+test("상한 없는 이름 훑기도 한 낱말 8,000자에서 빠름(비밀 낱말 자리마다 되짚지 않음)", () => {
+  for (const w of ["KEK", "HMAC", "TOKEN", "SECRETTOKEN"]) for (const tail of ["=" + jj("Hunter2", "Pass99"), " is: x1234567"]) {
+    const t = w.repeat(Math.ceil(8000 / w.length)).slice(0, 7990 - tail.length) + tail, t0 = performance.now(); filterText(t);
+    assert.ok(performance.now() - t0 < 1000, `${w}${tail.slice(0, 3)} ${(performance.now() - t0).toFixed(0)}ms`);
+  }
+});
+const FLOOR = await import("./log-filter-floor.ts"), { maskedSpans, prodSpans, redactProd } = FLOOR;
+const { filterText: filterMain769 } = await import("./log-filter-769.ts");
+test("바닥: main 판 · 운영판이 가린 값은 남지 않음(상한 밖 맨 값 · 닫히지 않은 따옴표 값 · 그 뒤 이름=값)", () => {
+  const sp = (n: number) => " ".repeat(n), zq = jj("Zq8", "Lm4Rt7Wx"), pa = jj("Pa55", "w0rd!x"), tr = jj("tr0ub", "4dor&3x"), f9 = jj("9f8e7d", "6c5b4a3f"), bm = jj("Blue", "Moon77");
+  for (const [t, vs] of [
+    [`API_KEY is "${pa}.|env.API_KEY${sp(18)}= ${tr}"`, [pa, tr]],   // 높음 A: 상한 밖 맨 값을 먼저 가려 앞 따옴표 값의 원문 짝이 깨지던 것
+    [`SIGNING_KEY=${sp(18)}「${zq} // 주석 · apiKey=>「${f9}」`, [zq, f9]],   // 높음 B: 상한 밖 사이 + 닫히지 않은 따옴표 값(운영판은 가림)
+    [`HMAC_KEY=${sp(17)}“${bm} Kp9Wz4&HMAC_KEY:=“${zq} // x\tHMAC_KEY”: x`, [bm, zq]],
+  ] as [string, string[]][]) {
+    const f = filterText(t); assert.ok("reject" in f || vs.every(v => !f.text.includes(v)), t);
+  }
+});
+test("바닥 구간: 거른 글을 원문 구간으로 되짚음 — 같은 글귀가 되풀이돼도 참 구간을 늘 담음", () => {
+  assert.deepEqual(maskedSpans("TOKEN=abcdefgh x", "TOKEN=[가림] x", MARK), [[6, 14]]);
+  assert.deepEqual(maskedSpans("a=xx a a=yy a", "a=[가림] a a=[가림] a", MARK), [[2, 4], [9, 11]]);
+  // 되풀이 글귀 사이: 앞 조각은 이른 자리, 뒤 조각은 늦은 자리 → 넉넉히
+  const sp = maskedSpans("x x x x", "x[가림]x", MARK)!; assert.ok(sp[0][0] <= 1 && sp[0][1] >= 6);
+  assert.equal(maskedSpans("abc", "abd", MARK), null);
+  assert.deepEqual(maskedSpans("자리표 [가림] 그대로", "자리표 [가림] 그대로", MARK), [[4, 8]]);
+});
+test("바닥 운영판: 운영판과 같은 자리를 가림 · 이름=값은 새 판 기준 값일 때만 합침", () => {
+  const ok = (v: string) => !/^(?:\$\{[^}]*\}|\d+)$/.test(v);
+  for (const t of [`TOKEN=${jj("Hunter2", "Pass99")}`, `Authorization: Bearer${" ".repeat(20)}${fill(20)}`, `postgres://u:${jj("Fake", "Pass99")}@h/db`, `x ${FAKE.openai} y`])
+    assert.ok(prodSpans(t, ok).length >= 1 && redactProd(t).includes("[secret]"), t);
+  assert.deepEqual(prodSpans("TOKEN=${GITHUB_TOKEN} · token_count=12345678", ok), []);
+  assert.equal(masked(`password${" ".repeat(20)}===${" ".repeat(20)}undefined`).text.includes("undefined"), true);
+});
+test("바닥 운영판: 긴 빈칸 · 줄바꿈 8,000자도 빠름(뒤돌아보기 앞 값 첫 글자 앞보기)", () => {
+  for (const t of ["TOKEN" + " ".repeat(7990) + "= abc", ("TOKEN\n").repeat(1333), ("TOKEN ").repeat(1333)]) {
+    const t0 = performance.now(); filterText(t); assert.ok(performance.now() - t0 < 1000, `${(performance.now() - t0).toFixed(0)}ms`);
+  }
+});
+test("바닥 main 판은 그대로 옮긴 것 — main 이 거절하면 같이 거절", () => {
+  const t = ["DB_PASSWORD", "API_KEY", "SECRET"].map((n, i) => `${n}=${jj("Hunter2", "Pass9", String(i))}`).join("\n");
+  assert.ok("reject" in filterMain769(t) && "reject" in filterText(t));
+});
+test("바닥: 섞인 따옴표 · 둥근 따옴표 이름 뒤 값도 main 판보다 덜 가리지 않음", () => {
+  const zq = jj("Zq8", "Lm4Rt7Wx"), hp = jj("Hunter2", "Pass99"), tr = jj("tr0ub", "4dor&3x"), fa = jj("Fal", "con9Rides42"), hg = jj("Hg7Vb", "3Nc9"), sk = jj("sk-", "proj", "ABCDEFGHIJKLMNOPQRSTU");
+  for (const [t, vs] of [
+    [`secretKey 「${zq} pw”: 「${hp}」`, [zq, hp]],
+    [`const token is: "${fa} 인증키’= “${tr} 비밀번호」=‘${hg}’"`, [fa, tr, hg]],
+    [`토큰 is: 「${zq}.|API_KEY”: 「${hp}」`, [zq, hp]],
+    [`“token”:“${zq}”&비밀번호 = ${hp}`, [zq, hp]],   // main 은 앞 값, 이 층은 뒤 값을 남기던 것 — 둘 다 가림
+    [`TOKEN_${"y".repeat(83)}\t= 「${zq} token&x=1) (토큰==「${sk}」 끝`, [zq, sk]],
+  ] as [string, string[]][]) {
+    const f = filterText(t); assert.ok("reject" in f || vs.every(v => !f.text.includes(v)), t);
+  }
+});
+test("둥근 따옴표 이름 뒤 undefined · null 은 그대로 · 세 줄이어도 통과", () => {
+  for (const t of ["‘API_KEY’: undefined", "“token”: null", "‘API_KEY’: undefined\n‘SECRET’: undefined\n“PASSWORD”: undefined"]) assert.equal(masked(t).text, t, t);
+  assert.ok(!masked(`‘API_KEY’: ${jj("Hunter2", "Pass99")}`).text.includes("Hunter2"));
+});
+test("바닥 운영판: ${X:-값} 기본값 · 대문자 값 속 숫자 · 16진 마디도 가림(운영판처럼)", () => {
+  const hp = jj("Hunter2", "Pass99");
+  for (const [t, v] of [
+    [`password: "\${DB_PASS:-${hp}}"`, hp], [`  api_key: \${OPENAI_KEY:-${hp}}`, hp], [`DB_PASSWORD: "\${PGPASS:-${hp}}"`, hp], [`SECRET_KEY=\${DJANGO_KEY:-${hp}}`, hp], [`token: '\${GH:-${hp}}'`, hp],
+    [`SECRET_KEY=${jj("MY_SUPER_SECRET_KEY_", "20240917")}`, "20240917"], [`JWT_SECRET=${jj("PROD_JWT_SECRET_", "7F3A9C2E81B4")}`, "7F3A9C2E81B4"], [`API_KEY: "${jj("LIVE_API_KEY_", "9F8E7D6C5B4A")}"`, "9F8E7D6C5B4A"],
+    [`TOKEN=\${${hp}}`, hp], [`TOKEN={{${hp}}}`, hp], [`PASSWORD=<${hp.toUpperCase()}>`, hp.toUpperCase()], [`password==this.${hp}`, hp], [`TOKEN_TTL=abc-${jj("correct", "horsebat")}`, jj("correct", "horsebat")],
+  ] as [string, string][]) { const f = filterText(t); assert.ok("reject" in f || !f.text.includes(v), t); }
+});
+test("바닥 운영판: 이름만 든 자리표 · 비밀 이름 값 · 코드 식은 그대로", () => {
+  for (const t of ["TOKEN=${GITHUB_TOKEN}", "SECRET_NAME=OPENAI_API_KEY", "API_TOKEN=${API_TOKEN:-}", "CLOUDFLARE_API_TOKEN=${{secrets.CLOUDFLARE_API_TOKEN}}", "token: \"{{ .Values.token }}\"", "TOKEN={{TOKEN}}",
+    "OPENAI_API_KEY=<your-openai-key>", "SECRET_KEY=<your_secret_key>", "if (apiKey === this.apiKey) ok()", "secret == process.env.SECRET_KEY", "TOKEN_COUNT=12345678", "SECRET_VERSION=v2-2026-11", "HMAC_ALG=sha-256"]) assert.equal(masked(t).text, t, t);
+  const { floorPlaceholder, floorCode } = FLOOR;
+  assert.ok(floorPlaceholder("${GITHUB_TOKEN}") && !floorPlaceholder("${X:-abc}") && !floorPlaceholder("PROD_API_KEY_" + "7F3A9C2E81") && floorPlaceholder("OPENAI_API_KEY"));
+  assert.ok(floorCode("token.trim()", "token") && !floorCode("this." + jj("Zq8", "Lm4Rt7Wx"), "token"));
+});

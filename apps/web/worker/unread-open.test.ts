@@ -85,7 +85,13 @@ test("남의 노드 · 남의 글 · Primary 글 · 모르는 노드는 빈 답(
   assert.deepEqual((await chat(D1, A, "n:예시 팀장", ts.lb)).messages, []);
   assert.deepEqual((await chat(D1, B, "n:예시 팀장", ts.l1)).messages, []);
   assert.deepEqual((await chat(D1, A, "n:예시 팀장", ts.lp)).messages, []);
-  assert.deepEqual((await chat(D1, A, "n:없는 노드", ts.l1)).messages, []);
+  const moved = await chat(D1, A, "n:없는 노드", ts.l1);
+  assert.deepEqual(moved.messages.map((m: any) => [m.ts, m.text, m.ch]), [[ts.l1, "이슈를 만들고 넘겼어요", "n:없는 노드"]]);
+  assert.equal(moved.orphan, true);
+  // 남의 뿌리 · 남의 카드 · 모르는 ts 는 없는 노드 채널로 불러도 빈 답
+  assert.deepEqual((await chat(D1, B, "n:없는 노드", ts.l1)).messages, [], "남의 뿌리");
+  assert.deepEqual((await chat(D1, A, "n:없는 노드", ts.lb)).messages, [], "남의 글");
+  assert.deepEqual((await chat(D1, A, "n:없는 노드", "1793000000.000999")).messages, [], "모르는 ts");
   assert.deepEqual((await chat(D1, B, "n:남의 노드", "1793000000.000123")).messages, [], "남의 카드");
 });
 

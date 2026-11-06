@@ -21,7 +21,7 @@ const rootOf = (thread: unknown) => { const t = String(thread || ""); return PTH
 const TS = /^(\d{10})\.(\d{6})$/, RX = /^[a-z0-9_+-]{1,40}$/;
 const CTRL = /[\x00-\x08\x0b-\x1f\x7f]/g;
 // 파일 붙은 글 끝의 첨부 줄(member-files.ts fileLines 꼴): 「📎 이름: <주소>/f/<id>?e=<초>&t=<서명>」
-const FILE_LINE = /^📎 .{1,200}: https?:\/\/\S+\/f\/[0-9a-f]{32}\?e=\d{9,11}&t=[0-9a-f]{32}$/u;
+const FILE_LINE = /^📎 .{1,200}: https?:\/\/\S+\/f\/[0-9a-f]{32}(?:\/[^\s?/]{1,400})?\?e=\d{9,11}&t=[0-9a-f]{32}$/u;
 const cut = (s: unknown, n: number) => { const a = Array.from(String(s ?? "")); return a.length <= n ? a.join("") : a.slice(0, n - 1).join("") + "…"; };
 const tsOf = (at: number, id: number) => `${Math.floor(at / 1000)}.${String(id % 1_000_000).padStart(6, "0")}`;   // member-board 채팅 글 ts 와 같은 꼴
 
