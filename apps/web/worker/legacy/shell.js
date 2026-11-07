@@ -982,7 +982,15 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   const PCQ = matchMedia('(min-width: 861px)');
   const net = () => { const n = navigator.connection; return n ? {net: n.effectiveType, net_type: n.type, rtt: n.rtt} : {}; };
   const VER = { hb_ver: (() => { try { return String(window.HB_VER || '') || null; } catch { return null; } })(), bx_ver: SHELL_VER };
-  const send = (action, ms, x) => { try { window.posthog?.capture('boarder_ui', {action, ms: Math.round(ms), mobile: !PCQ.matches, pwa: matchMedia('(display-mode: standalone)').matches, ...net(), ...VER, ...x}); } catch {} };
+  // Existing samples only, no retries/timers. Use the existing clientlog bypass so telemetry cannot change retry state.
+  const metricFetch = window.fetch.bind(window);
+  const metric = p => { try {
+    const safe = {};
+    for (const k of ['action', 'ms', 'sample', 'hb_ver', 'bx_ver', 'net', 'mobile', 'pwa', 'hidden', 'focus', 'rtt', 'n', 'max', 'block', 'idle_s', 'longtasks', 'visible_ms', 'observed_ms', 'lf_supported', 'lf_complete', 'lf_channel', 'lf_thread', 'lf_cards', 'lf_scroll', 'lf_other', 'status']) if (p[k] !== undefined) safe[k] = p[k];
+    void metricFetch('/api/clientlog/metrics', {method: 'POST', credentials: 'same-origin', keepalive: true, headers: {'content-type': 'application/json', 'x-hb': '1'}, body: JSON.stringify(safe)}).catch(() => {});
+  } catch {} };
+  const send = (action, ms, x) => { const p = {action, ms: Math.round(ms), mobile: !PCQ.matches, pwa: matchMedia('(display-mode: standalone)').matches, ...net(), ...VER, ...x};
+    metric(p); try { window.posthog?.capture('boarder_ui', p); } catch {} };
   window.BX_UI = send;   // 다시 연결(LiveES) 도 같은 꼴로
   const paint = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));   // 그린 다음 프레임까지
   // Same five-minute event, disjoint visible windows and bounded, content-free frame attribution.
@@ -1088,17 +1096,24 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   })();
   (() => { let lt = 0; try { new PerformanceObserver(l => { lt += l.getEntries().length; }).observe({type: 'longtask', buffered: false}); } catch (e) {}
     setInterval(() => { const m = performance.memory; const n = lt; lt = 0;
-      try { window.posthog?.capture('boarder_ui', {...VER, action: 'idle_cost', ms: m ? Math.round(m.usedJSHeapSize / 1048576) : -1, longtasks: n, hidden: document.hidden, focus: document.hasFocus(), mobile: !PCQ.matches, ...frameCost.flush()}); } catch (e) {} }, 300000); })();
+      send('idle_cost', m ? Math.round(m.usedJSHeapSize / 1048576) : -1, {longtasks: n, hidden: document.hidden, focus: document.hasFocus(), ...frameCost.flush()}); }, 300000); })();
   // 노드 트리 그리기: 바뀔 때마다 도니 10번에 1번만(고르게)
   { const f = window.redraw; if (typeof f === 'function') window.redraw = function (...a){ if (Math.random() >= 0.1) return f.apply(this, a); const t = performance.now(), out = f.apply(this, a); send('tree_draw', performance.now() - t, {sample: 10}); return out; }; }
   // 찾기 · 글 보내기 왕복: 서버 답까지(화면에 보인 때는 send_visible)
   { const f0 = window.fetch; window.fetch = function (u, o){
       const s = typeof u === 'string' ? u : u?.url || '', m = (o?.method || 'GET').toUpperCase(), body = typeof o?.body === 'string' ? o.body : '';
+      try { const target = new URL(s, location.href);
+        if (target.origin === location.origin && target.pathname.startsWith('/api/')) {
+          const headers = new Headers(o?.headers ?? (typeof u === 'object' ? u.headers : undefined));
+          if (VER.hb_ver) headers.set('x-hb-ver', VER.hb_ver); if (VER.bx_ver) headers.set('x-bx-ver', VER.bx_ver);
+          o = {...o, headers};
+        }
+      } catch {}
       // POST api/chat 는 읽음 · 반응 · 고치기 · 지우기도 탐 — 글 보내기(text 가 있고 나머지 표 없음)만
       let sendMsg = false; if (m === 'POST' && /(^|\/)api\/chat$/.test(s)) { try { const b = JSON.parse(body); sendMsg = !!b.text && !b.seen && !b.edit && !b.delete; } catch {} }
       const name = /(^|\/)api\/search\?/.test(s) ? 'search' : sendMsg ? 'send_roundtrip' : '';
-      if (!name) return f0.apply(this, arguments);
-      const t = performance.now(), p = f0.apply(this, arguments);
+      if (!name) return f0.call(this, u, o);
+      const t = performance.now(), p = f0.call(this, u, o);
       p.then(r => send(name, performance.now() - t, {status: r.status}), () => {});
       return p;
     }; }

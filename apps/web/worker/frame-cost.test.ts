@@ -18,7 +18,7 @@ const setup=(options:{hidden?:boolean,supported?:boolean,observeFails?:boolean}=
  }
  const context:any={performance:{now:()=>now,getEntriesByType:()=>[],getEntriesByName:()=>[]},navigator:{},
   document:{get hidden(){return hidden;},hasFocus:()=>true,readyState:'loading',addEventListener:on},
-  addEventListener:on,setInterval:(fn:Function,ms:number)=>timers.push({fn,ms}),requestAnimationFrame:()=>{},
+  addEventListener:on,setInterval:(fn:Function,ms:number)=>timers.push({fn,ms}),requestAnimationFrame:()=>{},fetch:()=>Promise.resolve(),
   matchMedia:()=>({matches:true}),location:{href:'https://boarder.dgit.co/chat/private-person?text=secret',origin:'https://boarder.dgit.co'},
   URL,PerformanceObserver:Observer,HB_LIVE:true,HB_VER:'test-harness',SHELL_VER:'test-shell',CS:{th:null},
   posthog:{capture:(event:string,props:any)=>events.push({event,...JSON.parse(JSON.stringify(props))})},

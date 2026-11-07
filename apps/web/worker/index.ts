@@ -1,3 +1,4 @@
+import { uiMetric, metricPath } from "./metrics";
 // Boarder API(Hono) — /api/* 만 Worker 가 받고, 나머지는 React 정적 자산(SPA)
 import { Hono, type Context } from "hono";
 import { readFrontDoor as readChatFront } from "./front-door";
@@ -120,6 +121,8 @@ import * as uid from "./uid";
 
 type Env = AuthEnv & PH & directUploads.DirectEnv & { SNAP: DurableObjectNamespace<import("./board").BoardSnap>; BRIDGE: DurableObjectNamespace<import("./bridge").Bridge>; RELAY_TOKEN: string; LEDGER_TOKEN?: string; ADMIN_TOKEN?: string; ENGINE: DurableObjectNamespace<Engine>; RESULTS: R2Bucket; CF_VERSION_METADATA: WorkerVersionMetadata; CONNECTOR_KEY?: string; SEARCH: DurableObjectNamespace<import("./search").Search>; AI: Ai; VOYAGE_API_KEY?: string; OB_EXPORT_SIGN_KEY?: string; OB_EXPORT_URL?: string; PUSH: DurableObjectNamespace<import("./push-do").Pusher>; VAPID_PRIVATE?: string; SOURCE_URL?: string; FAULT_OK?: string };
 const app = new Hono<{ Bindings: Env }>();
+// Telemetry is read-only: skip feature lookups, write invalidation, live bumps and self-measurement.
+app.post("/api/clientlog/metrics", c => uiMetric(c.req.raw, c.env, async () => (await signedIn(c))?.user.email || null));
 app.use("*", async (c, next) => { try { const on = await ledger.f7AllPeek(c.env.DB, p => c.executionCtx.waitUntil(p)); W.setCanonOn(on.has("owner_key_canon")); memberBoard.setHarnessKey(W.unifiedAnyIn(on, c.env) ? W.canon(c.env) : ""); } catch {} return next(); });
 const MC_PATHS = /^\/api\/(data|inbox|topics|chats|chat\/[^/]+(\/\d{9,11}\.\d{6})?)$/, MC_TTL = 10, MC_RATE = new Map<string, { at: number; n: number }>();
 app.use("*", async (c, next) => {
@@ -260,7 +263,7 @@ app.use("*", async (c, next) => {
   const url = new URL(c.req.url);
   if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method) && url.pathname.startsWith("/api/") && c.res.status < 400 && (!url.pathname.startsWith("/api/relay/") || url.pathname === "/api/relay/write"))
     console.log(JSON.stringify({ ev: "api_write", path: normPath(url.pathname), method: c.req.method, status: c.res.status, ms: total, ...rec.seg }));
-  if (url.pathname === "/api/relay/write" && c.res.status < 400) { if (Math.random() < 0.1) capture(c.env, c.executionCtx, "boarder_request", "relay", { path: "/api/relay/write", method: c.req.method, status: c.res.status, total_ms: total, sample: 10, ...Object.fromEntries(Object.entries(rec.seg).map(([k, v]) => [`${k}_ms`, v])), ...meterProps(meter), colo: (c.req.raw as any).cf?.colo }); return; }
+  if (url.pathname === "/api/relay/write" && c.res.status < 400) { if (Math.random() < 0.1) capture(c.env, c.executionCtx, "boarder_request", "relay", { path: "/api/relay/write", metrics_path: "/api/relay/write", method: c.req.method, status: c.res.status, total_ms: total, sample: 10, ...Object.fromEntries(Object.entries(rec.seg).map(([k, v]) => [`${k}_ms`, v])), ...meterProps(meter), colo: (c.req.raw as any).cf?.colo }); return; }
   if (url.pathname.startsWith("/api/relay/") || url.pathname.startsWith("/ph/") || url.pathname === "/api/health") return;
   const rid = (c.req.header("x-request-id") || "").slice(0, 40);
   if (c.res.status >= 400 && url.pathname.startsWith("/api/")) console.log(JSON.stringify({ ev: "api_error", rid, path: normPath(url.pathname), method: c.req.method, status: c.res.status, ms: total, ...rec.seg }));   // Workers Logs(observability)
@@ -268,7 +271,7 @@ app.use("*", async (c, next) => {
   const np = normPath(url.pathname), sample = total > 5000 ? 1 : sampleOf(np, c.req.method, c.res.status);
   if (sample > 1 && Math.random() >= 1 / sample) return;
   capture(c.env, c.executionCtx, "boarder_request", rec.who || "anon", {
-    path: np, method: c.req.method, status: c.res.status, total_ms: total, sample, ...(rid ? { rid } : {}),
+    path: np, metrics_path: metricPath(c.req.routePath, url.pathname), hb_ver: c.req.header("x-hb-ver"), bx_ver: c.req.header("x-bx-ver"), method: c.req.method, status: c.res.status, total_ms: total, sample, ...(rid ? { rid } : {}),
     ...Object.fromEntries(Object.entries(rec.seg).map(([k, v]) => [`${k}_ms`, v])), ...meterProps(meter), ...(rec as { hit?: Record<string, number> }).hit,
     via: (rec as { via?: string }).via || "worker", colo: (c.req.raw as any).cf?.colo, entry: (c.req.header("cf-ray") || "").split("-")[1], country: (c.req.raw as any).cf?.country, $current_url: undefined,
   });

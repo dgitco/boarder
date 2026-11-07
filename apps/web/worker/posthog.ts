@@ -1,4 +1,5 @@
-export type PH = { POSTHOG_KEY?: string; POSTHOG_HOST?: string; BETTER_AUTH_SECRET?: string };
+import { writeMetric, type MetricsEnv } from "./metrics";
+export type PH = MetricsEnv & { POSTHOG_KEY?: string; POSTHOG_HOST?: string; BETTER_AUTH_SECRET?: string };
 
 export const phId = async (env: PH, id: string) => !id.includes("@") || /^boarder@(worker$|[^:]+:)/.test(id) ? id : "u_" + [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${env.BETTER_AUTH_SECRET || ""}|ph|${id.trim().toLowerCase()}`)))].slice(0, 10).map(b => b.toString(16).padStart(2, "0")).join("");
 export const snippet = (env: PH, uid?: string) => !env.POSTHOG_KEY ? "" :
@@ -8,6 +9,7 @@ posthog.register({app:"boarder-web"});${uid ? `posthog.identify(${JSON.stringify
 
 // Worker 쪽 이벤트(배치 없이 한 통, 실패해도 요청엔 영향 없음 — 응답 뒤 waitUntil)
 export function capture(env: PH, ctx: { waitUntil(p: Promise<unknown>): void } | undefined, event: string, distinctId: string, properties: Record<string, unknown>) {
+  if (event === "boarder_request") writeMetric(env, event, properties);
   if (!env.POSTHOG_KEY || !ctx) return;
   ctx.waitUntil(phId(env, distinctId).then(id => fetch(`${env.POSTHOG_HOST || "https://us.i.posthog.com"}/i/v0/e/`, {
     method: "POST", headers: { "Content-Type": "application/json" },
