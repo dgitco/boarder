@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "21ffde9e1b66";
+window.HB_VER = "c619a6e79043";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -10172,11 +10172,21 @@ const bdText = (el) => {
 };
 const mineMsg = (m) => m && m.who === "owner" && !m.ledger && !m.deleted && m.src != null;
 const findMsgs = (ts) => [...Object.values(CS.thr).flatMap((t) => t?.messages || []), ...Object.values(CS.ch).flatMap((c) => c?.messages || [])].filter((m) => m.ts === ts);
-function apiChat(body) {
-  return fetch("api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-HB": "1" }, body: JSON.stringify({ rid: newRid(), ...body }) }).then((r) => r.json().catch(() => ({})).then((j) => {
-    if (!r.ok || j.ok === false) throw new Error(j.error || r.status);
-    return j;
+async function apiChat(body) {
+  const j = await fetch("api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-HB": "1" }, body: JSON.stringify({ rid: newRid(), ...body }) }).then((r) => r.json().catch(() => ({})).then((j2) => {
+    if (!r.ok || j2.ok === false) throw new Error(j2.error || r.status);
+    return j2;
   }));
+  if ((body.edit !== void 0 || body.delete) && j.rid && ["queued", "posting", "sending"].includes(j.state)) {
+    for (let n = 0; n < 240; n++) {
+      await new Promise((r2) => setTimeout(r2, 2500));
+      const r = await fetch("api/answer/" + encodeURIComponent(j.rid)), a = await r.json();
+      if (!r.ok || a.ok === false || a.state === "fail" || a.state === "unknown") throw new Error(a.error || r.status);
+      if (!["queued", "posting", "sending"].includes(a.state)) return a;
+    }
+    throw new Error("기기가 처리 결과를 보내지 못했어요");
+  }
+  return j;
 }
 function flipReact(ms, emoji, off) {
   for (const m of ms) {

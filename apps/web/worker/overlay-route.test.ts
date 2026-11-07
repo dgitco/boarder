@@ -123,13 +123,16 @@ test("기기 길 저장: 회원 full 기기 → 200, 그 사람 줄에만 저장
   assert.ok(lines[0], "프롬프트 저장도 알림 줄");
 });
 
-test("호스팅 서버의 주인 기기 저장: 알림은 D1 줄이 아니라 주인 보드 글 도구(notify)로 간다 · 프롬프트도", async () => {
+test("호스팅 주인 기기 알림은 primary 장부에 바로 · 판 넣기와 다리 없음", async () => {
   const s = await setup({ relay: true });
   assert.equal((await s.call("/api/device/overlay", { tok: "o", body: CSS })).status, 200);
-  assert.equal(await s.q("SELECT 1 x FROM board_log WHERE owner = ?", OWNER), null, "주인은 D1 보드 줄을 안 읽으므로 거기엔 안 씀");
-  assert.equal(flags.length, 1); assert.equal(flags[0].name, "notify", "보드 글 도구"); assert.match(String(flags[0].args.text), /내 노트북.*화면 덧씌우기/);
+  assert.equal(await s.q("SELECT 1 x FROM board_log WHERE owner = ?", OWNER), null);
+  const msg = await s.q("SELECT text, who, chan FROM wl_talk_msg LIMIT 1");
+  assert.match(String(msg?.text), /내 노트북.*화면 덧씌우기/);
+  assert.equal(msg?.who, "system"); assert.equal(msg?.chan, "primary");
   assert.equal((await s.call("/api/device/prompts", { tok: "o", body: { main: "주인 첫 글" } })).status, 200);
-  assert.equal(flags.length, 2); assert.match(String(flags[1].args.text), /메인 봇 · 역할 글/);
+  assert.ok(await s.q("SELECT 1 x FROM wl_talk_msg WHERE text LIKE '%메인 봇 · 역할 글%'"));
+  assert.equal(flags.length, 0); assert.equal(await s.q("SELECT 1 x FROM owner_job"), null);
 });
 
 test("릴레이가 없는 서버(공개 판)의 주인: 다리를 부르지 않고 그 사람 D1 보드 글로, 저장 응답은 알림을 기다리지 않음", async () => {
@@ -141,10 +144,18 @@ test("릴레이가 없는 서버(공개 판)의 주인: 다리를 부르지 않�
   assert.match(String((await s.q("SELECT text FROM board_log WHERE owner = ? AND kind = 'sys'", OWNER))?.text), /내 노트북.*화면 덧씌우기/);
 });
 
-test("알림은 응답과 떼어짐: 릴레이가 안 답해도 저장 응답이 먼저 나가고, 알림은 뒤에 마저 감", async () => {
+test("알림은 응답과 떼어짐: 장부 쓰기가 기다려도 저장 응답이 먼저 나감", async () => {
   const s = await setup({ relay: true });
   let release!: () => void, called = false; const gate = new Promise<void>(r => { release = r; });
-  (hosted as any).exec.on = async () => true; (hosted as any).exec.tool = async () => { called = true; await gate; return {}; };
+  const prepare = s.env.DB.prepare.bind(s.env.DB);
+  s.env.DB.prepare = (sql: string) => {
+    const stmt = prepare(sql);
+    if (sql.startsWith("INSERT INTO wl_talk_msg")) {
+      const bind = stmt.bind.bind(stmt);
+      stmt.bind = (...a: unknown[]) => { const bound = bind(...a), run = bound.run.bind(bound); bound.run = async () => { called = true; await gate; return run(); }; return bound; };
+    }
+    return stmt;
+  };
   const waits: Promise<unknown>[] = [];
   const r = await app.fetch(new Request("https://example.test/api/device/overlay", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${DEV("o")}` }, body: JSON.stringify(CSS) }),
     s.env as never, { waitUntil: (p: Promise<unknown>) => { waits.push(p); }, passThroughOnException() {} } as never);
@@ -166,13 +177,15 @@ test("기기 이름은 평문으로: 링크 · 꾸밈 · 비밀값 꼴이 알림
 });
 
 test("알림이 실패하면 삼키지 않고 한 줄 남기며 저장은 그대로 성공", async () => {
-  const s = await setup({ relay: true }); failTool = true;
+  const s = await setup({ relay: true });
+  const prepare = s.env.DB.prepare.bind(s.env.DB);
+  s.env.DB.prepare = (sql: string) => { if (sql.startsWith("INSERT INTO wl_talk_msg")) throw new Error("장부 쓰기 실패"); return prepare(sql); };
   const errs: string[] = [], orig = console.error; console.error = (...a: unknown[]) => { errs.push(a.join(" ")); };
   try {
     assert.equal((await s.call("/api/device/overlay", { tok: "o", body: CSS })).status, 200);
     assert.equal((await s.call("/api/device/prompts", { tok: "o", body: { main: "x" } })).status, 200);
   } finally { console.error = orig; failTool = false; }
-  assert.equal(errs.filter(e => /기기 알림 못 올림 relay/.test(e)).length, 2);
+  assert.equal(errs.filter(e => /기기 알림 못 올림 ledger/.test(e)).length, 2);
   assert.equal((await s.q("SELECT css FROM person_custom WHERE owner = ?", OWNER))?.css, "a{color:red}");
 });
 

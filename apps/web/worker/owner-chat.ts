@@ -1,6 +1,7 @@
-import { redact } from "./session/redact";
+import { maybeSecret } from "./owner-secret";
 import { ridDup, ridRow } from "./queue";
 import { okeyOf } from "./owner-jobs";
+export { maybeSecret } from "./owner-secret";
 
 export const FLAG = "write_chat_d1";
 export const BEAT_FRESH = 60_000;
@@ -43,15 +44,6 @@ export function textBlocks(text: string) {
   const cp = Array.from(text), out: object[] = [];
   for (let i = 0; i < cp.length && out.length < 45; i += 2900) out.push({ type: "section", text: { type: "mrkdwn", text: cp.slice(i, i + 2900).join("") } });
   return out;
-}
-
-const foldWs = (t: string) => t.replace(/[^\x00-\x7f]/gu, ch => /\s/u.test(ch) ? "\u00a4" : ch);
-const CHUNK = /[A-Za-z0-9_\-+/=]{17,}/;
-export function maybeSecret(text: string, ours: string[] = []) {
-  if (redact(text) !== text || redact(foldWs(text)) !== foldWs(text)) return true;
-  const rest = text.split("\n").filter(l => !ours.includes(l)).join("\n")   // Worker 가 붙인 「📎 이름: 서명 링크」 줄(파일 이름 · 서명 값)은 우리 것
-    .replace(/https?:\/\/\S+/g, " ");
-  return CHUNK.test(rest);
 }
 
 export type Plain = { rid: string; chan: string; thread: string; text: string; pane: string; node: string; body: Record<string, unknown>; mainOnly?: boolean };
@@ -125,3 +117,10 @@ export async function write(db: D1Database, p: Plain, now = Date.now()): Promise
   throw new Error("글 id 를 못 정함");
 }
 export class Fallback extends Error {}
+
+export async function systemLine(db: D1Database, text: string, now = Date.now()) {
+  const id = newId(now);
+  await db.prepare("INSERT INTO wl_talk_msg(id, chan, who, author, text, blocks, at, source) VALUES (?, 'primary', 'system', '보더', ?, ?, ?, 'boarder')")
+    .bind(id, text, JSON.stringify(textBlocks(mrkdwn(text))), now / 1000).run();
+  return id;
+}

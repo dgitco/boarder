@@ -472,7 +472,7 @@ app.post("/api/relay/after/done", async c => {
 app.post("/api/relay/jobs/take", async c => {
   if (!relayOk(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ limit?: number }>().catch(() => ({} as { limit?: number }));
-  return c.json({ jobs: await ownerJobs.take(c.env.DB, Number(b.limit) || 8) }, 200, { "cache-control": "no-store" });
+  return c.json({ jobs: await ownerJobs.take(c.env.DB, Number(b.limit) || 8, Date.now(), c.env.CONNECTOR_KEY) }, 200, { "cache-control": "no-store" });
 });
 app.get("/api/relay/jobs/stat", async c => relayOk(c) ? c.json(await ownerJobs.stat(c.env.DB), 200, { "cache-control": "no-store" }) : c.json({ error: "no" }, 403));
 app.post("/api/relay/jobs/:rid", async c => {
@@ -1528,12 +1528,12 @@ app.delete("/api/me/overlay", async c => {
 });
 const plainName = (n: unknown) => String(n || "").replace(/[^\p{L}\p{N} ]/gu, "").replace(/\s+/g, " ").trim().slice(0, 40) || "이름 없음";
 function noteDevice(c: Context<{ Bindings: Env }>, owner: string, device: { name?: string }, text: string) {
-  const line = `기기 「${plainName(device.name)}」가 ${text}. 내가 한 게 아니면 설정에서 기기를 끊어 주세요`, viaRelay = W.isAdmin(c.env, owner) && !!hosted.exec;
+  const line = `기기 「${plainName(device.name)}」가 ${text}. 내가 한 게 아니면 설정에서 기기를 끊어 주세요`, ownerLedger = W.isAdmin(c.env, owner) && !!hosted.exec;
   c.executionCtx.waitUntil((async () => {
     try {
-      if (viaRelay) await (boardTool(c.env, "owner", "notify", { text: line }, "boarder@worker") as Promise<unknown>);
+      if (ownerLedger) { await ownerChat.systemLine(c.env.DB, line); await live.bumpLedger(c.env); }
       else await sysLine(c.env.DB, owner, line);
-    } catch (e) { console.error("기기 알림 못 올림", viaRelay ? "relay" : "d1", String((e as Error)?.message || e).slice(0, 160)); }
+    } catch (e) { console.error("기기 알림 못 올림", ownerLedger ? "ledger" : "d1", String((e as Error)?.message || e).slice(0, 160)); }
   })());
 }
 async function overlayDevice(c: Context<{ Bindings: Env }>) {
@@ -2381,7 +2381,7 @@ app.post("/api/dev/ch", async c => {
 let artKinds: { at: number; ch: string; kinds: Record<string, string> } | null = null;
 async function isCanvas(env: Env, ch: string, id: string) { return (await artKind(env, ch, id)) === "canvas"; }
 async function artKind(env: Env, ch: string, id: string): Promise<string> {
-  if (ch === "owner" && await ledger.f7On(env.DB, "read_files")) { const ix = await files.index(env); if (ix && id in ix.arts) return ix.arts[id]?.kind || ""; }
+  if (ch === "owner" && await ledger.f7On(env.DB, "read_files")) { const ix = await files.index(env); return ix?.arts[id]?.kind || ""; }
   const age = artKinds && artKinds.ch === ch ? Date.now() - artKinds.at : Infinity;
   if (age > 60_000 || (age > 5_000 && !(id in artKinds!.kinds))) {
     const r = await boardCall(env, ch, { method: "GET", path: "/api/arts", headers: { accept: "application/json" } }).catch(() => null);
@@ -2453,8 +2453,8 @@ async function filesFirst(c: Context<{ Bindings: Env }>, path: string, headers: 
   if (chOf(c) !== "owner" || !files.FILE_PATH.test(p) || (files.isJsonPath(p) && cookieOf(c, "bx_w") && !(await ledger.f7On(c.env.DB, "write_art")))) return null;   // write_art 면 D1 이 정본이라 방금 쓴 사람도 D1
   if (!(await ledger.f7On(c.env.DB, "read_files"))) return null;
   const t = Date.now();
-  try { const o = await files.answer(c.env, path, headers, anon); return o ? { ...o, src: "r2" } : null; }
-  catch (e) { capture(c.env, c.executionCtx, "$exception", "f7", { $exception_list: [{ type: "F7FilesError", value: String(e).slice(0, 300), mechanism: { handled: true } }], path: normPath(p) }); return null; }
+  try { const o = await files.answer(c.env, path, headers, anon); return o ? { ...o, src: "r2" } : { status: 404, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" }, body: new TextEncoder().encode("not found"), src: "r2" }; }
+  catch (e) { capture(c.env, c.executionCtx, "$exception", "f7", { $exception_list: [{ type: "F7FilesError", value: String(e).slice(0, 300), mechanism: { handled: true } }], path: normPath(p) }); return { status: 503, headers: { "cache-control": "no-store" }, body: new TextEncoder().encode("파일을 읽지 못했어요"), src: "r2" }; }
   finally { seg(c.req.raw, "r2", Date.now() - t); }
 }
 // 그림자 대조(shadow_files): 다리로 답한 파일 길마다 R2 답도 만들어 몸통 해시를 견줌 → PostHog f7_shadow_files(same · miss · 길이 · 해시 앞 8바이트). 답에는 영향 없음
@@ -2995,7 +2995,7 @@ app.all("*", async c => {
       const nid = mine.length ? Math.max(...mine.map(n => Number(n.id) || 0)) : 0;
       const pin = new TextEncoder().encode(JSON.stringify({ art: cut(b.art, 40), target: cut(b.target, 200), page: cut(b.page, 200), text: cut(b.text, 4000), near: cut(b.near, 400), ...(nid ? { id: nid } : {}) }));
       // 할 일 줄(write_owner_jobs): 창에 넣기도 실행기가 당겨서 — 다리 왕복 없음(줄을 못 만들면 예전처럼 다리)
-      const jobbed = await ledger.f7On(c.env.DB, "write_owner_jobs") ? await ownerJobs.accept(c.env.DB, "/api/artpin", pin).catch(() => null) : null;
+      const jobbed = await ledger.f7On(c.env.DB, "write_owner_jobs") ? await ownerJobs.accept(c.env.DB, "/api/artpin", pin, undefined, c.env.CONNECTOR_KEY).catch(() => null) : null;
       if (!jobbed || jobbed.status >= 400) {
         const sending = boardCall(c.env, chOf(c), { method: "POST", path: "/api/artpin", headers: { "content-type": "application/json", "x-hb": "1" }, body: pin })
           .then(x => (JSON.parse(new TextDecoder().decode(x.body)) as { sent?: string | null }).sent ?? null, () => null).catch(() => null);
@@ -3011,14 +3011,15 @@ app.all("*", async c => {
     if (c.req.header("x-hb") !== "1") return c.json({ ok: false, error: "forbidden" }, 403);   // 다른 사이트 폼 막기(server.py 와 같은 문)
     sent ??= new Uint8Array(await c.req.arrayBuffer());
     let q: Awaited<ReturnType<typeof ownerJobs.accept>>;
-    try { q = await ownerJobs.accept(c.env.DB, url.pathname, sent); } catch { return queue.retrySafe(c); }
-    if (q) return c.json(q.body, q.status as 202, { "cache-control": "no-store", "x-owner-job": q.state || "bad" });
+    try { q = await ownerJobs.accept(c.env.DB, url.pathname, sent, undefined, c.env.CONNECTOR_KEY); } catch { return queue.retrySafe(c); }
+    if (q) return c.json(q.body, q.status as 202, { "cache-control": "no-store", "x-owner-job": q.state || "bad", ...(q.status === 503 ? { "x-retry-safe": "1" } : {}) });
   }
   // 할 일 줄로 받은 rid 의 답(스위치를 꺼도 쌓인 줄은 실행기가 마저 처리하니 늘 먼저 봄 — 표가 없거나 D1 오류면 아래 길 그대로)
   if (c.req.method === "GET" && chOf(c) === "owner") {
     const am = /^\/api\/answer\/([\w-]{1,64})$/.exec(url.pathname);
-    const j = am ? await ownerJobs.answer(c.env.DB, am[1]).catch(() => null) : null;
-    if (j) return c.json(j, 200, { "cache-control": "no-store", "x-f7": "job" });
+    let j: Awaited<ReturnType<typeof ownerJobs.answer>> = null;
+    try { if (am) j = await ownerJobs.answer(c.env.DB, am[1]); } catch { return queue.retrySafe(c); }
+    if (j) return c.json(j, j.state === "unknown" ? 404 : 200, { "cache-control": "no-store", "x-f7": "job" });
   }
   // 켠 주인(ownU)이 회원 길로 쓴 rid(세션 새로 열기 · 세션 글 등 — 표지 「<rid>.m.*」): 회원 판정(rid 칸 answerOf, 모르면 표지 결과). 다리는 그 글을 모름
   if (c.req.method === "GET" && ownU) {
@@ -3036,6 +3037,7 @@ app.all("*", async c => {
       const a = await queue.ownerAnswerOf(c.env, s.user.email, am[1]).catch(() => null);
       if (a) return c.json({ ok: true, ...a }, 200, { "cache-control": "no-store", "x-f7": "queue" });
     }
+    if (am && await ledger.f7On(c.env.DB, "write_owner_jobs")) return c.json({ rid: am[1], state: "unknown" }, 404, { "cache-control": "no-store", "x-f7": "job" });
   }
   const rd = c.req.method === "GET" && chOf(c) === "owner" ? ownerRead.route(url.pathname + url.search) : null;
   if (rd?.kind === "artnotes" && await ledger.f7On(c.env.DB, "read_" + rd.group)) {

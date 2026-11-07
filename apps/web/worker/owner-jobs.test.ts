@@ -40,14 +40,14 @@ async function setup(o: { on?: boolean; beat?: number | null } = {}) {
   const call = async (r: { method: string; path: string; body?: Uint8Array }) => { calls.push({ method: r.method, path: r.path, body: r.body ? new TextDecoder().decode(r.body) : "" }); return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode('{"ok":true,"state":"ok","from":"bridge"}') }; };
   // 스냅숏 · 화면 칸(주인도 회원 길 — 쓰기 뒤 화면 칸 알림 · 채널 표 cfg)
   const SNAP = { idFromName: (n: string) => n, get: () => ({ get: async (k: string) => k === "cfg" ? { body: JSON.stringify({ channels: { primary: "C1", dgit: "C4", company: "C2" }, drafts: {} }), etag: '"e-cfg"', at: Date.now(), checked: Date.now() } : null, tags: async () => ({ t: {}, age: 0, boot: "b" }), bump: async () => 0 }) };
-  const env = { DB: D1, SNAP, ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test", RELAY_TOKEN: RELAY, ADMIN_TOKEN: "admin-token-made-up" };
+  const env = { DB: D1, SNAP, ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test", RELAY_TOKEN: RELAY, CONNECTOR_KEY: btoa("k".repeat(32)), ADMIN_TOKEN: "admin-token-made-up" };
   const ctx = { waitUntil() {}, passThroughOnException() {} } as never;
   const send = async (path: string, body: unknown, headers: Record<string, string> = {}) => app.fetch(new Request("https://example.test" + path, { method: "POST", headers: { cookie: await cookie(OWNER), "x-hb": "1", "sec-fetch-site": "same-origin", "content-type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) }), env as never, ctx);
   const get = async (path: string) => app.fetch(new Request("https://example.test" + path, { headers: { cookie: await cookie(OWNER) } }), env as never, ctx);
   const relay = async (method: string, path: string, body?: unknown, tok = RELAY) => app.fetch(new Request("https://example.test" + path, { method, headers: { authorization: "Bearer " + tok, "content-type": "application/json" }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) }), env as never, ctx);
   const rows = () => db.prepare("SELECT rid, kind, okey, body, done_at, status, result, tries FROM owner_job ORDER BY seq").all() as { rid: string; kind: string; okey: string; body: string; done_at: number | null; status: number | null; result: string | null; tries: number }[];
   const admin = async (body: unknown) => app.fetch(new Request("https://example.test/api/admin/f7-flag", { method: "POST", headers: { authorization: "Bearer admin-token-made-up", "content-type": "application/json" }, body: JSON.stringify(body) }), env as never, ctx);
-  return { db, calls, send, get, relay, rows, admin };
+  return { db, calls, send, get, relay, rows, admin, env };
 }
 
 test("주인 글: 다리를 안 부르고 할 일 줄 한 줄 · 202 queued(rid 그대로)", async () => {
@@ -125,12 +125,12 @@ test("기기가 꺼져 있던 동안 쌓인 줄: 맡김이 풀리면 다시 내�
   assert.equal(st.open, 0); assert.equal(st.beat_ok, true);
 });
 
-test("실행기가 한 번도 안 당겼거나 10분 넘게 안 당기면 예전 다리 길", async () => {
+test("실행기가 한 번도 안 당겼거나 10분 넘게 안 당기면 503 다시 보내기", async () => {
   for (const beat of [null, OJ.BEAT_MAX + 1000]) {
     const t = await setup({ beat });
     const r = await t.send("/api/chat", { rid: "rjob-nobeat-01", channel: "dgit", text: "다리로" });
-    assert.equal(r.status, 200); assert.equal((await r.json() as { from: string }).from, "bridge");
-    assert.equal(t.calls.length, 1); assert.equal(t.calls[0].path, "/api/chat"); assert.equal(JSON.parse(t.calls[0].body).text, "다리로");
+    assert.equal(r.status, 503); assert.equal(r.headers.get("x-retry-safe"), "1");
+    assert.equal(t.calls.length, 0);
     assert.equal(t.rows().length, 0);
   }
 });
@@ -174,21 +174,32 @@ test("관리 길로 스위치를 켜고 끔(write_owner_jobs — 이름에 밑�
   assert.equal((await t.admin({ name: "write_Bad-name", on: true })).status, 400);
 });
 
-test("답을 안 따라가는 쓰기: 고치기 · 지우기는 예전 다리 길 · 세션 넣기 · 세션 대화는 회원 길(다리 아님)", async () => {
+test("고치기 · 지우기는 할 일 줄로 처리 결과를 올림 · 세션 넣기 · 세션 대화는 회원 길", async () => {
   const t = await setup();
   for (const [p, b] of [["/api/chat", { rid: "rjob-edit-0001", channel: "dgit", ts: "1793900000.000001", edit: "고친 글" }], ["/api/chat", { rid: "rjob-del-00001", channel: "dgit", ts: "1793900000.000001", delete: true }]] as const) {
-    const r = await t.send(p, b); assert.equal(r.status, 200, p); assert.equal((await r.json() as { from: string }).from, "bridge");
+    const r = await t.send(p, b); assert.equal(r.status, 202, p); assert.equal((await r.json() as { state: string }).state, "queued");
   }
   for (const [p, b] of [["/api/sess/send", { pane: "%1", text: "x" }], ["/api/chat/send", { sid: "s1", text: "x" }]] as const) assert.ok((await t.send(p, b)).status < 500, p);
-  assert.deepEqual(t.calls.map(c => c.path), ["/api/chat", "/api/chat"], "세션 넣기 · 세션 대화는 다리로 안 감");
-  assert.equal(t.rows().length, 0);
+  assert.equal(t.calls.length, 0);
+  assert.equal(t.rows().length, 2);
+  const jobs = await (await t.relay("POST", "/api/relay/jobs/take", { limit: 5 })).json() as { jobs: { rid: string; body: string }[] };
+  assert.equal(JSON.parse(jobs.jobs[0].body).edit, "고친 글");
+  await t.relay("POST", "/api/relay/jobs/rjob-edit-0001", { status: 400, result: { ok: false, error: "내 글이 아님" } });
+  assert.equal((await (await t.get("/api/answer/rjob-edit-0001")).json() as { state: string }).state, "fail");
+  assert.equal(JSON.parse((await (await t.relay("POST", "/api/relay/jobs/take", {})).json() as { jobs: { body: string }[] }).jobs[0].body).delete, true);
   assert.equal((await t.send("/api/chat", { rid: "rjob-react-001", channel: "dgit", ts: "1793900000.000001", react: "eyes" })).status, 202);   // 반응은 줄로
 });
 
-test("비밀 꼴이 든 글은 D1 에 남기지 않고 다리 길", async () => {
+test("비밀 꼴 글은 봉해 저장하고 인증된 실행기에만 원문 · 결과 뒤 몸통 비움", async () => {
   const t = await setup();
   const r = await t.send("/api/chat", { rid: "rjob-sec-00001", channel: "dgit", text: "API_KEY=abcd1234efgh5678 붙여 둠" });
-  assert.equal(r.status, 200); assert.equal(t.calls.length, 1); assert.equal(t.rows().length, 0);
+  assert.equal(r.status, 202); assert.equal(t.calls.length, 0); assert.equal(t.rows().length, 1);
+  assert.match(t.rows()[0].body, /^v1\./); assert.ok(!t.rows()[0].body.includes("abcd1234efgh5678"));
+  assert.equal((await t.relay("POST", "/api/relay/jobs/take", {}, "wrong")).status, 403);
+  const take = await (await t.relay("POST", "/api/relay/jobs/take", {})).json() as { jobs: { body: string }[] };
+  assert.equal(JSON.parse(take.jobs[0].body).text, "API_KEY=abcd1234efgh5678 붙여 둠");
+  await t.relay("POST", "/api/relay/jobs/rjob-sec-00001", { status: 400, result: { ok: false, error: "비밀 거절" } });
+  assert.equal(t.rows()[0].body, "");
 });
 
 test("읽음과 글은 다른 줄 — 읽음이 맡겨진 채여도 글은 바로 내줌", async () => {
@@ -199,7 +210,7 @@ test("읽음과 글은 다른 줄 — 읽음이 맡겨진 채여도 글은 바�
   assert.deepEqual(a.jobs.map(j => j.rid), ["rjob-seen-0101", "rjob-post-0101"]);
 });
 
-test("판 넣기 기다림(queued)이 30초 넘게 안 바뀌면 답은 다리 길(실행기가 다시 떠 따라가기를 잃은 때)", async () => {
+test("판 넣기 기다림이 30초 멈추면 unknown 404 · 실행기가 기록을 다시 올리면 정상 답", async () => {
   const t = await setup();
   await t.send("/api/chat", { rid: "rjob-stuck-001", channel: "dgit", text: "x" });
   await t.relay("POST", "/api/relay/jobs/take", { limit: 1 });
@@ -207,6 +218,68 @@ test("판 넣기 기다림(queued)이 30초 넘게 안 바뀌면 답은 다리 �
   assert.equal((await (await t.get("/api/answer/rjob-stuck-001")).json() as { state: string }).state, "queued");
   assert.equal(t.calls.length, 0);
   t.db.prepare("UPDATE owner_job SET upd_at = ?, done_at = ? WHERE rid = 'rjob-stuck-001'").run(Date.now() - OJ.STUCK - 1, Date.now() - OJ.STUCK - 1);
-  const a = await (await t.get("/api/answer/rjob-stuck-001")).json() as { from: string };
-  assert.equal(a.from, "bridge"); assert.equal(t.calls.length, 1); assert.equal(t.calls[0].path, "/api/answer/rjob-stuck-001");
+  const r = await t.get("/api/answer/rjob-stuck-001");
+  assert.equal(r.status, 404); assert.deepEqual(await r.json(), { rid: "rjob-stuck-001", state: "unknown" }); assert.equal(t.calls.length, 0);
+  await t.relay("POST", "/api/relay/jobs/rjob-stuck-001", { status: 200, result: { ok: true, state: "sent", posted: "1793900000.000100" } });
+  assert.equal((await (await t.get("/api/answer/rjob-stuck-001")).json() as { state: string }).state, "sent");
+});
+
+test("봉할 키가 없으면 비밀 글을 저장하지 않고 503", async () => {
+  const t = await setup(); delete (t.env as { CONNECTOR_KEY?: string }).CONNECTOR_KEY;
+  const r = await t.send("/api/chat", { rid: "rjob-nokey-01", channel: "dgit", text: "API_KEY=abcd1234efgh5678" });
+  assert.equal(r.status, 503); assert.equal(t.rows().length, 0); assert.equal(t.calls.length, 0);
+});
+
+for (const [name, value] of [
+  ["NBSP", "API_KEY=1234\u00a05678"],
+  ["앞 빈칸 JSON", '  {"api_key":"가나다라마바사아"}'],
+  ["앞 빈칸 JSON 배열", ' \n [{"key":"짧은값"}]'],
+] as const) for (const field of ["text", "edit"] as const) {
+  test(`${name} ${field}: 키 없음은 503 · 저장 없음`, async () => {
+    const t = await setup(); delete (t.env as { CONNECTOR_KEY?: string }).CONNECTOR_KEY;
+    const body = { rid: "rjob-secret-forms", channel: "dgit", ts: "1793900000.000001", [field]: value };
+    const r = await t.send("/api/chat", body);
+    assert.equal(r.status, 503);
+    assert.equal(r.headers.get("x-retry-safe"), "1");
+    assert.equal(t.rows().length, 0); assert.equal(t.calls.length, 0);
+  });
+
+  test(`${name} ${field}: 봉해 저장 · 인증된 relay take 에서만 원문 복원`, async () => {
+    const t = await setup();
+    const body = { rid: "rjob-secret-forms", channel: "dgit", ts: "1793900000.000001", [field]: value };
+    assert.equal((await t.send("/api/chat", body)).status, 202);
+    assert.equal(t.rows().length, 1);
+    const stored = t.rows()[0].body;
+    assert.match(stored, /^v1\./); assert.ok(!stored.includes(value));
+    assert.equal((await t.send("/api/relay/jobs/take", {})).status, 403, "브라우저 쿠키만으로 복원됨");
+    assert.equal((await t.relay("POST", "/api/relay/jobs/take", {}, "wrong")).status, 403);
+    assert.equal(t.rows()[0].tries, 0, "거절된 take 가 줄을 맡음");
+    const r = await t.relay("POST", "/api/relay/jobs/take", {});
+    assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store");
+    const take = await r.json() as { jobs: { body: string }[] };
+    assert.equal(take.jobs.length, 1); assert.deepEqual(JSON.parse(take.jobs[0].body), body);
+    assert.equal(t.rows()[0].body, stored, "take 가 저장 몸통을 평문으로 바꿈");
+    assert.equal(t.calls.length, 0);
+  });
+}
+
+test("일반 글과 수정은 키 없이도 받음 · JSON 안의 유니코드 이스케이프 비밀도 봉함", async () => {
+  for (const field of ["text", "edit"] as const) {
+    const t = await setup(); delete (t.env as { CONNECTOR_KEY?: string }).CONNECTOR_KEY;
+    assert.equal((await t.send("/api/chat", { rid: "rjob-plain-nokey", channel: "dgit", [field]: "일반 글 https://example.test/long-url-does-not-need-key" })).status, 202);
+    assert.equal(t.rows().length, 1);
+  }
+  const t = await setup(); delete (t.env as { CONNECTOR_KEY?: string }).CONNECTOR_KEY;
+  const r = await t.send("/api/chat", '{"rid":"rjob-escaped-secret","channel":"dgit","edit":"API_KEY=1234\\u00a05678"}');
+  assert.equal(r.status, 503); assert.equal(t.rows().length, 0);
+});
+
+test("모르는 rid 는 unknown 404 · D1 장애는 모름으로 숨기지 않고 503", async () => {
+  const t = await setup();
+  const unknown = await t.get("/api/answer/rjob-unknown-01");
+  assert.equal(unknown.status, 404); assert.deepEqual(await unknown.json(), { rid: "rjob-unknown-01", state: "unknown" });
+  const prepare = t.env.DB.prepare.bind(t.env.DB);
+  t.env.DB.prepare = (sql: string) => { if (sql.startsWith("SELECT done_at")) throw new Error("DB 읽기 실패"); return prepare(sql); };
+  assert.equal((await t.get("/api/answer/rjob-unknown-02")).status, 503);
+  assert.equal(t.calls.length, 0);
 });

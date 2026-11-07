@@ -1,5 +1,7 @@
 import { ridOfBody } from "./queue";
 import { redact } from "./session/redact";
+import { maybeSecret } from "./owner-secret";
+import { seal, open } from "./connectors/seal";
 
 type DB = D1Database;
 export const PATHS = new Set(["/api/chat", "/api/inbox", "/api/clientlog", "/api/answer", "/api/todo", "/api/cardcheck", "/api/split/move"]);
@@ -27,18 +29,21 @@ export async function enqueue(db: DB, j: { rid: string; kind: string; okey: stri
   return (await db.prepare("SELECT 1 FROM owner_job WHERE rid = ?").bind(j.rid).first()) ? "dup" : null;
 }
 
-/** 주인 POST 하나를 줄로 — null 이면 줄을 안 만듦(다리 길로). status 400 은 몸통 모양이 틀림(server.py 와 같은 답) */
-export async function accept(db: DB, path: string, raw: Uint8Array, mkRid: () => string = () => crypto.randomUUID()): Promise<{ status: number; body: Record<string, unknown>; state?: "new" | "dup" } | null> {
+/** 주인 POST 하나를 줄로 — 실행기 멈춤은 503. status 400 은 몸통 모양이 틀림(server.py 와 같은 답) */
+export async function accept(db: DB, path: string, raw: Uint8Array, mkRid: () => string = () => crypto.randomUUID(), sealKey?: string): Promise<{ status: number; body: Record<string, unknown>; state?: "new" | "dup" } | null> {
   if (raw.length > BODY_MAX) return { status: 400, body: { ok: false, error: "bad json" } };   // server.py 는 20000 까지만 읽음 — 잘린 JSON 은 bad json
   let b: unknown; try { b = JSON.parse(new TextDecoder().decode(raw) || "{}"); } catch { return { status: 400, body: { ok: false, error: "bad json" } }; }
   if (!b || typeof b !== "object" || Array.isArray(b)) return { status: 400, body: { ok: false, error: "bad json" } };
   const o = b as Record<string, unknown>;
-  if (path === "/api/chat" && (o.delete || o.edit !== undefined)) return null;   // 고치기 · 지우기 — 화면이 바로 받은 답으로 성공 · 실패를 가름(다리 길)
   const text = new TextDecoder().decode(raw);
-  if (redact(text) !== text) return null;
   const rid = ridOfBody(b) || mkRid();
-  const st = await enqueue(db, { rid, kind: path, okey: okeyOf(path, o, rid), body: text });
-  return st ? { status: 202, body: { ok: true, rid, state: "queued" }, state: st } : null;
+  // 비밀 검사는 실행기의 원래 처리기가 한다. D1 에는 봉한 몸통만 남기고, 인증된 당김에서만 푼다.
+  // 바깥 JSON 은 인용 부호를 이스케이프하므로 파싱한 본문도 검사한다.
+  const sensitive = redact(text) !== text || [o.text, o.edit].some(v => typeof v === "string" && (/^\s*[\[{]/.test(v) || maybeSecret(v)));
+  if (sensitive && !sealKey) return { status: 503, body: { ok: false, error: "봉할 키가 없어 받지 못했어요" } };
+  const body = sensitive ? await seal(sealKey, { rid, kind: path, body: text }) : text;
+  const st = await enqueue(db, { rid, kind: path, okey: okeyOf(path, o, rid), body });
+  return st ? { status: 202, body: { ok: true, rid, state: "queued" }, state: st } : { status: 503, body: { ok: false, error: "기기가 응답하지 않아 받지 못했어요" } };
 }
 
 /** GET /api/answer/:rid — 그 줄의 지금 상태(server.py _jobs 답 꼴). 줄이 없으면 null(다른 길이 앎) */
@@ -49,14 +54,15 @@ export async function answer(db: DB, rid: string, now = Date.now()): Promise<Rec
   if (r.done_at == null) return { rid, state: "queued" };
   let o: Record<string, unknown> = {}; try { const p = JSON.parse(r.result || "{}"); if (p && typeof p === "object" && !Array.isArray(p)) o = p; } catch {}
   delete o.text;   // server.py 답도 text 는 뺌
+  if (o.state === "unknown") return { rid, state: "unknown" };
   if ((r.status ?? 500) >= 400) return { ...o, rid, state: "fail", error: typeof o.error === "string" && o.error ? o.error : ERR };
   const state = typeof o.state === "string" && o.state ? o.state : "ok";
-  if (QUEUED.has(state) && !o.posted && now - (r.upd_at ?? r.done_at) > STUCK) return null;
+  if (QUEUED.has(state) && !o.posted && now - (r.upd_at ?? r.done_at) > STUCK) return { rid, state: "unknown" };
   return { ...o, rid, state };
 }
 
 /** 실행기 당김: 오래된 줄 · 너무 많이 맡긴 줄은 실패로 끝내고, 열쇠마다 맨 앞 줄(맡김이 풀린 것)만 LEASE 동안 맡김. 당긴 때(beat)도 남김 */
-export async function take(db: DB, limit: number, now = Date.now()) {
+export async function take(db: DB, limit: number, now = Date.now(), sealKey?: string) {
   const n = Math.max(1, Math.min(20, Math.floor(limit) || 1));
   await db.batch([
     db.prepare("INSERT INTO owner_job_beat(id, at) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET at = excluded.at WHERE owner_job_beat.at < ?").bind(now, now - 5_000),
@@ -68,7 +74,13 @@ export async function take(db: DB, limit: number, now = Date.now()) {
         AND seq = (SELECT MIN(seq) FROM owner_job k WHERE k.okey = j.okey AND k.done_at IS NULL)
       ORDER BY seq LIMIT ?) RETURNING seq, rid, kind, okey, body, at, tries`).bind(now, now - LEASE, n).all<{ seq: number; rid: string; kind: string; okey: string; body: string; at: number; tries: number }>();
   if (Math.random() < 0.01) await db.prepare("DELETE FROM owner_job WHERE done_at IS NOT NULL AND done_at < ?").bind(now - KEEP).run().catch(() => {});
-  return (r.results || []).sort((a, b) => a.seq - b.seq);
+  const jobs = (r.results || []).sort((a, b) => a.seq - b.seq);
+  for (const j of jobs) if (j.body.startsWith("v1.")) {
+    const b = await open<{ rid: string; kind: string; body: string }>(sealKey, j.body);
+    if (b.rid !== j.rid || b.kind !== j.kind || typeof b.body !== "string") throw new Error("할 일 봉함이 맞지 않음");
+    j.body = b.body;
+  }
+  return jobs;
 }
 
 export async function finish(db: DB, rid: string, status: number, result: unknown, now = Date.now()) {

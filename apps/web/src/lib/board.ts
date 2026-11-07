@@ -1,3 +1,4 @@
+// 회원 길의 카드 · 차례 목록을 읽고 보드와 같은 규칙으로 센다.
 import { useEffect, useRef, useState } from "react";
 
 export type BoardData = { generated?: string; cardlist?: { ts: string; state: string }[]; attn?: { ts: string }[]; [k: string]: unknown };
@@ -14,7 +15,7 @@ export function useBoard() {
     let stop = false;
     const load = async () => {
       if (document.visibilityState !== "visible") return;
-      const r = await fetch("/api/board/data", { credentials: "include", headers: tag.current ? { "If-None-Match": tag.current } : {} }).catch(() => null);
+      const r = await fetch("/api/data", { credentials: "include", headers: tag.current ? { "If-None-Match": tag.current } : {} }).catch(() => null);
       if (!r || stop || r.status === 304 || !r.ok) return;
       tag.current = r.headers.get("etag") || ""; setD(await r.json());
     };

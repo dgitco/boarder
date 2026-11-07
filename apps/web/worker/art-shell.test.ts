@@ -62,12 +62,12 @@ test("캔버스 껍데기: 에이전트가 방금 만든 캔버스를 1분 안�
   assert.equal(r.headers.get("content-security-policy"), null, "새 캔버스 B 가 낡은 목록 때문에 sandbox(다른 출처)로 갇혀 판을 못 부름");
 });
 
-test("캔버스 껍데기: R2 색인(read_files 켬)에 아직 없는 막 올린 캔버스도 다리 목록으로 껍데기 — 첫 열기 빈 캔버스", async () => {
+test("R2 색인에 없는 캔버스와 파일은 404 · 다리 목록을 부르지 않음", async () => {
   const A = newId("R"), B = newId("S"), arts: Record<string, { kind: string }> = { [A]: { kind: "canvas" } };
   const { D1 } = d1(), st = { artsDown: false, artsCalls: 0 };
   await D1.prepare("INSERT INTO f7_flag(name, on_at, note) VALUES ('read_files', ?, '시험')").bind(Date.now()).run();
-  const ix = { arts: { [A]: { kind: "canvas" } } };   // R2 색인엔 A 만(B 는 색인이 퍼지기 전)
-  const RESULTS = { get: async (k: string) => k.endsWith("index.json") ? { json: async () => ix } : null, put: async () => {}, head: async () => null, list: async () => ({ objects: [] }) };
+  const ix = { arts: { [A]: { kind: "canvas", title: "시험 캔버스" } } };   // R2 색인엔 A 만(B 는 색인이 퍼지기 전)
+  const RESULTS = { get: async (k: string) => k.endsWith("index.json") ? { json: async () => ix } : k.endsWith("artcanvas.html") ? { arrayBuffer: async () => new TextEncoder().encode("<!doctype html><html><head></head><body>캔버스 껍데기 __TITLE__</body></html>").buffer } : null, put: async () => {}, head: async () => null, list: async () => ({ objects: [] }) };
   const env = { DB: D1, BRIDGE: bridgeNs(arts, st), RESULTS, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
   const get = async (path: string) => app.fetch(new Request("https://example.test" + path, { headers: { accept: "text/html", "sec-fetch-dest": "iframe", cookie: await cookie() } }), env, { waitUntil() {}, passThroughOnException() {} });
   later(70_000);   // 앞 시험이 남긴 모듈 캐시(다리 목록 60초 · 색인 15초 · 스위치 10초)를 넘김
@@ -75,8 +75,9 @@ test("캔버스 껍데기: R2 색인(read_files 켬)에 아직 없는 막 올린
   arts[B] = { kind: "canvas" };   // 에이전트가 막 올림 — 다리 목록엔 바로, R2 색인엔 아직
   later(6_000);
   const r = await get(`/art/${B}/`);
-  assert.equal(r.status, 200);
-  assert.equal(r.headers.get("content-security-policy"), null, "R2 색인에 없다고 「캔버스 아님」으로 봐 sandbox 로 가두면 판을 못 불러 빈 캔버스");
+  assert.equal(r.status, 404);
+  assert.equal((await get(`/art/${B}/missing.png`)).status, 404);
+  assert.equal(st.artsCalls, 0, "R2 색인 밖을 다리 목록으로 찾지 않음");
 });
 
 test("보안: 목록은 캔버스라도 다리가 준 응답이 에이전트 페이지(sandbox CSP)면 sandbox 그대로 — 페이지를 캔버스로 다시 올린 경합", async () => {

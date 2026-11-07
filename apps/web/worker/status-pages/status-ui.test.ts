@@ -78,7 +78,8 @@ async function boot(feat: Record<string, boolean>, routes: Record<string, Route>
   const tick = async (ms: number) => { for (const [m, f] of timers) if (m === ms) f(); await flush(); };
   return { ctx, calls, timers, tick, body, R, list: () => body().querySelectorAll("[data-tk]").map(e => e.dataset.tk) };
 }
-const tasksOn = (extra: Record<string, Route> = {}) => boot({ taskboard: true }, { "api/me/taskboard": () => ({ ok: true, at: Date.now(), tasks: [TASK("R1", { title: "한글 찾기" }), TASK("R2", { title: "다른 일" })] }), ...extra });
+// 두 할 일이 같은 시각 — TASK 가 Date.now() 를 따로 잡으면 부하에서 1ms 가 넘어가 R2 가 더 새것으로 앞에 옴(목록은 최근 움직인 순)
+const tasksOn = (extra: Record<string, Route> = {}) => boot({ taskboard: true }, { "api/me/taskboard": () => { const at = Date.now(); return { ok: true, at, tasks: [TASK("R1", { title: "한글 찾기", updated_at: at }), TASK("R2", { title: "다른 일", updated_at: at })] }; }, ...extra });
 const detail = (st: { convo: any[]; fail?: number }) => (): unknown => st.fail ? { __st: st.fail, ok: false, error: "오류" } : ({ ok: true, task: TASK("R1"), convo: [...st.convo] });
 async function openDet(extra: Record<string, Route> = {}, st = { convo: [] as any[] } as { convo: any[]; fail?: number }) {
   const b = await tasksOn({ "api/me/taskboard/R1": detail(st), ...extra }); b.ctx.BXStatus.open("tasks", "R1"); await flush();

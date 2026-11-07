@@ -99,7 +99,7 @@ async function setup() {
   }; } };
   const r2 = new Map<string, unknown>();
   const RESULTS = { list: async () => ({ objects: [], truncated: false }), head: async () => null, get: async (k: string) => r2.get(k) ?? null, put: async (k: string, v: unknown) => { r2.set(k, v); }, delete: async (k: string) => { r2.delete(k); } };
-  const env: any = { DB: D1, RESULTS, SNAP, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: `${OWNER},${OWNER2}`, PUBLIC_URL: "https://example.test", ADMIN_TOKEN: ADMIN, RELAY_TOKEN: "relay-made-up",
+  const env: any = { DB: D1, RESULTS, SNAP, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: `${OWNER},${OWNER2}`, PUBLIC_URL: "https://example.test", ADMIN_TOKEN: ADMIN, RELAY_TOKEN: "relay-made-up", CONNECTOR_KEY: btoa("k".repeat(32)),
     ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call, tool }) },
     ENGINE: { idFromName: (n: string) => n, get: () => ({ revoke: async () => 0 }) }, PUSH: { idFromName: (n: string) => n, get: (n: string) => new Proxy({}, { get: (_o, k) => k === "then" ? undefined : async () => k === "key" ? "k-" + n : [200, { ok: true, from: n }] }) } };
   const pending: Promise<unknown>[] = [];
@@ -418,18 +418,27 @@ test("늘: 에이전트 채널 이름 표(HB_AGENTS) — 주인 cfg 채널 표�
   assert.deepEqual(run({}, { agents: ag }), ag, "끈 주인은 D.agents 그대로");
 });
 
-test("늘: rid 답(GET /api/answer/:rid)은 주인 길 — 다리로 간 글(비밀 꼴)은 다리 판정(_jobs)으로, 회원 rid 칸 ok 로 안 떨어짐 · 회원은 그대로", async () => {
+test("늘: 비밀 글은 봉한 owner_job · rid 답(GET /api/answer/:rid)은 그 줄 판정, 다리 0 · 키 없으면 503 저장 없음 · 회원은 그대로", async () => {
   const t = await setup(), h = await t.human(OWNER);
   await t.ownerWrites(); await ledger.setFlag(t.D1, "write_queue", true); await ledger.f7On(t.D1, "__reset__");
   t.reset();
-  const w = await t.req("POST", "/api/chat", { rid: "rid-secret-1", channel: "primary", text: "토큰 ghp_madeupmadeupmadeupmadeupmadeup0000" }, h);   // 지어낸 비밀 꼴 — D1 · 할 일 줄에 원문을 안 남기고 다리로
-  assert.equal(w.status, 200, w.text); assert.deepEqual(t.bridge, ["/api/chat"], "비밀 꼴 글은 다리로");
-  assert.ok(!t.db.prepare("SELECT 1 FROM owner_job WHERE rid = 'rid-secret-1'").get());
-  t.reset();
+  const body = { rid: "rid-secret-1", channel: "primary", text: "토큰 ghp_madeupmadeupmadeupmadeupmadeup0000" };   // 지어낸 비밀 꼴
+  const w = await t.req("POST", "/api/chat", body, h);
+  assert.equal(w.status, 202, w.text); assert.deepEqual(w.j, { ok: true, rid: body.rid, state: "queued" });
+  const job = t.db.prepare("SELECT kind, body FROM owner_job WHERE rid = ?").get(body.rid) as { kind: string; body: string };
+  assert.equal(job.kind, "/api/chat"); assert.match(job.body, /^v1\./); assert.ok(!job.body.includes(body.text.slice(3)), "비밀 원문을 저장함");
   const a = await t.req("GET", "/api/answer/rid-secret-1", undefined, h);
-  assert.deepEqual(t.bridge, ["/api/answer/rid-secret-1"], "다리가 받은 글의 답은 다리(_jobs)가 앎 — " + a.text);
-  assert.equal(a.j?.from, "bridge");
-  t.reset();
+  assert.equal(a.status, 200, a.text); assert.equal(a.h.get("x-f7"), "job"); assert.deepEqual(a.j, { rid: body.rid, state: "queued" });
+  const done = await t.req("POST", "/api/relay/jobs/rid-secret-1", { status: 400, result: { ok: false, error: "비밀 거절" } }, { authorization: `Bearer ${t.env.RELAY_TOKEN}` });
+  assert.equal(done.status, 200, done.text);
+  const fail = await t.req("GET", "/api/answer/rid-secret-1", undefined, h);
+  assert.equal(fail.status, 200, fail.text); assert.equal(fail.h.get("x-f7"), "job");
+  assert.deepEqual(fail.j, { ok: false, rid: body.rid, state: "fail", error: "비밀 거절" }, "회원 rid 칸 ok 로 떨어지지 않음");
+  assert.equal((t.db.prepare("SELECT body FROM owner_job WHERE rid = ?").get(body.rid) as { body: string }).body, "");
+  delete t.env.CONNECTOR_KEY;
+  const noKey = await t.req("POST", "/api/chat", { ...body, rid: "rid-secret-nokey" }, h);
+  assert.equal(noKey.status, 503, noKey.text); assert.equal(noKey.h.get("x-retry-safe"), "1"); assert.ok(!t.db.prepare("SELECT 1 FROM owner_job WHERE rid = 'rid-secret-nokey'").get());
+  assert.deepEqual(t.bridge, [], "비밀 글 저장 · rid 답 · 키 없음에 다리 호출");
   const q = await t.req("POST", "/api/chat", { rid: "rid-react-9", channel: "primary", ts: ROOT, react: "+1" }, h);
   assert.equal(q.status, 202, q.text);
   assert.equal((await t.req("GET", "/api/answer/rid-react-9", undefined, h)).j?.state, "queued", "할 일 줄 답 먼저");
@@ -440,7 +449,7 @@ test("늘: rid 답(GET /api/answer/:rid)은 주인 길 — 다리로 간 글(비
   assert.equal(ma.j?.state, "ok", "회원은 회원 rid 칸 — " + ma.text); assert.deepEqual(t.bridge, []);
 });
 
-test("늘: 회원 길로 쓴 세션 글(/api/chat/new)의 rid 답은 회원 판정(ok · 실패) — 다리에 안 물음, 할 일 줄 · 다리로 간 글은 그대로", async () => {
+test("늘: 회원 길로 쓴 세션 글(/api/chat/new)의 rid 답은 회원 판정(ok · 실패), 비밀 글은 봉한 할 일 줄 판정 · 다리 0", async () => {
   const t = await setup(), h = await t.human(OWNER), T = Date.now();
   t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devE", OWNER, "engine mac", "", "e".repeat(64), T, T, "full", T);
   let n = 0;
@@ -458,10 +467,19 @@ test("늘: 회원 길로 쓴 세션 글(/api/chat/new)의 rid 답은 회원 판�
   const q = await t.req("POST", "/api/chat", { rid: "rid-react-7", channel: "primary", ts: ROOT, react: "+1" }, h);
   assert.equal(q.status, 202, q.text); assert.equal((await t.req("GET", "/api/answer/rid-react-7", undefined, h)).j?.state, "queued", "할 일 줄 먼저");
   assert.deepEqual(t.bridge, [], "회원 길 글 · 할 일 줄 rid 답에 다리 호출");
-  await t.req("POST", "/api/chat", { rid: "rid-secret-7", channel: "primary", text: "토큰 ghp_madeupmadeupmadeupmadeupmadeup0000" }, h);
-  t.reset();
-  await t.req("GET", "/api/answer/rid-secret-7", undefined, h);
-  assert.deepEqual(t.bridge, ["/api/answer/rid-secret-7"], "다리로 간 글은 다리 판정");
+  const secret = { rid: "rid-secret-7", channel: "primary", text: "토큰 ghp_madeupmadeupmadeupmadeupmadeup0000" };
+  const s = await t.req("POST", "/api/chat", secret, h);
+  assert.equal(s.status, 202, s.text); assert.deepEqual(s.j, { ok: true, rid: secret.rid, state: "queued" });
+  const job = t.db.prepare("SELECT kind, body FROM owner_job WHERE rid = ?").get(secret.rid) as { kind: string; body: string };
+  assert.equal(job.kind, "/api/chat"); assert.match(job.body, /^v1\./); assert.ok(!job.body.includes(secret.text.slice(3)), "비밀 원문을 저장함");
+  const queued = await t.req("GET", "/api/answer/rid-secret-7", undefined, h);
+  assert.equal(queued.status, 200, queued.text); assert.equal(queued.h.get("x-f7"), "job"); assert.deepEqual(queued.j, { rid: secret.rid, state: "queued" });
+  const done = await t.req("POST", "/api/relay/jobs/rid-secret-7", { status: 200, result: { ok: true, state: "sent", posted: ROOT } }, { authorization: `Bearer ${t.env.RELAY_TOKEN}` });
+  assert.equal(done.status, 200, done.text);
+  const sent = await t.req("GET", "/api/answer/rid-secret-7", undefined, h);
+  assert.equal(sent.status, 200, sent.text); assert.equal(sent.h.get("x-f7"), "job");
+  assert.deepEqual(sent.j, { ok: true, rid: secret.rid, state: "sent", posted: ROOT }, "회원 rid 칸이 아닌 실행기 결과");
+  assert.deepEqual(t.bridge, [], "비밀 글 저장과 할 일 줄 rid 답에 다리 호출");
 });
 
 test("피드 묶음 길(POST /api/feed/threads): 켠 주인은 빈 답(스레드마다 GET 으로) · 회원은 묶음 · 같은 사이트가 아니면 403", async () => {
