@@ -55,7 +55,8 @@ async function setup(o: { voiceA?: unknown; engineA?: boolean; cmdFail?: { code:
   log.run(A, "예시 정리 창", "progress", "정리 창 진행 — 영수증 12장 남음", null, T - 5000, ROLE);
   log.run(B, "남의 창", "progress", "B 의 비밀 일", null, T - 5000, "ew_brole000001");
   // 가짜 엔진 DO(기기마다): cmd 는 부른 기기 · 동사 · 인자를 붙잡고 정해 둔 답
-  const cmds: { dev: string; verb: string; args: any }[] = [], delivered: [string, string, string][] = [];
+  const cmds: { dev: string; verb: string; args: any }[] = [], delivered: [string, string, string][] = [], hsent: { dev: string; id: string; text: string; o: any }[] = [];
+  let hsendAns: any = { sent: true };
   let devOf = "";
   const fake = async (verb: string, args: any) => {
         cmds.push({ dev: devOf, verb, args });
@@ -71,13 +72,15 @@ async function setup(o: { voiceA?: unknown; engineA?: boolean; cmdFail?: { code:
       rtc: async (verb: string, args: any) => { devOf = id.replace(/^dev:/, ""); try { return { ok: true, result: await fake(verb, args) }; } catch (e: any) { return { ok: false, code: e.code || 1, error: e.message }; } },
       deliver: async (wid: string, text: string) => { delivered.push([id, wid, text]); return { sent: true }; },
       drainCmds: async () => null,
+      hsend: async (wid: string, text: string, o: any) => { hsent.push({ dev: id.replace(/^dev:/, ""), id: wid, text, o }); return hsendAns; },
       ensureMain: async () => "ew_amain000001",
     }),
   };
   const R2 = new Map<string, { body: string; meta?: Record<string, string> }>();
   const RESULTS = {
     head: async (k: string) => R2.has(k) ? { customMetadata: R2.get(k)!.meta } : null,
-    get: async (k: string) => R2.has(k) ? { text: async () => R2.get(k)!.body, body: R2.get(k)!.body, httpMetadata: {} } : null,
+    get: async (k: string) => R2.has(k) ? { text: async () => R2.get(k)!.body, json: async () => JSON.parse(R2.get(k)!.body), body: R2.get(k)!.body, size: new TextEncoder().encode(R2.get(k)!.body).length,
+      arrayBuffer: async () => new TextEncoder().encode(R2.get(k)!.body).buffer, httpMetadata: {} } : null,
     list: async () => ({ objects: [], truncated: false }),
   };
   const mk = await MC.keyOf(A);
@@ -94,7 +97,7 @@ async function setup(o: { voiceA?: unknown; engineA?: boolean; cmdFail?: { code:
   const human = async (email = A) => ({ cookie: await cookie(email), "x-hb": "1", "sec-fetch-site": "same-origin" });
   const device = (t: string) => ({ authorization: `Bearer ${t}` });
   const lines = (owner = A) => db.prepare("SELECT win, kind, text, thread, wid FROM board_log WHERE owner = ? AND text LIKE '🎧%' ORDER BY id").all(owner).map(r => ({ ...r })) as any[];
-  return { db, env, call, human, device, cmds, delivered, lines };
+  return { db, env, call, human, device, cmds, delivered, lines, hsent, R2, setHsend: (a: any) => { hsendAns = a; } };
 }
 
 test("고르개 /api/voice/modes: 엔진 기기 없음 · 옛 CLI · 기기 codex 로그인 없음(그 이유) · 됨 — 주인 꼴 { agent, gpt:{ok, why} }", async () => {
@@ -215,6 +218,10 @@ test("캔버스 미팅: /api/artowner → 내 캔버스를 올린 창 판 · 남
   const say = s.cmds.at(-1)!;
   assert.equal(say.verb, "rtc_say"); assert.equal(say.args.cid, "rid0123456789");
   assert.match(say.args.text, /「막힘 판」/); assert.match(say.args.text, /막힘 3개 계정 재로그인 & 영수증/); assert.doesNotMatch(say.args.text, /alert|\.x\{/);
+  assert.doesNotMatch(say.args.text, /판 목록/); assert.match(say.args.text, /지금 바로 상대에게 말한다/); assert.ok(say.args.text.endsWith("누른다.)"));
+  assert.match(say.args.first, /지금 바로 상대에게 말한다/); assert.match(say.args.first, /이 캔버스의 판 목록\(판 가기 · 크게 · 짚기는 이 이름으로 — 데이터\): 「막힘 판」\.\)$/);
+  assert.match(say.args.firstSaid, /「막힘 판」.*막힘 3개/); assert.match(say.args.firstSaid, /이미 첫 안건을 말했으면 다시 말하지 말고 상대 답을 기다렸다가 이 판으로 이어 간다\./);
+  assert.doesNotMatch(say.args.firstSaid, /지금 바로/); assert.match(say.args.firstSaid, /판 목록.*「막힘 판」\. 이 안내는 말하지 마라\.\)$/);
   assert.equal((await s.call("POST", "/api/voice/rtc/note", { cid, k: "screen", art: ART, board: "B1.dc.html" }, await s.human(B))).status, 404);
   const n0 = s.cmds.length;
   assert.deepEqual((await s.call("POST", "/api/voice/rtc/note", { cid, k: "screen", art: ART, board: "../x.dc.html" }, h)).j, { ok: false });
@@ -223,7 +230,7 @@ test("캔버스 미팅: /api/artowner → 내 캔버스를 올린 창 판 · 남
   assert.match(s.cmds.at(-1)!.args.text, /핀 2 로 한 곳을 짚었다.*「영수증 12장」/);
 });
 
-test("기기 → 서버(/api/device/voice): 받아쓴 말 줄 · 넘기기(메인 봇 · 창 이름 · here) · 사람 말 없으면 거절 · 상태 — 기기 주인 것만, 주인 · 하네스 기기는 401", async () => {
+test("기기 → 서버(/api/device/voice): 받아쓴 말 줄 · 넘기기(메인 봇 · 창 이름 · here) · 사람 말 없으면 거절 · 상태 — 기기 주인 것만, 토큰 없음 · 틀린 토큰은 401", async () => {
   const s = await setup(), dv = s.device(TOK.A), base = { cid: "rid0123456789", pane: PANE };
   assert.equal((await s.call("POST", "/api/device/voice", { ...base, op: "turn", role: "user", text: "보고서 부탁해" }, dv)).status, 200);
   await s.call("POST", "/api/device/voice", { ...base, op: "turn", role: "assistant", text: "네, 넘길게요" }, dv);
@@ -261,7 +268,9 @@ test("기기 → 서버(/api/device/voice): 받아쓴 말 줄 · 넘기기(메�
   r = await s.call("POST", "/api/device/voice", { ...base, op: "status", handoffs: [{ id: "rid0-2", pane: PANE, at, state: "in" }] }, s.device(TOK.B));
   assert.deepEqual(r.j.handoffs, [{ id: "rid0-2", state: "in", recent: "" }], "B 는 A 창 줄을 못 읽음");
   assert.equal(s.lines().length, n0); assert.equal(s.delivered.length, 3);
-  for (const hd of [s.device(TOK.O), {}, s.device("bxd_" + "z".repeat(40))]) assert.equal((await s.call("POST", "/api/device/voice", { ...base, op: "turn", role: "user", text: "x" }, hd)).status, 401);
+  for (const hd of [{}, s.device("bxd_" + "z".repeat(40))]) assert.equal((await s.call("POST", "/api/device/voice", { ...base, op: "turn", role: "user", text: "x" }, hd)).status, 401);
+  assert.equal((await s.call("POST", "/api/device/voice", { ...base, op: "turn", role: "user", text: "x" }, s.device(TOK.O))).status, 400);
+  assert.equal(s.lines().length, n0);
 });
 
 test("기기 → 서버(/api/device/voice) 몸 크기: content-length 거짓 · 없음(스트림)이어도 32 KB 넘게 안 읽음(413), 깨진 JSON 400", async () => {
@@ -300,15 +309,117 @@ test("기기 → 서버(/api/device/voice) 상한: 기기마다 1분에 받아�
   assert.equal((s.db.prepare("SELECT count(*) n FROM device_voice_hit").get() as any).n, 1);
 });
 
-test("주인은 이 길로 안 옴: 주인 세션의 통화 요청은 회원 엔진 기기(cmd)에 하나도 안 감", async () => {
-  const s = await setup(), h = await s.human(OWNER);
-  await s.call("POST", "/api/voice/rtc/start", { rid: "rid0123456789", pane: "%1", sdp: OFFER }, h).catch(() => null);
-  await s.call("GET", "/api/voice/rtc/poll/devAaaaaaaaa.rid0123456789", undefined, h).catch(() => null);
-  await s.call("GET", "/api/voice/modes", undefined, h).catch(() => null);
-  assert.equal(s.cmds.length, 0);
+async function ownerHarness(s: Awaited<ReturnType<typeof setup>>) {
+  const T = Date.now(), ew = s.db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, state_at, created_at, handle) VALUES (?,?,?,?,?,?,?,?,?)");
+  ew.run("ew_pane42", OWNER, "devOooooooo1", "harness", "보더 최적화", "idle", T, T, JSON.stringify({ win: "보더 최적화", cwd: "/x/boarder" }));
+  ew.run("ew_pane15", OWNER, "devOooooooo1", "harness", "총괄", "idle", T, T, JSON.stringify({ win: "총괄" }));
+  s.db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?,?,?,?)").run(OWNER, "harness_state", JSON.stringify({ leads: { primary: "%15", leads: {} } }), T);
+  s.db.prepare("INSERT INTO wl_log(at, pane, win, kind, msg) VALUES (?,?,?,?,?)").run(T / 1000 - 60, "%42", "보더 최적화", "진행", "캔버스 첫 화면 0.8초로 줄임");
+}
+
+test("켠 주인 통화: 하네스 판 대상 · 주인 하네스 기기에서 rtc_start(그 판 창 id · 장부 맥락) · %1 = 총괄 판 — 회원 기기엔 안 감, 회원은 주인 판 · 기기 못 씀", async () => {
+  const s = await setup(); await ownerHarness(s);
+  const h = await s.human(OWNER);
+  assert.deepEqual((await s.call("GET", "/api/voice/modes?pane=" + encodeURIComponent("%42"), undefined, h)).j, { agent: { ok: true }, gpt: { ok: true } });
+  let r = await s.call("POST", "/api/voice/rtc/start", { rid: "rid0123456789", pane: "%42", sdp: OFFER }, h);
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual(r.j, { ok: true, cid: "devOooooooo1.rid0123456789", sdp: "v=0\r\no=answer" });
+  const c = s.cmds.at(-1)!;
+  assert.deepEqual({ dev: c.dev, verb: c.verb, pane: c.args.pane, window: c.args.window, name: c.args.name }, { dev: "devOooooooo1", verb: "rtc_start", pane: "%42", window: "ew_pane42", name: "보더 최적화" });
+  assert.match(c.args.instructions, /캔버스 첫 화면 0\.8초로 줄임/);
+  assert.equal(c.args.art, undefined, "미팅이 아니면 art 안 감");
+  assert.doesNotMatch(c.args.instructions, /영수증|B 의 비밀/);
+  r = await s.call("POST", "/api/voice/rtc/start", { rid: "rid0123456786", pane: "%42", sdp: OFFER, meet: true, art: "hbXzM4RUr6SrHKSUHVMHcRT7" }, h);
+  assert.deepEqual([r.status, s.cmds.at(-1)!.args.meet, s.cmds.at(-1)!.args.art], [200, true, "hbXzM4RUr6SrHKSUHVMHcRT7"], r.text);
+  await s.call("POST", "/api/voice/rtc/start", { rid: "rid0123456785", pane: "%42", sdp: OFFER, meet: true, art: "../x" }, h);
+  assert.equal(s.cmds.at(-1)!.args.art, undefined);
+  r = await s.call("POST", "/api/voice/rtc/start", { rid: "rid0123456780", pane: "%1", sdp: OFFER }, h);
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual([s.cmds.at(-1)!.args.pane, s.cmds.at(-1)!.args.window, s.cmds.at(-1)!.args.name], ["%15", "ew_pane15", "총괄"]);
+  // poll · note · stop · end 도 그 기기
+  assert.equal((await s.call("GET", "/api/voice/rtc/poll/devOooooooo1.rid0123456789", undefined, h)).status, 200);
+  assert.deepEqual(s.cmds.at(-1), { dev: "devOooooooo1", verb: "rtc_poll", args: { cid: "rid0123456789" } });
+  await s.call("POST", "/api/voice/rtc/note", { cid: "devOooooooo1.rid0123456789", k: "connected" }, h);
+  assert.equal(s.cmds.at(-1)!.verb, "rtc_note");
+  await s.call("POST", "/api/voice/rtc/stop", { cid: "devOooooooo1.rid0123456789" }, h);
+  assert.equal(s.cmds.at(-1)!.verb, "rtc_stop");
+  assert.equal((await s.call("POST", "/api/voice/end", { pane: "%42", secs: 9, n: 1 }, h)).status, 200);
+  assert.ok(s.cmds.every(x => x.dev === "devOooooooo1"), "회원 기기엔 안 감: " + s.cmds.map(x => x.dev).join(","));
+  assert.equal(s.lines(OWNER).length, 0, "하네스 판 기록은 board_log 에 안 씀(정본 = owner-host 장부)");
+  // 받아쓰기(/api/voice/stt)도 회원 파일 길(memberFiles.stt — Workers AI)
+  s.env.AI = { run: async () => ({ text: " 안녕 " }) };
+  const st = await s.call("POST", "/api/voice/stt", "RIFF-made-up-wav", h);
+  assert.deepEqual([st.status, st.j], [200, { ok: true, text: "안녕" }], st.text);
+  const ha = await s.human(A), n = s.cmds.length;
+  assert.equal((await s.call("POST", "/api/voice/rtc/start", { rid: "rid0123456788", pane: "%42", sdp: OFFER }, ha)).status, 400);
+  assert.equal((await s.call("GET", "/api/voice/rtc/poll/devOooooooo1.rid0123456789", undefined, ha)).status, 404);
+  assert.equal((await s.call("POST", "/api/voice/rtc/note", { cid: "devOooooooo1.rid0123456789", k: "connected" }, ha)).status, 404);
+  assert.equal(s.cmds.length, n);
+  r = await s.call("POST", "/api/voice/rtc/start", { rid: "rid0123456787", pane: "%1", sdp: OFFER }, ha);
+  assert.deepEqual([r.j.cid, s.cmds.at(-1)!.args.pane, s.cmds.at(-1)!.args.window], ["devAaaaaaaaa.rid0123456787", "%1", "ew_amain000001"]);
 });
 
-test("진짜 Engine.rtc: rtc_* 만 · 주인 하네스 기기 DO 는 거절 · 기기 답 · 오류는 답 꼴(code 그대로)", async () => {
+test("켠 주인 기기 → 서버(/api/device/voice, 하네스 토큰 200): 받아쓴 말 · 하네스 판에 넘기기(엔진 hsend) · primary = 총괄 판 · 상태는 장부 줄 — 회원 기기는 주인 판에 못 넣음", async () => {
+  const s = await setup(); await ownerHarness(s);
+  const dv = s.device(TOK.O), base = { cid: "rid0123456789", pane: "%42" };
+  let r = await s.call("POST", "/api/device/voice", { ...base, op: "turn", role: "user", text: "속도 어때" }, dv);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(s.lines(OWNER).length, 0);
+  r = await s.call("POST", "/api/device/voice", { ...base, op: "handoff", to: "보더 최적화", text: "첫 화면 더 줄여", said: "첫 화면 더 줄여 줘", n: 0 }, dv);
+  assert.equal(r.j.ok, true, r.text); assert.equal(r.j.text, "보더 최적화에 넣음 (id rid0-1)"); assert.equal(r.j.handoff.pane, "%42");
+  const hs = s.hsent.at(-1)!;
+  assert.deepEqual({ dev: hs.dev, id: hs.id, o: hs.o }, { dev: "devOooooooo1", id: "ew_pane42", o: { queue: true, owner: false } });
+  assert.match(hs.text, /^\[통화 넘김 · GPT voice 정리\] 첫 화면 더 줄여 — 원문\(받아쓰기\): 「첫 화면 더 줄여 줘」.*통화 넘김 rid0-1/);
+  r = await s.call("POST", "/api/device/voice", { ...base, op: "handoff", to: "보더 최적화", text: "A5 는 B 로", said: "에이 오는 비로 해", deck: " · 덱 A5: 첫 화면 속도(카드 1700000000.123456)", n: 1 }, dv);
+  assert.equal(r.j.text, "보더 최적화에 넣음 (id rid0-2)", r.text);
+  assert.match(s.hsent.at(-1)!.text, /^\[통화 넘김 · GPT voice 정리\] A5 는 B 로 — · 덱 A5: 첫 화면 속도\(카드 1700000000\.123456\) — 원문\(받아쓰기\): 「에이 오는 비로 해」/);
+  r = await s.call("POST", "/api/device/voice", { ...base, op: "handoff", to: "primary", text: "보고 정리", said: "보고 정리해", n: 1 }, dv);
+  assert.doesNotMatch(s.hsent.at(-1)!.text, /덱/, "덱 글이 없으면 붙이지 않음");
+  assert.deepEqual([r.j.ok, r.j.handoff.pane, s.hsent.at(-1)!.id], [true, "%15", "ew_pane15"], r.text);
+  r = await s.call("POST", "/api/device/voice", { ...base, op: "handoff", to: "%42", text: "x", said: "y", n: 2 }, dv);
+  assert.equal(r.j.handoff.pane, "%42");
+  s.setHsend({ queued: true });
+  r = await s.call("POST", "/api/device/voice", { ...base, op: "handoff", to: "here", text: "x", said: "y", n: 3 }, dv);
+  assert.equal(r.j.handoff.state, "sending", r.text);
+  s.setHsend({ offline: true });
+  r = await s.call("POST", "/api/device/voice", { ...base, op: "handoff", to: "here", text: "x", said: "y", n: 4 }, dv);
+  assert.equal(r.j.ok, false); assert.match(r.j.text, /하네스 기기가 꺼져 있어요/);
+  assert.equal(s.delivered.length, 0, "회원 창 길(deliver)로는 안 감");
+  const at = Date.now() - 5000;
+  r = await s.call("POST", "/api/device/voice", { ...base, op: "status", handoffs: [{ id: "rid0-1", pane: "%42", at, state: "in" }] }, dv);
+  assert.deepEqual(r.j.handoffs, [{ id: "rid0-1", state: "in", recent: "" }]);
+  s.db.prepare("INSERT INTO wl_log(at, pane, win, kind, msg) VALUES (?,?,?,?,?)").run(Date.now() / 1000, "%42", "보더 최적화", "끝", "통화 넘김 rid0-1 첫 화면 0.5초");
+  r = await s.call("POST", "/api/device/voice", { ...base, op: "status", handoffs: [{ id: "rid0-1", pane: "%42", at, state: "in" }] }, dv);
+  assert.deepEqual(r.j.handoffs, [{ id: "rid0-1", state: "done", kind: "끝", line: "통화 넘김 rid0-1 첫 화면 0.5초", recent: "" }]);
+  const n = s.hsent.length;
+  r = await s.call("POST", "/api/device/voice", { cid: "rid0123456789", pane: PANE, op: "handoff", to: "%42", text: "x", said: "y" }, s.device(TOK.A));
+  assert.deepEqual(r.j, { ok: false, text: "보드에 없는 판 %42" });
+  r = await s.call("POST", "/api/device/voice", { cid: "rid0123456789", pane: PANE, op: "handoff", to: "보더 최적화", text: "x", said: "y" }, s.device(TOK.A));
+  assert.equal(r.j.ok, false);
+  assert.equal((await s.call("POST", "/api/device/voice", { cid: "rid0123456789", pane: "%42", op: "turn", role: "user", text: "x" }, s.device(TOK.A))).status, 400);
+  assert.equal(s.hsent.length, n);
+  s.db.prepare("UPDATE device SET revoked_at = ? WHERE id = 'devOooooooo1'").run(Date.now());
+  assert.equal((await s.call("POST", "/api/device/voice", { ...base, op: "turn", role: "user", text: "x" }, dv)).status, 401);
+});
+
+test("켠 주인 캔버스 미팅: 주인 캔버스(R2 art/) 판 글을 진행자에게 — 회원은 주인 캔버스 글을 못 읽음", async () => {
+  const s = await setup(); await ownerHarness(s);
+  const h = await s.human(OWNER), OART = "OwNeRcAnVaS12345678x";
+  s.R2.set("art/_sys/index.json", { body: JSON.stringify({ v: 1, at: 1, arts: { [OART]: { kind: "canvas", title: "주인 덱", at: "1", acct: "d", auto: "", cv: "project" } }, blobs: {}, shim: "" }) });
+  s.R2.set(`art/${OART}/project/P1.dc.html`, { body: "<html><head></head><h1>주인 판 글</h1><script>x()</script></html>" });
+  s.R2.set(`art/${OART}/project/canvas.json`, { body: JSON.stringify({ boards: { "P1.dc.html": { title: "결정 판" }, "P2.dc.html": {}, "P3.dc.html": null, "x": [1] } }) });
+  const r = await s.call("POST", "/api/voice/rtc/note", { cid: "devOooooooo1.rid0123456789", k: "screen", art: OART, board: "P1.dc.html" }, h);
+  assert.deepEqual(r.j, { ok: true }, r.text);
+  const say = s.cmds.at(-1)!;
+  assert.deepEqual([say.dev, say.verb], ["devOooooooo1", "rtc_say"]);
+  assert.match(say.args.text, /「결정 판」/); assert.match(say.args.text, /주인 판 글/); assert.doesNotMatch(say.args.text, /x\(\)/);
+  assert.match(say.args.first, /판 목록.*「결정 판 \/ P2\.dc\.html \/ P3\.dc\.html」/); assert.match(say.args.firstSaid, /이미 첫 안건을 말했으면 다시 말하지 말고/);
+  const n = s.cmds.length;
+  assert.deepEqual((await s.call("POST", "/api/voice/rtc/note", { cid: "devAaaaaaaaa.rid0123456789", k: "screen", art: OART, board: "P1.dc.html" }, await s.human(A))).j, { ok: false });
+  assert.equal(s.cmds.length, n);
+});
+
+test("진짜 Engine.rtc: rtc_* 만 · 주인 하네스 기기 DO 도 같은 동사(주인 · 회원 한 길) · 기기 답 · 오류는 답 꼴(code 그대로)", async () => {
   const { Engine } = await import("./engine.ts");
   (globalThis as any).WebSocketRequestResponsePair ??= class { constructor(public a: string, public b: string) {} };
   const mk = (who: object) => {
@@ -318,8 +429,11 @@ test("진짜 Engine.rtc: rtc_* 만 · 주인 하네스 기기 DO 는 거절 · �
     return { e: new (Engine as any)(ctx, { DB: null }), sent };
   };
   const h = mk({ device: "devOooooooo1", owner: OWNER, harness: true });
-  assert.deepEqual(await h.e.rtc("rtc_start", { cid: "x" }), { ok: false, code: 1, error: "주인 하네스 기기엔 회원 통화가 없어요" });
-  assert.equal(h.sent.length, 0);
+  const hp = h.e.rtc("rtc_start", { cid: "x" });
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual({ op: h.sent[0]?.op, verb: h.sent[0]?.verb }, { op: "cmd", verb: "rtc_start" }, "하네스 기기도 기기로 보냄");
+  await h.e.webSocketMessage(null, JSON.stringify({ id: h.sent[0].id, ok: true, result: { state: "open" } }));
+  assert.deepEqual(await hp, { ok: true, result: { state: "open" } });
   const m = mk({ device: "devAaaaaaaaa", owner: A, harness: false });
   assert.deepEqual(await m.e.rtc("open", {}), { ok: false, code: 5, error: "없는 동사" });
   let p = m.e.rtc("rtc_poll", { cid: "rid0123456789" });
@@ -344,4 +458,28 @@ test("통화 넘기기: 고른 메인 봇 창에 줄만 선 글은 「보내는 
   const row = s.db.prepare("SELECT verb, args FROM engine_cmd WHERE owner = ? AND json_extract(args, '$.item') = ?").get(A, KEY) as any, a = JSON.parse(row.args);
   assert.equal(row.verb, "send"); assert.equal(a.post, true);
   assert.match(a.text, /\nThis is|\n\(This is/, "답하는 길 한 줄이 줄바꿈 뒤에");
+});
+
+test("주인 하네스 기기: hello 의 voice 칸을 저장하고 고르개(modes)가 그 기기를 고름 — 빠짐 6 주인 · 회원 한 길", async () => {
+  const { db, D1 } = d1(), T = Date.now(), { Engine } = await import("./engine.ts"), MV = await import("./member-voice.ts");
+  db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at, engine) VALUES (?,?,?,?,?,?,?,?,?,?)").run("devHhhhhhhh1", OWNER, "owner-host harness", "", "h".repeat(64), T, T, "harness", null, null);
+  assert.equal((await MV.modes(D1, OWNER)).gpt.ok, false, "엔진 hello 전엔 통화할 기기 없음");
+  const e = new (Engine as any)({ setWebSocketAutoResponse() {}, getWebSockets: () => [], storage: { setAlarm: async () => {}, get: async () => undefined, put: async () => {} } }, { DB: D1 });
+  await e.hmsg({ type: "hello", cli: "0.1.51", host: "owner-host", os: "linux", windows: [], voice: { ok: true, why: "" } }, "devHhhhhhhh1", OWNER, T);
+  const eng = JSON.parse((db.prepare("SELECT engine FROM device WHERE id = 'devHhhhhhhh1'").get() as { engine: string }).engine);
+  assert.deepEqual([eng.harness, eng.voice], [true, { ok: true, why: "" }], "하네스 표시 그대로 + voice 칸");
+  assert.equal((await MV.modes(D1, OWNER)).gpt.ok, true, "주인도 회원과 같은 고르개 판정");
+  await e.hmsg({ type: "hello", cli: "0.1.51", host: "owner-host", os: "linux", windows: [], voice: { ok: false, why: "이 기기에 codex 가 없어요\u0007" } }, "devHhhhhhhh1", OWNER, T + 1);
+  const m = await MV.modes(D1, OWNER);
+  assert.equal(m.gpt.ok, false); assert.ok(!/\u0007/.test(String(m.gpt.why)), "제어 문자 거름");
+});
+
+test("주인 하네스 기기 통화 번호(cid): 내 하네스 기기면 poll 이 기기로 감 — 남의 하네스 cid 는 그대로 안 감", async () => {
+  const s = await setup(), MV = await import("./member-voice.ts");
+  const [st] = await MV.poll(s.env, OWNER, "devOooooooo1.rid0123456789");
+  assert.notEqual(st, 404, "내 하네스 기기 cid 는 기기 찾음");
+  assert.ok(s.cmds.some(x => x.dev === "devOooooooo1" && x.verb === "rtc_poll"), "하네스 기기로 rtc_poll");
+  const n = s.cmds.length;
+  await MV.poll(s.env, A, "devOooooooo1.rid0123456789");
+  assert.equal(s.cmds.length, n, "회원이 주인 하네스 cid 로는 안 감");
 });

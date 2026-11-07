@@ -68,7 +68,6 @@ const PAGE = JSON.stringify({ ver: "v1", html: '<!doctype html><html><head></hea
 async function setup() {
   const { db, D1 } = d1(), T = Date.now(), OLD = T - 3600_000;   // 기기는 한 시간 전 — 온보딩 30분 조용히 밖
   _resetVaultCache(); W.setCanonOn(false);
-  await ledger.setFlag(D1, "owner_unified", false);
   await ledger.setFlag(D1, "owner_unified_prep", true);
   await ledger.f7On(D1, "__reset__");
   db.prepare("INSERT INTO invite(email, by_email, at) VALUES (?,?,?)").run(MEMBER, OWNER, T);
@@ -128,10 +127,9 @@ async function setup() {
   return { db, D1, env, req, flag, human, ask, pushCalls, subsOf, notes, bridge };
 }
 
-test("빠짐 2 · 켬: canon 보드 급한 카드는 주인 구독 칸(owner)으로 한 번 — 회원 canon 칸은 안 부름 · 보통 카드는 안 감(급한 일만)", async () => {
+test("빠짐 2: canon 보드 급한 카드는 주인 구독 칸(owner)으로 한 번 — 회원 canon 칸은 안 부름 · 보통 카드는 안 감(급한 일만)", async () => {
   const t = await setup();
   for (const f of ["member_push", "write_push"]) await ledger.setFlag(t.D1, f, true);
-  await t.flag("owner_unified", true);
   const urgent = await t.ask(OFULL, "tmux:work:1", { question: "결제 장애 — 어떻게 할까요", urgent: true });
   await t.ask(OFULL, "tmux:work:2", { question: "보통 결정" });
   assert.equal((t.db.prepare("SELECT count(*) n FROM board_card WHERE owner = ?").get(OWNER) as { n: number }).n, 2, "카드는 canon 회원 보드에");
@@ -139,10 +137,9 @@ test("빠짐 2 · 켬: canon 보드 급한 카드는 주인 구독 칸(owner)으
   assert.equal(t.pushCalls.some(x => x.cell === OWNER), false, "회원 canon 칸(구독 없음)은 안 부름");
 });
 
-test("빠짐 2 · 켬이어도 write_push 꺼짐(주인 구독이 다리 쪽)이면 주인 칸 · 회원 칸 둘 다 안 보냄", async () => {
+test("빠짐 2 · write_push 꺼짐(주인 구독이 다리 쪽)이면 주인 칸 · 회원 칸 둘 다 안 보냄", async () => {
   const t = await setup();
   await ledger.setFlag(t.D1, "member_push", true);
-  await t.flag("owner_unified", true);
   await t.ask(OFULL, "tmux:work:1", { question: "결제 장애", urgent: true });
   assert.deepEqual(t.notes(), []);
 });
@@ -150,12 +147,11 @@ test("빠짐 2 · 켬이어도 write_push 꺼짐(주인 구독이 다리 쪽)이
 test("빠짐 2 · 회원 그대로: 회원 카드는 회원 칸(mNotify) — 주인 칸 안 부름", async () => {
   const t = await setup();
   for (const f of ["member_push", "write_push"]) await ledger.setFlag(t.D1, f, true);
-  await t.flag("owner_unified", true);
   const id = await t.ask(MDEV, "tmux:m:1", { question: "결제 장애", urgent: true });
   assert.deepEqual(t.notes(), [{ cell: MEMBER, fn: "mNotify", id, key: `card:${id}` }]);
 });
 
-test("빠짐 2 · 누름(push/resolve): 켠 주인은 회원 카드(board_card)도 찾음 · 주인 장부 카드는 그대로 · 끈 주인은 예전 그대로(회원 카드 자리 없음)", async () => {
+test("빠짐 2 · 누름(push/resolve): 주인은 회원 카드(board_card)도 찾음 · 주인 장부 카드는 그대로", async () => {
   const t = await setup(), T = Date.now() / 1000;
   await ledger.setFlag(t.D1, "write_push", true);
   t.db.prepare("INSERT INTO board_card(id, owner, win, question, choices, at) VALUES (?,?,?,?,?,?)").run("1793000000.000101", OWNER, "창", "canon 카드", "[]", Date.now());
@@ -163,21 +159,16 @@ test("빠짐 2 · 누름(push/resolve): 켠 주인은 회원 카드(board_card)�
   t.db.prepare("INSERT INTO wl_cards(ts, area, kind, state, posted_at) VALUES (?,?,?,?,?)").run("1793000000.000201", "primary", "choice", "open", T);
   t.db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, text, at, source) VALUES (?,?,?,?,?,?,?)").run("1793000000.000201", "company", "1793000000.000200", "agent", "주인 카드", T, "cli");
   const h = await t.human(OWNER), rs = async (id: string) => (await t.req("GET", "/api/push/resolve/" + id, undefined, h)).j;
-  const off = await rs("1793000000.000101");
-  assert.deepEqual(off, { ts: "1793000000.000101", loc: null }, "끈 주인: 회원 카드는 예전처럼 자리 없음");
-  assert.deepEqual((await rs("1793000000.000201")).loc, { c: "company", t: "1793000000.000200", m: "1793000000.000201", state: "open" });
-  await t.flag("owner_unified:" + OWNER, true);
-  assert.deepEqual(await rs("1793000000.000101"), { ts: "1793000000.000101", loc: { c: "primary", t: "1793000000.000101", m: "1793000000.000101", state: "open" } }, "켠 주인: canon 회원 카드 자리");
+  assert.deepEqual(await rs("1793000000.000101"), { ts: "1793000000.000101", loc: { c: "primary", t: "1793000000.000101", m: "1793000000.000101", state: "open" } }, "canon 회원 카드 자리");
   assert.deepEqual((await rs("1793000000.000201")).loc, { c: "company", t: "1793000000.000200", m: "1793000000.000201", state: "open" }, "주인 장부 카드가 먼저(그대로)");
   assert.equal((await rs("1793000000.000102")).loc, null, "남의 회원 카드는 자리 없음");
   assert.equal(t.pushCalls.some(x => x.fn === "mPage" || x.cell === OWNER), false, "회원 canon 푸시 칸은 안 부름(주인 칸 길)");
   assert.deepEqual(t.bridge, [], "다리 0");
 });
 
-test("빠짐 3 · 온보딩 「알림 켜기」: 켠 주인 = 주인 구독 칸 구독 수 · write_push 꺼지면 예전 셈 · 회원은 member_push_ep 그대로", async () => {
+test("빠짐 3 · 온보딩 「알림 켜기」: 주인 = 주인 구독 칸 구독 수 · write_push 꺼지면 예전 셈 · 회원은 member_push_ep 그대로", async () => {
   const t = await setup();
   for (const f of ["member_push", "write_push"]) await ledger.setFlag(t.D1, f, true);
-  await t.flag("owner_unified", true);
   const step = async (who: string) => { const r = await t.req("GET", "/api/me/onboarding", undefined, await t.human(who)); assert.equal(r.status, 200, r.text); return r.j.steps.find((x: any) => x.key === "push"); };
   let s = await step(OWNER);
   assert.equal(s.done, false); assert.match(s.detail, /급한 일 알림/);
@@ -192,9 +183,8 @@ test("빠짐 3 · 온보딩 「알림 켜기」: 켠 주인 = 주인 구독 칸 
   assert.equal(t.pushCalls.filter(x => x.fn === "nSubs").every(x => x.cell === "owner"), true);
 });
 
-test("빠짐 3 · 알림 글 꼴 서버 값: HB_CAPS.push_wide — 켠 주인 거짓(급한 일만) · 회원 참", async () => {
+test("빠짐 3 · 알림 글 꼴 서버 값: HB_CAPS.push_wide — 주인 거짓(급한 일만) · 회원 참", async () => {
   const t = await setup();
-  await t.flag("owner_unified", true);
   const caps = async (who: string) => JSON.parse((/window\.HB_CAPS = (\{[^\n]*?\});/.exec((await t.req("GET", "/", undefined, await t.human(who))).text) || [])[1] || "null");
   assert.equal((await caps(OWNER)).push_wide, false);
   assert.equal((await caps(MEMBER)).push_wide, true);

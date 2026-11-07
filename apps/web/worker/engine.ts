@@ -109,7 +109,6 @@ export const sysLine = (db: D1Database, owner: string, text: string, wid?: strin
 
 // deliver 와 reopen 이 서로 부르니 답 꼴을 적어 둠(추론이 돌아 TS7023)
 type Delivered = { sent?: boolean; reopened?: boolean; queued?: boolean; device?: boolean };
-export const LOGIN_LINE = "아직 구독 계정이 연동되지 않았어요 — 설정 › 기기 › 엔진에서 ChatGPT 나 Claude 「로그인」을 눌러 주세요. 그동안 보낸 글은 로그인되면 메인 봇에게 넣어요";
 export const loginMissing = (e: unknown) => /계정이 아직 로그인되지 않았어요/.test(String((e as Error)?.message || e));
 export const LOST_LINE = "방금 글이 창에 안 들어갔어요 — 메인 봇 창을 열지 못했어요. 설정 › 노드 「메인 봇 창」을 확인하고 다시 보내 주세요";
 const REOPEN_ASK_MS = 3 * 60_000, REOPEN_GIVEUP_MS = 10 * 60_000, REOPEN_DROP_MS = 60 * 60_000;
@@ -208,7 +207,6 @@ export class Engine extends DurableObject<EngEnv> {
 
   async rtc(verb: string, args: Record<string, unknown>, timeoutMs = 30_000): Promise<{ ok: true; result: any } | { ok: false; code: number; error: string }> {
     if (!/^rtc_(start|poll|note|say|stop)$/.test(verb)) return { ok: false, code: 5, error: "없는 동사" };
-    if ((await this.who()).harness) return { ok: false, code: 1, error: "주인 하네스 기기엔 회원 통화가 없어요" };
     try { return { ok: true, result: await this.cmd(verb, args, timeoutMs) }; }
     catch (e) { return { ok: false, code: Number((e as EngineError)?.code) || 1, error: String((e as Error)?.message || e).slice(0, 300) }; }
   }
@@ -333,7 +331,7 @@ export class Engine extends DurableObject<EngEnv> {
           db.prepare("UPDATE engine_window SET state = 'closed', state_at = ? WHERE owner = ? AND role_id = ? AND state = 'failed'").bind(Date.now(), owner, r.id)]).catch(() => null);
       }
     }
-    if (!opened && login) return { seeded: defaults.length, opened };   // 구독 로그인 없음: 메인 봇 안내 한 줄(LOGIN_LINE)로 충분 — 역할은 로그인 뒤 메인 봇이 열릴 때 같이 열림
+    if (!opened && login) return { seeded: defaults.length, opened };   // 구독 로그인 없음: 화면 안내(sub-state.ts)로 충분 — 역할은 로그인 뒤 메인 봇이 열릴 때 같이 열림
     await sysLine(db, owner, opened ? `기본 역할 ${opened}개(${defaults.map(r => r.name).join(" · ")})를 만들었어요` : `기본 역할을 만들었지만 창은 못 열었어요${why ? ` — ${why}` : ""}`).catch(() => null);
     return { seeded: defaults.length, opened };
   }
@@ -367,10 +365,7 @@ export class Engine extends DurableObject<EngEnv> {
     const { rules } = await ownerCfg(db, owner).catch(() => ({ rules: RULES }));
     const r = await this.open({ owner, kind: "main", name, cwd: "~/boarder/primary", prompt: (await promptsOf(db, owner)).mainHello, system: mainSystem(owner, name, rules.one_goal !== false) }).catch(async (e: unknown) => {
       if (loginMissing(e)) {
-        const prev = await this.ctx.storage.get<number>("main_login_missing"), now = Date.now();
-        const first = !prev || now - prev > 6 * 3600_000;
-        await this.ctx.storage.put("main_login_missing", now);
-        if (first) await sysLine(db, owner, LOGIN_LINE).catch(() => null);
+        await this.ctx.storage.put("main_login_missing", Date.now());
         return null;
       }
       await sysLine(db, owner, `메인 봇을 못 열었어요 — ${shortWhy(e)}`).catch(() => null);
@@ -563,7 +558,8 @@ export class Engine extends DurableObject<EngEnv> {
   async hmsg(m: any, device: string, owner: string, now: number) {
     const db = this.env.DB;
     if (m.type === "hello") {
-      const eng = { cli: String(m.cli || "").slice(0, 20), host: String(m.host || "").slice(0, 60), os: String(m.os || "").slice(0, 20), default: m.default ? String(m.default).slice(0, 30) : null, harness: true };
+      const eng = { cli: String(m.cli || "").slice(0, 20), host: String(m.host || "").slice(0, 60), os: String(m.os || "").slice(0, 20), default: m.default ? String(m.default).slice(0, 30) : null, harness: true,
+        voice: m.voice && typeof m.voice === "object" ? { ok: m.voice.ok === true, why: String(m.voice.why || "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 160) } : null };
       await db.prepare("UPDATE device SET engine = ?, engine_at = ? WHERE id = ?").bind(JSON.stringify(eng), now, device).run();
       await this.hsync(Array.isArray(m.windows) ? m.windows : [], !m.partial, device, owner, now);
       await db.prepare("DELETE FROM engine_window WHERE owner = ? AND kind = 'harness' AND state = 'closed' AND closed_at < ?").bind(owner, now - 7 * 86400_000).run();

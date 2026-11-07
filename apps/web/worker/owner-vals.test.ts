@@ -108,8 +108,7 @@ const SNAP = () => {
 
 async function setup() {
   const { db, D1 } = d1(), T = Date.now();
-  SH._reset();
-  await ledger.setFlag(D1, "shadow_unified", false);
+  await ledger.f7On(D1, "__reset__");   // 스위치 캐시(isolate 10초)를 이 DB 로 비움
   db.prepare("INSERT INTO invite(email, by_email, at) VALUES (?,?,?)").run(MEMBER, OWNER, T);
   const dev = db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)");
   dev.run("devH", OWNER, "owner-host harness", "", await sha(TOK.harness), T, T, "harness", T);
@@ -154,7 +153,6 @@ async function setup() {
 test("(가)+(나): 장부 · 카드 · 질문 사본과 하네스가 올린 값이 회원 길 판에 나오고, 같은 때 스냅숏과 대조하면 차이 0", async () => {
   const s = await setup();
   try {
-    await s.flag("shadow_unified", true);
     const r = await s.up(HSTATE());
     assert.equal(r.status, 200, r.text); assert.deepEqual(r.j.promises, { opened: 1, changed: 0, closed: 0, reopened: 0, held: 0 });
     const D: any = await s.owner();
@@ -189,7 +187,6 @@ test("(가)+(나): 장부 · 카드 · 질문 사본과 하네스가 올린 값�
 test("대조 항목: 스냅숏과 칸이 다르면 그 칸 이름 · 개수가 잡힘(창 이름 · 글은 안 실음)", async () => {
   const s = await setup();
   try {
-    await s.flag("shadow_unified", true);
     assert.equal((await s.up(HSTATE())).status, 200);
     const D: any = await s.owner();
     const cases: [string, (o: any) => void, number][] = [
@@ -222,14 +219,10 @@ test("하네스가 값을 안 올렸으면 그 값 칸이 차이로 잡히고 hs
   } finally { s.done(); }
 });
 
-test("기기 길 인증: 하네스 기기만(회원 full · 주인 감시 · 토큰 없음 · 로그인 세션은 401) · 스위치 끔이면 204 로 안 씀 · 꼴이 틀리면 400", async () => {
+test("기기 길 인증: 하네스 기기만(회원 full · 주인 감시 · 토큰 없음 · 로그인 세션은 401) · 꼴이 틀리면 400", async () => {
   const s = await setup();
   try {
     const kept = () => s.db.prepare("SELECT count(*) n FROM user_pref WHERE k = 'harness_state'").get()!.n;
-    // 끔: 받기만 하고 안 씀
-    const off = await s.up(HSTATE());
-    assert.equal(off.status, 204); assert.equal(kept(), 0); assert.equal(s.db.prepare("SELECT count(*) n FROM member_promise").get()!.n, 0);
-    await s.flag("shadow_unified", true);
     assert.equal((await s.up(HSTATE(), TOK.member)).status, 401, "회원 full 기기");
     assert.equal((await s.up(HSTATE(), TOK.watch)).status, 401, "주인 감시 기기");
     assert.equal((await s.call("POST", "/api/device/owner-state", HSTATE())).status, 401, "토큰 없음");
@@ -241,14 +234,12 @@ test("기기 길 인증: 하네스 기기만(회원 full · 주인 감시 · 토
     const row: any = s.db.prepare("SELECT owner, v FROM user_pref WHERE k = 'harness_state'").get();
     assert.equal(row.owner, OWNER, "열쇠 = canon(하네스 기기 주인)");
     assert.ok(!("promises" in JSON.parse(row.v)), "약속은 member_promise 에만");
-    await s.flag("shadow_unified", false);
   } finally { s.done(); }
 });
 
 test("약속 맞추기: promises.md 열린 약속 → member_promise(hp:<번호>) 넣기 · 고치기 · 닫기, 파일을 못 읽으면(null) 그대로", async () => {
   const s = await setup();
   try {
-    await s.flag("shadow_unified", true);
     const rows = () => s.db.prepare("SELECT wid, win, due, state FROM member_promise WHERE owner = ? ORDER BY wid").all(OWNER).map((r: any) => [r.wid, r.win, r.due, r.state]);
     const H = HSTATE();
     H.promises.push({ n: 4, due: "2099-03-03", to: "팀", what: "또 다른 약속", watch: "감시", pane: "" });
@@ -265,7 +256,6 @@ test("약속 맞추기: promises.md 열린 약속 → member_promise(hp:<번호>
     s.db.prepare("INSERT INTO member_promise(owner, win, wid, who, what, check_by, due, at) VALUES (?,?,?,?,?,?,?,?)").run(OWNER, "1 총괄", "ew_x", "누구", "회원 길 약속", "장치", "2099-05-05", Date.now());
     await s.up(HSTATE());
     assert.equal(s.db.prepare("SELECT state FROM member_promise WHERE wid = 'ew_x'").get()!.state, "open");
-    await s.flag("shadow_unified", false);
   } finally { s.done(); }
 });
 
@@ -274,43 +264,16 @@ test("회원 회귀 없음: 장부 사본 · 하네스 값이 있어도 회원 �
   try {
     const strip = (o: any) => JSON.stringify({ ...o, generated: "" });
     const before = strip(await MB.data(s.D1, MEMBER, { name: "메인 봇" }));
-    await s.flag("shadow_unified", true);
     assert.equal((await s.up(HSTATE())).status, 200);
     const after = strip(await MB.data(s.D1, MEMBER, { name: "메인 봇" }));
     assert.equal(after, before);
     assert.ok(!after.includes("harness_state_at") && !after.includes('"wl":true'));
-    const plain: any = await MB.data(s.D1, OWNER, null);
-    assert.ok(!("harness_state_at" in plain));
-    await s.flag("shadow_unified", false);
-  } finally { s.done(); }
-});
-
-test("끝에서 끝: 스위치 켬 + 하네스 값 올림 → 주인 /api/data 답은 스냅숏 그대로 · 같은 판이면 차이 이벤트 없음, 다르면 새 칸 이름으로", async () => {
-  const s = await setup();
-  try {
-    const h = await s.human(OWNER);
-    const off = await s.call("GET", "/api/data", undefined, h);
-    assert.equal(off.text, JSON.stringify(SNAP()));
-    await s.flag("shadow_unified", true);
-    assert.equal((await s.up(HSTATE())).status, 200);
-    SH._reset(); s.sent.splice(0);
-    const on = await s.call("GET", "/api/data", undefined, h);
-    assert.equal(on.text, off.text, "답은 그대로");
-    assert.equal(s.sent.filter(e => e.event === "unify_shadow_diff").length, 0, JSON.stringify(s.sent.filter(e => e.event === "unify_shadow_diff").map(e => e.properties.at)));
-    const snap = SNAP(); snap.panes[2].branch = "main"; snap.todos = []; s.setSnap(snap); SH._reset();
-    const r = await s.call("GET", "/api/data", undefined, h);
-    assert.equal(r.text, JSON.stringify(snap));
-    const ev = s.sent.filter(e => e.event === "unify_shadow_diff");
-    assert.equal(ev.length, 1); assert.equal(ev[0].properties.at, "branch,todos"); assert.equal(ev[0].properties.branch, 1); assert.ok(ev[0].properties.hs_age >= 0);
-    assert.ok(!JSON.stringify(ev[0]).includes("feat-x") && !JSON.stringify(ev[0]).includes(OWNER));
-    await s.flag("shadow_unified", false);
   } finally { s.done(); }
 });
 
 test("hp: 약속: 창 도구 promise_list 는 hp:<번호> 로 보이고 promise_done 으로 닫으면 하네스가 1분 뒤 다시 안 엶 · 파일에서 빠졌다 다시 나타난 것만 다시 엶 · 목록 50 은 내 약속 먼저", async () => {
   const s = await setup();
   try {
-    await s.flag("shadow_unified", true);
     const tools = localTools(s.D1, OWNER, "1 총괄", "https://example.test");
     const ctx = { agent: "t", publicUrl: "https://example.test", view: { visible: () => true, why: () => null, desc: () => "", mask: () => false }, get: async () => ({}), op: async () => ({}), local: tools };
     const H: any = HSTATE(); H.promises = Array.from({ length: 60 }, (_, i) => ({ n: i + 1, due: "2099-01-01", to: "동료", what: `하네스 약속 ${i + 1}`, watch: "감시", pane: "%40" }));
@@ -334,14 +297,12 @@ test("hp: 약속: 창 도구 promise_list 는 hp:<번호> 로 보이고 promise_
     // 화면 번호 = 파일 번호, 기한 지남 확인 id 도 hp 머리
     const D: any = await s.owner();
     assert.ok(D.promises.some((p: any) => p.n === 7 && p.hp) && D.promises.some((p: any) => p.n === mine.promise_id && !p.hp));
-    await s.flag("shadow_unified", false);
   } finally { s.done(); }
 });
 
 test("섞을 때 정리: 장부 결정 hw<id> 와 회원 카드 결정 w<rowid> 가 같은 숫자여도 둘 다 · 카드 목록 · 끝난 것은 같은 ts 한 번(장부 줄이 이김) · 피드는 새 것부터", async () => {
   const s = await setup();
   try {
-    await s.flag("shadow_unified", true);
     assert.equal((await s.up(HSTATE())).status, 200);
     s.db.prepare("INSERT INTO board_card(rowid, id, owner, win, question, choices, state, at) VALUES (?,?,?,?,?,?,?,?)").run(8, "1793000001.000001", OWNER, "1 총괄", "회원 카드 결정", '["가","나"]', "open", Date.now() - 60_000);
     s.db.prepare("INSERT INTO board_card(id, owner, win, question, choices, state, at, answered_at) VALUES (?,?,?,?,?,?,?,?)").run(TS(500), OWNER, "1 총괄", "겹친 끝난 카드", "[]", "closed", Date.now() - 90_000, Date.now() - 80_000);
@@ -357,14 +318,12 @@ test("섞을 때 정리: 장부 결정 hw<id> 와 회원 카드 결정 w<rowid> 
     assert.ok(D.feed.some((f: any) => !f.wl) && D.feed.some((f: any) => f.wl), "회원 길 줄과 장부 줄이 같이");
     const d: any = SH.windowsDiff(SNAP(), D);
     assert.equal(d.decisions, 1, "대조: hw8 은 스냅숏 w8 과 같은 열쇠 — 더한 회원 카드 하나만 차이");
-    await s.flag("shadow_unified", false);
   } finally { s.done(); }
 });
 
 test("스냅숏에만 있던 칸: 상시 에이전트 표 · 판 agent/aname · 할 일 분류 · 옛 링크 표가 나오고, 하네스 총괄이 있으면 회원 메인 봇 판(%1)은 빠짐", async () => {
   const s = await setup();
   try {
-    await s.flag("shadow_unified", true);
     const before: any = await s.owner();
     assert.ok(before.panes.some((p: any) => p.pane === "%1"), "고치기 전 꼴: 회원 메인 봇 판이 총괄과 같이 있음");
     const H: any = HSTATE();

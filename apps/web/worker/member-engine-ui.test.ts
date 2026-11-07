@@ -82,13 +82,13 @@ test("계정 목록: 내 기기만 · 이름과 로그인 여부만(기기가 �
   assert.deepEqual(s.cmds.map(c => [c.dev, c.verb]), [["devAaaaaaaaa", "account_list"]]);
 });
 
-test("권한: 남의 기기 404 · 주인 하네스 기기 404 · 주인 · 로그인 없음 403 · 꺼진 기기 409 — 기기로 명령이 안 감", async () => {
+test("권한: 남의 기기 404 · 주인 하네스 기기 404 · 회원 기기를 주인이 부르면 404(주인 · 회원 한 길 — 남의 기기) · 로그인 없음 403 · 꺼진 기기 409 — 기기로 명령이 안 감", async () => {
   const s = await setup();
   assert.equal((await s.call("GET", "/api/me/engine/device/devBbbbbbbbb", undefined, await s.human())).status, 404);
   assert.equal((await s.call("POST", "/api/me/engine/device/devBbbbbbbbb/choose", { engine: "sdk" }, await s.human())).status, 404);
   assert.equal((await s.call("POST", "/api/me/engine/device/devBbbbbbbbb/login", { provider: "claude", name: "x" }, await s.human())).status, 404);
   assert.equal((await s.call("GET", "/api/me/engine/device/devOooooooo1", undefined, await s.human())).status, 404);
-  assert.equal((await s.call("GET", P, undefined, await s.human(OWNER))).status, 403);
+  assert.equal((await s.call("GET", P, undefined, await s.human(OWNER))).status, 404, "주인(canon)에게 회원 기기는 남의 기기");
   assert.equal((await s.call("GET", P)).status, 403);
   assert.equal(s.cmds.length, 0);
   const st = await setup({ stale: true });

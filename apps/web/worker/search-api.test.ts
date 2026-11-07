@@ -20,7 +20,7 @@ async function request(params: Record<string, string>, owner = true, signed = tr
   runInNewContext(code, {
     app: { get: (_path: string, fn: any) => { handler = fn; } },
     signedIn: async () => signed ? { user: { email: "member@example.test" } } : null,
-    isOwner: () => owner, memberSearch, seg: () => {},
+    isOwner: () => owner, W: { isAdmin: () => owner }, memberSearch, seg: () => {},
     search: () => ({ query: async (...args: unknown[]) => { calls.push(args); return { nodes: [], cards: [], chats: [], arts: [], ms: {} }; } }),
   });
   return { response: await handler(c), calls };

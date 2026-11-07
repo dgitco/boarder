@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "671725f7e7c4";
+window.HB_VER = "21ffde9e1b66";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1475,6 +1475,10 @@ a.tlc,.msg .bd a.tlc{width:min(420px,100%)}
 @media (max-width:860px){.cmain.gpt .gcol,.cmain.gnew .gwel{padding:0 16px}.cmain.gpt .gb{max-width:85%}.cmain.gnew h2{font-size:24px}}
 .sesssw{flex:none;height:30px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:none;color:var(--soft);font:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}.sesssw:hover{color:var(--ink);background:var(--sunk)}   
 .stools{margin:2px 0;border-radius:10px;background:var(--sunk);color:var(--soft);font-size:13px}.stools > summary{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;list-style:none;min-width:0}.stools > summary::-webkit-details-marker{display:none}.stools > summary span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stools[open] > summary{color:var(--ink)}.stools ol{margin:0;padding:0 12px 8px 30px;font-family:var(--mono,ui-monospace,monospace);font-size:12px;line-height:1.5;overflow-wrap:anywhere}   
+.subgate .sgb{margin:0 auto;width:calc(100% - 24px);max-width:var(--col);padding:14px 16px;border-radius:14px;background:var(--sunk);color:var(--ink);font-size:13.5px}
+.subgate .sgb b{display:block;font-size:14.5px}.subgate .sgb p{margin:4px 0 10px;color:var(--soft)}
+.subgate .sga{display:flex;flex-wrap:wrap;gap:8px}.subgate .sgp,.subgate .sgs{display:inline-flex;align-items:center;min-height:36px;padding:0 14px;border-radius:10px;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}
+.subgate .sgp{background:var(--accent);color:#fff;border:0}.subgate .sgs{background:transparent;color:var(--ink);border:1px solid var(--line)}.subgate .sgs:disabled{opacity:.6;cursor:default}
 .nbanner{display:flex;align-items:center;justify-content:center;gap:8px;margin:8px auto 0;width:calc(100% - 24px);max-width:var(--col);min-height:36px;padding:6px 14px;border-radius:12px;background:var(--sunk);color:var(--soft);font-size:13px;text-align:center;flex:none}
 .nbanner:empty{display:none}
 .msg .mh .snd{margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:4px;font-size:11.5px;line-height:16px;color:var(--muted)}
@@ -8640,6 +8644,29 @@ async function gptSend(ta, text) {
     return back();
   }
 }
+const subOff = (k, c = CS.ch[k]) => k === "primary" && !!window.HB_MEMBER && !!c?.sub?.missing;
+function subGate(k, c) {
+  if (!subOff(k, c)) return "";
+  const who = c.sub.provider === "codex" ? "ChatGPT" : c.sub.provider === "claude" ? "Claude" : "ChatGPT 나 Claude";
+  return `<div class="ccomp subgate" role="status"><div class="sgb"><b>아직 구독 계정이 연동되지 않았어요</b><p>설정 › 기기 › 엔진에서 ${who} 「로그인」을 누르면 메인 봇이 답해요.</p><div class="sga"><a class="sgp" href="#settings/devices" data-subgo>연결하기</a><button type="button" class="sgs" data-subretry${CS.subBusy ? " disabled" : ""}>${CS.subBusy ? '<i class="g g-spin" aria-label="확인하는 중"></i>' : "연결했어요 · 다시 확인"}</button></div></div></div>`;
+}
+async function subRetry() {
+  if (CS.subBusy) return;
+  CS.subBusy = true;
+  viewChat(true);
+  try {
+    const r = await fetch("api/me/engine/retry-main", { method: "POST", headers: { "content-type": "application/json", "x-hb": "1" }, body: "{}" });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.ok) toast(j?.error || "지금은 확인하지 못했어요 — 잠시 뒤 다시 눌러 주세요", 4e3, true);
+    else if (j.missing) toast("아직 로그인이 안 보여요 — 설정 › 기기 › 엔진에서 로그인해 주세요", 4e3, true);
+  } catch {
+    toast("지금은 확인하지 못했어요 — 잠시 뒤 다시 눌러 주세요", 4e3, true);
+  }
+  CS.subBusy = false;
+  await loadCh("primary").catch(() => {
+  });
+  viewChat(true);
+}
 function chanHTML() {
   if (isGptCh(CS.at)) return gptHTML(CS.at);
   if (isIbCh(CS.at)) return window.HBInbox?.feedHTML ? window.HBInbox.feedHTML(CS.at) : `<div class="cmain">${LOADING}</div>`;
@@ -8649,7 +8676,7 @@ function chanHTML() {
   return `<div class="cmain"><div class="chd"><span class="t">${isSessCh(k) ? esc(sessName(k)) + " · 세션" : isNodeCh(k) ? esc(k.slice(2)) : isXCh(k) ? "↔ " + esc(undefined || "") : k === "primary" ? "#메인" : "# " + k}</span><span class="d">${esc(k === "primary" && mainOn() ? `다섯 채널 글을 한 줄기로 · 새 글은 ${PRI()}${josa(PRI(), "이", "가")} 받아요` : k === "primary" ? `${PRI()}${josa(PRI(), "과", "와")} 영역 리드 · Slack 원문` : CH_DESC[k] || "")}</span>${c.stale_min ? `<span class="stale" title="Slack 을 못 읽어 마지막으로 읽은 글을 보여요">수집 멈춤 ${c.stale_min}분</span>` : c.err && c.messages.length ? `<span class="stale" title="${esc(c.err)}">수집 멈춤 · 화면은 마지막으로 받은 글</span>` : ""}${isNodeCh(k) ? "" : huddle({ ch: k })}</div>
     ${isNodeCh(k) ? `<div class="nbanner" role="status">${nodeBanner(k.slice(2))}</div>` : ""}
     ${fwrap("cfeed", "", feed + pendFor("new:" + CS.at))}
-    ${isSessCh(k) ? comp("cnew", `${sessName(k)}에 쓰기`, "Enter 보내기 · 이 세션 입력칸에 들어가요") : comp("cnew", k === "primary" ? "#메인에 쓰기" : isNodeCh(k) ? `${k.slice(2)}에 쓰기` : isXCh(k) ? `${undefined || ""}에 쓰기 · @리드 로 일 맡기기` : AGENT_CH.some((a) => a.key === k) ? `${AREA_NAME[k]}에 쓰기` : `#${k}에 쓰기`, k === "primary" ? `Enter 보내기 · ${PRI()}${josa(PRI(), "이", "가")} 받아요(낱말이 분명하면 그 영역 리드)` : isXCh(k) ? "Enter 보내기 · 이 채널 사람에게 보여요" : `Enter 보내기 · ${esc(jo(AREA_NAME[k], "이/가"))} 받아요 · Slack #${k}에도`)}</div>`;
+    ${subGate(k, c) || (isSessCh(k) ? comp("cnew", `${sessName(k)}에 쓰기`, "Enter 보내기 · 이 세션 입력칸에 들어가요") : comp("cnew", k === "primary" ? "#메인에 쓰기" : isNodeCh(k) ? `${k.slice(2)}에 쓰기` : isXCh(k) ? `${undefined || ""}에 쓰기 · @리드 로 일 맡기기` : AGENT_CH.some((a) => a.key === k) ? `${AREA_NAME[k]}에 쓰기` : `#${k}에 쓰기`, k === "primary" ? `Enter 보내기 · ${PRI()}${josa(PRI(), "이", "가")} 받아요(낱말이 분명하면 그 영역 리드)` : isXCh(k) ? "Enter 보내기 · 이 채널 사람에게 보여요" : `Enter 보내기 · ${esc(jo(AREA_NAME[k], "이/가"))} 받아요 · Slack #${k}에도`))}</div>`;
 }
 function thHTML() {
   if (!CS.th || thInline()) return "";
@@ -8895,7 +8922,7 @@ function viewChat(keepScroll, threadOnly = false) {
   const act = inheritedFocus ? pending.act : active?.id, caret = inheritedFocus ? pending.caret : caretSave(), hv = pending ? pending.hv : hovGet(), nMsg = [f, tf].map((x) => x ? x.querySelectorAll(":scope > .msg").length : 0).join();
   const sameCh = (el.dataset.sig || "").split("|")[0] === (CS.at || "");
   const thSwap = sameCh && el.dataset.sig !== sig;
-  if ((el.dataset.sig === sig || thSwap) && (el.querySelector("#cnew") || isIbCh(CS.at) && el.querySelector("#cfeed"))) {
+  if ((el.dataset.sig === sig || thSwap) && !subOff(CS.at) && (el.querySelector("#cnew") || isIbCh(CS.at) && el.querySelector("#cfeed"))) {
     const tmp = document.createElement("div");
     const onlyTh = threadOnly && sameCh && CS.th && !OPT.size && !Object.keys(CS.pend).length && !thInline() && !isIbCh(CS.at) && el.querySelector('#cfeed > .msg[data-mts="' + CSS.escape(CS.th.ts) + '"]');
     const skipCh = !!(CS.th && !thInline() && (matchMedia("(max-width:860px)").matches || onlyTh));
@@ -9665,6 +9692,7 @@ async function chatSend(id) {
   if (!ta) return;
   const text = withLnk(id, ta.value.trim()), att = CS.att[id] || [];
   if (!text && !att.length) return;
+  if (id === "cnew" && subOff(CS.at)) return toast("아직 구독 계정이 연동되지 않았어요 — 연결하기를 눌러 주세요", 4e3, true);
   if (id === "cnew" && isSessCh(CS.at)) return sessSend(ta, text);
   if (id === "cnew" && isGptCh(CS.at)) return gptSend(ta, text);
   CS.att[id] = [];
@@ -9721,6 +9749,10 @@ document.addEventListener("click", (e) => {
   if (CS.fpop && !t.closest(".fpop") && !t.closest("[data-fopen]")) {
     CS.fpop = null;
     viewChat(true);
+  }
+  if (t.closest("[data-subretry]")) {
+    stop();
+    return subRetry();
   }
   const ot = t.closest("[data-cother]");
   if (ot) {

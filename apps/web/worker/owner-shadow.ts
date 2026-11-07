@@ -91,9 +91,3 @@ function valuesDiff(snap: R, d1: R, S: Map<string, R>, D: Map<string, R>): Vals 
   v.hs_age = at ? Math.max(0, Math.round(Date.now() / 1000 - at)) : -1;
   return v;
 }
-
-// 대조는 isolate 마다 1분에 한 번 — 주인 화면이 /api/data 를 5–20초마다 부르니 매번 회원 load(D1 13문)를 더 돌리지 않게
-const EVERY_MS = 60_000;
-let lastAt = 0;
-export function due(now = Date.now()) { if (now - lastAt < EVERY_MS) return false; lastAt = now; return true; }
-export function _reset() { lastAt = 0; }   // 시험용

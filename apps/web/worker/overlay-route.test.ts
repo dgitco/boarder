@@ -63,13 +63,15 @@ async function cookie(email: string) {   // index.ts signedIn 의 서명 쿠키(
   const sig = hex(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(`bx_s|${email}|${exp}|${th}`))).slice(0, 32);
   return `better-auth.session_token=${TOKEN}; bx_s=${encodeURIComponent(`${email}|${exp}|${sig}`)}`;
 }
+// 첫 화면 틀(page-template.py 꼴) — 주인도 회원 길 첫 화면(memberPage)
+const PAGE = JSON.stringify({ ver: "v1", html: '<!doctype html><html><head></head><body><script>window.D = __BX_DATA__; window.T = "__BX_DTAG__"</script></body></html>' });
 const sha = async (t: string) => hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)));
 const DEV = (n: string) => "bxd_" + n.repeat(40).slice(0, 40);
 async function setup(o: { relay?: boolean } = {}) {
   const { D1 } = d1(), pending: Promise<unknown>[] = [];
   (hosted as any).exec = o.relay ? { on: async () => false, call: async () => ({ status: 404, headers: {}, body: new Uint8Array() }), tool: async () => ({}) } : undefined;   // 호스팅 서버만 릴레이가 있음
   const ASSETS = { fetch: async () => new Response("<!doctype html><html><head></head><body></body></html>", { headers: { "content-type": "text/html" } }) };
-  const env = { DB: D1, ASSETS, BRIDGE: bridgeNs(), SNAP: { idFromName: (s: string) => s, get: () => ({ bump: async () => 0 }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+  const env = { DB: D1, ASSETS, BRIDGE: bridgeNs(), SNAP: { idFromName: (s: string) => s, get: () => ({ bump: async () => 0, get: async (k: string) => k === "page" ? { body: PAGE, etag: '"e-page"', at: Date.now(), checked: Date.now() } : null, tags: async () => ({ t: {}, age: 0, boot: "b" }) }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
   flags.length = 0;
   const run = (sql: string, ...a: unknown[]) => (D1 as any).prepare(sql).bind(...a).run();
   await run("INSERT INTO invite(email, by_email, at) VALUES (?,?,?)", MEMBER, OWNER, Date.now());
@@ -219,6 +221,7 @@ test("DELETE: 기본은 내 칸만, ?all=1 이면 래퍼 칸(css · js · 사이
 test("화면에 얹힘: 로그인한 그 사람 것만, ?no_overlay=1 이면 안 얹음", async () => {
   const s = await setup();
   await s.grant("o", OWNER);   // 주인 기기도 js 는 허락 뒤에만
+  await s.q("INSERT INTO member_bot (owner, seed, hue, name, photo, icon, fav, updated_at) VALUES (?,?,?,?,?,?,?,?) RETURNING owner", OWNER, "s1", 10, "Primary", "", "", "", Date.now());   // 주인(canon) 메인 봇 줄 — 없으면 온보딩
   assert.equal((await s.call("/api/device/overlay", { tok: "o", body: { slot: "mine", set: { css: ".x{}", js: "window.__o=1" } } })).status, 200);
   const on = await (await s.web("/", OWNER)).text();
   assert.match(on, /id="hb-overlay-css"/); assert.match(on, /id="hb-overlay-js"/);

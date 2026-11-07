@@ -63,8 +63,7 @@ const SNAP = {
 
 async function setup() {
   const { db, D1 } = d1(), T = Date.now();
-  SH._reset();
-  await ledger.setFlag(D1, "shadow_unified", false);   // 스위치 캐시(isolate 10초)를 이 DB 로 비움
+  await ledger.f7On(D1, "__reset__");   // 스위치 캐시(isolate 10초)를 이 DB 로 비움
   db.prepare("INSERT INTO invite(email, by_email, at) VALUES (?,?,?)").run(MEMBER, OWNER, T);
   db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devH", OWNER, "owner-host harness", "", "h1", T, T, "harness", T);
   db.prepare("INSERT INTO board_log(owner, win, kind, text, thread, at) VALUES (?,?,?,?,?,?)").run(MEMBER, "메인 봇", "chat", "회원 글", "primary", T - 1000);
@@ -130,48 +129,4 @@ test("windowsDiff: 한쪽에만 있는 판 · 이름 · 상태 · 종류 · 묶�
   assert.deepEqual(winAt(d.at), ["panes", "name", "state", "kind", "group", "parked"]);
   assert.deepEqual([d.only_snap, d.only_d1, d.name, d.state, d.kind, d.parked_only_snap, d.parked_only_d1, d.d1_other], [3, 1, 1, 1, 1, 1, 0, 1]);
   assert.ok(!JSON.stringify(d).includes("총괄") && !JSON.stringify(d).includes("지어낸"), "창 이름 · 글은 안 실음");
-});
-
-test("스위치 shadow_unified 끔 = 예전 그대로(스냅숏 답 · 대조 없음) / 켬 = 같은 답 + 뒤에서 대조, 차이는 unify_shadow_diff(이름 없이)", async () => {
-  const s = await setup();
-  try {
-    const h = await s.human(OWNER);
-    const off = await s.call("GET", "/api/data", undefined, h);
-    assert.equal(off.status, 200, off.text);
-    assert.equal(off.text, JSON.stringify(SNAP), "끔: 스냅숏 그대로");
-    assert.equal(s.sent.filter(e => /^unify_/.test(e.event)).length, 0, "끔: 대조 없음");
-
-    await s.flag("shadow_unified", true);
-    // 차이 없음 → diff 이벤트 없음, 답은 같음
-    SH._reset();
-    const same = await s.call("GET", "/api/data", undefined, h);
-    assert.equal(same.text, off.text, "켬: 답은 그대로 스냅숏"); assert.equal(same.etag, off.etag);
-    assert.ok(events(s.sent, "unify_shadow_diff").every(e => !winAt(e.properties.at).length), "창 목록이 같으면 창 칸 차이 없음");
-    // 304 도 그대로
-    SH._reset();
-    const nm = await s.call("GET", "/api/data", undefined, { ...h, "if-none-match": String(off.etag) });
-    assert.equal(nm.status, 304);
-    const changed = { ...SNAP, panes: [...SNAP.panes.map(p => p.pane === "%40" ? { ...p, state: "쉼" } : p), { win: "7 스냅숏만", role: "리드", pane: "%55", state: "쉼", kind: "lead", area: "dgit" }] };
-    s.setSnap(changed); SH._reset();
-    s.sent.splice(0);
-    const r = await s.call("GET", "/api/data", undefined, h);
-    assert.equal(r.text, JSON.stringify(changed), "켬: 답은 스냅숏 그대로");
-    const ev = events(s.sent, "unify_shadow_diff");
-    assert.equal(ev.length, 1, JSON.stringify(s.sent.map(e => e.event)));
-    const p = ev[0].properties;
-    assert.deepEqual(winAt(p.at), ["panes", "state"]); assert.equal(p.only_snap, 1); assert.equal(p.state, 1); assert.equal(p.n_snap, 5); assert.equal(p.n_d1, 4);
-    assert.ok(!JSON.stringify(ev[0]).includes("스냅숏만") && !JSON.stringify(ev[0]).includes("총괄") && !JSON.stringify(ev[0]).includes(OWNER), "창 이름 · 메일 안 실음");
-    // 1분에 한 번: 바로 다시 불러도 대조 안 함
-    await s.call("GET", "/api/data", undefined, h);
-    assert.equal(events(s.sent, "unify_shadow_diff").length, 1, "isolate 마다 1분에 한 번");
-    // 대조는 주인 줄을 안 씀(읽기 전용 load)
-    assert.equal(s.db.prepare("SELECT count(*) n FROM engine_window WHERE kind = 'harness'").get()!.n, 5);
-    // 회원 /api/data 는 회원 길 그대로(스냅숏 아님 · 대조 없음)
-    SH._reset();
-    const m = await s.call("GET", "/api/data", undefined, await s.human(MEMBER));
-    assert.equal(m.status, 200, m.text);
-    assert.notEqual(m.text, JSON.stringify(changed)); assert.ok(!m.text.includes('"harness":true'));
-    assert.equal(events(s.sent, "unify_shadow_diff").length, 1, "회원 요청엔 대조 없음");
-    await s.flag("shadow_unified", false);
-  } finally { s.done(); }
 });

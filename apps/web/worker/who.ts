@@ -20,8 +20,3 @@ export const readKeys = (env: E, key: string): string[] => isOwnerKey(env, key) 
 export const ownerIn = (env: E, key: string, col = "owner") => { const ks = readKeys(env, key); return { sql: ks.length > 1 ? `${col} IN (?, ?)` : `${col} = ?`, args: ks }; };
 /** 같은 사람 열쇠인가(옮기는 동안 '' 와 canon 은 같은 주인) */
 export const sameKey = (env: E, a: string, b: string) => a === b || (isOwnerKey(env, a) && isOwnerKey(env, b));
-// 스위치 owner_unified(f7_flag, 주인 · 회원 한 길 ④-가 화면 전환 — design-owner-unify.md PR6): 켜면 그 주인 로그인이 회원 길(D1 보드, 열쇠 canon)로.
-//   계정별: 「owner_unified」 = 주인 메일 넷 모두, 「owner_unified:<메일>」 = 그 로그인 메일만(한 메일로 먼저 해 보기). on = 켜진 스위치 이름(ledger.f7All)
-export const unifiedIn = (on: Set<string>, env: E, email: string) => isAdmin(env, email) && (on.has("owner_unified") || on.has("owner_unified:" + String(email || "").trim().toLowerCase()));
-/** 주인 메일 가운데 하나라도 켜졌나 — 로그인 메일이 없는 길(화면 칸 알림)이 canon 칸에도 알릴지 */
-export const unifiedAnyIn = (on: Set<string>, env: E) => on.has("owner_unified") || mails(env).some(m => on.has("owner_unified:" + m));

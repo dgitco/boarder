@@ -120,7 +120,7 @@ test("기기 열쇠(scope full)로도 같은 답 · 다른 회원 기기는 자�
   assert.deepEqual(bh.j.windows.map((w: any) => w.window), ["b:ew_eee555"], "질의 값으로 남의 보드를 못 고름");
 });
 
-test("막는 길: 창 열쇠(쓰기) 403 · 옛 주인 403 · 로그인 없음 · 감시 기기 · 끊은 기기 · 모르는 열쇠 401", async () => {
+test("막는 길: 창 열쇠(쓰기) 403 · 주인은 canon 제 창만 · 로그인 없음 · 감시 기기 · 끊은 기기 · 모르는 열쇠 401", async () => {
   const s = await setup();
   const w = await s.call("/api/device/window", s.dev(DEVA), "POST", { key: "pc2:ew_fff666", name: "새 창" });
   assert.equal(w.status, 200, w.text); const bxa = w.j.token as string; assert.match(bxa, /^bxa_/);
@@ -131,7 +131,8 @@ test("막는 길: 창 열쇠(쓰기) 403 · 옛 주인 403 · 로그인 없음 �
     assert.equal((await s.call(p, s.dev("bxd_made-up-unknown-device-0123456789ab"))).status, 401, `${p} 모르는 기기 열쇠`);
   }
   assert.equal((await s.call("/api/me/windows", s.dev(DEVA))).status, 401, "사람 길에 기기 열쇠 머리 — 세션만");
-  assert.equal((await s.call("/api/me/windows", await s.human(OWNER))).status, 403, "옛 주인(회원 길 밖)");
+  const ow = await s.call("/api/me/windows", await s.human(OWNER));
+  assert.equal(ow.status, 200, "주인도 회원 길(canon, owner_unified 늘 켬)"); assert.ok(!(ow.j.windows as any[]).some(x => x.device === "pc2"), "회원 창은 안 보임");
   assert.equal((await s.call("/api/device/windows", s.dev(DEVAW))).status, 401, "감시 기기");
   s.db.prepare("UPDATE device SET revoked_at = ? WHERE id = 'devA'").run(Date.now());
   assert.equal((await s.call("/api/device/windows", s.dev(DEVA))).status, 401, "끊은 기기");

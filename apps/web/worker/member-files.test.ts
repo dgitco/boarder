@@ -84,11 +84,14 @@ test("글 링크 줄: 내 파일만 「📎 이름: 서명 링크」, 남의 · 
   assert.equal(await F.linkOk("other-secret", a.id, m![2], m![3]), false, "다른 비밀값으로 만든 서명 아님");
 });
 
-test("받아쓰기: 녹음 → 글, 빈 녹음 400, 3MB 넘으면 413", async () => {
+test("받아쓰기: 녹음 → 글, 빈 녹음 400, 4MiB(주인 voice-link CAP 와 같음 — wav16k 2분 ≈ 3.84MB) 넘으면 413", async () => {
+  assert.equal(F.VOICE_MAX, 4 * 1024 * 1024);
   const s = setup();
   assert.deepEqual(JSON.parse((await s.call("POST", "/api/voice/stt", { "content-type": "audio/wav" }, new Uint8Array(4))).t), { ok: true, text: "들린 글 4" });
   assert.equal((await s.call("POST", "/api/voice/stt", { "content-type": "audio/wav" }, new Uint8Array(0))).status, 400);
   assert.equal((await s.call("POST", "/api/voice/stt", { "content-type": "audio/wav" }, new Uint8Array(F.VOICE_MAX + 1))).status, 413);
+  const two = 44 + 32_000 * 120;   // 2분 wav16k(머리 44B) — 예전 3MiB 에선 413 이던 것
+  assert.equal((await s.call("POST", "/api/voice/stt", { "content-type": "audio/wav" }, new Uint8Array(two))).status, 200);
 });
 
 // content-length 없이 조각으로 오는 몸통(스트림) — 상한을 넘으면 그 자리에서 끊는지: 넘은 뒤 조각은 당기지 않음

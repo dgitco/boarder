@@ -23,6 +23,7 @@ type R = Record<string, any>;
 const FREQ = ["white_check_mark", "eyes", "+1", "raised_hands", "pray", "heart", "tada", "fire", "joy", "thinking_face", "100", "bulb"];   // owner-read FREQ_DEFAULT
 const PRIMARY = "%1";
 export const UNSORTED = "unsorted";   // 트리 정리의 「분류 안 됨」 열 키(머리 없음)
+import { subMissing, LOGIN_SYS_SQL } from "./sub-state";
 export const ME = "나";        // 회원이 Primary 채팅에 쓴 줄의 win(/api/me/chat)
 export const OWN = /^보더 들여오기$|(^|:)boarder(-|:)import$/;
 const NODE_PRI = ["급함", "높음", "보통", "낮음"];
@@ -935,7 +936,7 @@ async function primaryRows(db: D1Database, me: string, before?: string, pre?: Aw
   const m = before ? /^(\d{10})\.(\d{6})$/.exec(before) : null, sec = m ? Number(m[1]) * 1000 : 0;
   const wins = [...(pre?.front?.wins || [])];
   const aliases = wins.length ? " OR (win IN (SELECT value FROM json_each(?)) AND (thread IS NULL OR thread = ''))" : "";
-  const rs = (await db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? ${wins.length ? NOT_CHAT : ""} AND (thread = 'primary'${aliases})${m ? " AND (at < ? OR (at < ? AND id % 1000000 < ?))" : ""} ORDER BY at DESC, id DESC LIMIT 101`)
+  const rs = (await db.prepare(`SELECT id, win, kind, text, thread, at FROM board_log WHERE owner = ? ${wins.length ? NOT_CHAT : ""} AND (thread = 'primary'${aliases})${LOGIN_SYS_SQL}${m ? " AND (at < ? OR (at < ? AND id % 1000000 < ?))" : ""} ORDER BY at DESC, id DESC LIMIT 101`)
     .bind(me, ...(wins.length ? [JSON.stringify(wins)] : []), ...(m ? [sec, sec + 1000, Number(m[2])] : [])).all<R>()).results;
   if (wins.length) console.log(JSON.stringify({ ev: "primary_rows", wins: wins.length, rows: rs.length, front: rs.filter(r => r.thread !== "primary").length, before: !!m }));
   return rs;
@@ -1230,7 +1231,8 @@ async function getInner(db: D1Database, me: string, bot: { name?: string } | nul
     if (!url.searchParams.get("before") && L && pfRows.length) { const pf = peerFold(pfRows, pIds, PRIMARY, "primary", my, mainName); if (pf) msgs.unshift(pf.root); }
     await withReacts(db, me, msgs);
     await splitMarks(db, me, msgs, my);   // 나눈 내 글 = 갈래 칩(splits, 주인 owner-read splitMarks 꼴)
-    return j({ channel: "primary", messages: msgs, more: rows.length > 100, cursor: page.length ? tsOf(page.at(-1)!.at, page.at(-1)!.id) : null, read_at: Math.floor(Date.now() / 1000), stale_min: 0 });
+    const sub = url.searchParams.get("before") ? null : await subMissing(db, me);
+    return j({ channel: "primary", messages: msgs, more: rows.length > 100, cursor: page.length ? tsOf(page.at(-1)!.at, page.at(-1)!.id) : null, read_at: Math.floor(Date.now() / 1000), stale_min: 0, ...(sub?.missing ? { sub } : {}) });
   }
   if (p === "/api/nodechat") {
     const raw = String(url.searchParams.get("w") || "").trim(), t = raw.replace(/^\d+\s+/, "").trim();

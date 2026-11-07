@@ -32,6 +32,29 @@ export async function canvasBoards(env: Env, id: string): Promise<string[] | und
   try { const b = (JSON.parse(await o.text()) as { boards?: unknown }).boards; return b && typeof b === "object" ? Object.keys(b) : []; } catch { return []; }
 }
 export async function isCanvas(env: Env, id: string) { return (await index(env))?.arts[id]?.kind === "canvas"; }
+const BOARD = /^[\w .()·-]{1,120}\.dc\.html$/, CTRL = /[\x00-\x1f\x7f]/g;
+export async function boardText(env: Env, id: string, board: string): Promise<[string, string, string] | null> {
+  if (!ID.test(id) || !BOARD.test(board)) return null;
+  const ix = await index(env), it = ix?.arts[id]; if (!ix || !it || it.kind !== "canvas") return null;
+  const o = await art(env, ix, [id, board]); if (!o || o.status !== 200) return null;
+  const raw = o.body instanceof Uint8Array ? td.decode(o.body.slice(0, 400_000)) : await new Response(o.body).text().then(t => t.slice(0, 400_000));
+  let title = board, names = "";
+  try {
+    const cj = await env.RESULTS.get(`art/${id}/${it.cv ? it.cv + "/" : ""}canvas.json`, { range: { offset: 0, length: 2 * 1024 * 1024 } });
+    const boards = cj ? (JSON.parse(await cj.text()) as { boards?: Record<string, { title?: string } | null> }).boards : undefined;
+    const t = boards?.[board]?.title; if (t) title = String(t);
+    names = boardNames(boards);
+  } catch {}
+  const h = raw.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  const one = (t: string, n: number) => t.replace(CTRL, " ").split(/\s+/).filter(Boolean).join(" ").slice(0, n);
+  return [one(title, 120), one(h, 1800), names];
+}
+function boardNames(boards: unknown): string {
+  if (!boards || typeof boards !== "object") return "";
+  return Object.entries(boards as Record<string, unknown>).filter(([, v]) => v === null || (typeof v === "object" && !Array.isArray(v)))
+    .map(([k, v]) => String((v as { title?: unknown } | null)?.title || k).replace(CTRL, " ").split(/\s+/).filter(Boolean).join(" ").slice(0, 60)).filter(Boolean).join(" / ").slice(0, 1500);
+}
 
 const text = (status: number, s: string, ct = "text/plain"): Out => ({ status, headers: { "content-type": ct, "cache-control": "no-store" }, body: te.encode(s) });
 const bytes = async (o: R2ObjectBody) => new Uint8Array(await o.arrayBuffer());

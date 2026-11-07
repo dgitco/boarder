@@ -159,10 +159,49 @@ test("비밀 꼴은 맡은 이 · 누가 · 원 글에서도 가림(리뷰 921)"
   assert.ok(t.agent.startsWith("일꾼"));
 });
 
+test("넘김 번호: 첫머리 #N 만 · 켠 주인만 거절 · 표를 못 읽으면 안 막음 · 기록은 실패해도 넘김 그대로", async () => {
+  const { db, D1 } = d1();
+  assert.equal(T.headNo("#12 이어서"), 12); assert.equal(T.headNo("  #3 x"), 3); assert.equal(T.headNo("PR #918 봐 줘"), null); assert.equal(T.headNo("#0 x"), null);
+  await T.create(D1, A, { title: "열린 일" }, 1000);
+  await T.create(D1, A, { title: "끝난 일" }, 1001); await T.set(D1, A, 2, { status: "끝" }, 1002);
+  // 끈 주인: 번호가 없어도 · 끝난 번호여도 그대로(null)
+  for (const t of ["번호 없음", "#2 끝난 일", "#9 없는 일"]) assert.equal(await T.handoffNo(D1, A, t), null, t);
+  assert.equal(await T.handoffNo(D1, A, "#1 열린 일"), 1);
+  await T.setStrict(D1, A, true, 2000); assert.equal(await T.strictOn(D1, A), true); assert.equal(await T.strictOn(D1, B), false, "주인마다");
+  await rej(T.handoffNo(D1, A, "PR #918 봐 줘"), /할 일 번호가 없어요/);
+  await rej(T.handoffNo(D1, A, "#2 끝난 일"), /#2 이 없거나 끝났어요/);
+  await rej(T.handoffNo(D1, A, "#9 없는 일"), /#9 이 없거나 끝났어요/);
+  assert.equal(await T.handoffNo(D1, A, "#1 열린 일"), 1);
+  assert.equal(await T.handoffNo(D1, B, "번호 없음"), null);
+  db.prepare("UPDATE node_setting SET data = json_set(data, '$.keep', 'x') WHERE owner = ?").run(A);
+  await T.setStrict(D1, A, false, 2100); assert.equal(await T.strictOn(D1, A), false);
+  assert.equal((db.prepare("SELECT json_extract(data, '$.keep') k FROM node_setting WHERE owner = ?").get(A) as any).k, "x", "다른 설정은 그대로");
+  await T.setStrict(D1, A, true, 2200);
+  db.exec("DROP TABLE task_log"); db.exec("ALTER TABLE task RENAME TO task_old");
+  assert.equal(await T.handoffNo(D1, A, "#1 표를 못 읽음"), null, "표를 못 읽으면 막지 않음");
+  assert.equal(await T.handoffNo(D1, A, "번호 없음"), null, "번호가 없어도 표를 못 읽으면 막지 않음(리뷰 987)");
+  db.exec("ALTER TABLE task_old RENAME TO task");
+  await T.handoffRecord(D1, A, 1, { agent: "일꾼", who: "리드", chan: "x_abc", thread: "t_abc" });   // task_log 가 없어 실패해도 던지지 않음
+  await T.handoffRecord(D1, A, null, { agent: "일꾼", who: "리드" });
+});
+
+test("넘긴 뒤 기록: 맡은 이 · 에이전트 채널 스레드(같은 값은 한 번) · 잘못된 꼴은 거절", async () => {
+  const { D1 } = d1();
+  await T.create(D1, A, { title: "일", agent: "리드" }, 1000);
+  await T.handoffRecord(D1, A, 1, { agent: "일꾼", who: "리드", chan: "x_abc", thread: "t_abc" }, 2000);
+  await T.handoffRecord(D1, A, 1, { agent: "일꾼", who: "리드", chan: "x_abc", thread: "t_abc" }, 2100);
+  const g = await T.get(D1, A, 1);
+  assert.equal(g.task.agent, "일꾼"); assert.deepEqual(g.task.refs, [{ chan: "x_abc", thread: "t_abc" }]);
+  await rej(T.set(D1, A, 1, { ref: { thread: "x y" } }), /스레드 꼴/);
+});
+
 test("op: 모르는 칸 · 모르는 op · 상태 코드", async () => {
   const { D1 } = d1();
   assert.equal((await T.op(D1, A, { op: "new", title: "일", stat: "x" }))[0], 400);
   assert.equal((await T.op(D1, A, { op: "zap" }))[0], 400);
+  assert.deepEqual(await T.op(D1, A, { op: "strict" }), [200, { ok: true, strict: false }]);
+  assert.deepEqual(await T.op(D1, A, { op: "strict", on: true }), [200, { ok: true, strict: true }]);
+  assert.equal((await T.op(D1, A, { op: "strict", on: "yes" }))[0], 400);
   assert.equal((await T.op(D1, A, null))[0], 400);
   const [s, o] = await T.op(D1, A, { op: "new", title: "일" }); assert.equal(s, 200); assert.equal((o.task as any).no, 1);
   assert.equal((await T.op(D1, A, { op: "set", no: 9, status: "끝" }))[0], 404);
@@ -211,7 +250,7 @@ test("API 기기: 주인 하네스 · full 은 됨, 감시 기기 · 토큰 없�
   assert.equal((await s.call("POST", "/api/device/task", { op: "list" }, dev(DEVW))).status, 401, "감시 기기는 못 씀");
   const a = await s.call("POST", "/api/device/task", { op: "new", title: "할 일 정본", agent: "팀 리드" }, dev(DEVH));
   assert.equal(a.status, 200, a.text); assert.equal(a.j.task.no, 1);
-  assert.ok(s.bumps.some(([n, t]) => n === "owner@apac" && /^~\d+$/.test(t.task) && !t.data), "주인 화면 칸에 task 만: " + JSON.stringify(s.bumps));
+  assert.ok(s.bumps.some(([n, t]) => n === `live:${OWNER}@apac` && /^~\d+$/.test(t.task) && !t.data), "주인 화면 칸에 task 만: " + JSON.stringify(s.bumps));
   s.bumps.length = 0;
   const l = await s.call("POST", "/api/device/task", { op: "list" }, dev(DEVH));
   assert.equal(l.j.tasks.length, 1); assert.equal(s.bumps.length, 0, "읽기는 알림 없음");

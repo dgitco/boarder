@@ -87,7 +87,15 @@ test("주인 스레드: D1 답에 뿌리 · 답 글이 다 있음", async () => 
   assert.deepEqual(j.messages.map(x => x.text), ["뿌리 글", "답 글"]);
   assert.deepEqual(t.calls, []);
 });
-for (const [p, from] of [["/api/data", "snap-data"], ["/api/topics", "snap-topics"]]) {
+test("주인 /api/data: 방금 썼어도(bx_w) 회원 길(canon D1 판) · 다리 0", async () => {
+  const t = setup();
+  const r = await t.get("/api/data", "; bx_w=1");
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(r.headers.get("x-boarder-src"), "member");
+  assert.notEqual((await r.json() as { from?: string }).from, "snap-data", "옛 스냅숏 data 가 아님");
+  assert.deepEqual(t.calls, []);
+});
+for (const [p, from] of [["/api/topics", "snap-topics"]]) {
   test(`주인 ${p}: 스냅숏이 10분 낡고 방금 썼어도(bx_w) 다리 0 · x-snap-age`, async () => {
     const t = setup();
     const r = await t.get(p, "; bx_w=1");
@@ -97,15 +105,6 @@ for (const [p, from] of [["/api/data", "snap-data"], ["/api/topics", "snap-topic
     assert.deepEqual(t.calls, []);
   });
 }
-test("주인 첫 화면(/): 틀 · data 가 10분 낡아도 다리 0 · x-snap-age", async () => {
-  const t = setup();
-  const r = await t.get("/");
-  assert.equal(r.status, 200);
-  const html = await r.text();
-  assert.match(html, /snap-data/);
-  assert.ok(Number(r.headers.get("x-snap-age")) >= 600_000);
-  assert.deepEqual(t.calls, []);
-});
 for (const p of ["/chat/api/live", "/canvas/api/live", "/chat/primary/api/live", "/nodes/api/live"]) {
   test(`옛 탭의 상대 라이브 주소 ${p}: /api/live 와 같은 답 · 다리 0`, async () => {
     const t = setup();
@@ -115,25 +114,11 @@ for (const p of ["/chat/api/live", "/canvas/api/live", "/chat/primary/api/live",
     assert.deepEqual(t.calls, []);
   });
 }
-// 남은 다리 길(까닭이 있는 것)
-test("남김: cfg 스냅숏이 아예 없으면 채널은 다리로(채널 표를 모름)", async () => {
+test("cfg 스냅숏이 아예 없으면 채널은 503 다시 읽기(채널 표를 모름 — 다리로 안 감)", async () => {
   const t = setup({ noCfg: true });
-  await t.get("/api/chat/primary");
-  assert.deepEqual(t.calls, ["/api/chat/primary"]);
-});
-test("남김: 세션 목록은 방금 쓴 사람(bx_w)만 다리로 — 낡은 스냅숏은 다리 0", async () => {
-  const t = setup();
-  const r = await t.get("/api/chats");
-  assert.equal((await r.json() as { chats: { sid: string }[] }).chats[0].sid, "snap");
+  const r = await t.get("/api/chat/primary");
+  assert.equal(r.status, 503); assert.equal(r.headers.get("x-retry-safe"), "1");
   assert.deepEqual(t.calls, []);
-  await t.get("/api/chats", "; bx_w=1");
-  assert.deepEqual(t.calls, ["/api/chats"]);
-});
-
-test("남김: 장부 사본 올리기가 1분 넘게 멈추면 채널은 다리로(사본에만 든 새 글이 D1 에 안 보이니 — 고장 때만)", async () => {
-  const t = setup({ syncAge: 120_000 });
-  await t.get("/api/chat/primary");
-  assert.deepEqual(t.calls, ["/api/chat/primary"]);
 });
 for (const p of ["/api/history", "/api/push/key", "/api/drafts"]) {
   test(`주인 ${p}: 스냅숏이 10분 낡아도 다리 0`, async () => {

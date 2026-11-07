@@ -1,7 +1,3 @@
-// node --test --no-warnings --experimental-transform-types apps/web/worker/owner-unified.test.ts
-// 주인 · 회원 한 길 ④-가 화면 전환(스위치 owner_unified — 계정별, design-owner-unify.md PR6).
-//   끔 = 지금 그대로(주인 다리 · 스냅숏 길), 켬 = 주인 화면 요청이 다리 호출 0 으로 회원 길(D1, 열쇠 canon), 회원 회귀 없음, 역할(초대 등) 기능 유지.
-// 진짜 index.ts(app.fetch) + 메모리 SQLite. 메일 · 토큰 · 열쇠는 다 지어낸 것.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -75,8 +71,7 @@ const PAGE = JSON.stringify({ ver: "v1", html: '<!doctype html><html><head></hea
 async function setup() {
   const { db, D1 } = d1(), T = Date.now();
   _resetVaultCache(); W.setCanonOn(false);
-  await ledger.setFlag(D1, "owner_unified", false);   // 스위치 캐시(isolate 10초)를 이 DB 로 비움
-  await ledger.setFlag(D1, "owner_unified_prep", true);
+  await ledger.setFlag(D1, "owner_unified_prep", true);   // 운영과 같게(설정 줄 열쇠 canon — 스위치 캐시(isolate 10초)도 이 DB 로 비움)
   await ledger.f7On(D1, "__reset__");
   db.prepare("INSERT INTO invite(email, by_email, at) VALUES (?,?,?)").run(MEMBER, OWNER, T);
   const dev = db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope) VALUES (?,?,?,?,?,?,?,?)");
@@ -128,35 +123,16 @@ async function setup() {
   return { db, D1, env, ctx, r2, req, adm, flag, human, bridge, agents, cells, bumps, marks, reset, ownerWrites };
 }
 
-test("스위치 이름: owner_unified · owner_unified:<주인 메일>(대문자도 소문자로) 받음, 회원 메일 · 꼴이 틀린 이름은 400", async () => {
+test("스위치 이름: owner_unified · owner_unified:<주인 메일> 은 이제 없는 이름(400) — 주인은 늘 회원 길", async () => {
   const t = await setup();
-  await t.flag("owner_unified", true); await t.flag("owner_unified", false);
-  assert.equal((await t.req("POST", "/api/admin/f7-flag", { name: "owner_unified:Owner-Alt@Example.test", on: true }, t.adm)).status, 200);
-  assert.ok(t.db.prepare("SELECT 1 FROM f7_flag WHERE name = ? AND on_at IS NOT NULL").get("owner_unified:" + OWNER2));
-  assert.equal((await t.req("POST", "/api/admin/f7-flag", { name: "owner_unified:" + MEMBER, on: true }, t.adm)).status, 400, "회원 메일은 안 받음");
-  assert.equal((await t.req("POST", "/api/admin/f7-flag", { name: "owner_unifiedx", on: true }, t.adm)).status, 400);
+  for (const name of ["owner_unified", "owner_unified:" + OWNER2, "owner_unified:" + MEMBER, "owner_unifiedx"])
+    assert.equal((await t.req("POST", "/api/admin/f7-flag", { name, on: true }, t.adm)).status, 400, name);
+  await t.flag("owner_unified_prep", true);   // 남은 스위치는 그대로 받음
 });
 
-test("끔: 주인 / · /api/data · /api/chat/primary · POST /api/chat 은 지금 그대로 주인 길(스냅숏 · 다리)", async () => {
+test("늘: 주인 화면 요청이 다리 호출 0 으로 회원 길 — 열쇠는 canon", async () => {
   const t = await setup(), h = await t.human(OWNER);
-  const pg = await t.req("GET", "/", undefined, h);
-  assert.notEqual(pg.h.get("x-boarder-src"), "member", "끔인데 회원 화면");
-  const d = await t.req("GET", "/api/data", undefined, h);
-  assert.equal(d.j?.from, "snap-data", "끔인데 스냅숏 아님");
-  t.reset();
-  await t.req("GET", "/api/chat/primary", undefined, h);
-  assert.deepEqual(t.bridge, ["/api/chat/primary"], "끔이면 채팅 읽기는 다리(read_chat 꺼짐)");
-  t.reset();
-  await t.req("POST", "/api/chat", { text: "안녕", channel: "primary" }, h);
-  assert.deepEqual(t.bridge, ["/api/chat"], "끔이면 쓰기는 다리");
-  assert.equal(t.db.prepare("SELECT count(*) n FROM board_log").get()!.n, 0, "끔이면 D1 보드 줄 없음");
-  assert.equal((await t.req("GET", "/api/me/onboarding", undefined, h)).status, 403, "끔이면 주인은 회원 온보딩 밖(예전)");
-  assert.equal((await t.req("POST", "/api/me/chat", { text: "x" }, h)).status, 403, "끔이면 memberOnly 가 주인 거절(예전)");
-});
-
-test("켬(owner_unified): 주인 화면 요청이 다리 호출 0 으로 회원 길 — 열쇠는 canon", async () => {
-  const t = await setup(), h = await t.human(OWNER);
-  await t.ownerWrites(); await t.flag("owner_unified", true); t.reset();
+  await t.ownerWrites(); t.reset();
   const pg = await t.req("GET", "/", undefined, h);
   assert.equal(pg.status, 200, pg.text); assert.equal(pg.h.get("x-boarder-src"), "member");
   const d = await t.req("GET", "/api/data", undefined, h);
@@ -171,32 +147,29 @@ test("켬(owner_unified): 주인 화면 요청이 다리 호출 0 으로 회원 
     const r = await t.req("GET", p, undefined, h); assert.equal(r.status, 200, `${p} ${r.text}`);
   }
   assert.equal((await t.req("GET", "/api/me/bot", undefined, h)).j?.bot?.name, "총괄", "메인 봇 = canon 줄");
-  assert.deepEqual(t.bridge, [], "켬인데 다리 호출이 있음");
+  assert.deepEqual(t.bridge, [], "다리 호출이 있음");
 });
 
-test("켬: 주인 다른 로그인 메일(OWNER2)도 canon 열쇠 · 계정별 owner_unified:<메일> 은 그 메일만", async () => {
+test("늘: 주인 다른 로그인 메일(OWNER2)도 canon 열쇠", async () => {
   const t = await setup();
-  await t.ownerWrites(); await t.flag("owner_unified:" + OWNER2, true); t.reset();
+  await t.ownerWrites(); t.reset();
   const w = await t.req("POST", "/api/chat", { text: "둘째 메일 글", channel: "primary", rid: "rid-owner2-1" }, await t.human(OWNER2));
   assert.equal(w.status, 200, w.text);
   assert.ok(t.db.prepare("SELECT 1 FROM wl_talk_msg WHERE text = ?").get("둘째 메일 글"), "OWNER2 로 써도 주인 대화 표 하나");
   assert.equal((await t.req("GET", "/", undefined, await t.human(OWNER2))).h.get("x-boarder-src"), "member", "OWNER2 는 회원 길 화면");
   assert.deepEqual(t.bridge, []);
   const d = await t.req("GET", "/api/data", undefined, await t.human(OWNER));
-  assert.equal(d.j?.from, "snap-data", "켜지 않은 OWNER 메일은 그대로 주인 길");
+  assert.equal(d.h.get("x-boarder-src"), "member", "OWNER 도 같은 회원 길"); assert.notEqual(d.j?.from, "snap-data");
 });
 
-test("켬: 실시간 칸 · 화면 알림이 회원 쪽(live:<canon>) — 끄면 주인 칸 하나", async () => {
+test("늘: 실시간 칸 · 화면 알림이 회원 쪽(live:<canon>) 하나 — 스냅숏 칸(owner@apac)으로는 안 감", async () => {
   const t = await setup(), h = await t.human(OWNER);
   await ledger.setFlag(t.D1, "read_live", true);
   t.reset(); await ledger.f7On(t.D1, "__reset__");
   await live.bumpMember(t.env, OWNER);
-  assert.deepEqual(t.bumps, [live.OWNER_SNAP], "끄면 주인 알림은 스냅숏 칸 하나(예전)");
-  const off = await t.req("GET", "/api/live", undefined, h);
-  assert.equal(off.j?.t?.data, `d-${live.OWNER_SNAP}`, "끄면 주인 폴링 표 = 스냅숏 칸(예전)");
-  await t.flag("owner_unified", true); t.reset();
-  await live.bumpMember(t.env, OWNER);
-  assert.deepEqual(t.bumps.sort(), [live.OWNER_SNAP, `live:${OWNER}@apac`].sort(), "켜면 canon 회원 칸에도");
+  assert.deepEqual(t.bumps, [`live:${OWNER}@apac`], "주인 알림은 canon 회원 칸 하나");
+  t.reset(); await live.bumpMember(t.env, OWNER2);
+  assert.deepEqual(t.bumps, [`live:${OWNER}@apac`], "다른 주인 메일도 canon 칸");
   const on = await t.req("GET", "/api/live", undefined, h);
   assert.equal(on.j?.t?.data, `d-live:${OWNER}@apac`, on.text);
   t.reset();
@@ -204,56 +177,45 @@ test("켬: 실시간 칸 · 화면 알림이 회원 쪽(live:<canon>) — 끄면
   assert.ok(t.bumps.includes(`live:${OWNER}@apac`), "쓰기 뒤 canon 화면 칸 알림");
 });
 
-test("rid 칸: 주인은 켬 · 끔 모두 rid:owner — 끔에서 받은 rid 를 켬에서 다시 보내면 「이미 됨」(두 번 안 씀)", async () => {
+test("rid 칸: 주인은 rid:owner — 다리로 쓴 rid 를 다시 보내면 「이미 됨」(두 번 안 씀)", async () => {
   const t = await setup(), h = await t.human(OWNER);
   await ledger.setFlag(t.D1, "write_queue", true); await ledger.f7On(t.D1, "__reset__");
   const w1 = await t.req("POST", "/api/chat", { text: "한 번만", channel: "primary", rid: "rid-same-1" }, h);
-  assert.equal(w1.status, 200, w1.text); assert.deepEqual(t.bridge, ["/api/chat"], "끔 = 다리로 씀");
-  await t.flag("owner_unified", true); t.reset();
+  assert.equal(w1.status, 200, w1.text); assert.deepEqual(t.bridge, ["/api/chat"], "쓰기 스위치(write_chat_d1)가 꺼지면 다리로 씀");
+  t.reset();
   const w2 = await t.req("POST", "/api/chat", { text: "한 번만", channel: "primary", rid: "rid-same-1" }, h);
-  assert.equal(w2.h.get("x-rid"), "replay", "켬에서 같은 rid 가 새로 처리됨 — " + w2.text);
+  assert.equal(w2.h.get("x-rid"), "replay", "같은 rid 가 새로 처리됨 — " + w2.text);
   assert.deepEqual(t.bridge, []); assert.equal(t.db.prepare("SELECT count(*) n FROM board_log WHERE text = '한 번만'").get()!.n, 0, "D1 에 또 쓰지 않음");
   assert.ok(t.cells.includes("rid:owner@apac") && !t.cells.includes(`rid:${OWNER}@apac`), t.cells.join(","));
   const w3 = await t.req("POST", "/api/chat", { text: "켬 새 글", channel: "primary", rid: "rid-new-2" }, h);
   assert.equal(w3.status, 200, w3.text);
-  assert.ok(t.cells.includes("rid:owner@apac"), "켬에서 쓴 rid 도 rid:owner 칸");
+  assert.ok(t.cells.includes("rid:owner@apac"), "새 rid 도 rid:owner 칸");
   t.reset();
   const a = await t.req("GET", "/api/answer/rid-new-2", undefined, h);
   assert.deepEqual(t.bridge, ["/api/answer/rid-new-2"], a.text);
 });
 
-test("켬: 주인 full 기기 창 토큰 · 음성이 열림(canon 보드) — 끄면 예전처럼 거절", async () => {
+test("늘: 주인 full 기기 창 토큰 · 음성이 열림(canon 보드)", async () => {
   const t = await setup(), dv = { authorization: `Bearer ${OFULL}` };
-  assert.equal((await t.req("POST", "/api/device/window", { key: "tmux:work:1", name: "창" }, dv)).status, 401);
-  assert.equal((await t.req("POST", "/api/device/voice", { op: "x" }, dv)).status, 401);
-  await t.flag("owner_unified", true);
   const r = await t.req("POST", "/api/device/window", { key: "tmux:work:1", name: "창" }, dv);
   assert.equal(r.status, 200, r.text);
   assert.equal((t.db.prepare("SELECT owner FROM agent_token WHERE device_id = 'devOF'").get() as { owner: string }).owner, OWNER, "창 토큰 owner = canon");
   assert.notEqual((await t.req("POST", "/api/device/voice", { op: "x" }, dv)).status, 401);
   const tok = r.j.token as string, at = { authorization: `Bearer ${tok}` };
-  assert.notEqual((await t.req("POST", "/api/agent/__none__", {}, at)).status, 401, "켬이면 그 창 토큰이 삶");
-  await t.flag("owner_unified", false);
-  assert.equal((await t.req("POST", "/api/agent/__none__", {}, at)).status, 401, "끄면 켠 동안 만든 주인 기기 창 토큰은 죽음");
-  await t.flag("owner_unified:" + OWNER, true);
-  assert.equal((await t.req("POST", "/api/device/window", { key: "tmux:work:2", name: "창" }, dv)).status, 401, "메일별 스위치는 화면만 — 주인 기기 창 토큰 안 만듦");
-  assert.equal((await t.req("POST", "/api/agent/__none__", {}, at)).status, 401);
+  assert.notEqual((await t.req("POST", "/api/agent/__none__", {}, at)).status, 401, "그 창 토큰이 삶");
   assert.equal((await t.req("POST", "/api/device/window", { key: "tmux:m:1", name: "m" }, { authorization: `Bearer ${MDEV}` })).status, 200, "회원 기기 그대로");
 });
 
-test("전체 켬이어도 owner-host 주인 창 토큰(owner 빈 값)의 도구는 주인 장부로 — 회원 보드(board_log canon) 0줄", async () => {
+test("owner-host 주인 창 토큰(owner 빈 값)의 도구는 주인 장부로 — 회원 보드(board_log canon) 0줄", async () => {
   const t = await setup(), ag = { authorization: `Bearer ${ATOK}` }, dv = { authorization: `Bearer ${OFULL}` };
   const tools = () => t.bridge.filter(x => x !== "tool:flag");
-  for (const f of ["", "owner_unified:" + OWNER, "owner_unified"]) {
-    if (f) await t.flag(f, true);
-    t.reset();
-    for (const [name, args] of [["inbox_status", { text: "상태 " + f }], ["inbox_log", { kind: "progress", text: "진행 " + f }], ["inbox_ask", { question: "물음 " + f, choices: ["가", "나"] }]] as const) {
-      const r = await t.req("POST", "/api/agent/" + name, args, ag);
-      assert.equal(r.status, 200, name + " " + r.text);
-    }
-    assert.deepEqual(tools(), ["tool:inbox_status", "tool:inbox_log", "tool:inbox_ask"], "주인 장부 도구 " + f);
-    assert.ok(t.agents.slice(-3).every(x => /:%77$/.test(x)), "릴레이가 받는 에이전트에 owner-host 판(%N) — inbox_log · ask 가 그 창 몫: " + t.agents.slice(-3).join(","));
+  t.reset();
+  for (const [name, args] of [["inbox_status", { text: "상태" }], ["inbox_log", { kind: "progress", text: "진행" }], ["inbox_ask", { question: "물음", choices: ["가", "나"] }]] as const) {
+    const r = await t.req("POST", "/api/agent/" + name, args, ag);
+    assert.equal(r.status, 200, name + " " + r.text);
   }
+  assert.deepEqual(tools(), ["tool:inbox_status", "tool:inbox_log", "tool:inbox_ask"], "주인 장부 도구");
+  assert.ok(t.agents.slice(-3).every(x => /:%77$/.test(x)), "릴레이가 받는 에이전트에 owner-host 판(%N) — inbox_log · ask 가 그 창 몫: " + t.agents.slice(-3).join(","));
   assert.equal((t.db.prepare("SELECT count(*) n FROM board_log WHERE owner = ?").get(OWNER) as { n: number }).n, 0, "회원 보드 줄 0");
   assert.equal((t.db.prepare("SELECT count(*) n FROM board_card WHERE owner = ?").get(OWNER) as { n: number }).n, 0, "회원 카드 0");
   const w = await t.req("POST", "/api/device/window", { key: "tmux:work:1", name: "창" }, dv);
@@ -268,62 +230,50 @@ test("전체 켬이어도 owner-host 주인 창 토큰(owner 빈 값)의 도구�
   assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(MEMBER, "회원 상태"));
 });
 
-test("회원 회귀 없음 · 역할 기능은 그대로 주인에게(켬이어도)", async () => {
+test("회원 회귀 없음 · 역할 기능은 그대로 주인에게", async () => {
   const t = await setup(), hm = await t.human(MEMBER), ho = await t.human(OWNER);
-  for (const on of [false, true]) {
-    await t.flag("owner_unified", on); t.reset();
-    const w = await t.req("POST", "/api/chat", { text: "회원 글 " + on, channel: "primary" }, hm);
-    assert.equal(w.status, 200, w.text);
-    assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(MEMBER, "회원 글 " + on));
-    const d = await t.req("GET", "/api/data", undefined, hm); assert.equal(d.h.get("x-boarder-src"), "member");
-    assert.deepEqual(t.bridge, []);
-    t.reset(); await live.bumpMember(t.env, MEMBER); assert.deepEqual(t.bumps, [`live:${MEMBER}@apac`], "회원 알림은 제 칸 하나");
-    assert.equal((await t.req("GET", "/api/me/invites", undefined, ho)).status, 200, "초대 목록은 주인(역할)");
-    assert.equal((await t.req("GET", "/api/me/invites", undefined, hm)).status, 403);
-  }
+  t.reset();
+  const w = await t.req("POST", "/api/chat", { text: "회원 글", channel: "primary" }, hm);
+  assert.equal(w.status, 200, w.text);
+  assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(MEMBER, "회원 글"));
+  const d = await t.req("GET", "/api/data", undefined, hm); assert.equal(d.h.get("x-boarder-src"), "member");
+  assert.deepEqual(t.bridge, []);
+  t.reset(); await live.bumpMember(t.env, MEMBER); assert.deepEqual(t.bumps, [`live:${MEMBER}@apac`], "회원 알림은 제 칸 하나");
+  assert.equal((await t.req("GET", "/api/me/invites", undefined, ho)).status, 200, "초대 목록은 주인(역할)");
+  assert.equal((await t.req("GET", "/api/me/invites", undefined, hm)).status, 403);
 });
 
-test("켬: canon 회원 보드 load 가 주인 하네스 판을 읽음 — 끄면 안 읽음(회원 load 조회 그대로)", async () => {
+test("늘: canon 회원 보드 load 가 주인 하네스 판을 읽음 — 회원 load 조회는 그대로", async () => {
   const t = await setup(), h = await t.human(OWNER), T = Date.now();
   t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devH", OWNER, "owner-host harness", "", "h1", T, T, "harness", T);
   await new (Engine as any)({ setWebSocketAutoResponse() {} }, { DB: t.D1 }).hsync([{ id: "ew_pane40", state: "busy", name: "지어낸 일", meta: { pane: "%40", win: "5 지어낸 일", role: "리드", cwd: "~/src/x" } }], true, "devH", OWNER, T);
   MB.setHarnessKey("");
-  assert.equal((await MB.load(t.D1, OWNER)).harness.length, 0, "끄면(설정값 빈 것) 하네스 판을 안 읽음");
-  await t.flag("owner_unified", true);
+  assert.equal((await MB.load(t.D1, OWNER)).harness.length, 0, "설정값이 빈 것이면 하네스 판을 안 읽음(아래 미들웨어가 늘 canon 으로 맞춤)");
+  await t.req("GET", "/api/data", undefined, await t.human(MEMBER));   // 어느 요청이든 미들웨어가 canon 으로
+  MB.loadForget(OWNER);
+  assert.equal((await MB.load(t.D1, OWNER)).harness.length, 1, "회원 요청 뒤에도 canon 은 하네스 판을 읽음");
   const d = await t.req("GET", "/api/data", undefined, h);
   assert.equal(d.status, 200, d.text);
-  assert.ok((d.j.panes as any[]).some(p => p.harness && p.pane === "%40"), "켬이면 주인 하네스 판이 canon 보드에 — " + d.text.slice(0, 200));
+  assert.ok((d.j.panes as any[]).some(p => p.harness && p.pane === "%40"), "주인 하네스 판이 canon 보드에 — " + d.text.slice(0, 200));
   assert.equal((await MB.load(t.D1, MEMBER)).harness.length, 0, "회원 load 는 하네스 판 조회 없음");
-  await t.flag("owner_unified", false);
-  await t.req("GET", "/api/data", undefined, await t.human(MEMBER));   // 미들웨어가 설정값을 다시 맞춤(꺼짐 → "")
-  assert.equal((await MB.load(t.D1, OWNER)).harness.length, 0);
 });
 
-test("owner_unified 는 owner_unified_prep 이 켜져 있어야 켜짐(409) — 끄기는 늘 됨", async () => {
-  const t = await setup();
-  await ledger.setFlag(t.D1, "owner_unified_prep", false);
-  for (const n of ["owner_unified", "owner_unified:" + OWNER2]) assert.equal((await t.req("POST", "/api/admin/f7-flag", { name: n, on: true }, t.adm)).status, 409, n);
-  assert.equal((await t.req("POST", "/api/admin/f7-flag", { name: "owner_unified", on: false }, t.adm)).status, 200);
-});
-
-test("켬: nodereopen · 할 일은 canon 회원 길(다리 0), 주인 메일 넷이 올린 파일이 열림", async () => {
+test("늘: nodereopen · 할 일은 canon 회원 길(다리 0), 주인 메일 넷이 올린 파일이 열림", async () => {
   const t = await setup(), h = await t.human(OWNER);
   t.r2.set("mfiles/0123456789abcdef0123456789abcdef", { body: "글", customMetadata: { owner: OWNER2, name: "a.txt" }, writeHttpMetadata: (x: Headers) => x.set("content-type", "text/plain") });
-  assert.equal((await t.req("GET", "/api/file/0123456789abcdef0123456789abcdef", undefined, h)).status, 404, "끔 = 지금 그대로(주인 길은 그 로그인 메일이 올린 것만)");
-  await t.flag("owner_unified", true); t.reset();
+  t.reset();
   const nr = await t.req("POST", "/api/me/nodereopen", { name: "보관 노드" }, h);
   assert.equal(nr.status, 404, nr.text);
   const td = await t.req("GET", "/api/todos", undefined, h);
   assert.ok(td.status < 500, td.text);
   const f = await t.req("GET", "/api/file/0123456789abcdef0123456789abcdef", undefined, h);
-  assert.equal(f.status, 200, "켬이면 OWNER2 가 올린 파일도 canon 회원 길에서 — " + f.text);
+  assert.equal(f.status, 200, "OWNER2 가 올린 파일도 canon 회원 길에서 — " + f.text);
   assert.equal((await t.req("GET", "/api/file/0123456789abcdef0123456789abcdef", undefined, await t.human(MEMBER))).status, 404, "회원은 남의 파일 못 봄");
   assert.deepEqual(t.bridge, []);
 });
 
-test("켬: 하네스 MCP 읽기(조용한 POST)는 canon 의 나눠 쓰는 load 를 안 버림 — 쓰기는 버림", async () => {
+test("늘: 하네스 MCP 읽기(조용한 POST)는 canon 의 나눠 쓰는 load 를 안 버림 — 쓰기는 버림", async () => {
   const t = await setup(), ag = { authorization: `Bearer ${ATOK}` };
-  await t.flag("owner_unified", true);
   MB.loadRead(t.D1, OWNER, t.ctx); const p1 = MB.readShareOf(OWNER);   // 나눠 쓰는 판(맡김 칸) — loadRead 는 기다림 상한으로 감싸 매번 새 Promise
   assert.ok(p1, "나눠 쓰는 판이 맡겨짐");
   await t.req("POST", "/api/agent/promise_list", {}, ag);
@@ -346,15 +296,14 @@ function seedTalk(db: DatabaseSync) {
 }
 const CHAT_GETS = ["/api/chat/primary", `/api/chat/primary/${ROOT}`, `/api/chat/primary?before=${ROOT}`, "/api/chat/harness_lead", "/api/inbox", "/api/nodechat?w=" + encodeURIComponent("지어낸 노드"), "/api/emoji/frequent"];
 
-test("켬: 주인 채널 · 스레드 · 노드 채팅 · 모아 보기 · 자주 쓰는 반응이 주인 길 D1 답(owner-read)과 같은 몸통 · 다리 0", async () => {
+test("늘: 주인 채널 · 스레드 · 노드 채팅 · 모아 보기 · 자주 쓰는 반응이 주인 길 D1 답(owner-read)과 같은 몸통 · 다리 0", async () => {
   const t = await setup(), h = await t.human(OWNER);
   seedTalk(t.db);
-  for (const f of ["read_chat", "read_cards"]) await ledger.setFlag(t.D1, f, true);   // 끔 쪽 기준 답 = 주인 길 D1(owner-read)
+  for (const f of ["read_chat", "read_cards"]) await ledger.setFlag(t.D1, f, true);   // 기준 답(read_* 켬)
   await ledger.f7On(t.D1, "__reset__");
   const want: Record<string, string> = {};
   for (const p of CHAT_GETS) { t.reset(); const r = await t.req("GET", p, undefined, h); assert.equal(r.status, 200, `${p} ${r.text}`); assert.deepEqual(t.bridge, [], p); want[p] = r.text; }
-  for (const f of ["read_chat", "read_cards"]) await ledger.setFlag(t.D1, f, false);   // 켬은 read_* 스위치와 상관없이 D1
-  await t.flag("owner_unified", true);
+  for (const f of ["read_chat", "read_cards"]) await ledger.setFlag(t.D1, f, false);   // 주인은 read_* 스위치와 상관없이 D1
   for (const p of CHAT_GETS) {
     t.reset();
     const r = await t.req("GET", p, undefined, h);
@@ -376,10 +325,9 @@ test("켬: 주인 채널 · 스레드 · 노드 채팅 · 모아 보기 · 자�
   assert.deepEqual(t.bridge, []);
 });
 
-test("켬: cfg 스냅숏이 아직 없으면 채널 읽기는 503 다시 읽기(다리로 안 감 · 회원 빈 답도 아님)", async () => {
+test("늘: cfg 스냅숏이 아직 없으면 채널 읽기는 503 다시 읽기(다리로 안 감 · 회원 빈 답도 아님)", async () => {
   const t = await setup(), h = await t.human(OWNER);
   seedTalk(t.db);
-  await t.flag("owner_unified", true);
   const env0 = t.env.SNAP;
   t.env.SNAP = { ...env0, get: (n: string) => { const o = env0.get(n); return { ...o, get: async (k: string) => k === "cfg" ? null : o.get(k) }; } };
   t.reset();
@@ -389,9 +337,8 @@ test("켬: cfg 스냅숏이 아직 없으면 채널 읽기는 503 다시 읽기(
   t.env.SNAP = env0;
 });
 
-test("켬: 첫 화면 채널 목록(HB_CH) = 주인 채널 표(기본 다섯 + 에이전트 채널) — 회원은 Primary 하나 그대로", async () => {
+test("늘: 첫 화면 채널 목록(HB_CH) = 주인 채널 표(기본 다섯 + 에이전트 채널) — 회원은 Primary 하나 그대로", async () => {
   const t = await setup();
-  await t.flag("owner_unified", true);
   const pg = await t.req("GET", "/", undefined, await t.human(OWNER));
   assert.equal(pg.h.get("x-boarder-src"), "member");
   assert.match(pg.text, /window\.HB_CH = \["primary","company","personal","dgit","shop","harness_lead"\];/);
@@ -399,9 +346,9 @@ test("켬: 첫 화면 채널 목록(HB_CH) = 주인 채널 표(기본 다섯 + �
   assert.match(pm.text, /window\.HB_CH = \["primary"\];/);
 });
 
-test("켬: 주인 반응 · 읽음 · 저장 · 결정 답 · 할 일 · 초안 쓰기는 주인 길(할 일 줄 · D1 owner_state) — 회원 표엔 안 씀 · 다리 0, rid 답은 그 줄", async () => {
+test("늘: 주인 반응 · 읽음 · 저장 · 결정 답 · 할 일 · 초안 쓰기는 주인 길(할 일 줄 · D1 owner_state) — 회원 표엔 안 씀 · 다리 0, rid 답은 그 줄", async () => {
   const t = await setup(), h = await t.human(OWNER);
-  seedTalk(t.db); await t.ownerWrites(); await t.flag("owner_unified", true); t.reset();
+  seedTalk(t.db); await t.ownerWrites(); t.reset();
   const posts: [string, Record<string, unknown>][] = [
     ["/api/chat", { rid: "rid-react-1", channel: "primary", ts: ROOT, react: "+1" }],
     ["/api/chat", { rid: "rid-seen-1", channel: "primary", seen: ROOT }],
@@ -429,23 +376,20 @@ test("켬: 주인 반응 · 읽음 · 저장 · 결정 답 · 할 일 · 초안 
   assert.deepEqual(t.bridge, []);
 });
 
-test("회원 회귀 없음: 켬이어도 회원 채널 · 모아 보기는 회원 길(주인 대화 표 안 읽음)", async () => {
+test("회원 회귀 없음: 회원 채널 · 모아 보기는 회원 길(주인 대화 표 안 읽음)", async () => {
   const t = await setup(), hm = await t.human(MEMBER);
-  seedTalk(t.db);
-  for (const on of [false, true]) {
-    await t.flag("owner_unified", on); t.reset();
-    const ch = await t.req("GET", "/api/chat/primary", undefined, hm);
-    assert.equal(ch.status, 200, ch.text); assert.ok(!ch.text.includes("주인 뿌리 글"), "회원이 주인 글을 봄");
-    assert.notEqual(ch.h.get("x-f7"), "d1");
-    const ib = await t.req("GET", "/api/inbox", undefined, hm);
-    assert.equal(ib.status, 200, ib.text); assert.ok(!ib.text.includes(REPLY), "회원 모아 보기에 주인 저장 글");
-    assert.deepEqual(t.bridge, []);
-  }
+  seedTalk(t.db); t.reset();
+  const ch = await t.req("GET", "/api/chat/primary", undefined, hm);
+  assert.equal(ch.status, 200, ch.text); assert.ok(!ch.text.includes("주인 뿌리 글"), "회원이 주인 글을 봄");
+  assert.notEqual(ch.h.get("x-f7"), "d1");
+  const ib = await t.req("GET", "/api/inbox", undefined, hm);
+  assert.equal(ib.status, 200, ib.text); assert.ok(!ib.text.includes(REPLY), "회원 모아 보기에 주인 저장 글");
+  assert.deepEqual(t.bridge, []);
 });
 
-test("켬: 할 일 없애기 — 화면이 회원 꼴(/api/todo {id, drop})로 보내도 주인 꼴(/api/cardcheck {rid, ts}) 할 일 줄로 · 끔 · 회원은 그대로", async () => {
+test("늘: 할 일 없애기 — 화면이 회원 꼴(/api/todo {id, drop})로 보내도 주인 꼴(/api/cardcheck {rid, ts}) 할 일 줄로 · 회원은 그대로", async () => {
   const t = await setup(), h = await t.human(OWNER);
-  await t.ownerWrites(); await t.flag("owner_unified", true); t.reset();
+  await t.ownerWrites(); t.reset();
   const r = await t.req("POST", "/api/todo", { rid: "rid-drop-1", id: ROOT, drop: true }, h);
   assert.equal(r.status, 202, r.text); assert.equal(r.j?.state, "queued");
   const j = t.db.prepare("SELECT kind, body FROM owner_job WHERE rid = 'rid-drop-1'").get() as { kind: string; body: string };
@@ -456,14 +400,10 @@ test("켬: 할 일 없애기 — 화면이 회원 꼴(/api/todo {id, drop})로 �
   assert.deepEqual(t.bridge, []);
   const m = await t.req("POST", "/api/todo", { rid: "rid-mdrop-1", id: "1703300000.000999", drop: true }, await t.human(MEMBER));
   assert.ok(m.status < 500, m.text); assert.ok(!t.db.prepare("SELECT 1 FROM owner_job WHERE rid = 'rid-mdrop-1'").get(), "회원 것은 주인 할 일 줄이 아님");
-  await t.flag("owner_unified", false); t.reset();
-  await t.req("POST", "/api/todo", { rid: "rid-off-1", id: ROOT, drop: true }, h);
-  assert.equal((t.db.prepare("SELECT kind FROM owner_job WHERE rid = 'rid-off-1'").get() as { kind: string } | undefined)?.kind, "/api/todo", "끄면 바꾸지 않음(예전 주인 길)");
 });
 
-test("켬: 에이전트 채널 이름 표(HB_AGENTS) — 주인 cfg 채널 표의 에이전트 채널, 이름은 하네스가 올린 것(없으면 키) · 회원 · 끔은 없음", async () => {
+test("늘: 에이전트 채널 이름 표(HB_AGENTS) — 주인 cfg 채널 표의 에이전트 채널, 이름은 하네스가 올린 것(없으면 키) · 회원은 없음", async () => {
   const t = await setup();
-  await t.flag("owner_unified", true);
   const pg = await t.req("GET", "/", undefined, await t.human(OWNER));
   const m = /window\.HB_AGENTS = (\[[^\n]*?\]);/.exec(pg.text); assert.ok(m, pg.text.slice(0, 400));
   assert.deepEqual(JSON.parse(m![1]), [{ key: "harness_lead", name: "harness_lead", lead: null }]);
@@ -478,10 +418,10 @@ test("켬: 에이전트 채널 이름 표(HB_AGENTS) — 주인 cfg 채널 표�
   assert.deepEqual(run({}, { agents: ag }), ag, "끈 주인은 D.agents 그대로");
 });
 
-test("켬: rid 답(GET /api/answer/:rid)은 주인 길 — 다리로 간 글(비밀 꼴)은 다리 판정(_jobs)으로, 회원 rid 칸 ok 로 안 떨어짐 · 회원은 그대로", async () => {
+test("늘: rid 답(GET /api/answer/:rid)은 주인 길 — 다리로 간 글(비밀 꼴)은 다리 판정(_jobs)으로, 회원 rid 칸 ok 로 안 떨어짐 · 회원은 그대로", async () => {
   const t = await setup(), h = await t.human(OWNER);
   await t.ownerWrites(); await ledger.setFlag(t.D1, "write_queue", true); await ledger.f7On(t.D1, "__reset__");
-  await t.flag("owner_unified", true); t.reset();
+  t.reset();
   const w = await t.req("POST", "/api/chat", { rid: "rid-secret-1", channel: "primary", text: "토큰 ghp_madeupmadeupmadeupmadeupmadeup0000" }, h);   // 지어낸 비밀 꼴 — D1 · 할 일 줄에 원문을 안 남기고 다리로
   assert.equal(w.status, 200, w.text); assert.deepEqual(t.bridge, ["/api/chat"], "비밀 꼴 글은 다리로");
   assert.ok(!t.db.prepare("SELECT 1 FROM owner_job WHERE rid = 'rid-secret-1'").get());
@@ -500,14 +440,14 @@ test("켬: rid 답(GET /api/answer/:rid)은 주인 길 — 다리로 간 글(비
   assert.equal(ma.j?.state, "ok", "회원은 회원 rid 칸 — " + ma.text); assert.deepEqual(t.bridge, []);
 });
 
-test("켬: 회원 길로 쓴 세션 글(/api/chat/new)의 rid 답은 회원 판정(ok · 실패) — 다리에 안 물음, 할 일 줄 · 다리로 간 글은 그대로", async () => {
+test("늘: 회원 길로 쓴 세션 글(/api/chat/new)의 rid 답은 회원 판정(ok · 실패) — 다리에 안 물음, 할 일 줄 · 다리로 간 글은 그대로", async () => {
   const t = await setup(), h = await t.human(OWNER), T = Date.now();
   t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devE", OWNER, "engine mac", "", "e".repeat(64), T, T, "full", T);
   let n = 0;
   t.env.ENGINE = { idFromName: (s: string) => s, get: (id: string) => ({ revoke: async () => 0, deliver: async () => ({ sent: true }),
     open: async (w: any) => { const wid = `ew_own${String(++n).padStart(6, "0")}`; t.db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, state_at, created_at) VALUES (?,?,?,?,?,?,?,?)").run(wid, w.owner, id.replace(/^dev:/, ""), w.kind, w.name, "starting", Date.now(), Date.now()); return { id: wid }; } }) };
   await t.ownerWrites(); await ledger.setFlag(t.D1, "write_queue", true); await ledger.f7On(t.D1, "__reset__");
-  await t.flag("owner_unified", true); t.reset();
+  t.reset();
   const w = await t.req("POST", "/api/chat/new", { rid: "rid-sess-new1", text: "새 대화 첫 글" }, h);
   assert.equal(w.status, 200, w.text); assert.match(w.j?.sid || "", /^ew_own/);
   const a = await t.req("GET", "/api/answer/rid-sess-new1", undefined, h);
@@ -526,7 +466,7 @@ test("켬: 회원 길로 쓴 세션 글(/api/chat/new)의 rid 답은 회원 판�
 
 test("피드 묶음 길(POST /api/feed/threads): 켠 주인은 빈 답(스레드마다 GET 으로) · 회원은 묶음 · 같은 사이트가 아니면 403", async () => {
   const t = await setup(), h = await t.human(OWNER), m = await t.human(MEMBER);
-  await t.ownerWrites(); await t.flag("owner_unified", true); t.reset();
+  await t.ownerWrites(); t.reset();
   const ts = "1790000000.000001", key = W.canon({ ALLOW_EMAILS: OWNER } as never) || OWNER;
   for (const own of [key, OWNER]) t.db.prepare("INSERT OR IGNORE INTO board_card(id, owner, win, question, choices, recommend, body, state, at) VALUES (?,?,?,?,?,?,?,?,?)").run(ts, own, "lap:herdr:p2", "회원 표의 카드", "[]", "", "", "open", Date.now());   // 켠 주인 열쇠의 회원 표 줄 — 가드가 없으면 이것이 새어 나옴
   const body = { items: [{ k: "primary", ts }] };
@@ -539,9 +479,9 @@ test("피드 묶음 길(POST /api/feed/threads): 켠 주인은 빈 답(스레드
   assert.deepEqual(t.bridge, [], "다리 호출 없음");
 });
 
-test("켬: 주인 주제 · 지난 판은 주인 스냅숏(회원 표 아님) · 다리 0 — 회원은 그대로", async () => {
+test("늘: 주인 주제 · 지난 판은 주인 스냅숏(회원 표 아님) · 다리 0 — 회원은 그대로", async () => {
   const t = await setup(), h = await t.human(OWNER), hm = await t.human(MEMBER);
-  await t.flag("owner_unified:" + OWNER, true); t.reset();
+  t.reset();
   const tp = await t.req("GET", "/api/topics", undefined, h);
   assert.equal(tp.status, 200, tp.text); assert.deepEqual(tp.j, { from: "snap-topics" }, "주제 = 주인 스냅숏");
   assert.equal(tp.h.get("etag"), '"e-topics"');
@@ -553,12 +493,10 @@ test("켬: 주인 주제 · 지난 판은 주인 스냅숏(회원 표 아님) ·
   assert.equal(mt.h.get("x-boarder-src"), "member", "회원은 그대로 제 표"); assert.notDeepEqual(mt.j, { from: "snap-topics" });
 });
 
-test("켬: 릴레이가 주제 · 지난 판 · cfg 스냅숏을 바꿔 올리면 켠 주인 칸(live:<canon>)에도 그 표시 — data 는 안 보냄 · 끄면 주인 칸만 · 폴링 표는 칸 전부", async () => {
+test("늘: 릴레이가 주제 · 지난 판 · cfg 스냅숏을 바꿔 올리면 주인 칸(live:<canon>)에 그 표시 — data 는 안 보냄 · 폴링 표는 칸 전부", async () => {
   const t = await setup(), h = await t.human(OWNER), rl = { authorization: "Bearer relay-made-up" }, U = `live:${OWNER}@apac`;
   const put = async (k: string, b: unknown) => { const r = await t.req("PUT", "/api/relay/snap/" + k, b, rl); assert.equal(r.status, 200, k + " " + r.text); };
-  t.reset(); await put("topics", { topics: [1] });
-  assert.deepEqual(t.marks.filter(m => m[0] === U), [], "끄면 회원 칸에 안 감");
-  await t.flag("owner_unified:" + OWNER, true); t.reset();
+  t.reset();
   await put("topics", { topics: [1, 2] }); await put("history", { oldest: 1, rows: [] }); await put("cfg", { ...JSON.parse(CFG), drafts: { a: 1 } }); await put("data", { from: "snap-data-2" });
   const um = t.marks.filter(m => m[0] === U).map(m => Object.keys(m[1])[0]).sort();
   assert.deepEqual(um, ["drafts", "history", "topics"], "주제 · 지난 판 · 초안만 — data 는 안 보냄: " + JSON.stringify(t.marks));
@@ -569,7 +507,7 @@ test("켬: 릴레이가 주제 · 지난 판 · cfg 스냅숏을 바꿔 올리�
   assert.equal(lv.j?.t?.todo, "t-" + U, "폴링 표에 DO 칸 전부(할 일 등): " + lv.text);
 });
 
-test("꺼진 회원 폴링 표는 예전 그대로 data · chat 만 — DO 칸에 todo 가 있어도 안 실음(꺼짐이면 아무것도 안 바뀜)", async () => {
+test("회원 폴링 표는 data · chat 만 — DO 칸에 todo 가 있어도 안 실음", async () => {
   const t = await setup();
   await ledger.setFlag(t.D1, "read_live", true); await ledger.f7On(t.D1, "__reset__");
   const lv = await t.req("GET", "/api/live", undefined, await t.human(MEMBER));
@@ -577,12 +515,12 @@ test("꺼진 회원 폴링 표는 예전 그대로 data · chat 만 — DO 칸�
   assert.deepEqual(Object.keys(lv.j?.t || {}).filter(k => k === "data" || k === "todo" || k === "chat").sort(), ["chat", "data"], "회원 표: " + lv.text);
 });
 
-test("켬: 웹 푸시(/api/push/* · /sw.js)는 주인 길(주인 구독 칸) — 회원은 회원 칸", async () => {
+test("늘: 웹 푸시(/api/push/* · /sw.js)는 주인 길(주인 구독 칸) — 회원은 회원 칸", async () => {
   const t = await setup(), h = await t.human(OWNER), hm = await t.human(MEMBER);
   for (const f of ["member_push", "write_push"]) await ledger.setFlag(t.D1, f, true);
-  await t.flag("owner_unified:" + OWNER, true); t.reset();
+  t.reset();
   const k = await t.req("GET", "/api/push/key", undefined, h);
-  assert.equal(k.j?.key, "k-owner", "켠 주인 = 주인 구독 칸: " + k.text);
+  assert.equal(k.j?.key, "k-owner", "주인 = 주인 구독 칸: " + k.text);
   const sub = await t.req("POST", "/api/push/subscribe", { sub: { endpoint: "https://push.example.test/x" } }, h);
   assert.equal(sub.j?.from, "owner", "구독도 주인 칸: " + sub.text);
   assert.equal((await t.req("GET", "/sw.js", undefined, h)).status, 200);
@@ -593,47 +531,37 @@ test("켬: 웹 푸시(/api/push/* · /sw.js)는 주인 길(주인 구독 칸) �
   assert.deepEqual(t.bridge, [], "다리 0");
 });
 
-test("메일별 미리 보기: 하네스 기기 쓰기(로그인 메일 없음)도 켠 주인 칸(live:<canon>)에 알림 — 다 끄면 안 감", async () => {
+test("늘: 하네스 기기 쓰기(로그인 메일 없음 — owner-state 올림)도 주인 칸(live:<canon>)에 data 알림", async () => {
   const t = await setup(), HT = "bxd_" + "h".repeat(32), T = Date.now(), U = `live:${OWNER}@apac`;
   t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devH2", OWNER, "owner-host harness", "", await sha(HT), T, T, "harness", T);
-  await ledger.setFlag(t.D1, "shadow_unified", true); await ledger.f7On(t.D1, "__reset__");
   const S0 = Math.floor(T / 1000), up = () => t.req("POST", "/api/device/owner-state", { v: 1, at: S0, panes: {}, topics: {}, leads: { primary: "%15", leads: {}, windows: {} }, agents: [], parked: [], archived: [], promises: [], snoozed: [], ch_keys: {}, attn: null }, { authorization: `Bearer ${HT}` });
-  t.reset(); const r0 = await up(); assert.equal(r0.status, 200, r0.text);
-  assert.deepEqual(t.bumps, [], "다 끄면 어느 칸에도 안 감(주인 칸 chat 도 아님): " + t.bumps.join(","));
-  await t.flag("owner_unified:" + OWNER2, true); t.reset();   // canon 이 아닌 주인 메일 하나만 켬
-  const r1 = await up(); assert.equal(r1.status, 200, r1.text);
-  assert.ok(t.bumps.includes(U), "켠 주인 칸에 알림: " + t.bumps.join(","));
-  assert.ok(t.marks.some(m => m[0] === U && "data" in m[1]), "켠 주인 칸에 data(그 화면 /api/data 가 올린 값으로 계산)");
+  t.reset(); const r1 = await up(); assert.equal(r1.status, 200, r1.text);
+  assert.ok(t.bumps.length > 0 && t.bumps.every(b => b === U), "주인 칸에만(스냅숏 칸 chat 아님): " + t.bumps.join(","));
+  assert.ok(t.marks.some(m => m[0] === U && "data" in m[1]), "주인 칸에 data(그 화면 /api/data 가 올린 값으로 계산)");
 });
 
-test("켬: 장부 바뀜 알림이 켠 주인 칸(live:<canon>)에는 chat 과 data 를 같이(그 화면 /api/data 가 장부 사본으로 계산) — 주인 칸은 chat 만 · 끄면 주인 칸만", async () => {
+test("늘: 장부 바뀜 알림은 주인 칸(live:<canon>) 하나에 chat 과 data 를 같이(그 화면 /api/data 가 장부 사본으로 계산)", async () => {
   const t = await setup(), U = `live:${OWNER}@apac`;
   t.reset(); await ledger.f7On(t.D1, "__reset__");
   await live.bumpLedger(t.env);
-  assert.deepEqual(t.marks.map(m => [m[0], Object.keys(m[1]).sort()]), [[live.OWNER_SNAP, ["chat"]]], "끄면 주인 칸 chat 하나(예전)");
-  await t.flag("owner_unified", true); t.reset();
-  await live.bumpLedger(t.env);
-  const by = Object.fromEntries(t.marks.map(m => [m[0], Object.keys(m[1]).sort()]));
-  assert.deepEqual(by[live.OWNER_SNAP], ["chat"], "주인 칸(스냅숏 길)은 그대로 chat 만");
-  assert.deepEqual(by[U], ["chat", "data"], "켠 주인 칸에는 data 도 — 판 줄 · 결정이 2분 확인까지 안 멈춤");
+  assert.deepEqual(t.marks.map(m => [m[0], Object.keys(m[1]).sort()]), [[U, ["chat", "data"]]], "주인 칸 하나 — data 도(판 줄 · 결정이 2분 확인까지 안 멈춤)");
 });
 
-test("켬: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS — 켠 주인은 관리 권한 값 · 차례 글은 사람 설정 · 열 꼴 주인, 회원은 지금 값", async () => {
+test("늘: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS — 켠 주인은 관리 권한 값 · 차례 글은 사람 설정 · 열 꼴 주인, 회원은 지금 값", async () => {
   const t = await setup();
-  await t.flag("owner_unified", true);
   const page = async (who: string) => (await t.req("GET", "/", undefined, await t.human(who))).text;
   const vals = (html: string) => ({ caps: JSON.parse((/window\.HB_CAPS = (\{[^\n]*?\});/.exec(html) || [])[1] || "null"), mem: JSON.parse((/window\.HB_MEMBER = (\{[^\n]*?\})<\/script>/.exec(html) || [])[1] || "null"), css: /id="hbm-css"/.test(html) });
   const o = vals(await page(OWNER)), m = vals(await page(MEMBER));
   assert.deepEqual(o.caps, { invite: true, org_links: true, mainline: true, session_files: true, start_tab: false, push: true, push_wide: false, area_tabs: true }, "켠 주인(관리 권한)은 지금 주인 기능 문 — 세션 첨부도 참(회원 세션 길이 첨부를 링크 줄로 넘김, 빠짐 4) · 넓힘 칸은 거짓(주인 구독 칸)");
   assert.equal(o.css, true, "하네스 총괄 판이 없으면(이 시험 준비) 켠 주인도 회원 틀 CSS — 아래에서 총괄 판을 넣으면 빠짐");
   assert.deepEqual([m.caps?.org_links, m.caps?.session_files, m.caps?.push, m.caps?.push_wide], [false, false, false, true], "회원 org_links · session_files 거짓, push = member_push(꺼짐), push_wide 참(넓힘을 고름)");
-  const o2 = vals(await page(OWNER2)); assert.deepEqual(o2.caps, o.caps, "다른 주인 메일로 들어온 미리 보기도 canon 값");
+  const o2 = vals(await page(OWNER2)); assert.deepEqual(o2.caps, o.caps, "다른 주인 메일로 들어와도 canon 값");
   assert.equal(m.caps?.start_tab, true, "회원은 「시작하기」 그대로"); assert.equal(m.caps?.invite, false); assert.equal(m.caps?.mainline, false);
   assert.equal(m.mem?.turn, "내 차례"); assert.equal(m.css, true, "회원 틀 CSS 그대로(열 하나)");
   t.db.prepare("INSERT INTO node_setting(owner, data, updated_at) VALUES (?,?,?) ON CONFLICT(owner) DO UPDATE SET data = json_set(data, '$.turn_label', '내 차례')").run(OWNER, JSON.stringify({ turn_label: "내 차례" }), Date.now());
   assert.equal(vals(await page(OWNER)).mem?.turn, "내 차례", "차례 글은 사람 설정(데이터)");
   const { Engine } = await import("./engine.ts"), OV = await import("./owner-vals.ts"), T = Date.now();
-  const t2 = await setup(); await t2.flag("owner_unified", true); await ledger.f7On(t2.D1, "__reset__");
+  const t2 = await setup(); await ledger.f7On(t2.D1, "__reset__");
   const page2 = async (who: string) => (await t2.req("GET", "/", undefined, await t2.human(who))).text;
   t2.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devHx", OWNER, "owner-host harness", "", "h".repeat(64), T, T, "harness", T);
   await new (Engine as any)({ setWebSocketAutoResponse() {} }, { DB: t2.D1 }).hsync([{ id: "ew_pane15", state: "background", name: "총괄", meta: { pane: "%15", win: "1 총괄", role: "리드", cwd: "~/work", kind: "primary" } }], true, "devHx", OWNER, T);
@@ -641,11 +569,6 @@ test("켬: 사람 값 · 기능 문(HB_MEMBER.turn · HB_CAPS) · 회원 틀 CSS
   { const MBf = await import("./member-board.ts"); MBf.loadForget(OWNER); MBf.loadForget(MEMBER); }   // 회원 보드 읽기 캐시는 메일 열쇠(400ms) — 앞 준비(t)에서 읽은 값을 비움
   assert.equal(vals(await page2(OWNER)).css, false, "총괄 판이 있으면 회원 틀 CSS 안 넣음");
   assert.equal(vals(await page2(MEMBER)).css, true, "회원은 그대로");
-  await ledger.setFlag(t2.D1, "owner_unified", false); await ledger.f7On(t2.D1, "__reset__");   // 꺼진 값을 isolate 캐시에
-  t2.db.prepare("UPDATE f7_flag SET on_at = ? WHERE name = 'owner_unified'").run(Date.now());   // 캐시는 두고 D1 만 켬
-  MB.loadForget(OWNER);
-  const realNow = Date.now; Date.now = () => realNow() + 11_000;   // 캐시를 10초 넘게 낡게
-  try { assert.equal(vals(await page2(OWNER)).css, false, "낡은 스위치 캐시에서도 하네스 판을 읽음(회원 틀 CSS 없음)"); } finally { Date.now = realNow; }
 });
 
 let harnessCmds: [string, string, any][] = [];
@@ -665,14 +588,9 @@ async function harnessOn(t: Awaited<ReturnType<typeof setup>>) {
   harnessCmds = cmds;
   return sent;
 }
-test("켬: 하네스 판 세션 글(/api/sess/send %N)은 하네스 기기 엔진 send(줄 세움)로 그 판에 — 주차 판도 · 다리 0 · 회원 · 모르는 판은 404 · 끄면 예전처럼 다리", async () => {
+test("늘: 하네스 판 세션 글(/api/sess/send %N)은 하네스 기기 엔진 send(줄 세움)로 그 판에 — 주차 판도 · 다리 0 · 회원 · 모르는 판은 404", async () => {
   const t = await setup(), h = await t.human(OWNER), sent = await harnessOn(t);
   t.reset();
-  const off = await t.req("POST", "/api/sess/send", { pane: "%40", name: "5 지어낸 일", text: "끈 상태 글" }, h);
-  assert.ok(off.status < 500, off.text);
-  assert.deepEqual(t.bridge, ["/api/sess/send"], "끔이면 다리(server.py sess_send) 그대로"); assert.deepEqual(sent, []);
-  assert.equal((await t.req("POST", "/api/me/harness/send", { pane: "%40", text: "안쪽 길" }, h)).status, 403, "끔이면 안쪽 길도 주인 거절(memberOnly)");
-  await t.flag("owner_unified", true); t.reset();
   const r = await t.req("POST", "/api/sess/send", { pane: "%40", name: "5 지어낸 일", text: "판에 바로\n두 줄" }, h);
   assert.equal(r.status, 200, r.text); assert.equal(r.j?.ok, true, r.text);
   assert.deepEqual(sent, [["dev:devH", "ew_pane40", "판에 바로\n두 줄", { queue: true, owner: true }]], "하네스 기기 엔진 send · 줄바꿈 그대로 · owner(어댑터가 장부 줄)");
@@ -693,13 +611,13 @@ test("켬: 하네스 판 세션 글(/api/sess/send %N)은 하네스 기기 엔�
   const hm = await t.human(MEMBER);
   assert.equal((await t.req("POST", "/api/sess/send", { pane: "%40", text: "남의 판" }, hm)).status, 404);
   assert.equal((await t.req("POST", "/api/me/harness/send", { pane: "%40", text: "남의 판" }, hm)).status, 404);
-  assert.equal(sent.length, 2); assert.deepEqual(t.bridge, [], "켬인데 다리 호출");
+  assert.equal(sent.length, 2); assert.deepEqual(t.bridge, [], "다리 호출");
   t.db.prepare("UPDATE device SET revoked_at = ? WHERE id = 'devH'").run(Date.now());
   assert.equal((await t.req("POST", "/api/me/harness/send", { pane: "%40", text: "x" }, h)).status, 404, "폐기된 하네스 기기의 판 줄은 내 판이 아님");
 });
 
 // 빠짐 4: 회원 「세션」 칸 글(/api/chat/new · send)의 첨부 — 채널 글과 같은 서명 링크 줄(「📎 이름: 링크」)로 창에 넘김. 켠 주인 HB_CAPS.session_files 참
-test("켬: 세션 글 첨부(/api/chat/new · /api/chat/send files)는 내 파일 링크 줄을 붙여 창에 — 남의 · 모르는 파일만이면 400 · 창 안 엶", async () => {
+test("늘: 세션 글 첨부(/api/chat/new · /api/chat/send files)는 내 파일 링크 줄을 붙여 창에 — 남의 · 모르는 파일만이면 400 · 창 안 엶", async () => {
   const t = await setup(), h = await t.human(OWNER), T = Date.now();
   t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devE", OWNER, "engine mac", "", "e".repeat(64), T, T, "full", T);
   const FA = "0123456789abcdef0123456789abcdef", FB = "fedcba9876543210fedcba9876543210";
@@ -709,7 +627,7 @@ test("켬: 세션 글 첨부(/api/chat/new · /api/chat/send files)는 내 파�
   let n = 0; const opened: any[] = [], delivered: [string, string][] = [];
   t.env.ENGINE = { idFromName: (s: string) => s, get: (id: string) => ({ revoke: async () => 0, deliver: async (wid: string, text: string) => { delivered.push([wid, text]); return { sent: true }; },
     open: async (w: any) => { opened.push(w); const wid = `ew_own${String(++n).padStart(6, "0")}`; t.db.prepare("INSERT INTO engine_window(id, owner, device_id, kind, name, state, state_at, created_at) VALUES (?,?,?,?,?,?,?,?)").run(wid, w.owner, id.replace(/^dev:/, ""), w.kind, w.name, "starting", Date.now(), Date.now()); return { id: wid }; } }) };
-  await t.flag("owner_unified", true); t.reset();
+  t.reset();
   const link = new RegExp(`^📎 사진\\.png: https://example\\.test/f/${FA}(?:/[^?\\s]+)?\\?e=\\d+&t=[0-9a-f]{32}$`);   // 링크 끝에 파일 이름이 붙는 꼴(다른 PR)도
   const nw = await t.req("POST", "/api/chat/new", { text: "이 사진 봐 줘", files: [{ id: FA }] }, h);
   assert.equal(nw.status, 200, nw.text);
@@ -723,13 +641,10 @@ test("켬: 세션 글 첨부(/api/chat/new · /api/chat/send files)는 내 파�
   assert.deepEqual(t.bridge, []);
 });
 
-test("켬: 하네스 판 세션 기록(/api/sesslog %N)은 하네스 기기 엔진 log 동사 — 기록을 sess_log 꼴로 · log 를 모르는 옛 엔진은 404(빈 대화) · 회원 · 끄면 엔진 안 부름", async () => {
+test("늘: 하네스 판 세션 기록(/api/sesslog %N)은 하네스 기기 엔진 log 동사 — 기록을 sess_log 꼴로 · log 를 모르는 옛 엔진은 404(빈 대화) · 회원은 엔진 안 부름", async () => {
   const t = await setup(), h = await t.human(OWNER), sent = await harnessOn(t), cmds = harnessCmds;
   const q = (pane: string, name = "") => `/api/sesslog?pane=${encodeURIComponent(pane)}${name ? "&name=" + encodeURIComponent(name) : ""}`;
   t.reset();
-  await t.req("GET", q("%40", "5 지어낸 일"), undefined, h);
-  assert.equal(t.bridge.length, 1, "끔이면 다리 그대로"); assert.match(t.bridge[0], /^\/api\/sesslog\?/); assert.deepEqual(cmds, [], "끔이면 엔진 안 부름");
-  await t.flag("owner_unified", true); t.reset();
   const r = await t.req("GET", q("%40", "5 지어낸 일"), undefined, h);
   assert.equal(r.status, 200, r.text);
   assert.deepEqual([r.j.channel, r.j.kind, r.j.live, r.j.name, r.j.messages.map((m: any) => m.text)], ["s:%40", "claude", true, "5 지어낸 일", ["기록 글"]]);
@@ -741,7 +656,7 @@ test("켬: 하네스 판 세션 기록(/api/sesslog %N)은 하네스 기기 엔�
 });
 
 // ── 켠 주인 회원 길의 빠짐 채우기(delete-plan.md 3절 5 · 9 · 12) ──
-test("켬: #메인(/api/chat/main)은 끈 주인 길과 같은 답 — 주인 메일 넷의 「켠 시각」(mainmerge_at) 거름, 못 만들면 404 가 아니라 503 다시 읽기(빠짐 5)", async () => {
+test("늘: #메인(/api/chat/main)은 끈 주인 길과 같은 답 — 주인 메일 넷의 「켠 시각」(mainmerge_at) 거름, 못 만들면 404 가 아니라 503 다시 읽기(빠짐 5)", async () => {
   const t = await setup(), h = await t.human(OWNER), now = Date.now() / 1000;
   seedTalk(t.db);
   const m = t.db.prepare("INSERT INTO wl_talk_msg(id, chan, thread, who, author, pane, text, at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'cli')");
@@ -751,15 +666,16 @@ test("켬: #메인(/api/chat/main)은 끈 주인 길과 같은 답 — 주인 �
   // 켠 시각은 다른 주인 메일(OWNER2)에 적힘 — 로그인 메일 하나만 넘기면 못 찾음
   t.db.prepare("INSERT INTO user_pref(owner, k, v, at) VALUES (?, 'mainmerge_at', ?, ?)").run(OWNER2, String(Math.round((now - 60) * 1000)), Math.round((now - 60) * 1000));
   await ledger.setFlag(t.D1, "read_chat", true); await ledger.f7On(t.D1, "__reset__");
-  const off = await t.req("GET", "/api/chat/main", undefined, h);
+  const off = await t.req("GET", "/api/chat/main", undefined, h);   // 기준 답(read_chat 켬)
   assert.equal(off.status, 200, off.text); assert.deepEqual(t.bridge, []);
   const texts = (j: any) => (j.messages as { text: string }[]).map(x => x.text);
   assert.ok(!texts(off.j).includes("켠 뒤 에이전트끼리 글") && texts(off.j).includes("켠 뒤 Owner 글") && texts(off.j).includes("켜기 전 에이전트 글"), "끈 주인 길 기준 답 — " + off.text.slice(0, 200));
   await ledger.setFlag(t.D1, "read_chat", false);
-  await t.flag("owner_unified", true); t.reset();
+  t.reset();
   const on = await t.req("GET", "/api/chat/main", undefined, h);
   assert.equal(on.status, 200, on.text); assert.equal(on.h.get("x-f7"), "d1");
-  assert.deepEqual(on.j, off.j, "켠 주인 #메인이 끈 주인 길과 다름(켠 시각 거름 빠짐)");
+  const noAt = (o: any) => { const { read_at: _a, ...x } = o ?? {}; return x; };   // read_at = 부른 시각(초) — 두 번 읽는 사이 초가 넘어가면 1 다름
+  assert.deepEqual(noAt(on.j), noAt(off.j), "주인 #메인이 기준 답과 다름(켠 시각 거름 빠짐)");
   assert.deepEqual(t.bridge, []);
   // cfg 에 기본 다섯 채널이 하나도 없으면 #메인을 못 만듦 — 끈 주인 길은 다리로 넘기고, 켠 주인은 404(「없는 채널」) 대신 503 다시 읽기
   const env0 = t.env.SNAP;
@@ -771,7 +687,7 @@ test("켬: #메인(/api/chat/main)은 끈 주인 길과 같은 답 — 주인 �
   assert.deepEqual(t.bridge, []);
 });
 
-test("켬: 설정 › 노드 보관함에 하네스 닫힌 창 · 다시 열기는 하네스 기기 엔진 reopen(빠짐 9) — 회원은 그대로 · 다리 0", async () => {
+test("늘: 설정 › 노드 보관함에 하네스 닫힌 창 · 다시 열기는 하네스 기기 엔진 reopen(빠짐 9) — 회원은 그대로 · 다리 0", async () => {
   const t = await setup(), h = await t.human(OWNER), T = Date.now(), s = T / 1000, OV = await import("./owner-vals.ts");
   t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, engine_at) VALUES (?,?,?,?,?,?,?,?,?)").run("devH", OWNER, "owner-host harness", "", "h".repeat(64), T, T, "harness", T);
   await new (Engine as any)({ setWebSocketAutoResponse() {} }, { DB: t.D1 }).hsync([{ id: "ew_pane43", state: "busy", name: "열린 창", meta: { pane: "%43", win: "3 열린 창", role: "리드", cwd: "~/src/x" } }], true, "devH", OWNER, T);
@@ -784,7 +700,7 @@ test("켬: 설정 › 노드 보관함에 하네스 닫힌 창 · 다시 열기�
   lg.run(s - 3600, "%43", "3 열린 창", "끝", "끝났지만 판이 살아 있음", "~/src/x");
   const cmds: unknown[] = [];
   t.env.ENGINE = { idFromName: (n: string) => n, get: (id: string) => ({ revoke: async () => 0, cmd: async (v: string, a: unknown) => { cmds.push([id, v, a]); return {}; } }) };
-  await t.flag("owner_unified", true); t.reset();
+  t.reset();
   const ns = await t.req("GET", "/api/me/nodeset", undefined, h);
   assert.equal(ns.status, 200, ns.text);
   const arch = ns.j.archive as { id?: string; name: string; at: number; msg: string; reopen: boolean }[];
@@ -812,9 +728,9 @@ test("켬: 설정 › 노드 보관함에 하네스 닫힌 창 · 다시 열기�
   assert.deepEqual(cmds, []); assert.deepEqual(t.bridge, []);
 });
 
-test("켬: /ea(퍼스널 비서)는 관리 권한이면 같은 틀에 BX_EA_MODE=personal(끈 주인 길과 같음, 빠짐 12) — 회원은 /es 로 302 그대로", async () => {
+test("늘: /ea(퍼스널 비서)는 관리 권한이면 같은 틀에 BX_EA_MODE=personal(끈 주인 길과 같음, 빠짐 12) — 회원은 /es 로 302 그대로", async () => {
   const t = await setup();
-  await t.flag("owner_unified", true); t.reset();
+  t.reset();
   const ea = await t.req("GET", "/ea", undefined, await t.human(OWNER));
   assert.equal(ea.status, 200, ea.text.slice(0, 200));
   assert.equal(ea.h.get("x-boarder-src"), "member", "회원 길(memberPage)");
@@ -841,7 +757,7 @@ test("가려진 첨부: 실제 Worker 주인 채널·스레드, 통합 켬/끔 �
   const F = await import("./member-files.ts");
   for (const unified of [false, true]) {
     const t = await setup(), h = await t.human(OWNER), heads = maskedR2(t, OWNER2), root = "1793950000.000101", at = Date.now() / 1000;
-    await t.flag("read_chat", true); if (unified) await t.flag("owner_unified", true);
+    await t.flag("read_chat", true);
     t.db.prepare("INSERT INTO wl_talk_chan(id,name,slack_channel) VALUES ('primary','primary','C1')").run();
     const text = [maskedAttachment(), maskedAttachment(MASK_OTHER), maskedAttachment(MASK_NONE)].join("\n");
     t.db.prepare("INSERT INTO wl_talk_msg(id,chan,who,text,at,source) VALUES (?,'primary','owner',?,?,'web')").run(root, text, at);
@@ -860,7 +776,6 @@ test("가려진 첨부: 실제 Worker 주인 채널·스레드, 통합 켬/끔 �
 
 test("가려진 첨부: agent raw가 Owner 표시를 흉내 내도 저장된 글쓴이가 다르면 재서명 안 함", async () => {
   const t = await setup(), h = await t.human(OWNER), heads = maskedR2(t, OWNER);
-  await t.flag("owner_unified", true);
   t.db.prepare("INSERT INTO wl_talk_chan(id,name,slack_channel) VALUES ('primary','primary','C1')").run();
   t.db.prepare("INSERT INTO wl_talk_msg(id,chan,who,text,raw,at,source) VALUES (?,'primary','agent',?,?,?,'cli')")
     .run("1793950000.000102", maskedAttachment(), JSON.stringify({ user: "U0000000000" }), Date.now() / 1000);
@@ -888,7 +803,6 @@ test("가려진 첨부: 실제 회원 채널·스레드·피드·저장 글, 내
 test("가려진 첨부: 주인 노드 채팅·전달 상자·저장 글도 복구, 저장된 agent 글의 파일은 복구 안 함", async () => {
   const t = await setup(), h = await t.human(OWNER), heads = maskedR2(t, OWNER2), at = Date.now() / 1000;
   const root = `${Math.floor(at - 20)}.000103`, box = `${Math.floor(at - 10)}.000104`, agent = `${Math.floor(at - 5)}.000105`;
-  await t.flag("owner_unified", true);
   // 다른 시험의 노드 색인과 구분되는 cfg tag.
   const cf = JSON.parse(CFG); cf.dm_node_roots = true;
   const snaps = t.env.SNAP;
@@ -919,7 +833,6 @@ test("가려진 첨부: 주인 노드 채팅·전달 상자·저장 글도 복�
 test("모아 보기 로컬 사본(snap_inbox): 사본 번호가 D1 웹 바뀜 번호 이상이면 스냅숏, 낮음 · 끔 · 초안 다름 · 가림이면 D1", async () => {
   const t = await setup(), h = await t.human(OWNER), rl = { authorization: "Bearer relay-made-up" };
   seedTalk(t.db);
-  await t.flag("owner_unified", true);
   const web = () => Number(t.db.prepare("INSERT INTO wl_change(tbl, pk, op, at, origin) VALUES ('talk_seen', '[\"x\"]', 'up', ?, 'web')").run(Date.now()).lastInsertRowid);
   const s1 = web();
   const put = async (b: unknown) => { const r = await t.req("PUT", "/api/relay/snap/inbox", b, rl); assert.equal(r.status, 200, r.text); };
@@ -964,7 +877,6 @@ test("모아 보기 로컬 사본(snap_inbox): owner_unified 를 끈 주인 길�
 
 test("주인 읽기: cfg·sync 한 RPC와 구형 DO 폴백의 JSON·ETag·나이 머리가 같음", async () => {
   const t = await setup(), h = await t.human(OWNER);
-  await t.flag("owner_unified", true);
   const old = await t.req("GET", "/api/chat/main", undefined, h);
   assert.equal(old.status, 200, old.text);
   const ns = t.env.SNAP; let batch = 0;
@@ -1060,10 +972,23 @@ test("main_only: 주인 채널은 메인 하나, 모드는 옛 페이지와 통�
   await t.flag("read_page", true);
   const old = await t.req("GET", "/", undefined, await t.human(OWNER));
   assert.match(old.text, /window\.HB_MAIN_ONLY = true;/);
-  await t.flag("owner_unified", true);
   const owner = await t.req("GET", "/", undefined, await t.human(OWNER));
   assert.match(owner.text, /window\.HB_CH = \["primary"\];/);
   assert.match(owner.text, /window\.HB_MAIN_ONLY = true;/);
   const member = await t.req("GET", "/", undefined, await t.human(MEMBER));
   assert.match(member.text, /window\.HB_MAIN_ONLY = false;/);
+});
+
+test("관리 live/drop: 주인 메일이면 화면 칸(live:<canon>)과 스냅숏 저장 칸(OWNER_SNAP)을 둘 다 — 배포 뒤 DO 다시 띄우기(deploy-main.sh) · 회원은 제 칸 하나", async () => {
+  const t = await setup(), dropped: string[] = [], env0 = t.env.SNAP;
+  t.env.SNAP = { ...env0, get: (n: string) => ({ ...env0.get(n), drop: async (abort: boolean) => { dropped.push(`${n}:${abort}`); return 1; } }) };
+  try {
+    const r = await t.req("POST", "/api/admin/live/drop", { who: OWNER2, abort: true }, t.adm);
+    assert.equal(r.status, 200, r.text); assert.equal(JSON.parse(r.text).closed, 2);
+    assert.ok(dropped.includes(`${live.OWNER_SNAP}:true`), "스냅숏 저장 칸: " + dropped.join(" "));
+    assert.ok(dropped.some(x => x.startsWith(`live:${OWNER}`) && x.endsWith(":true")), "화면 칸(canon): " + dropped.join(" "));
+    dropped.length = 0;
+    await t.req("POST", "/api/admin/live/drop", { who: MEMBER }, t.adm);
+    assert.deepEqual(dropped.length, 1); assert.ok(dropped[0].startsWith(`live:${MEMBER}`) && dropped[0].endsWith(":false"), dropped.join(" "));
+  } finally { t.env.SNAP = env0; }
 });

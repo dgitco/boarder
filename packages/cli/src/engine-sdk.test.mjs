@@ -58,6 +58,31 @@ test('Codex 창(자동 허용)은 작업 폴더 샌드박스에서도 네트워�
   assert.equal(t.opt.sandboxMode, 'workspace-write'); assert.equal(t.opt.networkAccessEnabled, true);
 });
 
+test('구독을 안 정한 창: Claude 로그인이 없고 ChatGPT 로그인이 있으면 Codex 로 엶(모델 · 대화 id 버림) · 정한 창은 그대로 오류', async () => {
+  const c = { sdk: { accounts: {} } };
+  S._inject.loggedIn = prov => prov === 'codex';
+  const o = await S.open(c, { id: 'ew_fb1', name: 'fb', cwd: path.join(home, 'wfb1'), prompt: 'hi', model: 'claude-opus-5-5', session_id: '11111111-2222-3333-4444-555555555555' });
+  assert.equal(o.provider, 'codex');
+  await wait(() => calls.some(x => x.p === 'codex'));
+  const t = calls.find(x => x.p === 'codex');
+  assert.equal(t.id, null, '새 대화(startThread) — 가짜 id 로 resumeThread 안 함'); assert.equal(t.opt.model, undefined, 'Claude 모델 이름을 Codex 에 안 넘김');
+  await assert.rejects(S.open(c, { id: 'ew_fb2', name: 'fb2', cwd: path.join(home, 'wfb2'), prompt: 'x', provider: 'claude' }), /Claude 계정이 아직 로그인되지 않았어요/, '서버가 claude 로 정한 창은 바꾸지 않음');
+  S._inject.loggedIn = () => false;
+  await assert.rejects(S.open(c, { id: 'ew_fb3', name: 'fb3', cwd: path.join(home, 'wfb3'), prompt: 'x' }), e => /구독 계정이 아직 로그인되지 않았어요/.test(e.message) && /ChatGPT 나 Claude/.test(e.message), '둘 다 없으면 어느 쪽이든 로그인하라고 안내');
+});
+
+test('Codex 가 모르는 대화 id(no rollout found)면 새 대화로 한 번 더 — 같은 가짜 id 로 되풀이하지 않음', async () => {
+  const c = { sdk: { accounts: {} } };
+  const ids = [];
+  class Thread { constructor(id) { this.id = id; } async runStreamed() { const t = this; ids.push(t.id); if (t.id === 'fake-uuid') throw new Error('thread/resume failed: no rollout found for thread id fake-uuid'); return { events: (async function* () { if (!t.id) t.id = 'th-new'; yield { type: 'thread.started', thread_id: t.id }; yield { type: 'turn.completed' }; })() }; } }
+  S._inject.codex = { Codex: class { startThread() { return new Thread(null); } resumeThread(id) { return new Thread(id); } } };
+  await S.open(c, { id: 'ew_nr1', name: 'nr', cwd: path.join(home, 'wnr1'), prompt: 'hi', provider: 'codex', session_id: 'fake-uuid' });
+  await wait(() => S.state(c, 'ew_nr1').state !== 'busy' && ids.length >= 2);
+  assert.deepEqual(ids, ['fake-uuid', null], '두 번째는 새 대화(startThread)');
+  assert.ok(!S.state(c, 'ew_nr1').error, '오류 없이 끝남');
+  assert.equal(S.state(c, 'ew_nr1').session_id, 'th-new');
+});
+
 test('되살린 창(계정 비어 있음)도 글마다 로그인된 계정을 고름 · 없으면 이유가 state.error 에', async () => {
   const c = { sdk: { accounts: {} } };
   fs.mkdirSync(path.join(home, 'cfg', 'sdk-accounts', 'claude', 'me'), { recursive: true });
@@ -282,8 +307,9 @@ test('SDK 자동 설치: npm install --prefix 로 깔고, 깔린 곳에서 impor
   S._inject.claude = null; S._inject.codex = null;
   const fakeNpm = path.join(home, 'npm'); fs.writeFileSync(fakeNpm, '');
   let cmd;
-  const exec = (f, a) => {
-    cmd = [f, ...a];
+  let npmEnv;
+  const exec = (f, a, o) => {
+    cmd = [f, ...a]; npmEnv = o?.env;
     for (const [pkg, body] of [['@anthropic-ai/claude-agent-sdk', 'export const query = () => "L";'], ['@openai/codex-sdk', 'export class Codex {}']]) {
       if (!a.includes(`${pkg}@${S.PINNED[pkg.startsWith('@openai') ? 'codex' : 'claude']}`)) continue;
       const r = path.join(S.sdkDir(), 'node_modules', ...pkg.split('/')); fs.mkdirSync(r, { recursive: true });
@@ -295,6 +321,7 @@ test('SDK 자동 설치: npm install --prefix 로 깔고, 깔린 곳에서 impor
   assert.equal((await S.installSdks({ exec, npm: null })).ok, false);
   const ok = await S.installSdks({ exec, npm: fakeNpm });
   assert.equal(ok.ok, true); assert.ok(cmd.includes('--prefix') && cmd.includes(S.sdkDir()));
+  if (process.platform !== 'win32') assert.equal(npmEnv.PATH.split(path.delimiter)[0], path.dirname(process.execPath), 'npm 의 env node 가 설치기의 Node 를 찾음(따로 깐 Node 없는 맥 · 리눅스)');
   assert.ok(cmd.includes('--ignore-scripts') && cmd.includes('@anthropic-ai/claude-agent-sdk@0.3.319') && cmd.includes('@openai/codex-sdk@0.167.0'));   // 버전 고정 · 설치 스크립트 안 돌림
   assert.deepEqual(S.PINNED, { claude: JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url))).optionalDependencies['@anthropic-ai/claude-agent-sdk'], codex: JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url))).optionalDependencies['@openai/codex-sdk'] });
   assert.equal((await S.loadSdk('claude')).query(), 'L');
@@ -312,4 +339,13 @@ test('윈도우 상주: schtasks 가 거절하면(SYSTEM 계정) 시작 폴더 .
   assert.match(fs.readFileSync(f, 'utf8'), /engine-run\.cmd/); assert.equal(started, 1);
   const ok = await installWindows('n', {}, { runCmd: async () => {}, startNow: () => assert.fail() });
   assert.match(ok.how, /^Task Scheduler/);
+});
+
+test('SDK 설치: 설치기 Node 만 있는 기기에서 실제 실행 함수로 npm 의 env node 를 찾음', { skip: process.platform === 'win32' }, async () => {
+  S._inject.claude = null; S._inject.codex = null;
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'npm-')), npm = path.join(d, 'npm');
+  fs.writeFileSync(npm, '#!/usr/bin/env node\nprocess.exit(0);\n', { mode: 0o700 });
+  const prev = process.env.PATH; process.env.PATH = d;
+  try { const r = await S.installSdks({ npm }); assert.doesNotMatch(String(r.why || ''), /env: .*node.*No such file/, 'npm 이 실행됨'); }
+  finally { process.env.PATH = prev; }
 });

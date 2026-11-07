@@ -1,5 +1,5 @@
 // node --test --no-warnings --experimental-transform-types apps/web/worker/es-route.test.ts (Node 22.18+ · node:sqlite · apps/web 의존성 설치된 채)
-// 비서(/es) 길: 진짜 index.ts(app.fetch) 그대로 — 주인 /es 는 / 와 같은 몸통(다리 path 「/」)에 틀 + BX_EA · ea.js/css, /es/ 는 301 /es, 회원 /es 는 자기 보드 몸통 + 비서 배치(주인 다리 안 감), / 몸통엔 BX_EA 없음.
+// 비서(/es) 길: 진짜 index.ts(app.fetch) 그대로 — 주인 /es 는 / 와 같은 회원 길 몸통(memberPage — 틀 스냅숏 + canon 판, 다리 안 감)에 틀 + BX_EA · ea.js/css, /es/ 는 301 /es, 회원 /es 는 자기 보드 몸통 + 비서 배치, / 몸통엔 BX_EA 없음.
 // 가짜 D1 = 메모리 SQLite + migrations 전부, 다리 = 부른 path 를 적어 두는 가짜. HTMLRewriter = head · body 앞뒤에 끼우는 것만 흉내. 자료는 다 지어낸 것.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -41,7 +41,9 @@ function d1() {
     raw: async () => db.prepare(sql).all(...(args as never[])).map(r => Object.values(r as object)),
     run: async () => { const r = db.prepare(sql).run(...(args as never[])); return { success: true, results: [], meta: { changes: Number(r.changes) } }; },
   });
-  return { D1: { prepare: (sql: string) => stmt(sql), batch: async (ss: any[]) => Promise.all(ss.map(s => s.all())) } as unknown as D1Database };
+  const D1: any = { prepare: (sql: string) => stmt(sql), batch: async (ss: any[]) => Promise.all(ss.map(s => s.all())) };
+  D1.withSession = () => D1;
+  return { db, D1: D1 as D1Database };
 }
 const BOARD = '<!doctype html><html><head><meta charset=utf-8><meta name="apple-mobile-web-app-title" content="보드"></head><body><div class=wrap>보드</div></body></html>';
 function bridgeNs(paths: string[]) {
@@ -62,25 +64,32 @@ async function cookie(email: string) {   // index.ts signedIn 의 서명 쿠키(
   const sig = hex(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(`bx_s|${email}|${exp}|${th}`))).slice(0, 32);
   return `better-auth.session_token=${TOKEN}; bx_s=${encodeURIComponent(`${email}|${exp}|${sig}`)}`;
 }
+// 첫 화면 틀(page-template.py 꼴) — 주인 · 회원 같은 틀(memberPage)
+const PAGE = JSON.stringify({ ver: "v1", html: '<!doctype html><html><head><meta charset=utf-8><meta name="apple-mobile-web-app-title" content="보드"></head><body><div class=wrap>보드</div><script>window.D = __BX_DATA__; window.T = "__BX_DTAG__"</script></body></html>' });
 function setup() {
-  const { D1 } = d1(), paths: string[] = [];
+  const { db, D1 } = d1(), paths: string[] = [];
+  db.prepare("INSERT INTO member_bot (owner, seed, hue, name, photo, icon, fav, updated_at) VALUES (?,?,?,?,?,?,?,?)").run(OWNER, "s1", 10, "Primary", "", "", "", Date.now());   // 주인(canon) 메인 봇 줄 — 없으면 온보딩
+  const snaps: Record<string, string> = { page: PAGE, cfg: JSON.stringify({ channels: { primary: "C1" }, drafts: {} }) };
+  const SNAP = { idFromName: (n: string) => n, get: () => ({ get: async (k: string) => k in snaps ? { body: snaps[k], etag: `"e-${k}"`, at: Date.now(), checked: Date.now() } : null, tags: async () => ({ t: {}, age: 0, boot: "b" }), bump: async () => 0 }) };
+  const r2 = new Map<string, unknown>();
+  const RESULTS = { list: async () => ({ objects: [], truncated: false }), head: async () => null, get: async (k: string) => r2.get(k) ?? null, put: async (k: string, v: unknown) => { r2.set(k, v); }, delete: async (k: string) => { r2.delete(k); } };
   const ASSETS = { fetch: async (r: Request) => new Response(new URL(r.url).pathname === "/" ? "<!doctype html><html><head></head><body><div id=root>로그인 화면</div></body></html>" : "nf", { headers: { "content-type": "text/html" } }) };
-  const env = { DB: D1, ASSETS, BRIDGE: bridgeNs(paths), BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+  const env = { DB: D1, ASSETS, SNAP, RESULTS, ENGINE: { idFromName: (n: string) => n, get: () => ({}) }, BRIDGE: bridgeNs(paths), BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
   const get = async (path: string, who: string | null = OWNER, method = "GET") => app.fetch(new Request("https://example.test" + path, { method, redirect: "manual", headers: { accept: "text/html", "sec-fetch-dest": "document", ...(who ? { cookie: await cookie(who) } : {}) } }), env, { waitUntil() {}, passThroughOnException() {} });
   return { paths, get, env };
 }
 
-test("주인 /es: / 와 같은 몸통(다리 path 「/」)에 틀 + head 맨 앞 BX_EA · ea.css · ea.js · ea-secret.js(틀 스크립트 뒤)", async () => {
+test("주인 /es: / 와 같은 몸통(회원 길 · 다리 0)에 틀 + head 맨 앞 BX_EA · ea.css · ea.js · ea-secret.js(틀 스크립트 뒤)", async () => {
   const { paths, get } = setup();
   const r = await get("/es");
   assert.equal(r.status, 200);
-  assert.deepEqual(paths, ["/"], "다리에 /es 가 아니라 / 로 물어야 함");
+  assert.deepEqual(paths, [], "다리에 안 감");
+  assert.equal(r.headers.get("x-boarder-src"), "member");
   const html = await r.text();
   assert.ok(html.includes("보드"), "보드 몸통");
   assert.match(html, /<head[^>]*><script>window\.BX_EA=1<\/script>/, "BX_EA 가 head 맨 앞");
   assert.ok(html.includes("window.HB_HASH0"), "틀 머리 글");
   assert.equal(r.headers.get("content-security-policy"), "frame-ancestors 'self'");
-  assert.equal(r.headers.get("clear-site-data"), '"cache"', "/ 와 같은 한 번 캐시 지우기");
   // ea.css · ea.js 덩어리(/bxs 주소)는 틀 것 뒤에 — / 에는 없는 것
   const root = await (await get("/")).text();
   const css = (h: string) => [...h.matchAll(/\/bxs\/([0-9a-f]{32})\.css/g)].map(m => m[1]), js = (h: string) => [...h.matchAll(/\/bxs\/([0-9a-f]{32})\.js/g)].map(m => m[1]);
@@ -129,13 +138,6 @@ test("주인 / 몸통에는 BX_EA · ea 덩어리 없음", async () => {
   assert.ok(!html.includes("api/secret") && !html.includes("bx-ea-pins"), "/ 에는 비밀값 · 고정 원 스크립트 없음");
 });
 
-test("HEAD /es 도 / 와 같은 길", async () => {
-  const { paths, get } = setup();
-  const r = await get("/es", OWNER, "HEAD");
-  assert.equal(r.status, 200);
-  assert.deepEqual(paths, ["/"]);
-});
-
 test("/es/ → 301 /es(상대 주소 api/… 가 깨지지 않게) — 쿼리 그대로, 로그인 전에도", async () => {
   const { get } = setup();
   for (const who of [OWNER, MEMBER, null]) {
@@ -167,7 +169,7 @@ test("주인 /ea(퍼스널 비서): /es 와 같은 길 · 같은 틀에 BX_EA_MO
   const { paths, get } = setup();
   const r = await get("/ea");
   assert.equal(r.status, 200);
-  assert.deepEqual(paths, ["/"]);
+  assert.deepEqual(paths, []);
   const html = await r.text();
   assert.match(html, /<head[^>]*><script>window\.BX_EA=1;window\.BX_EA_MODE="personal"<\/script>/);
   assert.ok(!(await (await get("/es")).text()).includes("BX_EA_MODE"));
@@ -189,14 +191,15 @@ test("보더 화면 경로: /nodes · /chat/<채널>/<스레드> · /canvas/<id>
     const { paths, get } = setup();
     const r = await get(p);
     assert.equal(r.status, 200, p);
-    assert.deepEqual(paths.slice(0, 1), ["/"], p + " → 다리에 / 로");
+    assert.deepEqual(paths, [], p + " → 다리에 안 감");
+    assert.equal(r.headers.get("x-boarder-src"), "member", p + " → / 와 같은 회원 길 첫 화면");
     const html = await r.text();
     assert.ok(html.includes('<base href="/">') && html.includes("window.HB_PATHS=1"), p + " → 경로 모드 머리");
   }
   for (const p of ["/canvas/short", "/chatx", "/nodes/a/b/c"]) {
-    const { paths, get } = setup();
-    await get(p);
-    assert.ok(!paths.includes("/"), p + " → 보드 아님");
+    const { get } = setup();
+    const r = await get(p);
+    assert.notEqual(r.headers.get("x-boarder-src"), "member", p + " → 보드 아님");
   }
   for (const p of ["/es", "/ea", "/?embed=primary"]) {
     const html = await (await setup().get(p)).text();
@@ -205,11 +208,11 @@ test("보더 화면 경로: /nodes · /chat/<채널>/<스레드> · /canvas/<id>
   }
 });
 
-test("주인 /x(피드 화면): / 와 같은 몸통에 BX_X · x.css · x.js(틀 뒤), BX_EA · ea 덩어리 · 경로 모드 없음, / 에는 BX_X 없음", async () => {
+test("주인 /x(피드 화면): / 와 같은 몸통(회원 길 · 다리 0)에 BX_X · x.css · x.js(틀 뒤), BX_EA · ea 덩어리 · 경로 모드 없음, / 에는 BX_X 없음", async () => {
   const { paths, get } = setup();
   const r = await get("/feed");
   assert.equal(r.status, 200);
-  assert.deepEqual(paths, ["/"], "다리에 / 로");
+  assert.deepEqual(paths, [], "다리에 안 감");
   const html = await r.text();
   assert.match(html, /<head[^>]*><script>window\.BX_X=1<\/script>/, "BX_X 가 head 맨 앞");
   assert.ok(!html.includes("BX_EA") && !html.includes("hbx-ea-css"), "비서 배치 아님");

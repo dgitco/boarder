@@ -26,11 +26,18 @@ rl.on('line', l => { const m = JSON.parse(l); log(m);
     out({ method: 'thread/realtime/sdp', params: { threadId: 'thr_fake', sdp: 'v=0\\r\\no=answer' } });
     out({ id: m.id, result: {} });
     setTimeout(() => {
-      if (${JSON.stringify(mode)} === 'say') out({ method: 'thread/realtime/transcript/done', params: { role: 'user', text: '메인 봇에 이번 주 보고서 정리 부탁해' } });
+      if (${JSON.stringify(mode)} !== 'nosay') out({ method: 'thread/realtime/transcript/done', params: { role: 'user', text: '메인 봇에 이번 주 보고서 정리 부탁해' } });
       out({ id: 7, method: 'item/tool/call', params: { tool: 'screen', arguments: JSON.stringify({ action: 'open_channel', channel: '#notes' }) } });
       out({ id: 8, method: 'item/tool/call', params: { tool: 'handoff', arguments: { to: 'primary', text: '이번 주 보고서 정리' } } });
       out({ id: 9, method: 'item/tool/call', params: { tool: 'screen', arguments: { action: 'focus', region: { x0: 50, y0: 0, x1: 10, y1: 5 } } } });
       out({ id: 10, method: 'item/commandExecution/requestApproval', params: {} });
+      if (${JSON.stringify(mode)} === 'hook') setTimeout(() => {   // 기기 고리 시험: 위임 글 · 더한 도구(deck_item) · 덱 번호 물음 넘기기(고리가 원문으로 답)
+        // 첫 넘김(id 8)이 끝난 뒤에 다음 말 — 같이 보내면 그 넘김 시각(at)이 다음 말보다 늦게 찍혀 「방금 말한 부탁이 없어」로 떨어짐(부하 높을 때 반쯤 실패하던 것)
+        out({ method: 'item/started', params: { item: { type: 'userMessage', content: [{ type: 'text', text: '<input>에이 오 자세히</input>' }] } } });
+        out({ id: 11, method: 'item/tool/call', params: { tool: 'deck_item', arguments: { id: 'A5' } } });
+        out({ method: 'thread/realtime/transcript/done', params: { role: 'user', text: '에이 오 자세히' } });
+        out({ id: 12, method: 'item/tool/call', params: { tool: 'handoff', arguments: { to: 'primary', text: '덱 질문' } } });
+      }, 150);
     }, 30);
   }
   if (m.method === 'thread/realtime/appendText' || m.method === 'thread/realtime/stop') out({ id: m.id, result: {} });
@@ -102,6 +109,7 @@ test('rtc_start → app-server 말 차례(initialize · thread/start 읽기 전�
   await V.handle('rtc_say', { cid: 'cid0abcdef', text: '(시스템: 판 글)' }, w.deps);
   const ap = await until(() => { const x = w.lines().filter(l => l.method === 'thread/realtime/appendText'); return x.length === 2 && x; });
   assert.equal(ap[0].params.text, V.GREET); assert.equal(ap[1].params.text, '(시스템: 판 글)');
+  assert.equal(V._calls.get('cid0abcdef').meetOn, false, '판 글 꼴이 아닌 rtc_say 는 첫 판을 쓰지 않음(미팅 아닌 통화 그대로)');
   // 끊기 → realtime/stop · 프로세스 끝 · poll 은 closed
   assert.deepEqual(await V.handle('rtc_stop', { cid: 'cid0abcdef' }, w.deps), { ok: true, turns: 1 });
   assert.ok(w.lines().some(l => l.method === 'thread/realtime/stop'));
@@ -118,6 +126,11 @@ test('사람 말 없이 모델이 넘기려 하면 기기에서 거절(서버에
   await V.handle('rtc_note', { cid: 'cid1abcdef', k: 'connected' }, w.deps);
   await sleep(100);
   assert.equal(w.lines().filter(l => l.method === 'thread/realtime/appendText').length, 0);
+  const SAY = { text: '판 글', first: '판 글 + 판 목록', firstSaid: '이어 가기' };
+  await V.handle('rtc_say', { cid: 'cid1abcdef', ...SAY }, w.deps);
+  await V.handle('rtc_say', { cid: 'cid1abcdef', ...SAY }, w.deps);
+  const aps = await until(() => { const x = w.lines().filter(l => l.method === 'thread/realtime/appendText'); return x.length === 2 && x; });
+  assert.deepEqual(aps.map(x => x.params.text), ['판 글 + 판 목록', '판 글']);
   await V.handle('rtc_stop', { cid: 'cid1abcdef' }, w.deps);
 });
 
@@ -154,4 +167,122 @@ test('screenCmd · statusText: 주인 tool_screen · tool_status 와 같은 규�
   const t = V.statusText([{ id: 'a-1', name: '매출 보고', at: 0, state: 'working', kind: '진행', line: '통화 넘김 a-1 하는 중', text: '보고서' }], '', 120_000);
   assert.equal(t, 'a-1 → 매출 보고 2분 전: 진행 중 · [진행] 통화 넘김 a-1 하는 중 · 넘긴 글: 보고서');
   assert.equal(V.statusText([], ''), '이 통화에서 넘긴 일이 아직 없어요');
+});
+
+function fakeHook(over = {}) {
+  const got = [];
+  const rec = n => async (...a) => { got.push([n, ...a]); return over[n]?.(...a); };
+  const hook = { got };
+  for (const n of ['start', 'started', 'turn', 'delegate', 'tool', 'handoff', 'handed', 'answered', 'ended']) hook[n] = rec(n);
+  return hook;
+}
+test('기기 고리: 지시문 · cwd · 더한 도구 · thread/realtime 칸 · 미팅 첫인사 · 받아쓴 말 · 위임 글 · 더한 도구 답 · 덱 넘김 · 끝', async () => {
+  const w = world('hook');
+  const hook = fakeHook({
+    start: () => ({ instructions: '주인 지시문 + 노드 맥락', cwd: w.H, tools: [{ type: 'function', name: 'deck_item', description: 'd', inputSchema: { type: 'object' } }],
+      thread: { config: { model_reasoning_effort: 'low' } }, realtime: { delegationAckFiller: false }, greet: '(시스템: 싱크 첫 안건)' }),
+    tool: (c, name, a) => [`덱 ${a.id} 원문`, true],
+    handoff: (c, { text }) => text === '덱 질문' ? { answer: '(넘기지 않음 — 덱 원문으로 바로 답하세요) A5 원문' } : { deck: ' · 덱 A5: 첫 화면', refs: ['A5'] },
+  });
+  await V.handle('rtc_start', { cid: 'cidHook0001', sdp: OFFER, pane: '%42', name: '보더', meet: true, art: 'hbXzM4RUr6SrHKSUHVMHcRT7', instructions: '서버 지시문' }, { ...w.deps, hook });
+  const L = w.lines(), m = n => L.find(x => x.method === n);
+  const ts = m('thread/start').params, rs = m('thread/realtime/start').params;
+  assert.equal(ts.baseInstructions, '주인 지시문 + 노드 맥락\n\n' + V.NO_SECRETS);
+  assert.deepEqual(ts.dynamicTools.map(t => t.name), ['handoff', 'handoff_status', 'screen', 'deck_item']);
+  assert.deepEqual([ts.config, ts.sandbox, ts.cwd, rs.delegationAckFiller, rs.prompt], [{ model_reasoning_effort: 'low' }, 'read-only', w.H, false, ts.baseInstructions]);
+  assert.equal(hook.got[0][1].art, 'hbXzM4RUr6SrHKSUHVMHcRT7');
+  const res = await until(() => { const x = w.lines().filter(l => [8, 11, 12].includes(l.id) && !l.method); return x.length === 3 && x; });
+  const by = id => res.find(x => x.id === id).result;
+  assert.deepEqual(by(11), { contentItems: [{ type: 'inputText', text: '덱 A5 원문' }], success: true });
+  assert.deepEqual(by(12), { contentItems: [{ type: 'inputText', text: '(넘기지 않음 — 덱 원문으로 바로 답하세요) A5 원문' }], success: true });
+  const hs = w.calls.filter(c => c.op === 'handoff');
+  assert.equal(hs.length, 1, '덱 물음은 서버로 안 감');
+  assert.equal(hs[0].deck, '· 덱 A5: 첫 화면');
+  await until(() => hook.got.some(g => g[0] === 'handed') && hook.got.some(g => g[0] === 'delegate'));
+  const handed = hook.got.find(g => g[0] === 'handed')[2];
+  assert.deepEqual([handed.refs, handed.handoff.id, handed.ok, handed.text], [['A5'], 'cid0-1', true, '이번 주 보고서 정리']);
+  assert.equal(hook.got.find(g => g[0] === 'delegate')[2], '<input>에이 오 자세히</input>');
+  assert.equal(hook.got.find(g => g[0] === 'turn')[2].text, '메인 봇에 이번 주 보고서 정리 부탁해');
+  assert.ok(hook.got.some(g => g[0] === 'started' && g[1].cid === 'cidHook0001'));
+  // 미팅이어도 고리 첫인사 글이 있으면 connected 에 그 글(싱크 덱 미팅 — server.py SYNC_GREET)
+  await V.handle('rtc_note', { cid: 'cidHook0001', k: 'connected' }, w.deps);
+  const ap = await until(() => w.lines().find(l => l.method === 'thread/realtime/appendText'));
+  assert.equal(ap.params.text, '(시스템: 싱크 첫 안건)');
+  const SAY = { text: '(시스템: 판 글 — 지금 바로 말한다)', first: '(시스템: 판 글 — 지금 바로 말한다 판 목록 「A / B」.)', firstSaid: '(시스템: 판 글 — 이미 첫 안건을 말했으면 다시 말하지 말고 이어 간다 판 목록 「A / B」.)' };
+  await V.handle('rtc_say', { cid: 'cidHook0001', ...SAY }, w.deps);
+  await V.handle('rtc_say', { cid: 'cidHook0001', ...SAY }, w.deps);
+  const aps = await until(() => { const x = w.lines().filter(l => l.method === 'thread/realtime/appendText'); return x.length === 3 && x; });
+  assert.deepEqual(aps.slice(1).map(x => x.params.text), [SAY.firstSaid, SAY.text]);
+  // 넘긴 일에 답이 오면 answered
+  await V.handle('rtc_poll', { cid: 'cidHook0001' }, w.deps);
+  await until(() => hook.got.some(g => g[0] === 'answered'));
+  assert.equal(hook.got.find(g => g[0] === 'answered')[2].line, '통화 넘김 cid0-1 보고서 쓰는 중');
+  await V.handle('rtc_stop', { cid: 'cidHook0001' }, w.deps);
+  await until(() => hook.got.some(g => g[0] === 'ended'));
+  assert.equal(hook.got.find(g => g[0] === 'ended')[2], '');
+});
+
+test('기기 고리 오류 · 늦음은 통화를 막지 않음: start 가 던지면 서버 지시문 그대로 · 도구 고리가 던지면 모르는 도구 · reap 은 까닭과 함께 ended', async () => {
+  const w = world('hook');
+  const hook = fakeHook({ start: () => { throw new Error('파이썬 없음'); }, tool: () => { throw new Error('x'); }, handoff: () => { throw new Error('y'); }, turn: () => { throw new Error('z'); } });
+  await V.handle('rtc_start', { cid: 'cidHook0002', sdp: OFFER, pane: '%42', meet: true, instructions: '서버 지시문' }, { ...w.deps, hook });
+  const ts = w.lines().find(x => x.method === 'thread/start').params;
+  assert.equal(ts.baseInstructions, '서버 지시문\n\n' + V.NO_SECRETS);
+  assert.deepEqual(ts.dynamicTools.map(t => t.name), ['handoff', 'handoff_status', 'screen']);
+  assert.equal(ts.config, undefined);
+  const res = await until(() => { const x = w.lines().filter(l => [8, 11, 12].includes(l.id) && !l.method); return x.length === 3 && x; });
+  assert.match(res.find(x => x.id === 11).result.contentItems[0].text, /모르는 도구 deck_item/);
+  await until(() => w.calls.filter(c => c.op === 'handoff').length === 2);   // 고리가 던지면 덱 판정 없이 그대로 넘김(덱 물음도)
+  assert.ok(w.calls.filter(c => c.op === 'handoff').every(c => !('deck' in c)));
+  // 미팅 · 고리 첫인사 없음 → 첫인사 안 함(회원 미팅과 같음)
+  await V.handle('rtc_note', { cid: 'cidHook0002', k: 'connected' }, w.deps);
+  await sleep(100);
+  assert.equal(w.lines().filter(l => l.method === 'thread/realtime/appendText').length, 0);
+  V.reap(Date.now() + V.IDLE_KILL_MS + 1000);
+  await until(() => hook.got.some(g => g[0] === 'ended'));
+  assert.equal(hook.got.find(g => g[0] === 'ended')[2], '화면이 끊겨 닫음');
+});
+
+// 넘김 판정은 한 시계(받아쓴 말 순번 + 기기 시계): Worker 가 찍은 handoff.at 과 견주지 않음 — 시계가 어긋나거나 넘김이 오가는 동안 말해도 정상 넘김은 통과,
+// 사람 말 없이 맥락만이면 거절 그대로(한 말로 두 번 넘기지 않음)
+async function clockCall(cid, skew, delay = 0) {
+  const w = world('nosay');   // 가짜 codex 는 사람 말 없이 넘김 하나(id 8)만 — 아래는 runTool 을 바로 부름
+  await V.handle('rtc_start', { cid, sdp: OFFER, pane: '%1' }, w.deps);
+  await until(() => w.lines().find(l => l.id === 8 && !l.method));
+  const c = V._calls.get(cid), sent = [];
+  let gate = null;
+  c.server = async (op, body) => {
+    if (op !== 'handoff') return { ok: true };
+    sent.push(body);
+    if (delay) await new Promise(r => { gate = r; setTimeout(r, delay); });
+    return { ok: true, text: '넣음', handoff: { id: `${cid.slice(0, 4)}-${sent.length}`, pane: '%1', name: 'Primary', at: Date.now() + skew, state: 'in' } };   // Worker 시계(skew 만큼 어긋남)
+  };
+  const say = text => c.line(JSON.stringify({ method: 'thread/realtime/transcript/done', params: { role: 'user', text } }));
+  const hand = text => c.runTool('handoff', { to: 'primary', text });
+  return { c, sent, say, hand, release: () => gate?.() };
+}
+for (const skew of [60_000, -60_000]) test(`넘김 판정 한 시계: Worker 시계가 ${skew > 0 ? '+' : ''}${skew / 1000}초 어긋나도 새 말 뒤 넘김은 통과 · 같은 말로 두 번은 거절`, async () => {
+  const k = await clockCall(skew > 0 ? 'cidClkP001' : 'cidClkM001', skew);
+  k.say('첫 부탁');
+  assert.deepEqual(await k.hand('첫 일'), ['넣음', true]);
+  const again = await k.hand('맥락만 보고 또');   // 새 사람 말 없음(Worker 시계가 늦어도 첫 말을 다시 쓰지 않음)
+  assert.equal(again[1], false); assert.match(again[0], /방금 말한 부탁이 없어/);
+  k.say('둘째 부탁');   // Worker 시계가 앞서도(옛: 넘김 at 이 이 말보다 늦게 찍혀 거절) 통과
+  assert.deepEqual(await k.hand('둘째 일'), ['넣음', true]);
+  assert.deepEqual(k.sent.map(b => b.said), ['첫 부탁', '둘째 부탁']);
+});
+test('넘김 판정 한 시계: 넘김이 오가는 동안 한 말은 다음 넘김에 씀 · 오래된 말(기기 시계 SAID_MS 넘음)은 거절', async () => {
+  const k = await clockCall('cidClkF001', 0, 300);
+  k.say('첫 부탁');
+  const p1 = k.hand('첫 일');
+  await until(() => k.sent.length === 1);
+  k.say('가는 동안 둘째 부탁');   // 서버가 아직 답하기 전(그 뒤 Worker 가 at 을 찍음)
+  assert.deepEqual(await p1, ['넣음', true]);
+  assert.deepEqual(k.sent[0].said, '첫 부탁', '넘김을 보낸 뒤 한 말은 그 넘김에 안 붙음');
+  const p2 = k.hand('둘째 일'); k.release();
+  assert.deepEqual(await p2, ['넣음', true]);
+  assert.equal(k.sent[1].said, '가는 동안 둘째 부탁');
+  k.say('셋째 부탁'); k.c.turns.at(-1).at -= V.SAID_MS + 1000;   // 기기 시계로 90초 넘은 말
+  const old = await k.hand('셋째 일');
+  assert.equal(old[1], false); assert.equal(k.sent.length, 2);
 });

@@ -8,7 +8,8 @@ type Env = direct.DirectEnv & { DB: D1Database; RESULTS: R2Bucket; AI: { run(mod
 type C = Context<{ Bindings: Env }>;
 
 export const LEGACY_FILE_MAX = 20 * 1024 * 1024;
-export const FILE_MAX = direct.MAX_FILE, VOICE_MAX = 3 * 1024 * 1024, LINK_DAYS = 7, FILES_PER_MSG = 10;
+export const FILE_MAX = direct.MAX_FILE, VOICE_MAX = 4 * 1024 * 1024,
+  LINK_DAYS = 7, FILES_PER_MSG = 10;
 // 파일 id = 새 UUID v7(하이픈 꼴) 또는 옛 32자 16진. 주소 · 화면에서 오면 소문자로(대소문자 안 가림)
 export const FID_SRC = "[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}";
 const FID = new RegExp(`^(?:${FID_SRC})$`), OLD = /^[0-9a-f]{32}$/, RISKY = /html|svg|xml|javascript|ecmascript/i;

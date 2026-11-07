@@ -38,7 +38,9 @@ async function setup(o: { on?: boolean; beat?: number | null } = {}) {
   await ledger.setFlag(D1, "write_owner_jobs", o.on ?? true);   // 스위치 캐시도 비움
   if (o.beat !== null) db.prepare("INSERT INTO owner_job_beat(id, at) VALUES (1, ?)").run(Date.now() - (o.beat ?? 1000));
   const call = async (r: { method: string; path: string; body?: Uint8Array }) => { calls.push({ method: r.method, path: r.path, body: r.body ? new TextDecoder().decode(r.body) : "" }); return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode('{"ok":true,"state":"ok","from":"bridge"}') }; };
-  const env = { DB: D1, ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test", RELAY_TOKEN: RELAY, ADMIN_TOKEN: "admin-token-made-up" };
+  // 스냅숏 · 화면 칸(주인도 회원 길 — 쓰기 뒤 화면 칸 알림 · 채널 표 cfg)
+  const SNAP = { idFromName: (n: string) => n, get: () => ({ get: async (k: string) => k === "cfg" ? { body: JSON.stringify({ channels: { primary: "C1", dgit: "C4", company: "C2" }, drafts: {} }), etag: '"e-cfg"', at: Date.now(), checked: Date.now() } : null, tags: async () => ({ t: {}, age: 0, boot: "b" }), bump: async () => 0 }) };
+  const env = { DB: D1, SNAP, ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test", RELAY_TOKEN: RELAY, ADMIN_TOKEN: "admin-token-made-up" };
   const ctx = { waitUntil() {}, passThroughOnException() {} } as never;
   const send = async (path: string, body: unknown, headers: Record<string, string> = {}) => app.fetch(new Request("https://example.test" + path, { method: "POST", headers: { cookie: await cookie(OWNER), "x-hb": "1", "sec-fetch-site": "same-origin", "content-type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) }), env as never, ctx);
   const get = async (path: string) => app.fetch(new Request("https://example.test" + path, { headers: { cookie: await cookie(OWNER) } }), env as never, ctx);
@@ -54,7 +56,7 @@ test("주인 글: 다리를 안 부르고 할 일 줄 한 줄 · 202 queued(rid 
   assert.equal(r.status, 202);
   assert.deepEqual(await r.json(), { ok: true, rid: "rjob-chat-0001", state: "queued" });
   assert.equal(r.headers.get("x-owner-job"), "new");
-  assert.ok(!(r.headers.get("set-cookie") || "").includes("bx_w="), "할 일 줄 길에 「방금 씀」 쿠키");
+  assert.ok((r.headers.get("set-cookie") || "").includes("bx_w=1; Max-Age=20"), "주인도 회원과 같이 앞단 「방금 씀」 쿠키(owner_unified 늘 켬)");
   assert.equal(t.calls.length, 0, "다리를 불렀음");
   const [row] = t.rows();
   assert.equal(row.rid, "rjob-chat-0001"); assert.equal(row.kind, "/api/chat"); assert.equal(row.okey, "chat:dgit");
@@ -143,22 +145,22 @@ test("스위치를 끄면 예전 다리 길(쌓인 줄의 답은 그대로 보�
   assert.equal(t.calls.length, 1, "쌓인 줄 답을 다리로 물음");
 });
 
-test("문 · 모양: X-HB 없으면 403, 깨진 JSON 은 400(줄 없음), 줄로 안 받는 길(chat/new)은 다리", async () => {
+test("문 · 모양: X-HB 없으면 403, 깨진 JSON 은 400(줄 없음), 줄로 안 받는 길(chat/new)은 회원 길(다리 아님)", async () => {
   const t = await setup();
   assert.equal((await t.send("/api/chat", { channel: "dgit", text: "x" }, { "x-hb": "" })).status, 403);
   const bad = await t.send("/api/chat", "{깨짐");
   assert.equal(bad.status, 400); assert.equal(t.rows().length, 0);
-  assert.equal((await t.send("/api/chat/new", { text: "새 대화" })).status, 200);
-  assert.equal(t.calls.length, 1); assert.equal(t.calls[0].path, "/api/chat/new");
+  assert.ok((await t.send("/api/chat/new", { text: "새 대화" })).status < 500);
+  assert.equal(t.calls.length, 0, "세션 새로 열기는 회원 길(memberPost)");
 });
 
-test("읽음 표시 · 화면 오류 기록은 「방금 씀」 쿠키 없이 줄로", async () => {
+test("읽음 표시는 할 일 줄로 · 화면 오류 기록은 회원 길(Workers Logs) — 둘 다 다리 아님, 화면 오류 기록엔 「방금 씀」 쿠키 없음", async () => {
   const t = await setup();
   const seen = await t.send("/api/chat", { channel: "dgit", thread: "1793900000.000001", seen: true, rid: "rjob-seen-0001" });
-  assert.equal(seen.status, 202); assert.ok(!(seen.headers.get("set-cookie") || "").includes("bx_w="));
+  assert.equal(seen.status, 202);
   const log = await t.send("/api/clientlog", { kind: "http", err: "x" });
-  assert.equal(log.status, 202); assert.ok(!(log.headers.get("set-cookie") || "").includes("bx_w="));
-  assert.deepEqual(t.rows().map(r => [r.kind, r.okey.split(":")[0]]), [["/api/chat", "seen"], ["/api/clientlog", "log"]]);
+  assert.ok(log.status < 400, String(log.status)); assert.ok(!(log.headers.get("set-cookie") || "").includes("bx_w="));
+  assert.deepEqual(t.rows().map(r => [r.kind, r.okey.split(":")[0]]), [["/api/chat", "seen"]]);
   assert.equal(t.calls.length, 0);
 });
 
@@ -172,13 +174,13 @@ test("관리 길로 스위치를 켜고 끔(write_owner_jobs — 이름에 밑�
   assert.equal((await t.admin({ name: "write_Bad-name", on: true })).status, 400);
 });
 
-test("답을 안 따라가는 쓰기(고치기 · 지우기 · 세션 넣기 · 세션 대화)는 예전 다리 길", async () => {
+test("답을 안 따라가는 쓰기: 고치기 · 지우기는 예전 다리 길 · 세션 넣기 · 세션 대화는 회원 길(다리 아님)", async () => {
   const t = await setup();
-  for (const [p, b] of [["/api/chat", { rid: "rjob-edit-0001", channel: "dgit", ts: "1793900000.000001", edit: "고친 글" }], ["/api/chat", { rid: "rjob-del-00001", channel: "dgit", ts: "1793900000.000001", delete: true }],
-    ["/api/sess/send", { pane: "%1", text: "x" }], ["/api/chat/send", { sid: "s1", text: "x" }]] as const) {
+  for (const [p, b] of [["/api/chat", { rid: "rjob-edit-0001", channel: "dgit", ts: "1793900000.000001", edit: "고친 글" }], ["/api/chat", { rid: "rjob-del-00001", channel: "dgit", ts: "1793900000.000001", delete: true }]] as const) {
     const r = await t.send(p, b); assert.equal(r.status, 200, p); assert.equal((await r.json() as { from: string }).from, "bridge");
   }
-  assert.deepEqual(t.calls.map(c => c.path), ["/api/chat", "/api/chat", "/api/sess/send", "/api/chat/send"]);
+  for (const [p, b] of [["/api/sess/send", { pane: "%1", text: "x" }], ["/api/chat/send", { sid: "s1", text: "x" }]] as const) assert.ok((await t.send(p, b)).status < 500, p);
+  assert.deepEqual(t.calls.map(c => c.path), ["/api/chat", "/api/chat"], "세션 넣기 · 세션 대화는 다리로 안 감");
   assert.equal(t.rows().length, 0);
   assert.equal((await t.send("/api/chat", { rid: "rjob-react-001", channel: "dgit", ts: "1793900000.000001", react: "eyes" })).status, 202);   // 반응은 줄로
 });

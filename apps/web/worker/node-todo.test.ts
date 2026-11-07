@@ -159,7 +159,8 @@ test("API 기기: full · 주인 하네스는 됨, 감시 기기 · 토큰 없�
   assert.equal((await s.call("POST", "/api/device/todos", { op: "list" }, dev(DEVW))).status, 401, "감시 기기는 못 씀");
   const a = await s.call("POST", "/api/device/todos", { op: "add", node: "보더 웹 만들기", title: "할 일 칸", prio: 1, by: "Claude" }, dev(DEVH));
   assert.equal(a.status, 200, a.text); assert.equal(a.j.todo.owner, OWNER);
-  assert.ok(s.bumps.some(([n, t]) => n === "owner@apac" && /^~\d+$/.test(t.todo) && !t.data), "주인 화면 칸에 todo 만");
+  assert.ok(s.bumps.some(([n, t]) => n === `live:${OWNER}@apac` && /^~\d+$/.test(t.todo) && !t.data), "주인 화면 칸(live:<canon>)에 todo 만");
+  assert.ok(!s.bumps.some(([n]) => n === "owner@apac"), "스냅숏 칸(owner@apac)엔 안 감");
   s.bumps.length = 0;
   const m = await s.call("POST", "/api/device/todos", { op: "add", node: "내 노드", title: "회원 일" }, dev(DEV));
   assert.equal(m.status, 200); assert.equal(m.j.todo.owner, MEMBER);

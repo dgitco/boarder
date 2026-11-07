@@ -127,7 +127,7 @@ test("새 메인 창이 열리면(로그인 뒤 첫 글) 미룬 역할 창도 he
   assert.equal(open.length, DEFAULT_ROLES.length, "미룬 역할 창이 다 열림");
 });
 
-test("구독 로그인 없음: 안내 한 줄만 한 번 · 그동안 온 글은 맡아 뒀다 로그인 뒤 열린 메인 봇에게 넣음", async () => {
+test("구독 로그인 없음: 메인 스레드에 줄 없음 · 그동안 온 글은 맡아 뒀다 로그인 뒤 열린 메인 봇에게 넣음", async () => {
   const o = { failOpen: true, failMsg: "이 기기의 Claude 계정이 아직 로그인되지 않았어요 — 설정 › 기기 › 엔진에서 「로그인」을 눌러 주세요" };
   const s = setup(o);
   s.eng.ctx.waitUntil = () => {};
@@ -136,7 +136,7 @@ test("구독 로그인 없음: 안내 한 줄만 한 번 · 그동안 온 글은
   assert.equal(await s.eng.ensureMain(MEMBER, DEV), null, "두 번째도 실패");
   assert.ok(await s.eng.holdForMain("[보드 · Primary] [Boarder chat] 안녕"), "글을 맡아 둠");
   const lines = s.sys();
-  assert.equal(lines.filter(t => /아직 구독 계정이 연동되지 않았어요/.test(t)).length, 1, "안내 한 줄만");
+  assert.equal(lines.filter(t => /아직 구독 계정이 연동되지 않았어요/.test(t)).length, 0, "「보더」 안내 줄도 안 씀 — 화면이 채팅 칸에 안내(sub-state.ts)");
   assert.ok(!lines.some(t => /메인 봇을 못 열었어요|창은 못 열었어요/.test(t)), "오류 줄은 안 쌓임");
   o.failOpen = false; s.sent.length = 0;
   const id = await s.eng.ensureMain(MEMBER, DEV);

@@ -70,11 +70,42 @@ export async function upsert(env: Env, key: string, v: { service: string; label:
   return r!.id;
 }
 
+/** 끊긴 까닭까지 남김 — 「다시 연결이 필요해요」만 있으면 왜 끊겼는지 뒤에 알 길이 없음(토큰 값은 안 들어감: 서버 오류 이름 · 상태 코드만) */
+const reconnectWhy = (why: string) => `다시 연결이 필요해요(${why})`.slice(0, 200);
 async function mark(env: Env, id: string, status: Row["status"], error: string | null) {
   await env.DB.prepare("UPDATE connection SET status = ?, error = ?, updated_at = ? WHERE id = ?").bind(status, error, Date.now(), id).run();
 }
 
 const refreshing = new Map<string, Promise<Auth>>();
+
+/** 다른 isolate 가 갱신 중이라 이번 요청은 토큰을 못 받음 — 끊김이 아니라 잠깐 뒤 다시(상태를 바꾸지 않음) */
+export class RefreshBusy extends Error { constructor() { super("연결 토큰을 갱신하는 중이에요 — 잠시 뒤 다시"); } }
+// 위 Map 은 isolate 하나 안에서만 막음. 요청이 몰리면 isolate 둘이 같은 갱신 토큰을 같은 때 보내고, 돌려 쓰는 서버는 재사용으로 보고 줄 전체를 폐기함 → D1 임차로 연결마다 한 곳만 갱신
+const LEASE_MS = 30_000;   // 토큰 요청 시간 초과(15초)보다 넉넉히. 임자가 죽어도 이 뒤엔 다른 곳이 가져감
+const WAIT_MS = 20_000;    // 제한 시간을 안 받은 길이 임차 · 갱신을 기다리는 한도
+async function takeLease(env: Env, id: string): Promise<boolean> {
+  const now = Date.now();
+  try {
+    const r = await env.DB.prepare("INSERT INTO connection_refresh_lease(id, until) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET until = excluded.until WHERE connection_refresh_lease.until < ?").bind(id, now + LEASE_MS, now).run();
+    return !!r.meta.changes;
+  } catch (e) {
+    if (/no such table/i.test(String(e))) return true;   // 표가 아직 없을 때만(코드가 마이그레이션보다 먼저 나감) 예전처럼
+    throw new RefreshBusy();                              // D1 일시 장애에 잠금 없이 갱신하면 그게 곧 경합 — 이번 요청은 포기
+  }
+}
+/** 임차를 쥔 채 f. 남이 쥐고 있으면 놓을 때까지 기다림 — f 안에서 줄을 다시 읽으므로 임자가 쓴 토큰을 거기서 집어 감 */
+async function underLease<T>(env: Env, id: string, deadline: number, f: () => Promise<T>): Promise<T> {
+  while (!await takeLease(env, id)) {
+    const left = deadline - Date.now(); if (left <= 0) throw new RefreshBusy();
+    await new Promise(r => setTimeout(r, Math.min(500, left)));
+  }
+  try { return await f(); } finally { await env.DB.prepare("DELETE FROM connection_refresh_lease WHERE id = ?").bind(id).run().catch(() => null); }
+}
+/** 남이 하는 갱신을 마감까지만 기다림. 자기가 하는 갱신에는 쓰지 말 것 — 토큰 서버가 갱신 토큰을 쓴 뒤 요청이 먼저 끝나면 새 토큰을 잃음(돌려 쓰는 서버에선 끊김) */
+function byDeadline<T>(p: Promise<T>, deadline: number): Promise<T> {
+  let t: ReturnType<typeof setTimeout>;
+  return Promise.race([p, new Promise<never>((_, no) => { t = setTimeout(() => no(new RefreshBusy()), Math.max(0, deadline - Date.now())); })]).finally(() => clearTimeout(t));
+}
 const clientOf = (env: Env, row: Row, a: Auth) => a.hosted ? (hostedApp(env, row.service) || { client_id: a.client_id! }) : { client_id: a.client_id!, client_secret: a.client_secret };
 
 export function obLive(env: Env, row: Pick<Row, "source">): boolean {
@@ -105,22 +136,25 @@ async function writeAuth(env: Env, row: Row, next: Auth) {
   throw new Error("연결 열쇠가 바뀌는 중이에요 — 잠시 뒤 다시");
 }
 
-async function doRefresh(env: Env, row: Row, a: Auth): Promise<Auth> {
+async function doRefresh(env: Env, row: Row, a: Auth, deadline = Date.now() + WAIT_MS): Promise<Auth> {
   if (obLive(env, row)) throw new Error("옮겨 오기 전 서비스가 아직 같은 토큰을 써요 — 옮기기를 마칠 때 새로 받아요");
-  const running = refreshing.get(row.id); if (running) return running;
+  const running = refreshing.get(row.id); if (running) return byDeadline(running, deadline);
   const p = (async () => {
     try {
-      const n = await newer(env, row); if (n) { if (!n.expires_at || n.expires_at > Date.now() + 60_000) return n; a = n; }
-      const t = await refresh(a.token_endpoint!, a.refresh_token!, a.resource || row.url, clientOf(env, row, a));
-      const next = { ...a, access_token: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
-      await writeAuth(env, row, next);
-      return next;
+      return await underLease(env, row.id, deadline, async () => {
+        const n = await newer(env, row); if (n) { if (!n.expires_at || n.expires_at > Date.now() + 60_000) return n; a = n; }
+        const t = await refresh(a.token_endpoint!, a.refresh_token!, a.resource || row.url, clientOf(env, row, a));
+        const next = { ...a, access_token: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
+        await writeAuth(env, row, next);
+        return next;
+      });
     } catch (e) {
+      if (e instanceof RefreshBusy) throw e;
       // 다른 isolate 가 먼저 갱신했으면 그 토큰을 씀
       const fresh = await env.DB.prepare("SELECT auth, owner FROM connection WHERE id = ?").bind(row.id).first<{ auth: string; owner: string }>();
       if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; row.owner = fresh.owner; return openAuth(env, row, fresh.auth); }
       const dead = e instanceof TokenError && (["invalid_grant", "bad_refresh_token", "invalid_client", "unauthorized_client"].includes(e.code || "") || (e.status >= 400 && e.status < 500 && e.status !== 429));
-      await mark(env, row.id, dead ? "expired" : "error", dead ? "다시 연결이 필요해요" : (e instanceof Error ? e.message : String(e)).slice(0, 200));
+      await mark(env, row.id, dead ? "expired" : "error", dead ? reconnectWhy(`갱신 거절 ${(e as TokenError).code || (e as TokenError).status}`) : (e instanceof Error ? e.message : String(e)).slice(0, 200));
       throw dead ? new AuthError("refresh") : e;
     } finally { refreshing.delete(row.id); }
   })();
@@ -132,28 +166,33 @@ async function doRefresh(env: Env, row: Row, a: Auth): Promise<Auth> {
 export async function remote(env: Env, row: Row, force = false, timeoutMs?: number): Promise<Remote> {
   let a = await openAuth(env, row, row.auth);
   const canRefresh = row.kind === "oauth" && !!a.refresh_token && !!a.token_endpoint && !!a.client_id;
-  if (canRefresh && (force || (a.expires_at && a.expires_at < Date.now() + 60_000))) a = await doRefresh(env, row, a);
+  const deadline = Date.now() + (timeoutMs || WAIT_MS);
+  if (canRefresh && (force || (a.expires_at && a.expires_at < Date.now() + 60_000))) a = await doRefresh(env, row, a, deadline);
+  if (timeoutMs) timeoutMs = Math.max(500, deadline - Date.now());   // 받은 제한 시간은 갱신 대기까지 합친 전체 — 기다린 만큼 원격 호출 몫을 줄임
   const headers: Record<string, string> = { ...(a.headers || {}) };
   if (a.access_token) headers.authorization = `Bearer ${a.access_token}`;
   return { id: row.id, url: row.url, headers, timeoutMs };
 }
 
-/** 401 이면 한 번 갱신하고 다시. 그래도 401 이면 끊김 */
+/** 401 이면 갱신하고 다시. 그래도 401 이면 끊김 */
 async function withAuth<T>(env: Env, row: Row, f: (r: Remote) => Promise<T>, timeoutMs?: number): Promise<T> {
-  try { return await f(await remote(env, row, false, timeoutMs)); }
+  const end = timeoutMs ? Date.now() + timeoutMs : 0, left = () => timeoutMs ? Math.max(500, end - Date.now()) : undefined;
+  try { return await f(await remote(env, row, false, left())); }
   catch (e) {
     if (!(e instanceof AuthError)) throw e;
     const a = await openAuth(env, row, row.auth);
-    if (row.kind === "oauth" && a.refresh_token && e.message !== "refresh") {
-      try { return await f(await remote(env, row, true, timeoutMs)); } catch (e2) { if (!(e2 instanceof AuthError)) throw e2; }
+    let marked = e.message === "refresh";   // doRefresh 가 까닭을 이미 적음 — 덮지 않음
+    // 두 번까지: 첫 번은 다른 요청이 그사이 쓴 토큰을 집어 올 뿐 갱신이 아닐 수 있음(그 토큰도 401 이면 그때 진짜 갱신 — 갱신 한 번 없이 끊김으로 적지 않게)
+    for (let i = 0; i < 2 && !marked && row.kind === "oauth" && a.refresh_token; i++) {
+      try { return await f(await remote(env, row, true, left())); } catch (e2) { if (!(e2 instanceof AuthError)) throw e2; marked = e2.message === "refresh"; }
     }
-    await mark(env, row.id, "expired", "다시 연결이 필요해요");
+    if (!marked) await mark(env, row.id, "expired", reconnectWhy("서비스가 토큰을 받지 않음 401"));
     throw new AuthError(`${prefixOf(row)} 연결이 끊겼어요 — 보더 설정에서 다시 연결`);
   }
 }
 
-/** 원격 도구 목록(캐시 10분). fresh 면 새로 */
-export async function tools(env: Env, row: Row, fresh = false, timeoutMs?: number): Promise<RemoteTool[]> {
+/** 원격 도구 목록(캐시 10분). fresh 면 새로. strict 면 못 읽었을 때 옛 목록으로 넘기지 않고 오류 — 「다시 읽기」가 실패를 성공처럼 답하지 않게 */
+export async function tools(env: Env, row: Row, fresh = false, timeoutMs?: number, strict = false): Promise<RemoteTool[]> {
   if (row.kind === "api") return apiTools(env, row);
   if (!fresh && row.tools && row.tools_at && Date.now() - row.tools_at < TOOLS_TTL) return JSON.parse(row.tools);
   try {
@@ -163,8 +202,8 @@ export async function tools(env: Env, row: Row, fresh = false, timeoutMs?: numbe
     row.tools = JSON.stringify(t); row.tools_at = at; row.status = "ok"; row.error = null;
     return t;
   } catch (e) {
-    if (!(e instanceof AuthError)) await mark(env, row.id, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200));
-    if (row.tools) return JSON.parse(row.tools);   // 옛 목록이라도
+    if (!(e instanceof AuthError) && !(e instanceof RefreshBusy)) await mark(env, row.id, "error", (e instanceof Error ? e.message : String(e)).slice(0, 200));
+    if (row.tools && !strict) return JSON.parse(row.tools);   // 옛 목록이라도
     throw e;
   }
 }
@@ -174,7 +213,7 @@ export async function call(env: Env, row: Row, tool: string, args: Record<string
     const a = await apiAuth(env, row); if (!a.spec) throw new Error("이 API 는 다시 만들어요");
     const r = await runApi(a.spec, a.spec.auth.type === "oauth" ? await googleKey(env, row) : a.key, tool, args);
     const dead = r.isError && (a.spec.preset === "slack" && /^Slack: (token_expired|invalid_auth|token_revoked|account_inactive)/.test(r.content[0]?.text || "") || a.spec.preset === "github-app" && /^401 /.test(r.content[0]?.text || ""));
-    if (dead && !obLive(env, row)) await mark(env, row.id, "expired", "다시 연결이 필요해요");
+    if (dead && !obLive(env, row)) await mark(env, row.id, "expired", reconnectWhy((r.content[0]?.text || "").slice(0, 60)));
     return r;
   }
   return withAuth(env, row, r => rpc(r, "tools/call", { name: tool, arguments: args }));
@@ -190,19 +229,23 @@ async function googleKey(env: Env, row: Row): Promise<string | undefined> {
   const app = a.api ? (slack ? slackApp(env, a.api.auth) : github ? githubApp(env, a.api.auth) : googleApp(env, a.api.auth)) : null;
   if (!a.refresh_token || !app || !a.expires_at || a.expires_at > Date.now() + 60_000) return a.key;
   if ((slack || github) && obLive(env, row)) return a.key;
-  const running = refreshing.get(row.id); if (running) return (await running).key;
+  const deadline = Date.now() + WAIT_MS;
+  const running = refreshing.get(row.id); if (running) return (await byDeadline(running, deadline)).key;
   const p = (async () => {
     try {
-      const n = await newer(env, row); if (n) { if (n.expires_at && n.expires_at > Date.now() + 60_000) return n; a = n; }
-      const t = slack ? await slackToken(app, a.refresh_token!) : github ? await githubAppToken(app, a.refresh_token!) : await googleToken(app, { grant_type: "refresh_token", refresh_token: a.refresh_token! });
-      const next: Auth = { ...a, key: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
-      await writeAuth(env, row, next);
-      return next;
+      return await underLease(env, row.id, deadline, async () => {
+        const n = await newer(env, row); if (n) { if (n.expires_at && n.expires_at > Date.now() + 60_000) return n; a = n; }
+        const t = slack ? await slackToken(app, a.refresh_token!) : github ? await githubAppToken(app, a.refresh_token!) : await googleToken(app, { grant_type: "refresh_token", refresh_token: a.refresh_token! });
+        const next: Auth = { ...a, key: t.access_token, refresh_token: t.refresh_token || a.refresh_token, expires_at: t.expires_at };
+        await writeAuth(env, row, next);
+        return next;
+      });
     } catch (e) {
+      if (e instanceof RefreshBusy) throw e;
       const fresh = await env.DB.prepare("SELECT auth, owner FROM connection WHERE id = ?").bind(row.id).first<{ auth: string; owner: string }>();
       if (fresh && fresh.auth !== row.auth) { row.auth = fresh.auth; row.owner = fresh.owner; return openAuth(env, row, fresh.auth); }
       const dead = e instanceof GoogleTokenError && (e.code === "invalid_grant" || (e.status >= 400 && e.status < 500 && e.status !== 429));
-      await mark(env, row.id, dead ? "expired" : "error", dead ? "다시 연결이 필요해요" : (e instanceof Error ? e.message : String(e)).slice(0, 200));
+      await mark(env, row.id, dead ? "expired" : "error", dead ? reconnectWhy(`갱신 거절 ${(e as GoogleTokenError).code || (e as GoogleTokenError).status}`) : (e instanceof Error ? e.message : String(e)).slice(0, 200));
       throw dead ? new AuthError(`${prefixOf(row)} 연결이 끊겼어요 — 보더 설정에서 다시 연결`) : e;
     } finally { refreshing.delete(row.id); }
   })();
@@ -254,6 +297,7 @@ export async function sharedTo(env: Env, owner: string): Promise<(Row & { from_e
 
 /** 이 주인의 연결된 도구 전부(이름 = <service>[__<label>]__<tool>). 끊긴 연결은 빠짐. 이름이 겹치면 뒤 것에 hash */
 const ERROR_BACKOFF_MS = 5 * 60_000;
+const CATALOG_MS = 8_000;
 export async function catalog(env: Env, owner: string, wait: (p: Promise<unknown>) => void): Promise<Map<string, CTool>> {
   const own = (await list(env, owner)).sort((a, b) => a.id < b.id ? -1 : 1), out = new Map<string, CTool>();
   const shared = (await sharedTo(env, owner).catch(() => [])).map(r => ({ ...r, read_only: 1, label: slug(`${r.from_email.split("@")[0]}${r.label ? "-" + r.label : ""}`) || "shared" }));
@@ -263,7 +307,8 @@ export async function catalog(env: Env, owner: string, wait: (p: Promise<unknown
     const stale = !row.tools_at || Date.now() - row.tools_at >= TOOLS_TTL;
     if (row.tools) { if (stale) wait(tools(env, row, true).catch(() => {})); return JSON.parse(row.tools); }
     if (row.status === "error" && Date.now() - row.updated_at < ERROR_BACKOFF_MS) return [];
-    try { return await tools(env, row, false, 8_000); } catch { return []; }
+    // 8초는 이 목록 전체의 한도(원격 호출 여럿 · 갱신 포함). 넘겨도 하던 일은 wait 로 끝까지 — 갱신한 토큰을 저장하고 임차를 놓아야 함
+    try { const p = tools(env, row, false, CATALOG_MS); wait(p.catch(() => {})); return await byDeadline(p, Date.now() + CATALOG_MS); } catch { return []; }
   }));
   rows.forEach((row, i) => {
     const off = new Set(row.off.split(",").filter(Boolean));

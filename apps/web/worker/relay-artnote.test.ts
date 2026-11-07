@@ -44,7 +44,8 @@ test("owner-write artnote: who 를 받으면 그 이름으로 쓰고 지우기�
 
 test("POST /api/relay/artnote: 토큰 없으면 403, 이름 없으면 400, 쓰면 D1 이 id 를 정하고 같은 rid 는 한 번", async () => {
   const { db, D1 } = d1();
-  const env = { DB: D1, RESULTS: R2, RELAY_TOKEN: "relay-t", LEDGER_TOKEN: "ledger-t" } as never;
+  const SNAP = { idFromName: (n: string) => n, get: () => ({ bump: async () => 1 }) };
+  const env = { DB: D1, RESULTS: R2, SNAP, RELAY_TOKEN: "relay-t", LEDGER_TOKEN: "ledger-t" } as never;
   const call = (b: object, tok = "ledger-t") => app.fetch(new Request("https://example.test/api/relay/artnote", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tok}` }, body: JSON.stringify(b) }), env, ctx);
   const mark = (r: Response) => r.headers.get("x-artnote-route");   // 이 길 표시 — 없으면 Python 이 옛 Worker 로 보고 예전 길로 감(안전이 이 머리에 걸림)
   for (const [b, tok, st] of [[{ art: CV, target: "A.dc.html", text: "x", who: "a" }, "wrong", 403], [{ art: CV, target: "A.dc.html", text: "x" }, "ledger-t", 400], [{ art: "nope", target: "A.dc.html", text: "x", who: "a" }, "ledger-t", 404]] as const) {

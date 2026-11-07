@@ -255,7 +255,7 @@ export function mountConnectors(host: Hono<any>, who: Who) {
   app.get("/api/connections/:id/tools", async c => {
     const m = await me(c); if (m.err) return m.err;
     const row = await store.get(c.env, m.w.owner, c.req.param("id")); if (!row) return c.json({ error: "없음" }, 404);
-    let ts; try { ts = await store.tools(c.env, row, c.req.query("fresh") === "1"); } catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e), connection: view(row, m.rd) }, 502); }
+    let ts; try { const fresh = c.req.query("fresh") === "1"; ts = await store.tools(c.env, row, fresh, undefined, fresh); } catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e), connection: view(row, m.rd) }, 502); }
     const off = new Set(row.off.split(",").filter(Boolean));
     return c.json({ connection: view(row, m.rd), tools: ts.map(t => ({ name: t.name, exposed: exposedName(store.prefixOf(row), t.name), title: t.title, description: (t.description || "").slice(0, 300), read_only: t.annotations?.readOnlyHint === true, on: !off.has(t.name) })) });
   });
@@ -282,7 +282,7 @@ export function mountConnectors(host: Hono<any>, who: Who) {
   app.post("/api/connections/:id/refresh", async c => {
     const m = await me(c, true); if (m.err) return m.err;
     const row = await store.get(c.env, m.w.owner, c.req.param("id")); if (!row) return c.json({ error: "없음" }, 404);
-    try { const ts = await store.tools(c.env, row, true); await store.probeAccount(c.env, row).catch(() => null); return c.json({ ok: true, tools: ts.length }); }   // 계정 칸이 비었으면 이때 채움(전에 연결한 줄)
+    try { const ts = await store.tools(c.env, row, true, undefined, true); await store.probeAccount(c.env, row).catch(() => null); return c.json({ ok: true, tools: ts.length }); }   // 계정 칸이 비었으면 이때 채움(전에 연결한 줄)
     catch (e) { return c.json({ error: e instanceof Error ? e.message : String(e) }, 502); }
   });
 

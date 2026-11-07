@@ -13,6 +13,12 @@ export const REFRESH_MS = 15_000;      // 넘긴 일 상태를 서버에 묻는 
 export const SCREEN_ACTIONS = ['open_channel', 'open_thread', 'open_canvas', 'next', 'prev', 'goto_board', 'focus', 'point'];
 const ART_ID = /^[A-Za-z0-9]{16,40}$/, TS_RE = /^\d{10}\.\d{6}$/;
 const CTRL = /[\x00-\x1f\x7f]/g;
+export const HOOK_START_MS = 15_000;   // 고리의 지시문 · 맥락 모으기 한도(서버 rtc_start 45초 안) — 넘으면 서버 지시문 그대로
+/** 고리 함수 하나 — 없거나 던지면 undefined(통화는 그대로) */
+export async function hookRun(hook, name, ...a) {
+  const f = hook?.[name]; if (typeof f !== 'function') return undefined;
+  try { return await f.apply(hook, a); } catch { return undefined; }
+}
 const oneLine = (t, n) => String(t ?? '').replace(CTRL, ' ').split(/\s+/).filter(Boolean).join(' ').slice(0, n);
 
 export function codexBin(env = process.env) {
@@ -97,12 +103,14 @@ export function statusText(hs, id = '', now = Date.now()) {
 }
 
 export class Call {
-  /** o: { cid, pane, name, cwd, instructions, bin, server(op, body) → Promise<json>, spawn? } */
+  /** o: { cid, pane, name, cwd, instructions, bin, server(op, body) → Promise<json>, spawn?, hook?, tools?, thread?, realtime?, greet? }
+   *  hook = 기기 고리(handle 의 deps.hook), tools · thread · realtime · greet = 고리 start 가 준 더할 도구 · thread/start · realtime/start 칸 · 첫인사 글 */
   constructor(o) {
-    Object.assign(this, { cid: o.cid, pane: o.pane, name: o.name || o.pane, cwd: o.cwd, instructions: o.instructions || '', server: o.server });
+    Object.assign(this, { cid: o.cid, pane: o.pane, name: o.name || o.pane, cwd: o.cwd, instructions: o.instructions || '', server: o.server,
+      hook: o.hook || null, extraTools: Array.isArray(o.tools) ? o.tools : [], threadExtra: o.thread || {}, realtimeExtra: o.realtime || {}, greetText: o.greet || '' });
     this.at = this.seen = Date.now();
     this.turns = []; this.state = 'starting'; this.reason = ''; this.n = 10; this.waits = new Map();
-    this.sdp = null; this.sdpWait = null; this.screenQ = []; this.handoffs = []; this.refreshedAt = 0; this.greeted = false; this.tid = null;
+    this.sdp = null; this.sdpWait = null; this.screenQ = []; this.handoffs = []; this.saidFrom = 0; this.refreshedAt = 0; this.greeted = false; this.tid = null; this.meetOn = false; this.firstSaid = false;
     this.p = (o.spawn || spawnProc)(o.bin, ['app-server', '--listen', 'stdio://'], { stdio: ['pipe', 'pipe', 'ignore'], cwd: existsSync(o.cwd || '') ? o.cwd : os.homedir() });
     this.exited = false;
     this.p.on('error', e => this.closed(`codex 를 못 띄움: ${e.code || e.message}`));
@@ -138,6 +146,11 @@ export class Call {
       const t = { role: pr.role, text: String(pr.text).trim(), at: Date.now() };
       this.turns.push(t);
       Promise.resolve(this.server?.('turn', { role: t.role, text: t.text.slice(0, 1500) })).catch(() => {});
+      if (this.hook) hookRun(this.hook, 'turn', this, t);
+    } else if (m === 'item/started' && this.hook && pr.item && typeof pr.item === 'object' && /^user_?message$/i.test(String(pr.item.type || ''))) {
+      // 음성 모델이 Codex 에 위임한 말(받아쓰기보다 먼저 옴) — 고리가 덱 번호 원문을 바로 넣게(주인 voice_rtc ON_DELEGATE)
+      const it = pr.item, txt = (Array.isArray(it.content) ? it.content.map(x => String(x?.text || '')).join(' ') : '').trim() || String(it.text || '').trim();
+      if (txt) hookRun(this.hook, 'delegate', this, txt);
     } else if (m === 'thread/realtime/error') this.reason = String(pr.message || '오류').slice(0, 200);
     else if (m === 'thread/realtime/closed') this.closed(pr.reason || '');
   }
@@ -153,15 +166,23 @@ export class Call {
     if (name === 'screen') { const [cmd, ok] = screenCmd(a); if (!ok) return [cmd, false]; this.screenQ = [...this.screenQ, cmd].slice(-20); return ['화면 옮김', true]; }
     if (name === 'handoff') {
       const text = oneLine(a.text, 500); if (!text) return ['넘길 글이 비었어요', false];
-      const prev = Math.max(0, ...this.handoffs.map(h => h.at));
-      const said = this.turns.filter(t => t.role === 'user' && t.at > Math.max(prev, Date.now() - SAID_MS)).map(t => t.text);
+      const upTo = this.turns.length, now = Date.now();
+      const said = this.turns.slice(this.saidFrom, upTo).filter(t => t.role === 'user' && t.at > now - SAID_MS).map(t => t.text);
       if (!said.length) return ['상대가 방금 말한 부탁이 없어 넘기지 않았어요 — 넘길지 물어보세요', false];
+      // 고리(주인 덱): 덱 번호를 묻기만 한 말이면 넘기지 않고 원문 답 · 넘기면 덱 글을 붙임(server.py handoff_deck)
+      const pre = this.hook ? await hookRun(this.hook, 'handoff', this, { text, said }) : undefined;
+      if (pre?.answer) return [String(pre.answer), true];
       if (this.handoffs.length >= HANDOFF_MAX) return ['이 통화에서 넘긴 일이 너무 많아요', false];
-      const r = await this.server('handoff', { to: oneLine(a.to, 80), text, said: oneLine(said.join(' / '), 500), n: this.handoffs.length });
-      if (r?.handoff?.id) this.handoffs.push({ ...r.handoff, text });
+      const r = await this.server('handoff', { to: oneLine(a.to, 80), text, said: oneLine(said.join(' / '), 500), n: this.handoffs.length, ...(pre?.deck ? { deck: oneLine(pre.deck, 500) } : {}) });
+      if (r?.handoff?.id) { this.handoffs.push({ ...r.handoff, text }); this.saidFrom = Math.max(this.saidFrom, upTo); }   // 이 넘김에 쓴 말까지 — 다음 넘김은 그 뒤 말로만
+      if (this.hook && r?.handoff?.id) hookRun(this.hook, 'handed', this, { text, said: oneLine(said.join(' / '), 500), refs: pre?.refs || [], handoff: r.handoff, ok: !!r?.ok });
       return [String(r?.text || (r?.ok ? '넣었어요' : '못 넣었어요')), !!r?.ok];
     }
     if (name === 'handoff_status') { await this.refresh(true); return [statusText(this.handoffs, oneLine(a.id, 30)), true]; }
+    if (this.hook && this.extraTools.some(t => t.name === name)) {   // 고리가 더한 도구(주인 deck_item)
+      const r = await hookRun(this.hook, 'tool', this, name, a);
+      if (Array.isArray(r)) return [String(r[0] ?? ''), !!r[1]];
+    }
     return [`모르는 도구 ${oneLine(name, 40)}`, false];
   }
   async refresh(force = false) {
@@ -170,24 +191,29 @@ export class Call {
     this.refreshedAt = Date.now();
     try {
       const r = await this.server('status', { handoffs: open.map(({ id, pane, at, state }) => ({ id, pane, at, state })) });
-      for (const u of Array.isArray(r?.handoffs) ? r.handoffs : []) { const h = this.handoffs.find(x => x.id === u.id); if (h) Object.assign(h, { state: u.state || h.state, kind: u.kind || '', line: u.line || '', recent: u.recent || '' }); }
+      for (const u of Array.isArray(r?.handoffs) ? r.handoffs : []) {
+        const h = this.handoffs.find(x => x.id === u.id); if (!h) continue;
+        const was = h.line || '';
+        Object.assign(h, { state: u.state || h.state, kind: u.kind || '', line: u.line || '', recent: u.recent || '' });
+        if (this.hook && h.line && h.line !== was) hookRun(this.hook, 'answered', this, h);   // 넘긴 일에 그 창이 답함 — 고리가 통화 중에 이어 말함(주인 handoff_refresh)
+      }
     } catch {}
   }
   async start(offer) {
     await this.rpc('initialize', { clientInfo: { name: 'boarder_member_voice', version: '1' }, capabilities: { experimentalApi: true } });
     this.send({ method: 'initialized' });
-    const r = await this.rpc('thread/start', { cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true, baseInstructions: this.instructions, dynamicTools: TOOLS });
+    const r = await this.rpc('thread/start', { ...this.threadExtra, cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true, baseInstructions: this.instructions, dynamicTools: [...TOOLS, ...this.extraTools] });
     this.tid = r?.thread?.id;
     if (!this.tid) throw new Error('thread/start 답에 thread id 가 없어요');
     const got = new Promise(res => { this.sdpWait = res; });
-    await this.rpc('thread/realtime/start', { threadId: this.tid, outputModality: 'audio', version: 'v3', includeStartupContext: false, prompt: this.instructions, transport: { type: 'webrtc', sdp: offer } });
+    await this.rpc('thread/realtime/start', { ...this.realtimeExtra, threadId: this.tid, outputModality: 'audio', version: 'v3', includeStartupContext: false, prompt: this.instructions, transport: { type: 'webrtc', sdp: offer } });
     if (!this.sdp) await Promise.race([got, new Promise(res => setTimeout(res, 20_000))]);
     if (!this.sdp) throw new Error(this.reason || 'SDP 답이 안 옴');
     this.state = 'open';
     return this.sdp;
   }
   async say(text) { if (!this.tid || this.state !== 'open') return false; await this.rpc('thread/realtime/appendText', { threadId: this.tid, text: String(text).slice(0, 6000) }, 10_000); return true; }
-  async greet() { if (this.greeted || !this.tid || this.state !== 'open') return false; this.greeted = true; return this.say(GREET); }
+  async greet() { if (this.greeted || !this.tid || this.state !== 'open') return false; this.greeted = true; return this.say(this.greetText || GREET); }
   async stop(why = '끊음') {
     try { if (this.tid && !this.exited) await this.rpc('thread/realtime/stop', { threadId: this.tid }, 5000); } catch {}
     this.closed(why);
@@ -211,7 +237,9 @@ const CID = /^[\w-]{8,64}$/;
 const err = (code, msg) => Object.assign(new Error(msg), { code });
 export const _calls = calls;   // 시험용
 
-/** deps: { server(op, body) → json(기기 토큰 POST /api/device/voice), spawn?, env?, listWindows?() → [{id, spec:{cwd}, cwd}], home? } */
+/** deps: { server(op, body) → json(기기 토큰 POST /api/device/voice), spawn?, env?, listWindows?() → [{id, spec:{cwd}, cwd}], home?, hook? }
+ *  hook(기기 고리 — 없으면 회원 기기 그대로): start(a) → { instructions?, cwd?, tools?, thread?, realtime?, greet? } · started(call, a) · turn(call, t) · delegate(call, 글)
+ *    · tool(call, 이름, 인자) → [글, 성공] · handoff(call, {text, said}) → { answer? | deck?, refs? } · handed(call, {text, said, refs, handoff, ok}) · answered(call, 넘김) · ended(call, 까닭) */
 export async function handle(verb, a = {}, deps = {}) {
   const cid = String(a.cid || '');
   if (!CID.test(cid)) throw err(1, '통화 id 꼴이 틀려요');
@@ -228,10 +256,18 @@ export async function handle(verb, a = {}, deps = {}) {
     calls.set(cid, null);   // 자리 잡기
     let c;
     try {
-      c = new Call({ cid, pane, name: String(a.name || pane).slice(0, 80), cwd, instructions: [String(a.instructions || '').slice(0, 20000), NO_SECRETS].filter(Boolean).join('\n\n'), bin: codexBin(deps.env || process.env), server, spawn: deps.spawn });
+      const hook = deps.hook || null;
+      const h = hook ? await Promise.race([hookRun(hook, 'start', a), new Promise(res => setTimeout(res, HOOK_START_MS).unref?.())]) : undefined;
+      const hs = h && typeof h === 'object' ? h : {};
+      if (typeof hs.cwd === 'string' && hs.cwd && existsSync(hs.cwd)) cwd = hs.cwd;
+      const ins = typeof hs.instructions === 'string' && hs.instructions ? hs.instructions : String(a.instructions || '');
+      c = new Call({ cid, pane, name: String(a.name || pane).slice(0, 80), cwd, instructions: [ins.slice(0, 20000), NO_SECRETS].filter(Boolean).join('\n\n'), bin: codexBin(deps.env || process.env), server, spawn: deps.spawn,
+        hook, tools: hs.tools, thread: hs.thread, realtime: hs.realtime, greet: typeof hs.greet === 'string' ? hs.greet : '' });
       const answer = await c.start(sdp);
       c.seen = Date.now(); calls.set(cid, c);
-      if (a.meet) c.greeted = true;
+      if (a.meet && !c.greetText) c.greeted = true;
+      c.firstSaid = !!(a.meet && c.greetText);
+      if (hook) hookRun(hook, 'started', c, a);
       return { cid, sdp: answer };
     } catch (e) {
       calls.delete(cid);
@@ -240,15 +276,27 @@ export async function handle(verb, a = {}, deps = {}) {
     }
   }
   const c = calls.get(cid);
-  if (verb === 'rtc_stop') { calls.delete(cid); if (c) await c.stop('끊음'); return { ok: true, turns: c ? c.turns.length : 0 }; }
+  if (verb === 'rtc_stop') { calls.delete(cid); if (c) { await c.stop('끊음'); if (c.hook) hookRun(c.hook, 'ended', c, ''); } return { ok: true, turns: c ? c.turns.length : 0 }; }
   if (!c) return verb === 'rtc_poll' ? { state: 'closed', reason: '통화가 없어요' } : { ok: false };
   if (verb === 'rtc_poll') return c.poll();
   if (verb === 'rtc_note') { c.seen = Date.now(); if (a.k === 'connected') c.greet().catch(() => {}); return { ok: true }; }
-  if (verb === 'rtc_say') { c.seen = Date.now(); const t = String(a.text || ''); if (!t) return { ok: false }; c.say(t).catch(() => {}); return { ok: true }; }
+  if (verb === 'rtc_say') {
+    c.seen = Date.now();
+    let t = String(a.text || '');
+    if (typeof a.first === 'string') {
+      const first = !c.meetOn; c.meetOn = true;
+      if (first) t = String((c.firstSaid && typeof a.firstSaid === 'string' && a.firstSaid) || a.first || t);
+    }
+    if (!t) return { ok: false };
+    c.say(t).catch(() => {}); return { ok: true };
+  }
   throw err(5, `unknown verb ${verb}`);
 }
 /** 15초마다: 화면이 끊겼거나(150초) 한 시간 넘은 통화 · 끝난 app-server 를 닫음 */
 export function reap(now = Date.now()) {
-  for (const [cid, c] of calls) if (c && (now - c.seen > IDLE_KILL_MS || now - c.at > MAX_CALL_MS || c.exited)) { calls.delete(cid); c.stop('화면 끊김 · 시간 넘음').catch(() => {}); }
+  for (const [cid, c] of calls) if (c && (now - c.seen > IDLE_KILL_MS || now - c.at > MAX_CALL_MS || c.exited)) {
+    const why = c.exited ? '엔진이 끝나 닫음' : now - c.at > MAX_CALL_MS ? '한 시간이 넘어 닫음' : '화면이 끊겨 닫음';   // 주인 voice_rtc reaper 와 같은 까닭
+    calls.delete(cid); c.stop(why).then(() => { if (c.hook) hookRun(c.hook, 'ended', c, why); }).catch(() => {});
+  }
 }
 export async function stopAll() { for (const [cid, c] of calls) { calls.delete(cid); if (c) await c.stop('엔진 끝').catch(() => {}); } }

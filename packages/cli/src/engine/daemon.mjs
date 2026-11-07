@@ -148,7 +148,8 @@ export function stopOnSignals({ resend = true, stop = () => V.stopAll() } = {}) 
   for (const s of ['SIGTERM', 'SIGINT']) process.once(s, () => { Promise.resolve().then(stop).catch(() => {}).finally(() => { if (resend) process.kill(process.pid, s); }); });
 }
 
-export async function runDaemon({ hostStops = false } = {}) {
+export async function runDaemon({ hostStops = false, voice = null } = {}) {
+  if (voice && typeof voice === 'object') voiceDeps.hook = voice;
   if (typeof globalThis.WebSocket !== 'function') { console.error('boarder engine needs Node 22 or newer (built-in WebSocket).'); process.exit(1); }
   const dev = loadDevice();
   if (!dev?.token) { console.error('not signed in — run `boarder setup --yes` first'); process.exit(REVOKED_EXIT); }

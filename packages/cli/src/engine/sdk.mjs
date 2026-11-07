@@ -13,7 +13,7 @@ const PKG = { claude: '@anthropic-ai/claude-agent-sdk', codex: '@openai/codex-sd
 // 공급망: 버전 고정(윈도우 · 서버 시험에서 설치돼 동작한 판). 올릴 때는 시험을 다시 돌린 뒤 packages/cli/package.json 과 같이 바꿈
 export const PINNED = { claude: '0.3.319', codex: '0.167.0' };
 const SPEC = p => `${PKG[p]}@${PINNED[p]}`;
-const NO_CONVO = /No conversation found with session ID/i;
+const NO_CONVO = /No conversation found with session ID|no rollout found for thread id/i;
 const LIMIT = /(usage limit|limit reached|rate.?limit|quota|resets? (at|in) \d)/i;
 const expand = p => (p || '').replace(/^~(?=$|[\\/])/, os.homedir());
 export function agentEnv(base = process.env, { home = os.homedir(), exists = existsSync, sep = path.delimiter } = {}) {
@@ -66,8 +66,8 @@ export async function installSdks({ exec = execAsync, npm = findNpm(), log = () 
   try {
     const args = ['install', '--prefix', d, '--no-audit', '--no-fund', '--ignore-scripts', '--loglevel=error', ...need.map(SPEC)];
     if (npm.endsWith('.js')) await exec(process.execPath, [npm, ...args], { stdio: 'pipe', timeout: 600000 });
-    else if (process.platform === 'win32') await exec([`"${npm}"`, ...args.map(a => `"${a}"`)].join(' '), { stdio: 'pipe', timeout: 600000, shell: true });   // .cmd 는 셸로
-    else await exec(npm, args, { stdio: 'pipe', timeout: 600000 });
+    else if (process.platform === 'win32') await exec([`"${npm}"`, ...args.map(a => `"${a}"`)].join(' '), { stdio: 'pipe', timeout: 600000, shell: true });
+    else await exec(npm, args, { stdio: 'pipe', timeout: 600000, env: { ...process.env, PATH: path.dirname(process.execPath) + path.delimiter + (process.env.PATH || '') } });
   } catch (e) { return { ok: false, missing: need, why: `could not install the SDKs (${String(e.stderr || e.message).trim().split('\n')[0].slice(0, 160)}) - run by hand: ${MANUAL}` }; }
   const missing = need.filter(p => !localEntry(PKG[p]));
   return missing.length ? { ok: false, missing, why: `npm finished but ${missing.map(p => PKG[p]).join(', ')} is not there - run by hand: ${MANUAL}` } : { ok: true, missing: [] };
@@ -76,7 +76,7 @@ export async function installSdks({ exec = execAsync, npm = findNpm(), log = () 
 function execAsync(cmd, args, opts = {}) {
   if (!Array.isArray(args)) { opts = args || {}; args = []; }   // 윈도우 .cmd: 한 줄 명령 + shell
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: opts.timeout, shell: opts.shell, windowsHide: true, maxBuffer: 8 << 20 }, (err, stdout, stderr) => err ? reject(Object.assign(err, { stderr: String(stderr || '') })) : resolve(String(stdout)));
+    execFile(cmd, args, { ...(opts.env ? { env: opts.env } : {}), timeout: opts.timeout, shell: opts.shell, windowsHide: true, maxBuffer: 8 << 20 }, (err, stdout, stderr) => err ? reject(Object.assign(err, { stderr: String(stderr || '') })) : resolve(String(stdout)));
   });
 }
 function hasGlobal(pkg) { try { import.meta.resolve(pkg); return true; } catch { return false; } }
@@ -200,7 +200,8 @@ function startTurn(cfg, w, text) {
   const run = w.provider === 'codex' ? codexTurn : claudeTurn;
   const attempt = async () => {
     await run(cfg, w, text, () => early()).catch(e => { if (!NO_CONVO.test(String(e?.message || e))) throw e; w.error = String(e.message); });
-    if (w.error && NO_CONVO.test(w.error) && w.session_id) { w.session_id = null; w.error = null; persist(); await run(cfg, w, text, () => early()); }
+    if (w.error && NO_CONVO.test(w.error) && w.session_id) { w.session_id = null; w.thread = null; w.error = null; persist();
+      await run(cfg, w, text, () => early()); }
   };
   w.turn = (w.provider === 'claude' || w.provider === 'codex' ? pickAccount(cfg, w.provider, w) : Promise.resolve()).then(attempt)
     .catch(e => { if (e?.name !== 'AbortError' && !w.abort?.signal?.aborted) w.error = String(e?.message || e); })
@@ -214,12 +215,24 @@ export async function open(cfg, s) {
   ensureLoaded();
   if (!/^[\w-]{3,64}$/.test(s.id || '')) throw new EngineError(1, 'bad window id');
   if (wins.has(s.id)) throw new EngineError(1, 'window already open');
-  const provider = s.provider || cfg?.sdk?.provider || 'claude';
+  let provider = s.provider || cfg?.sdk?.provider || 'claude';
+  const implicit = !s.provider && !cfg?.sdk?.provider;   // 서버 · 이 기기 설정 어디서도 구독을 안 정함
   if (!PROVIDERS.includes(provider)) throw new EngineError(1, `unknown provider ${provider} (claude or codex)`);
   const cwd = expand(s.cwd) || os.homedir();
   mkdirSync(cwd, { recursive: true });
-  const w = mk({ ...s, provider, cwd });
-  if (!w.test) { await loadSdk(provider); await pickAccount(cfg, provider, w); accountDir(cfg, provider, w); }   // SDK 없음 · 로그인 없음 · 계정 이름 오류는 창을 만들기 전에
+  let w = mk({ ...s, provider, cwd });
+  if (!w.test) {   // SDK 없음 · 로그인 없음 · 계정 이름 오류는 창을 만들기 전에
+    await loadSdk(provider);   // SDK 가 없으면 바꿔 열지 않고 설치 안내 그대로
+    try { await pickAccount(cfg, provider, w); }
+    catch (e) {
+      if (!implicit || provider !== 'claude' || !(e instanceof EngineError) || e.code !== 1) throw e;
+      const alt = mk({ ...s, provider: 'codex', cwd, model: null, session_id: null });
+      try { await loadSdk('codex'); await pickAccount(cfg, 'codex', alt); }
+      catch { throw new EngineError(1, '이 기기의 구독 계정이 아직 로그인되지 않았어요 — 설정 › 기기 › 엔진에서 ChatGPT 나 Claude 「로그인」을 눌러 주세요'); }   // 어느 구독을 쓸지 안 정했으니 Claude 만 말하지 않음(ChatGPT 구독만 있는 회원이 「Claude 계정」 안내를 봄)
+      w = alt; provider = 'codex';
+    }
+    accountDir(cfg, provider, w);
+  }
   wins.set(w.id, w); persist();
   try { if (s.prompt) await startTurn(cfg, w, s.prompt); }
   catch (e) { wins.delete(w.id); persist(); throw e; }

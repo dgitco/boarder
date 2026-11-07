@@ -39,7 +39,9 @@ async function cookie(email: string) {
 function setup() {
   const { DB: D1 } = fileD1(), calls: { path: string; body: string }[] = [], { m, R: bucket } = fileR2();
   const call = async (r: { path: string; body?: Uint8Array }) => { calls.push({ path: r.path, body: r.body ? new TextDecoder().decode(r.body) : "" }); return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode('{"ok":true}') }; };
-  const env = { ...directConfig, DB: D1, RESULTS: bucket, ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
+  // 스냅숏 · 화면 칸(주인은 회원 길 — 올리기는 canon 열쇠, 쓰기 뒤 화면 칸 알림)
+  const SNAP = { idFromName: (n: string) => n, get: () => ({ get: async (k: string) => k === "cfg" ? { body: JSON.stringify({ channels: { primary: "C1", dgit: "C4" }, drafts: {} }), etag: '"e-cfg"', at: Date.now(), checked: Date.now() } : null, tags: async () => ({ t: {}, age: 0, boot: "b" }), bump: async () => 0 }) };
+  const env = { ...directConfig, DB: D1, RESULTS: bucket, SNAP, ASSETS: { fetch: async () => new Response("nf") }, BRIDGE: { idFromName: (n: string) => n, get: () => ({ call }) }, BETTER_AUTH_SECRET: SECRET, ALLOW_EMAILS: OWNER, PUBLIC_URL: "https://example.test" };
   const send = async (path: string, body: BodyInit, headers: Record<string, string> = {}) => app.fetch(new Request("https://example.test" + path, { method: "POST", headers: { cookie: await cookie(OWNER), "x-hb": "1", "sec-fetch-site": "same-origin", ...headers }, body }), env as never, { waitUntil() {}, passThroughOnException() {} } as never);
   const get = async (path: string) => app.fetch(new Request("https://example.test" + path, { headers: { cookie: await cookie(OWNER) } }), env as never, { waitUntil() {}, passThroughOnException() {} } as never);
   const upload = (body: Uint8Array, name: string) => uploadFile((suffix, b) => send("/api/upload" + suffix, JSON.stringify(b), { "content-type": "application/json" }), env, body, { name, mime: "image/png" });
@@ -73,11 +75,11 @@ test("주인 글(파일 없음)은 그대로 다리로", async () => {
   const r = await t.send("/api/chat", JSON.stringify({ text: "안녕" }), { "content-type": "application/json" });
   assert.equal(r.status, 200); assert.equal(t.calls.length, 1); assert.equal(JSON.parse(t.calls[0].body).text, "안녕");
 });
-test("주인 읽음 표시(seen) POST 는 「방금 씀」 쿠키를 안 붙이고, 글 POST 는 붙임", async () => {
+test("주인 쓰기 POST 는 회원과 같이 「방금 씀」 쿠키(bx_w)를 받음 — 읽음(seen)도(앞단 미들웨어, owner_unified 늘 켬)", async () => {
   const t = setup();
   const seen = await t.send("/api/chat", JSON.stringify({ channel: "dgit", thread: "1793000000.000001", seen: true }), { "content-type": "application/json" });
   assert.equal(seen.status, 200);
-  assert.ok(!(seen.headers.get("set-cookie") || "").includes("bx_w="), "읽음에 bx_w");
+  assert.ok((seen.headers.get("set-cookie") || "").includes("bx_w=1; Max-Age=20"), "회원 길과 같은 bx_w");
   const post = await t.send("/api/chat", JSON.stringify({ text: "안녕" }), { "content-type": "application/json" });
   assert.ok((post.headers.get("set-cookie") || "").includes("bx_w="), "글에 bx_w 없음");
 });

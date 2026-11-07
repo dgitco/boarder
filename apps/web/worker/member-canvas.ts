@@ -159,19 +159,24 @@ export async function ownerWin(env: Env, email: string, art: string) {
   return m ? { win: m.win || "", wid: m.wid || "" } : null;
 }
 const BOARD = /^[\w .()·-]{1,120}\.dc\.html$/;
-export async function boardText(env: Env, email: string, art: string, board: string): Promise<[string, string] | null> {
+export function boardNames(boards: unknown): string {
+  if (!boards || typeof boards !== "object") return "";
+  return Object.entries(boards as Record<string, unknown>).filter(([, v]) => v === null || (typeof v === "object" && !Array.isArray(v)))
+    .map(([k, v]) => String((v as { title?: unknown } | null)?.title || k).replace(CTRL, " ").split(/\s+/).filter(Boolean).join(" ").slice(0, 60)).filter(Boolean).join(" / ").slice(0, 1500);
+}
+export async function boardText(env: Env, email: string, art: string, board: string): Promise<[string, string, string] | null> {
   const mk = await keyOf(email.toLowerCase());
   if (!ID.test(art) || !BOARD.test(board)) return null;
   const m = await metaOf(env, mk, art); if (!m || m.kind !== "canvas") return null;
   let o: R2ObjectBody | null = null;
   for (const p of [...new Set([m.cv ? `${m.cv}/${board}` : board, board, `project/${board}`])]) { if (okPath(p) && (o = await env.RESULTS.get(fileKey(mk, art, m.ver, p), { range: { offset: 0, length: 400_000 } }))) break; }
   if (!o) return null;
-  let title = board;
-  try { const cj = await canvasJson(env, fileKey(mk, art, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); const t = cj?.boards?.[board]?.title || ""; if (t) title = String(t); } catch {}
+  let title = board, names = "";
+  try { const cj = await canvasJson(env, fileKey(mk, art, m.ver, m.cv ? `${m.cv}/canvas.json` : "canvas.json")); const t = cj?.boards?.[board]?.title || ""; if (t) title = String(t); names = boardNames(cj?.boards); } catch {}
   const h = (await o.text()).slice(0, 400_000).replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
   const one = (t: string, n: number) => t.replace(CTRL, " ").split(/\s+/).filter(Boolean).join(" ").slice(0, n);
-  return [one(title, 120), one(h, 1800)];
+  return [one(title, 120), one(h, 1800), names];
 }
 
 const ARTNOTE_MAX = 4000;

@@ -10,7 +10,7 @@ import * as devSettings from "./device-settings";
 import { uiPrefStmts } from "./ui-pref";
 import { onboarding } from "./member-onboarding";
 import { legal } from "./legal";
-import { createAuth, allowed, isOwner, member, otpSendOk, type Env as AuthEnv } from "./auth";
+import { createAuth, allowed, member, otpSendOk, type Env as AuthEnv } from "./auth";
 import * as UE from "./user-email";
 import * as W from "./who";
 import * as OK from "./owner-key";
@@ -39,6 +39,7 @@ import { engineLog, hNote } from "./engine";
 import directUploadJs from "../../../packages/cli/src/direct-upload.mjs?raw";
 import * as directMedia from "./direct-media";
 import * as directUploads from "./direct-uploads";
+import { subMissing } from "./sub-state";
 import shellJs from "./legacy/shell.js?raw";
 import shellCss from "./legacy/shell.css?raw";
 import installSh from "./install/install.sh?raw";
@@ -92,7 +93,6 @@ import * as OS from "./owner-state";
 import * as OP from "./owner-prep";   // 주인 · 회원 한 길 ④ 준비 옮기기(owner_unified_prep)
 import * as ownerJobs from "./owner-jobs";
 import * as memberBoard from "./member-board";
-import * as ownerShadow from "./owner-shadow";
 import * as ownerVals from "./owner-vals";
 import * as ownerArchive from "./owner-archive";
 import * as memberVoice from "./member-voice";
@@ -123,7 +123,7 @@ type Env = AuthEnv & PH & directUploads.DirectEnv & { SNAP: DurableObjectNamespa
 const app = new Hono<{ Bindings: Env }>();
 // Telemetry is read-only: skip feature lookups, write invalidation, live bumps and self-measurement.
 app.post("/api/clientlog/metrics", c => uiMetric(c.req.raw, c.env, async () => (await signedIn(c))?.user.email || null));
-app.use("*", async (c, next) => { try { const on = await ledger.f7AllPeek(c.env.DB, p => c.executionCtx.waitUntil(p)); W.setCanonOn(on.has("owner_key_canon")); memberBoard.setHarnessKey(W.unifiedAnyIn(on, c.env) ? W.canon(c.env) : ""); } catch {} return next(); });
+app.use("*", async (c, next) => { memberBoard.setHarnessKey(W.canon(c.env)); try { const on = await ledger.f7AllPeek(c.env.DB, p => c.executionCtx.waitUntil(p)); W.setCanonOn(on.has("owner_key_canon")); } catch {} return next(); });
 const MC_PATHS = /^\/api\/(data|inbox|topics|chats|chat\/[^/]+(\/\d{9,11}\.\d{6})?)$/, MC_TTL = 10, MC_RATE = new Map<string, { at: number; n: number }>();
 app.use("*", async (c, next) => {
   const u = new URL(c.req.url), ck = c.req.header("cookie") || "";
@@ -131,7 +131,7 @@ app.use("*", async (c, next) => {
   if (c.req.method !== "GET") {
     await next();
     const who = REC.get(c.req.raw)?.who;
-    if (c.res.status < 400 && who && /@/.test(who) && (!isOwner(c.env, who) || await unifiedOn(c.env, who)) && !/^\/api\/(draft$|clientlog|relay\/)/.test(u.pathname) && !/(^|;\s*)bx_w=/.test(ck)) {   // owner_unified 로 회원 길에 든 주인도 회원처럼
+    if (c.res.status < 400 && who && /@/.test(who) && !/^\/api\/(draft$|clientlog|relay\/)/.test(u.pathname) && !/(^|;\s*)bx_w=/.test(ck)) {   // 주인도 회원처럼(주인 · 회원 한 길)
       const v = "bx_w=1; Max-Age=20; Path=/; SameSite=Lax; Secure; HttpOnly";
       try { c.res.headers.append("set-cookie", v); } catch { const r0 = c.res, r = new Response(r0.body, { status: r0.status, statusText: r0.statusText, headers: new Headers(r0.headers), ...((r0 as any).encodeBody ? { encodeBody: (r0 as any).encodeBody } : {}) }); r.headers.append("set-cookie", v); c.res = r; } }
     return;
@@ -249,9 +249,9 @@ app.use("*", async (c, next) => {
   const rn = (rec as { renew?: Renew }).renew;
   if (rn?.done && rn.done === rn.email) rec.cookies.push(await bxCookie(c, rn.email, rn.th));
   const lw = rec.who && /^[^@\s:%]+@[^@\s:%]+$/.test(rec.who) ? rec.who : rec.dev;
-  const lwU = !!lw && isOwner(c.env, lw) && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && (lw !== rec.who ? W.unifiedAnyIn(await ledger.f7All(c.env.DB), c.env) : await unifiedOn(c.env, lw));
+  const lwU = !!lw && W.isAdmin(c.env, lw) && !["GET", "HEAD", "OPTIONS"].includes(c.req.method);
   if (lw && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && !(lwU && rec.quiet)) memberBoard.loadForget(lwU ? W.canon(c.env) : lw);
-  if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && (!isOwner(c.env, lw) || lwU) && !/^\/api\/(relay\/|device\/metrics|device\/taskboard|me\/taskboard|me\/devboard|me\/features$|draft$|cardcheck$|me\/tasks\/view$|me\/emails)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok). 상태 페이지 쓰기는 보드 화면 값을 안 바꿈(그 페이지가 스스로 다시 읽음). 붙은 메일(설정 › 프로필)도 보드 값이 아님
+  if (lw && !rec.quiet && !["GET", "HEAD", "OPTIONS"].includes(c.req.method) && c.res.status < 400 && !/^\/api\/(relay\/|device\/metrics|device\/taskboard|me\/taskboard|me\/devboard|me\/features$|draft$|cardcheck$|me\/tasks\/view$|me\/emails)/.test(c.req.path))   // 회원 초안 · 카드 체크는 저장 표가 없음(member-board 가 바로 ok). 상태 페이지 쓰기는 보드 화면 값을 안 바꿈(그 페이지가 스스로 다시 읽음). 붙은 메일(설정 › 프로필)도 보드 값이 아님
     c.executionCtx.waitUntil(live.bumpMember(c.env, lw));
   const total = Date.now() - t0, st = [...Object.entries(rec.seg).map(([k, v]) => `${k};dur=${v}`), ...(meter.d1rn ? [`d1r;dur=${meter.d1r};desc=${meter.d1rn}`] : []), ...(meter.d1wn ? [`d1w;dur=${meter.d1w};desc=${meter.d1wn}`] : []), ...(meter.dobn ? [`dob;dur=${meter.dob};desc=${meter.dobn}`] : []), ...(meter.r2n ? [`r2m;dur=${meter.r2};desc=${meter.r2n}`] : []), `total;dur=${total}`].join(", ");
   if (c.res.status === 101 || (c.res as any).webSocket) { }
@@ -284,7 +284,7 @@ app.use("*", async (c, next) => {
 });
 app.get("/api/arttok/:id", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  if (!isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  if (!W.isAdmin(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   const id = c.req.param("id");
   if (!/^[A-Za-z0-9]{16,40}$/.test(id) || !["canvas", "page"].includes(await artKind(c.env, chOf(c), id))) return c.json({ error: "not found" }, 404);
   return c.json({ t: await artTok(c.env, id, Date.now() + 2 * 3600_000) }, 200, { "cache-control": "no-store" });
@@ -348,7 +348,7 @@ app.get("/direct-upload.js", c => c.body(directUploadJs, 200, { "content-type": 
 app.get("/api/login/methods", c => c.json({ code: true, google: Boolean(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET), home: c.env.PUBLIC_URL }));   // 로그인 화면이 켤 단추(구글은 콜백이 PUBLIC_URL 이라 다른 주소에선 거기로 옮겨 시작)
 app.get("/api/me", async c => {   // 이름 · id 까지 — 서명 쿠키 말고 better-auth 로(가끔만 부름)
   const s0 = await createAuth(c.env).api.getSession({ headers: c.req.raw.headers }), s = s0 && await member(c.env, s0.user.email) ? s0 : null;
-  return s ? c.json({ user: { id: s.user.id, email: s.user.email, primary_email: await UE.primaryEmail(c.env.DB, s.user.email), name: s.user.name, owner: isOwner(c.env, s.user.email) } }) : c.json({ user: null }, 401);
+  return s ? c.json({ user: { id: s.user.id, email: s.user.email, primary_email: await UE.primaryEmail(c.env.DB, s.user.email), name: s.user.name, owner: W.isAdmin(c.env, s.user.email) } }) : c.json({ user: null }, 401);
 });
 // 한 계정에 메일 여러 개(설정 › 프로필 「계정」, user-email.ts): 회원 · 주인 같은 길. 코드는 응답에 안 냄(메일로만)
 app.get("/api/me/emails", async c => {
@@ -598,16 +598,9 @@ app.put("/api/relay/push/import", async c => {
 });
 app.get("/api/relay/push/stat", async c => relayOk(c) ? c.json(await pusher(c.env).stat()) : c.json({ error: "no" }, 403));
 app.post("/api/relay/push/tick", async c => relayOk(c) ? c.json({ sent: await pusher(c.env).tickNow() }) : c.json({ error: "no" }, 403));
-app.get("/api/relay/f7/read", async c => {
-  if (!relayOk(c)) return c.json({ error: "no" }, 403);
-  const rt = ownerRead.route(c.req.query("p") || ""); if (!rt) return c.json({ error: "모르는 길" }, 400);
-  const now = Number(c.req.query("now")) || undefined;
-  const o = await ownerRead.build(c.env.DB, await ownerRead.cfgOf(() => snap(c.env).get("cfg")), rt, now, !now);
-  return o ? c.json(o.body as object, o.status as 200) : c.json({ error: "cfg 없음" }, 404);
-});
 // 웹 ← 스냅숏(로그인, ETag 같으면 304)
 app.get("/api/board/:key", async c => {
-  const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401); if (!isOwner(c.env, sb.user.email)) return c.json({ error: "no" }, 403);
+  const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401); if (!W.isAdmin(c.env, sb.user.email)) return c.json({ error: "no" }, 403);
   const key = c.req.param("key"); if (!KEYS.has(key)) return c.json({ error: "모르는 칸" }, 400);
   const r = await snap(c.env).get(key);
   if (!r) return c.json({ error: "아직 없음" }, 404);
@@ -619,16 +612,16 @@ app.get("/api/board/:key", async c => {
 const liveGet = async (c: Context<{ Bindings: Env }>) => {
   const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401);
   if (chOf(c) === "test" || !(await ledger.f7On(c.env.DB, "read_live"))) return c.json({ error: "꺼짐" }, 404);   // 시험 통로는 스냅숏을 안 씀 — 예전 폴링
-  const me = sb.user.email, um = await unifiedOn(c.env, me);   // owner_unified: 회원 길에 든 주인은 회원 칸(live:<canon>) · 회원 폴링 표
+  const me = sb.user.email, um = W.isAdmin(c.env, me);   // 주인은 회원 칸(live:<canon>) · 회원 폴링 표
   if (c.req.header("upgrade") === "websocket") {
     const o = c.req.header("origin") || "", ok = [new URL(c.req.url).origin, c.env.PUBLIC_URL, ...String(c.env.ALT_URLS || "").split(",")].map(x => x.trim()).filter(Boolean);
     if (!ok.includes(o)) return c.json({ error: "no" }, 403);   // 다른 사이트가 쿠키로 여는 것 막기
-    return live.liveOf(c.env, me, um).fetch(c.req.raw);
+    return live.liveOf(c.env, me).fetch(c.req.raw);
   }
   const o = await live.table(c.env, me, async () => {
-    const dt = await live.liveOf(c.env, me, um).tags().catch(() => null);
+    const dt = await live.liveOf(c.env, me).tags().catch(() => null);
     return (um ? { ...(dt?.t || {}), chat: dt?.t.chat || "~0" } : { ...(dt?.t.data ? { data: dt.t.data } : {}), chat: dt?.t.chat || "~0" }) as { data: string; chat: string };
-  }, um);
+  });
   if (hosted.liveTags) Object.assign(o.t, await hosted.liveTags(c.env, me).catch(() => ({})));
   return c.json(o, 200, { "cache-control": "no-store" });
 };
@@ -655,7 +648,7 @@ app.get("/api/search", async c => {
   const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401);
   const q = (c.req.query("q") || "").slice(0, 100), t0 = Date.now();
   // 회원은 자기 D1 만(member-search.ts) — 주인 색인(DO)은 주인만. 회원 뜻 찾기(sem=1)는 같은 Workers AI 로 최근 글만(member-search.ts)
-  const r = await memberSearch.route({ owner: isOwner(c.env, sb.user.email), me: sb.user.email, q, db: c.env.DB, sem: c.req.query("sem") === "1", ai: c.env.AI as unknown as memberSearch.Ai,
+  const r = await memberSearch.route({ owner: W.isAdmin(c.env, sb.user.email), me: sb.user.email, q, db: c.env.DB, sem: c.req.query("sem") === "1", ai: c.env.AI as unknown as memberSearch.Ai,
     ownerSearch: () => search(c.env).query(q, c.req.query("sem") === "1", c.req.query("dbg") === "1", c.req.query("engine") === "bge" ? "bge" : c.req.query("engine") === "voyage" ? "voyage" : "mix") });   // dbg = 노드 점수 나눔(주인만, 순위 고칠 때)
   seg(c.req.raw, "search", Date.now() - t0);
   return c.json({ ...r, ms: { ...r.ms, worker: Date.now() - t0 } }, 200, { "cache-control": "private, no-store" });
@@ -674,12 +667,11 @@ const flagAt = new Map<string, number>();
 async function bound(env: Env, tok: string) {
   if (!/^bxa_[A-Za-z0-9_-]{30,80}$/.test(tok)) return null;
   const h = await sha(tok), hit = tokCache.get(h);
-  const alive = async <T extends { owner: string }>(v: T) => v.owner && isOwner(env, v.owner) && !(await unifiedAll(env)) ? null : v;
-  if (hit && Date.now() - hit.at < 10_000) return alive(hit);
+  if (hit && Date.now() - hit.at < 10_000) return hit;
   const r = await env.DB.prepare("SELECT t.pane, t.win, t.host, t.tools, t.owner, t.device_id, d.name AS device_name FROM agent_token t LEFT JOIN device d ON d.id = t.device_id WHERE t.hash = ? AND t.revoked_at IS NULL AND (t.device_id IS NULL OR d.revoked_at IS NULL)").bind(h).first<{ pane: string; win: string; host: string; tools: string; owner: string; device_id: string | null; device_name: string | null }>();
   if (!r) { tokCache.delete(h); return null; }
   if (tokCache.size > 1000) tokCache.clear();
-  const v = { ...r, hash: h, at: Date.now() }; tokCache.set(h, v); return alive(v);
+  const v = { ...r, hash: h, at: Date.now() }; tokCache.set(h, v); return v;
 }
 async function agentCtx(c: Context<{ Bindings: Env }>) {
   const tok = (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -697,7 +689,7 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
   const agent = `boarder@${who.host}:${who.pane}`;
   const own = who.owner;
   REC.get(c.req.raw) && (REC.get(c.req.raw)!.who = who.owner || agent);
-  if (!who.owner && await unifiedAll(c.env)) { const rec = REC.get(c.req.raw); if (rec) rec.dev = W.canon(c.env); }   // 쓰기 뒤 canon 화면 칸에 알림(미들웨어 lw) — PostHog who 는 그대로 에이전트
+  if (!who.owner) { const rec = REC.get(c.req.raw); if (rec) rec.dev = W.canon(c.env); }   // 쓰기 뒤 canon 화면 칸에 알림(미들웨어 lw) — PostHog who 는 그대로 에이전트
   if (who.owner) c.executionCtx.waitUntil(c.env.DB.prepare("UPDATE device SET last_at = ? WHERE id = (SELECT device_id FROM agent_token WHERE hash = ?)").bind(Date.now(), who.hash).run().catch(() => {}));
   const reg = await registry(c.env.DB, t => flag(t, "boarder@worker"), c.env.CF_VERSION_METADATA);
   const owner = who.hash.slice(0, 32);
@@ -823,30 +815,26 @@ async function deviceOf(c: Context<{ Bindings: Env }>, opt: { watch?: boolean; h
 }
 const prepOn = (env: Env) => ledger.f7On(env.DB, "owner_unified_prep");
 /** 회원 설정 줄(node_setting · user_pref primary_win · 내 얼굴 · 노드 prefs)의 열쇠: 회원 = 그 메일, 주인 = 스위치가 켜졌을 때만 canon(꺼지면 null — 예전처럼 주인은 그 길 밖) */
-const settingsKey = async (env: Env, email: string) => !isOwner(env, email) ? String(email).trim().toLowerCase() : await prepOn(env) ? W.canon(env) : null;
-const unifiedOn = async (env: Env, email: string) => isOwner(env, email) && W.unifiedIn(await ledger.f7All(env.DB), env, email);
-const unifiedAll = async (env: Env) => (await ledger.f7All(env.DB)).has("owner_unified");
+const settingsKey = async (env: Env, email: string) => !W.isAdmin(env, email) ? String(email).trim().toLowerCase() : await prepOn(env) ? W.canon(env) : null;
 const canonKey = (env: Env) => { const k = W.canon(env); memberBoard.setHarnessKey(k); return k; };
-/** 회원 길 사람 열쇠: 회원 = 그 메일, 주인 = owner_unified 가 켜졌을 때만 canon(꺼지면 null — 예전 주인 길) */
-const boardWho = async (env: Env, email: string) => !isOwner(env, email) ? String(email).trim().toLowerCase() : await unifiedOn(env, email) ? canonKey(env) : null;
-/** 기기(scope full)의 보드 열쇠: 회원 기기 = 그 메일(초대 안), 주인 기기 = 전체 owner_unified 가 켜졌을 때만 canon(꺼지면 null — 예전 주인 기기 거절) */
-const deviceWho = async (env: Env, owner: string) => isOwner(env, owner) ? (await unifiedAll(env) ? canonKey(env) : null) : await member(env, owner) ? owner.toLowerCase() : null;
-/** 회원 줄 열쇠(늘 있음): 회원 길이면 그 열쇠, 꺼진 주인은 예전처럼 로그인 메일 */
-const boardMe = async (env: Env, email: string) => (await boardWho(env, email)) ?? String(email).trim().toLowerCase();
+const boardWho = async (env: Env, email: string) => W.isAdmin(env, email) ? canonKey(env) : W.canonKey(env, email);
+/** 기기(scope full)의 보드 열쇠: 주인은 canon, 회원은 초대가 살아 있는 메일. */
+const deviceWho = async (env: Env, owner: string) => W.isAdmin(env, owner) ? canonKey(env) : await member(env, owner) ? owner.toLowerCase() : null;
+const boardMe = boardWho;
 async function cliDevice(c: Context<{ Bindings: Env }>) {
   const d = await deviceOf(c, { ownercli: true }); if (!d) return null;
-  if (isOwner(c.env, d.owner)) return d.scope === "ownercli" || (d.scope === "full" && await prepOn(c.env)) ? d : null;
+  if (W.isAdmin(c.env, d.owner)) return d.scope === "ownercli" || (d.scope === "full" && await prepOn(c.env)) ? d : null;
   return d.scope === "full" && await member(c.env, d.owner) ? d : null;
 }
 // 승인 신청만은 주인 감시 기기(scope watch)도 부를 수 있음 — 단 행동 ownercli.enable 하나(approval-link.ts 가 가름)
 async function cliDeviceOrOwnerWatch(c: Context<{ Bindings: Env }>) {
   const d = await cliDevice(c); if (d) return d;
-  const w = await deviceOf(c, { watch: true }); return w && w.scope === "watch" && isOwner(c.env, w.owner) ? w : null;
+  const w = await deviceOf(c, { watch: true }); return w && w.scope === "watch" && W.isAdmin(c.env, w.owner) ? w : null;
 }
 async function boardDevice(c: Context<{ Bindings: Env }>) {
   const on = await ledger.f7On(c.env.DB, "owner_device");
   const d = await deviceOf(c, { harness: on }); if (!d) return null;
-  if (isOwner(c.env, d.owner)) return on && d.scope === "harness" ? d : null;
+  if (W.isAdmin(c.env, d.owner)) return on && d.scope === "harness" ? d : null;
   return d.scope === "full" && await member(c.env, d.owner) ? d : null;
 }
 // 설정 · 커넥터 · 비밀이 쓰는 줄 열쇠: 주인 = "" , 회원 = 메일(커넥터 who() 와 같음). 기기 목록은 주인 메일 넷 모두
@@ -898,14 +886,14 @@ app.post("/api/device/code", async c => {
   ]);
   // 온보딩 2층: 메일을 주면(코드 입력 길만) 그 회원 보드에 허용 카드 — 회원인지 · 카드를 세웠는지는 답에 안 나옴(늘 board: "asked")
   const em = clean(b.email, 200).toLowerCase();
-  if (em && !cb && !isOwner(c.env, em)) c.executionCtx.waitUntil((async () => {
+  if (em && !cb && !W.isAdmin(c.env, em)) c.executionCtx.waitUntil((async () => {
     const card = await devCard.askOnBoard(c.env, { userCode: uc, email: em, isMember: await member(c.env, em), name: clean(b.name, 80), country, now });
     if (card) await memberCardPush(c.env, em, { id: card.id, question: `새 기기 「${card.name}」 허용?`, secret: true });   // 사람이 방금 기기에서 시작한 허용(코드 만료) — 늘 보냄
   })().catch(e => console.error("기기 카드", String(e).slice(0, 200))));
   return c.json({ device_code: dc, user_code: uc, verify_url: `${c.env.PUBLIC_URL}/device?code=${uc}`, expires_in: 600, interval: 3, mode: cb ? "local" : "code", ...(em && !cb ? { board: "asked" } : {}) });
 });
 app.post("/api/device/approve-by-device", async c => {
-  const d = await deviceOf(c); if (!d || isOwner(c.env, d.owner) || !(await member(c.env, d.owner))) return c.json({ error: "기기 토큰" }, 401);
+  const d = await deviceOf(c); if (!d || W.isAdmin(c.env, d.owner) || !(await member(c.env, d.owner))) return c.json({ error: "기기 토큰" }, 401);
   const b = await c.req.json<{ user_code?: string; allow?: boolean }>().catch(() => ({} as { user_code?: string; allow?: boolean }));
   const r = await devCard.approveByDevice(c.env, d, String(b.user_code || ""), b.allow !== false);
   if ("error" in r) return r.error === "person" ? c.json({ error: "person", verify_url: `${c.env.PUBLIC_URL}/device?code=${clean(b.user_code, 9).toUpperCase()}` }, 403) : c.json({ error: r.error }, r.error === "unknown" ? 404 : r.error === "expired" ? 410 : 409);
@@ -935,7 +923,7 @@ app.post("/api/device/token", async c => {
     const ch = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(code_verifier || ""))));
     if (!code_verifier || !sameToken(ch, r.challenge)) return c.json({ error: "verifier" }, 400);
   }
-  const own = isOwner(c.env, r.owner), prep = own && await prepOn(c.env);
+  const own = W.isAdmin(c.env, r.owner), prep = own && await prepOn(c.env);
   const scope = own && !prep ? "watch" : "full", devOwner = prep ? W.canon(c.env) : r.owner;
   if (scope === "watch" && ((await c.env.DB.prepare("SELECT count(*) n FROM device WHERE owner = ? AND revoked_at IS NULL").bind(r.owner).first<{ n: number }>())?.n || 0) >= 10) return c.json({ state: "denied" }, 403);
   // 승인됨 → 기기 토큰을 지금 한 번만 만듦(값은 안 두고 해시만). 두 폴링이 겹쳐도 한쪽만(state 조건)
@@ -953,11 +941,11 @@ app.get("/api/device/lookup", async c => {
   if (!r) return c.json({ error: "unknown" }, 404);
   if (r.state !== "pending") return c.json({ error: "done" }, 409);
   if (r.expires_at < Date.now()) return c.json({ error: "expired" }, 410);
-  const ownWatch = isOwner(c.env, s.user.email) && !(await prepOn(c.env));
+  const ownWatch = W.isAdmin(c.env, s.user.email) && !(await prepOn(c.env));
   return c.json({ name: r.name, tools: r.tools, at: r.created_at, ip: r.req_ip, country: r.req_country, same: !!r.req_ip && r.req_ip === (c.req.header("cf-connecting-ip") || ""), mode: r.callback ? "local" : "code", scope: ownWatch ? "watch" : "full" });
 });
 app.get("/api/device/lookup-by-device", async c => {   // boarder device approve 가 허용 전에 보여 줄 것(이름 · 곳 · 같은 망인지)
-  const d = await deviceOf(c); if (!d || isOwner(c.env, d.owner) || !(await member(c.env, d.owner))) return c.json({ error: "기기 토큰" }, 401);
+  const d = await deviceOf(c); if (!d || W.isAdmin(c.env, d.owner) || !(await member(c.env, d.owner))) return c.json({ error: "기기 토큰" }, 401);
   const r = await c.env.DB.prepare("SELECT name, tools, expires_at, state, created_at, req_ip, req_country, callback FROM device_code WHERE user_code = ?").bind(clean(c.req.query("code"), 9).toUpperCase()).first<{ name: string; tools: string; expires_at: number; state: string; created_at: number; req_ip: string; req_country: string; callback: string | null }>();
   if (!r) return c.json({ error: "unknown" }, 404);
   if (r.state !== "pending") return c.json({ error: "done" }, 409);
@@ -990,7 +978,7 @@ app.post("/api/device/approve", async c => {
 });
 app.get("/api/device/me", async c => {
   const d = await deviceOf(c, { watch: true, harness: true, ownercli: true }); if (!d) return c.json({ error: "기기 토큰" }, 401);   // 데몬이 폐기 확인에 씀(ownercli 로 올린 주인 기기의 감시 데몬도 계속 돎)(401 이면 끝내고 안 뜸)
-  return c.json({ email: d.owner, owner: isOwner(c.env, d.owner), scope: d.scope, device: { id: d.id, name: d.name, tools: d.tools }, server: c.env.PUBLIC_URL });
+  return c.json({ email: d.owner, owner: W.isAdmin(c.env, d.owner), scope: d.scope, device: { id: d.id, name: d.name, tools: d.tools }, server: c.env.PUBLIC_URL });
 });
 app.post("/api/device/metrics", async c => {
   const d = await deviceOf(c, { watch: true, ownercli: true }); if (!d) return c.json({ error: "기기 토큰" }, 401);
@@ -1020,7 +1008,8 @@ app.post("/api/device/window", async c => {
   return c.json({ token: tok });
 });
 app.post("/api/device/voice", async c => {
-  const d = await deviceOf(c); if (!d) return c.json({ error: "기기 토큰" }, 401);
+  const d = await deviceOf(c, { harness: true }); if (!d) return c.json({ error: "기기 토큰" }, 401);
+  if (d.scope === "harness" && !W.isAdmin(c.env, d.owner)) return c.json({ error: "기기 토큰" }, 401);
   const own = await deviceWho(c.env, d.owner); if (!own) return c.json({ error: "기기 토큰" }, 401);
   const len = +(c.req.header("content-length") || 0); if (len > memberVoice.VOICE_BODY_MAX) return c.json({ error: "too big" }, 413);
   const buf = await readCapped(c.req.raw.body, memberVoice.VOICE_BODY_MAX); if (!buf) return c.json({ error: "too big" }, 413);
@@ -1029,7 +1018,8 @@ app.post("/api/device/voice", async c => {
   if (!(await memberVoice.voiceBudgetOk(c.env.DB, d.id, String(b.op || "")))) return c.json({ ok: false, text: memberVoice.VOICE_TOO_MANY }, 429, { "retry-after": "60" });
   const me = own, mainName = (await memberBot(c.env, me).catch(() => null))?.name || "Primary";
   const primary = async (who: string, text: string) => await primarySend(c.env, who, text);
-  try { const [st, o] = await memberVoice.deviceOp(c.env as never, me, b, { primary }, mainName); return c.json(o, st as 200); }
+  const harness = async (pane: string, text: string) => { try { return await engineSend(c.env, pane, text, { queue: true, owner: false }); } catch (e) { if (/may have been sent/.test(String((e as Error)?.message || ""))) return { queued: true }; throw e; } };
+  try { const [st, o] = await memberVoice.deviceOp(c.env as never, me, b, { primary, harness }, mainName); return c.json(o, st as 200); }
   catch (e) { console.error("통화 기기 op", e); return c.json({ ok: false, text: "일시적인 오류가 발생했어요" }, 503); }
 });
 const todoOwner = (env: Env, email: string) => W.canonKey(env, email);
@@ -1037,8 +1027,7 @@ const todoBump = (c: Context<{ Bindings: Env }>, who: string) => { quiet(c.req.r
 async function todoReply(c: Context<{ Bindings: Env }>, email: string, b: unknown, device: boolean) {
   const me = todoOwner(c.env, email), write = !!b && typeof b === "object" && (b as { op?: unknown }).op !== "list";
   try {
-    const mem = !isOwner(c.env, email) || (device ? await unifiedAll(c.env) : await boardWho(c.env, email) !== null);
-    const [st, o] = await nodeTodo.op(c.env.DB, me, b, { member: mem, device });
+    const [st, o] = await nodeTodo.op(c.env.DB, me, b, { member: true, device });
     if (st === 200 && write) todoBump(c, me); else quiet(c.req.raw);
     return c.json(o, st as 200, { "cache-control": "no-store" });
   } catch (e) { console.error("할 일", e); return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503); }
@@ -1080,7 +1069,7 @@ app.get("/api/todos", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const me = todoOwner(c.env, s.user.email), raw = c.req.query("node");
   try {
-    const node = await nodeTodo.resolveNode(c.env.DB, me, raw, await boardWho(c.env, s.user.email) !== null);   // owner_unified 켠 주인도 회원 노드(mnode)
+    const node = await nodeTodo.resolveNode(c.env.DB, me, raw, true);   // 주인도 회원 노드(mnode)
     const [todos, n] = await Promise.all([nodeTodo.list(c.env.DB, me, node, { all: c.req.query("all") === "1" }), nodeTodo.counts(c.env.DB, me, node)]);
     return c.json({ ok: true, node, todos, ...n }, 200, { "cache-control": "no-store" });
   } catch (e) {
@@ -1096,7 +1085,7 @@ app.post("/api/todos", async c => {
 // 주인이 아닌 사람의 보드(첫 화면이 4초마다 읽음)
 app.get("/api/me/board", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  const me = await boardMe(c.env, s.user.email);   // owner_unified: 주인은 canon
+  const me = await boardMe(c.env, s.user.email);   // 주인은 canon
   const [dv, wn, lg, cd] = await c.env.DB.batch([
     c.env.DB.prepare("SELECT d.id, d.name, d.tools, d.created_at, d.last_at, m.at metrics_at, m.data metrics FROM device d LEFT JOIN device_metric m ON m.device_id = d.id WHERE d.owner = ? AND d.revoked_at IS NULL ORDER BY d.created_at DESC").bind(me),
     c.env.DB.prepare("SELECT t.device_id, t.win FROM agent_token t JOIN device d ON d.id = t.device_id WHERE d.owner = ? AND d.revoked_at IS NULL AND t.revoked_at IS NULL ORDER BY t.created_at DESC").bind(me),
@@ -1158,15 +1147,7 @@ async function ownerSaveNodeVals(env: Env, raw: unknown) {
 }
 app.get("/api/me/nodeset", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  const bw = await boardWho(c.env, s.user.email);   // owner_unified 가 켜지면 주인도 아래 회원 길(canon 줄 — 노드 수치 정본은 owner_unified_prep 이 옮긴 node_setting)
-  if (bw === null) {
-    const r = await toBoard(c, "GET", "/api/nodeset");
-    if (r.status !== 200 || chOf(c) !== "owner") return r;
-    const prep = await prepOn(c.env);   // 켜지면 값 · 노드 prefs 의 정본이 canon 회원 줄(화면은 아직 주인 prefs 칸을 안 그림 — settings.js OWNER)
-    const v = prep ? await ownerNodeVals(c.env).catch(() => null) : await OS.nodeSettings(c.env.DB).catch(() => null); if (!v) return r;
-    const j = await r.json().catch(() => null) as Record<string, unknown> | null; if (!j) return c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503);
-    return c.json({ ...j, values: v, ...(prep ? { prefs: await readPrefs(c.env.DB, W.canon(c.env)), pref_defaults: PREF_DEF, park_limits: PARK_H_LIM, rule_keys: RULE_KEYS, bundle_keys: BUNDLE_KEYS } : {}) }, 200, { "cache-control": "no-store" });
-  }
+  const bw = await boardWho(c.env, s.user.email);   // 주인도 아래 회원 길(canon 줄 — 노드 수치 정본은 owner_unified_prep 이 옮긴 node_setting)
   const me = bw;
   const [rawSet, arch, iw, em, dv] = await c.env.DB.batch([
     c.env.DB.prepare("SELECT data FROM node_setting WHERE owner = ?").bind(me),
@@ -1178,7 +1159,7 @@ app.get("/api/me/nodeset", async c => {
   const data = (rawSet.results[0] as { data?: string } | undefined)?.data;
   const unit = (() => { try { return (JSON.parse(data || "{}") as { unit?: string }).unit || null; } catch { return null; } })();
   const mArch = (arch.results as { id: string; name: string; why: string | null; archived_at: number; open: number }[]).map(n => ({ id: n.id, name: n.name, at: n.archived_at / 1000, msg: n.why || "", reopen: !!n.open && !!unit }));
-  const hArch = isOwner(c.env, s.user.email) ? await ownerArchive.list(c.env.DB, me).catch(e => { console.error("하네스 보관함", e); return []; }) : [];
+  const hArch = W.isAdmin(c.env, s.user.email) ? await ownerArchive.list(c.env.DB, me).catch(e => { console.error("하네스 보관함", e); return []; }) : [];
   const archive = hArch.length ? [...hArch, ...mArch].sort((a, b) => b.at - a.at) : mArch;
   const prefs = prefsOf(data), wins = (iw.results as (Item & { device: string })[]).filter(canBePrimary);
   const cur = primaryPick(wins, prefs.primary_item, em.results.length > 0).primary;   // 지금 메인 봇인 창(없으면 보더 메인 봇)
@@ -1195,7 +1176,7 @@ app.post("/api/me/nodeset", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const b = await c.req.json<{ values?: unknown; unit?: string; prefs?: unknown }>().catch(() => ({} as { values?: unknown; unit?: string; prefs?: unknown }));
-  if (!isOwner(c.env, s.user.email) && (b.unit === "goal" || b.unit === "agent")) {   // 채널 묶는 단위 — 회원만(주인은 노드 = 채널 그대로)
+  if (!W.isAdmin(c.env, s.user.email) && (b.unit === "goal" || b.unit === "agent")) {   // 채널 묶는 단위 — 회원만(주인은 노드 = 채널 그대로)
     const me = s.user.email.toLowerCase();
     await setUnit(c.env as never, me, b.unit, "me"); await regroup(c.env as never, me);
     return c.json({ ok: true, unit: b.unit });
@@ -1205,12 +1186,12 @@ app.post("/api/me/nodeset", async c => {
     const me = pk, patch = prefsPatch(b.prefs);
     if (!patch) return c.json({ ok: false, error: "값" }, 400);
     await savePrefs(c.env.DB, me, patch);
-    if (isOwner(c.env, s.user.email)) return c.json({ ok: true, prefs: await readPrefs(c.env.DB, me) });
+    if (W.isAdmin(c.env, s.user.email)) return c.json({ ok: true, prefs: await readPrefs(c.env.DB, me) });
     if (patch.primary_item !== undefined || patch.park_on !== undefined || patch.park_h !== undefined || patch.task_channels !== undefined || patch.task_repo !== undefined) await regroup(c.env as never, me);
     return c.json({ ok: true, prefs: await readPrefs(c.env.DB, me) });
   }
   if (!b.values || typeof b.values !== "object") return c.json({ ok: false, error: "값" }, 400);
-  if (isOwner(c.env, s.user.email)) {
+  if (W.isAdmin(c.env, s.user.email)) {
     if (chOf(c) === "owner" && await prepOn(c.env)) {   // owner_unified_prep: 정본 = canon 회원 줄(owner_state 는 거울)
       const v = await ownerSaveNodeVals(c.env, b.values).catch(() => null);
       return v ? c.json({ ok: true, values: v }) : c.json({ ok: false, error: "일시적인 오류가 발생했어요" }, 503, { "x-retry-safe": "1" });
@@ -1232,11 +1213,8 @@ app.post("/api/me/nodereopen", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const bw = await boardWho(c.env, s.user.email);
   const b = await c.req.json<{ name?: string }>().catch(() => ({} as { name?: string }));
-  if (bw !== null) {   // 회원 · owner_unified 켠 주인(canon 회원 길 — canon 보관 노드는 화면이 nodes/edit 로)
-    const r = isOwner(c.env, s.user.email) ? await ownerReopen(c, bw, String(b.name || "")) : null;
-    return r ?? c.json({ ok: false, error: "보관함에 없는 노드예요" }, 404);
-  }
-  return toBoard(c, "POST", "/api/nodereopen", { name: String(b.name || "").slice(0, 80) });
+  const r = W.isAdmin(c.env, s.user.email) ? await ownerReopen(c, bw, String(b.name || "")) : null;
+  return r ?? c.json({ ok: false, error: "보관함에 없는 노드예요" }, 404);
 });
 async function ownerReopen(c: Context<{ Bindings: Env }>, me: string, raw: string) {
   const name = raw.trim().slice(0, 80);
@@ -1246,7 +1224,7 @@ async function ownerReopen(c: Context<{ Bindings: Env }>, me: string, raw: strin
   const [st, j] = await ownerArchive.harnessReopen(c.env as never, chOf(c), hit.name);
   return c.json(j, st as 200, { "cache-control": "no-store" });
 }
-const ownerMails = (env: Env, email: string) => { const me = email.toLowerCase(); return isOwner(env, me) ? env.ALLOW_EMAILS.split(",").map(x => x.trim().toLowerCase()).filter(Boolean) : [me]; };
+const ownerMails = (env: Env, email: string) => { const me = email.toLowerCase(); return W.isAdmin(env, me) ? env.ALLOW_EMAILS.split(",").map(x => x.trim().toLowerCase()).filter(Boolean) : [me]; };
 app.get("/api/me/devices", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   return c.json({ devices: await listDevices(c.env.DB, ownerMails(c.env, s.user.email), Date.now(), { fold: true }) }, 200, { "cache-control": "no-store" });   // 같은 컴퓨터 줄은 한 카드(members)
@@ -1324,13 +1302,13 @@ async function cardTell(env: Env, me: string, k: { id?: string; wid: string | nu
 }
 mountImport(app as never, {
   device: async c => boardDevice(c as never),
-  member: async c => { const s = await signedIn(c as never); return s ? boardWho(c.env as never, s.user.email) : null; },   // owner_unified 가 켜지면 주인도 canon
+  member: async c => { const s = await signedIn(c as never); return s ? boardWho(c.env as never, s.user.email) : null; },   // 주인도 canon
   sameSite: c => sameSite(c as never),
   quiet: c => quiet(c.req.raw),
 });
 mountTaskConvo(app as never, {
   device: async c => boardDevice(c as never),
-  member: async c => { const s = await signedIn(c as never); return s ? boardWho(c.env as never, s.user.email) : null; },   // owner_unified 가 켜지면 주인도 canon
+  member: async c => { const s = await signedIn(c as never); return s ? boardWho(c.env as never, s.user.email) : null; },   // 주인도 canon
   sameSite: c => sameSite(c as never),
   sync: (db, me, node) => memberBoard.syncTaskConvo(db, me, node),
 });
@@ -1356,7 +1334,7 @@ mountApprovalLink(app as never, {
   sameSite: c => sameSite(c as never),
   key: (env, email) => cliKey(env as never, email),
   mails: (env, email) => ownerMails(env as never, email),
-  isOwner: (env, email) => isOwner(env as never, email),
+  isOwner: (env, email) => W.isAdmin(env as never, email),
 });
 mountWindows(app as never, {
   human: async c => { const s = await signedIn(c as never); return s ? { me: await boardWho(c.env as never, s.user.email) } : null; },
@@ -1364,7 +1342,7 @@ mountWindows(app as never, {
 });
 devSettings.mountDeviceSettings(app as never, {
   device: async c => cliDevice(c as never) as never,
-  isOwner: (env, email) => isOwner(env as never, email),
+  isOwner: (env, email) => W.isAdmin(env as never, email),
   mails: (env, email) => ownerMails(env as never, email),
   unified: env => prepOn(env as never),   // owner_unified_prep: 주인 기기도 회원 칸 전부를 canon 줄로
   ownerNodeValues: {
@@ -1372,21 +1350,21 @@ devSettings.mountDeviceSettings(app as never, {
     save: async (env, raw) => { const r = await OS.nodeSet(env.DB, { values: raw as never }); return r && r[0] === 200 ? (r[1] as { values: Record<string, number> }).values : null; },
   },
   ownWindow: (db, me, t) => ownWindow(db, me, t),
-  regroup: async (env, me) => { if (!isOwner(env as never, me)) await regroup(env as never, me); },   // 주인 노드는 아직 다리(②-가 전) — canon 줄을 다시 묶지 않음
+  regroup: async (env, me) => { if (!W.isAdmin(env as never, me)) await regroup(env as never, me); },   // 주인 노드는 아직 다리(②-가 전) — canon 줄을 다시 묶지 않음
   setUnit: (env, me, unit) => setUnit(env as never, me, unit, "me"),
   uiPref: () => UI_PREF,
   nodeValues: {   // 주인(canon — owner_unified_prep 일 때만 여기로 옴)은 옛 정본을 바탕 · owner_state 거울(ownerNodeVals)
-    read: (env, me) => isOwner(env as never, me) ? ownerNodeVals(env as never) : memberNodeVals(env as never, me),
-    save: (env, me, raw) => isOwner(env as never, me) ? ownerSaveNodeVals(env as never, raw) : saveNodeVals(env as never, me, raw) },
+    read: (env, me) => W.isAdmin(env as never, me) ? ownerNodeVals(env as never) : memberNodeVals(env as never, me),
+    save: (env, me, raw) => W.isAdmin(env as never, me) ? ownerSaveNodeVals(env as never, raw) : saveNodeVals(env as never, me, raw) },
   sessionSync: { get: (env, me) => sessions.syncOn(env as never, W.legacyKey(env as never, me)), set: (env, me, on) => sessions.setSync(env as never, W.legacyKey(env as never, me), on) },   // 세션은 옛 열쇠 그대로(R2 조각 길 · 봉함 AAD 가 owner 에 묶임 — 열쇠 이전에서 뺌)
   flagsOff: env => (env as unknown as { FLAGS_OFF?: string }).FLAGS_OFF,
-  avatar: { get: async (env, me) => isOwner(env as never, me) && !(await env.DB.prepare("SELECT 1 FROM member_bot WHERE owner = ?").bind(memberBoard.meKey(me)).first()) ? (b => b ? memberBoard.cleanFace(b) : null)(await memberBot(env as never, "@owner")) : memberBoard.myAvatar(env.DB, me),   // 주인: 옮기기 전이면 「@owner」 얼굴
-    set: async (env, me, face) => { const f = await memberBoard.setMyAvatar(env.DB, me, face); if (isOwner(env as never, me)) await ownerFaceMirror(env as never, "toOwner"); return f; }, clean: v => memberBoard.cleanFace(v), photoOk: (env, photo) => photoOk(env as never, photo), put: (env, body) => putPhoto(env as never, body) },
+  avatar: { get: async (env, me) => W.isAdmin(env as never, me) && !(await env.DB.prepare("SELECT 1 FROM member_bot WHERE owner = ?").bind(memberBoard.meKey(me)).first()) ? (b => b ? memberBoard.cleanFace(b) : null)(await memberBot(env as never, "@owner")) : memberBoard.myAvatar(env.DB, me),   // 주인: 옮기기 전이면 「@owner」 얼굴
+    set: async (env, me, face) => { const f = await memberBoard.setMyAvatar(env.DB, me, face); if (W.isAdmin(env as never, me)) await ownerFaceMirror(env as never, "toOwner"); return f; }, clean: v => memberBoard.cleanFace(v), photoOk: (env, photo) => photoOk(env as never, photo), put: (env, body) => putPhoto(env as never, body) },
   card: (env, owner, card) => void memberCardPush(env as never, owner, { ...card, secret: true }),   // 기기가 기다리는 허락 — 늘 보냄(커넥터 허용과 같음)
-  after: async (env, me, key) => { if (key === "bot_name" && isOwner(env as never, me)) await ownerFaceMirror(env as never, "toOwner"); },   // 주인 이름도 「@owner」 에 같게
+  after: async (env, me, key) => { if (key === "bot_name" && W.isAdmin(env as never, me)) await ownerFaceMirror(env as never, "toOwner"); },   // 주인 이름도 「@owner」 에 같게
 });
 mountSecrets(app as never, {
-  human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s ? { email: s.user.email, owner: isOwner(c.env as never, s.user.email) } : null; },
+  human: async c => { if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return null; const s = await signedIn(c as never); return s ? { email: s.user.email, owner: W.isAdmin(c.env as never, s.user.email) } : null; },
   sameSite: c => sameSite(c as never),
   agent: async c => {
     const w = await bound(c.env as never, (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "")); if (!w) return null;
@@ -1398,7 +1376,7 @@ mountSecrets(app as never, {
     if (!/^bxd_[A-Za-z0-9_-]{30,80}$/.test(tok)) return null;
     const e = env as unknown as Env, d = await e.DB.prepare("SELECT id, owner, scope FROM device WHERE token_hash = ? AND revoked_at IS NULL").bind(await sha(tok)).first<{ id: string; owner: string; scope: string }>();
     if (!d) return null;
-    if (isOwner(e, d.owner)) return { id: d.id, key: "", scope: d.scope };
+    if (W.isAdmin(e, d.owner)) return { id: d.id, key: "", scope: d.scope };
     return await member(e, d.owner) ? { id: d.id, key: d.owner.toLowerCase(), scope: d.scope } : null;
   },
   admin: c => admin(c as never),
@@ -1408,8 +1386,8 @@ const memberBot = (env: Env, me: string) => env.DB.prepare("SELECT seed, hue, na
 const BLOB_ID = /^[0-9a-f]{32}$/;
 const botKey = (env: Env, email: string) => W.botKey(env, email);
 // owner_unified: 회원 길에 든 주인의 메일 봇 줄 = canon(owner_unified_prep face 가 「@owner」 에서 옮김 — 아직 없으면 「@owner」 를 읽음)
-const myBotKey = async (env: Env, email: string) => await unifiedOn(env, email) ? W.canon(env) : botKey(env, email);
-const myBot = async (env: Env, k: string) => (await memberBot(env, k)) ?? (isOwner(env, k) ? await memberBot(env, "@owner") : null);
+const myBotKey = boardWho;
+const myBot = async (env: Env, k: string) => (await memberBot(env, k)) ?? (W.isAdmin(env, k) ? await memberBot(env, "@owner") : null);
 app.get("/api/me/bot", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   return c.json({ bot: await myBot(c.env, await myBotKey(c.env, s.user.email)) }, 200, { "cache-control": "no-store" });
@@ -1452,7 +1430,7 @@ app.post("/api/me/bot", async c => {
   await c.env.DB.prepare("INSERT INTO member_bot (owner, seed, hue, name, photo, icon, fav, updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(owner) DO UPDATE SET seed = excluded.seed, hue = excluded.hue, name = excluded.name, photo = excluded.photo, icon = excluded.icon, fav = excluded.fav, updated_at = excluded.updated_at")
     .bind(me, seed, hue, name, photo, icon, fav, now).run();
   if (me === "@owner" && await prepOn(c.env)) await ownerFaceMirror(c.env, "fromOwner");   // owner_unified_prep: 정본(canon 줄)도 같게
-  else if (me !== "@owner" && isOwner(c.env, me)) await ownerFaceMirror(c.env, "toOwner");   // owner_unified(canon 줄에 씀): 다리 길 화면이 읽는 「@owner」 이름도 같게
+  else if (me !== "@owner" && W.isAdmin(c.env, me)) await ownerFaceMirror(c.env, "toOwner");   // owner_unified(canon 줄에 씀): 다리 길 화면이 읽는 「@owner」 이름도 같게
   // 온보딩을 마친 순간 기기가 이미 붙어 있으면 기본 역할을 바로 심음(멱등 — 안 붙었으면 다음 hello 때). 주인은 me = '@owner' 라 그 열쇠의 기기가 없어 그냥 지나감(예전 주인 검사는 늘 참이라 지움)
   c.executionCtx.waitUntil((async () => { const dev = await liveDevice(c.env.DB, me); if (dev) await (engineOf(c.env, dev) as unknown as { seedRoles(o: string): Promise<unknown> }).seedRoles(me); })().catch(() => {}));
   return c.json({ bot: { seed, hue, name, photo, icon, fav } });
@@ -1461,7 +1439,7 @@ const photoOk = async (env: Env, photo: string) => { if (!photo) return true; if
 app.get("/api/me/avatar", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
   const me = s.user.email.toLowerCase();
-  if (isOwner(c.env, me)) {   // 주인 아바타 = 「@owner」 줄(api/me/bot 과 같음). owner_unified_prep 이 켜지면 내 얼굴 줄(@me:<canon>) — 아직 안 옮겼으면 「@owner」
+  if (W.isAdmin(c.env, me)) {   // 주인 아바타 = 「@owner」 줄(api/me/bot 과 같음). owner_unified_prep 이 켜지면 내 얼굴 줄(@me:<canon>) — 아직 안 옮겼으면 「@owner」
     const b = (await prepOn(c.env) ? await memberBot(c.env, memberBoard.meKey(W.canon(c.env))) : null) ?? await memberBot(c.env, "@owner");
     return c.json({ avatar: b ? memberBoard.cleanFace(b) : null }, 200, { "cache-control": "no-store" });
   }
@@ -1473,7 +1451,7 @@ app.post("/api/me/avatar", async c => {
   if (!f) return c.json({ error: "모양 · 색" }, 400);
   if (!(await photoOk(c.env, f.photo || ""))) return c.json({ error: "그림을 먼저 올려요" }, 400);
   const out = await memberBoard.setMyAvatar(c.env.DB, me, f);
-  if (isOwner(c.env, me)) await ownerFaceMirror(c.env, "toOwner");
+  if (W.isAdmin(c.env, me)) await ownerFaceMirror(c.env, "toOwner");
   return c.json({ avatar: out });
 });
 // 주인 얼굴 거울(owner_unified_prep): 정본 = canon 회원 줄(내 얼굴 @me:<canon> · 이름 canon), 화면은 아직 「@owner」 줄을 읽음(④-가 전).
@@ -1541,7 +1519,7 @@ app.delete("/api/me/overlay", async c => {
 });
 const plainName = (n: unknown) => String(n || "").replace(/[^\p{L}\p{N} ]/gu, "").replace(/\s+/g, " ").trim().slice(0, 40) || "이름 없음";
 function noteDevice(c: Context<{ Bindings: Env }>, owner: string, device: { name?: string }, text: string) {
-  const line = `기기 「${plainName(device.name)}」가 ${text}. 내가 한 게 아니면 설정에서 기기를 끊어 주세요`, viaRelay = isOwner(c.env, owner) && !!hosted.exec;
+  const line = `기기 「${plainName(device.name)}」가 ${text}. 내가 한 게 아니면 설정에서 기기를 끊어 주세요`, viaRelay = W.isAdmin(c.env, owner) && !!hosted.exec;
   c.executionCtx.waitUntil((async () => {
     try {
       if (viaRelay) await (boardTool(c.env, "owner", "notify", { text: line }, "boarder@worker") as Promise<unknown>);
@@ -1606,7 +1584,7 @@ app.post("/api/device/prompts", async c => {
   return c.json({ ok: true });
 });
 app.get("/api/me/nodes/avatar", async c => {
-  const s = await signedIn(c), me = s ? await boardWho(c.env, s.user.email) : null; if (!me) return c.json({ error: "no" }, 403);   // owner_unified 가 켜지면 주인도 canon
+  const s = await signedIn(c), me = s ? await boardWho(c.env, s.user.email) : null; if (!me) return c.json({ error: "no" }, 403);   // 주인도 canon
   return c.json({ nodes: await memberBoard.nodeFaceList(c.env.DB, me, await memberBot(c.env, me)) }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/nodes/avatar", async c => {
@@ -1621,13 +1599,13 @@ app.post("/api/me/nodes/avatar", async c => {
   return "error" in r ? c.json({ error: r.error }, r.status) : c.json(r);
 });
 app.get("/api/me/agent-faces", async c => {
-  const s = await signedIn(c); if (!s || !isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s || !W.isAdmin(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   return c.json({ faces: await agentFace.all(c.env.DB, todoOwner(c.env, s.user.email)) }, 200, { "cache-control": "no-store" });
 });
 // { key: 에이전트 키, seed?, hue?, photo? } — seed · photo 둘 다 없으면 기본 얼굴로 되돌림
 app.post("/api/me/agent-faces", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
-  const s = await signedIn(c); if (!s || !isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s || !W.isAdmin(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   const b = Object(await c.req.json().catch(() => ({}))) as Record<string, unknown>, key = String(b.key ?? "");
   if (!agentFace.KEY.test(key)) return c.json({ error: "없는 에이전트예요" }, 404);
   if ("name" in b && !("seed" in b) && !("photo" in b)) {   // 보이는 이름만(얼굴은 그대로) — 빈 글이면 기본 이름으로
@@ -1656,7 +1634,7 @@ app.post("/api/me/devices/:id/ownercli", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
   if (c.req.header("authorization") !== undefined || c.req.header("x-boarder-device") !== undefined) return c.json({ error: "로그인" }, 401);   // 기기 토큰 머리가 붙은 요청은 사람이 아님
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  if (!isOwner(c.env, s.user.email)) return c.json({ error: "주인만" }, 403);
+  if (!W.isAdmin(c.env, s.user.email)) return c.json({ error: "주인만" }, 403);
   const id = c.req.param("id"), now = Date.now(), ms = ownerMails(c.env, s.user.email);
   // owner_unified_prep 이 켜지면: 감시 기기는 ownercli 대신 회원과 같은 full 로, 이미 full · ownercli 인 주인 기기는 범위는 두고 설정 허락만 남김
   const prep = await prepOn(c.env), from = prep ? "scope IN ('watch', 'full', 'ownercli')" : "scope = 'watch'", to = prep ? "full" : "ownercli";
@@ -1718,7 +1696,7 @@ app.post("/api/me/chat", async c => {
 // 회원 온보딩 점검표(member-onboarding.ts, 온보딩 4층): 설정 › 시작하기 — 그 회원 것만, 읽기만
 app.get("/api/me/onboarding", async c => {
   const s = await signedIn(c), me = s ? await boardWho(c.env, s.user.email) : null; if (!me) return c.json({ error: "no" }, 403);
-  const ownerSubs = isOwner(c.env, s!.user.email) && await ledger.f7On(c.env.DB, "write_push") ? await pusher(c.env).nSubs().catch(() => undefined) : undefined;
+  const ownerSubs = W.isAdmin(c.env, s!.user.email) && await ledger.f7On(c.env.DB, "write_push") ? await pusher(c.env).nSubs().catch(() => undefined) : undefined;
   return c.json(await onboarding(c.env.DB, me, { server: c.env.PUBLIC_URL, push: ownerSubs !== undefined || await ledger.f7On(c.env.DB, "member_push").catch(() => false), ownerSubs }), 200, { "cache-control": "no-store" });
 });
 const UI_PREF: Record<string, (v: string) => boolean> = { theme: v => /^(system|light|dark)$/.test(v), accent: v => v === "bot" || v === "orange" || /^#[0-9a-f]{6}$/.test(v), still: v => v === "0" || v === "1", favblink: v => v === "0" || v === "1", tapthread: v => v === "0" || v === "1", newsb: v => v === "0" || v === "1", unreadkeep: v => v === "0" || v === "1", copybits: v => v === "0" || v === "1", canvasback: v => v === "0" || v === "1", ibboth: v => v === "0" || v === "1", mainmerge: v => v === "0" || v === "1", sbw: v => v === "0" || v === "72" || (/^[1-9]\d{2}$/.test(v) && +v >= 200 && +v <= 480) }
@@ -1802,6 +1780,8 @@ app.get("/api/me/engine/device/:id", async c => {
   const x = await engineDevCmd(c, "account_list", {}, 30_000); if ("err" in x) return x.err;
   const r = x.result || {}, accounts: Record<string, { name: string; logged_in: boolean }[]> = {};
   for (const p of ["claude", "codex"]) accounts[p] = (Array.isArray(r.accounts?.[p]) ? r.accounts[p] : []).slice(0, 20).map((a: any) => ({ name: String(a?.name || "").slice(0, 40), logged_in: a?.logged_in === true }));
+  const prim = (() => { try { return x.d.engine ? JSON.parse(x.d.engine).primary !== false : true; } catch { return true; } })();
+  if (prim && Object.values(accounts).some(xs => xs.some(a => a.logged_in)) && (await subMissing(c.env.DB, x.me)).missing) c.executionCtx.waitUntil(engineOf(c.env, x.d.id).ensureMain(x.me, x.d.id).catch(() => null));
   return c.json({ ok: true, engine: typeof r.engine === "string" ? r.engine.slice(0, 30) : null, engines: Array.isArray(r.engines) ? r.engines.filter((e: unknown) => typeof e === "string").slice(0, 8) : [], accounts }, 200, { "cache-control": "no-store" });
 });
 app.post("/api/me/engine/device/:id/login", async c => {
@@ -1811,6 +1791,14 @@ app.post("/api/me/engine/device/:id/login", async c => {
   const x = await engineDevCmd(c, "account_login", { provider: b.provider, name: b.name }, 40_000); if ("err" in x) return x.err;
   const u = typeof x.result?.url === "string" && /^https:\/\/[^\s]{1,2000}$/.test(x.result.url) ? x.result.url : null;   // 주소는 https 만 화면에 링크로
   return c.json({ ok: true, url: u, started: x.result?.started !== false });
+});
+// 구독 미연결 안내(채팅 칸)의 「다시 확인」: 엔진이 켜진 내 기기에서 메인 봇을 다시 열어 봄 → 지금 판정. 로그인이 아직이면 missing 그대로
+app.post("/api/me/engine/retry-main", async c => {
+  if (!sameSite(c)) return c.json({ error: "no" }, 403);
+  const me = await memberOnly(c); if (!me) return c.json({ error: "no" }, 403);
+  const dev = await liveDevice(c.env.DB, me, true); if (!dev) return c.json({ ok: false, error: "엔진이 켜진 기기가 없어요" }, 409);
+  const id = await engineOf(c.env, dev).ensureMain(me, dev).catch(() => null);
+  return c.json({ ok: true, started: !!id, ...(await subMissing(c.env.DB, me)) });
 });
 app.post("/api/me/engine/device/:id/choose", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
@@ -1918,16 +1906,15 @@ app.get("/api/device/engine", async c => {
   if (c.req.header("upgrade") !== "websocket") return c.json({ error: "websocket" }, 426);
   const d = await deviceOf(c, { harness: true }); if (!d) return c.json({ error: "기기 토큰" }, 401);
   const harness = d.scope === "harness";
-  if (harness ? !isOwner(c.env, d.owner) : (isOwner(c.env, d.owner) || !(await member(c.env, d.owner)))) return c.json({ error: "기기 토큰" }, 401);
+  if (harness ? !W.isAdmin(c.env, d.owner) : (W.isAdmin(c.env, d.owner) || !(await member(c.env, d.owner)))) return c.json({ error: "기기 토큰" }, 401);
   const h = new Headers(c.req.raw.headers); h.set("x-bx-device", d.id); h.set("x-bx-owner", d.owner); h.set("x-bx-harness", harness ? "1" : "0");   // 머리는 늘 덮어씀(밖에서 넣은 값 무시)
   return engineOf(c.env, d.id).fetch(new Request(c.req.raw, { headers: h }));
 });
 app.post("/api/device/owner-state", async c => {
   const d = await deviceOf(c, { harness: true });
-  if (!d || d.scope !== "harness" || !isOwner(c.env, d.owner)) return c.json({ error: "하네스 기기 토큰만" }, 401);
+  if (!d || d.scope !== "harness" || !W.isAdmin(c.env, d.owner)) return c.json({ error: "하네스 기기 토큰만" }, 401);
   if (Number(c.req.header("content-length") || 0) > 512_000) return c.json({ error: "too large" }, 413);
   const text = await c.req.text(); if (text.length > 512_000) return c.json({ error: "too large" }, 413);
-  if (!(await ledger.f7On(c.env.DB, "shadow_unified"))) return c.body(null, 204);
   let body: unknown = null; try { body = JSON.parse(text); } catch { /* 아래 400 */ }
   const r = await ownerVals.ingest(c.env.DB, d.owner, body);
   if (r) c.executionCtx.waitUntil(live.bumpOwnerVals(c.env));
@@ -1941,12 +1928,12 @@ const invite = async (env: Env, email: string, by: string) => {
 };
 app.post("/api/me/invites", async c => {
   if (!sameSite(c)) return c.json({ error: "no" }, 403);
-  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401); if (!isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401); if (!W.isAdmin(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   const e = await invite(c.env, (await c.req.json<{ email?: string }>().catch(() => ({} as { email?: string }))).email || "", s.user.email); if (!e) return c.json({ error: "메일 주소" }, 400);
   return c.json({ ok: true, email: e });
 });
 app.get("/api/me/invites", async c => {
-  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401); if (!isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401); if (!W.isAdmin(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   return c.json((await c.env.DB.prepare("SELECT email, at FROM invite ORDER BY at DESC").all()).results);
 });
 
@@ -1962,7 +1949,7 @@ app.get("/api/emoji/custom", async c => {
   const s = await signedIn(c);
   if (!s && !relayOk(c)) return c.json({ error: "로그인" }, 401);
   const me = s ? s.user.email.toLowerCase() : null;
-  return c.json(await emoji.list(c.env, me, !!me && isOwner(c.env, me)), 200, { "cache-control": "no-store" });
+  return c.json(await emoji.list(c.env, me, !!me && W.isAdmin(c.env, me)), 200, { "cache-control": "no-store" });
 });
 app.post("/api/emoji/custom", async c => {
   c.header("Deprecation", "true");
@@ -1980,13 +1967,13 @@ app.post("/api/emoji/custom/delete", async c => {
   if (!sameSite(c)) return c.json({ ok: false, error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ ok: false, error: "로그인" }, 401);
   const b = await c.req.json<{ name?: string }>().catch(() => ({} as { name?: string })), me = s.user.email.toLowerCase();
-  const [st, j] = await emoji.remove(c.env, me, isOwner(c.env, me), String(b.name || ""));
+  const [st, j] = await emoji.remove(c.env, me, W.isAdmin(c.env, me), String(b.name || ""));
   return c.json(j, st as 200);
 });
 app.post("/api/emoji/bot", async c => {
   if (!sameSite(c)) return c.json({ ok: false, error: "no" }, 403);
   const s = await signedIn(c); if (!s) return c.json({ ok: false, error: "로그인" }, 401);
-  const me = s.user.email.toLowerCase(); if (!isOwner(c.env, me)) return c.json({ ok: false, error: "관리자만 바꿀 수 있어요" }, 403);
+  const me = s.user.email.toLowerCase(); if (!W.isAdmin(c.env, me)) return c.json({ ok: false, error: "관리자만 바꿀 수 있어요" }, 403);
   const b = await c.req.json<{ bot?: string; on?: boolean }>().catch(() => ({} as { bot?: string; on?: boolean }));
   const [st, j] = await emoji.bot(c.env, me, String(b.bot || ""), !!b.on);
   return c.json(j, st as 200);
@@ -2071,7 +2058,7 @@ app.post("/api/admin/member-push-log", async c => {
 app.post("/api/admin/member-push-fails", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const e = String((await c.req.json<{ email?: string }>().catch(() => ({} as { email?: string }))).email || "").trim().toLowerCase();
-  if (!PU.memberName(e) || isOwner(c.env, e) || !(await member(c.env, e))) return c.json({ error: "초대한 회원 주소만" }, 400);
+  if (!PU.memberName(e) || W.isAdmin(c.env, e) || !(await member(c.env, e))) return c.json({ error: "초대한 회원 주소만" }, 400);
   const pu = memberPusher(c.env, e); if (!pu) return c.json({ error: "no" }, 404);
   return c.json({ email: e, fails: await pu.mFails(e) });
 });
@@ -2079,9 +2066,9 @@ app.post("/api/admin/test-session", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ email?: string; revoke?: boolean }>().catch(() => ({} as { email?: string; revoke?: boolean }));
   const e = clean(b.email, 80).toLowerCase();
-  if (!TEST_EMAIL.test(e) || isOwner(c.env, e)) return c.json({ error: "시험 주소(@example.com)만" }, 400);
+  if (!TEST_EMAIL.test(e) || W.isAdmin(c.env, e)) return c.json({ error: "시험 주소(@example.com)만" }, 400);
   const lk = await UE.linkedUser(c.env.DB, e);
-  if (lk && (!TEST_EMAIL.test(lk.email) || isOwner(c.env, lk.email))) return c.json({ error: "시험 주소(@example.com)만" }, 400);
+  if (lk && (!TEST_EMAIL.test(lk.email) || W.isAdmin(c.env, lk.email))) return c.json({ error: "시험 주소(@example.com)만" }, 400);
   const key = lk?.email ?? e;
   const st = UE.authState(), ctx = await createAuth(c.env, st).$context;
   const found = await ctx.internalAdapter.findUserByEmail(key);
@@ -2138,11 +2125,9 @@ app.post("/api/admin/vault", async c => {
 app.post("/api/admin/f7-flag", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ name?: string; on?: boolean; note?: string }>().catch(() => ({} as { name?: string; on?: boolean; note?: string }));
-  if (/^(envelope|owner_unified):/i.test(b.name || "") && !/^envelope:o:/.test(b.name || "")) b.name = b.name!.toLowerCase();
-  if (/^owner_unified:/.test(b.name || "") && !isOwner(c.env, b.name!.slice("owner_unified:".length))) return c.json({ error: "owner_unified:<메일> 은 주인 메일(ALLOW_EMAILS)만" }, 400);
-  if (b.on && /^owner_unified(:|$)/.test(b.name || "") && !(await c.env.DB.prepare("SELECT 1 FROM f7_flag WHERE name = 'owner_unified_prep' AND on_at IS NOT NULL").first().catch(() => null))) return c.json({ error: "owner_unified_prep 을 먼저 켜고 옮기기(run)를 돌려요" }, 409);
-  if (!/^(read|write|shadow|member)_[a-z][a-z0-9_]{1,24}$/.test(b.name || "") && !/^owner_(device|key_canon|unified_prep|unified)$/.test(b.name || "") && !/^owner_unified:[^@\s:,]{1,64}@[^@\s:,]{1,190}$/.test(b.name || "")
-    && !/^envelope:o:[A-Za-z0-9_-]{1,40}$/.test(b.name || "") && !/^envelope(:owner|:[^@\s:,]{1,64}@[^@\s:,]{1,190})?$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음> · owner_device · owner_key_canon · owner_unified_prep · owner_unified · owner_unified:<주인 메일> · envelope · envelope:<메일 | owner | o:<id>>" }, 400);
+  if (/^(envelope):/i.test(b.name || "") && !/^envelope:o:/.test(b.name || "")) b.name = b.name!.toLowerCase();
+  if (!/^(read|write|shadow|member)_[a-z][a-z0-9_]{1,24}$/.test(b.name || "") && !/^owner_(device|key_canon|unified_prep)$/.test(b.name || "")
+    && !/^envelope:o:[A-Za-z0-9_-]{1,40}$/.test(b.name || "") && !/^envelope(:owner|:[^@\s:,]{1,64}@[^@\s:,]{1,190})?$/.test(b.name || "")) return c.json({ error: "name = read_|write_|shadow_|member_<묶음> · owner_device · owner_key_canon · owner_unified_prep · envelope · envelope:<메일 | owner | o:<id>>" }, 400);
   // e2e 판이 있는 사람의 envelope:<owner> 는 못 끔(vault adoptE2e 의 지킬 것 — 끄면 그 사람 쓰기가 봉해지지 않음)
   if (!b.on && /^envelope:/.test(b.name!)) {
     const who = b.name === "envelope:owner" ? "" : b.name!.slice("envelope:".length);
@@ -2168,7 +2153,11 @@ app.post("/api/admin/live/drop", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const b = await c.req.json<{ who?: string; abort?: boolean; old?: boolean }>().catch(() => ({} as { who?: string; abort?: boolean; old?: boolean }));
   if (!/^[^@\s]{1,80}@[^@\s]{1,120}$/.test(b.who || "")) return c.json({ error: "who = 메일" }, 400);
-  if (b.old) return c.json({ ok: true, closed: await c.env.SNAP.get(c.env.SNAP.idFromName(isOwner(c.env, b.who!) ? "owner@wnam" : `live:${b.who!.trim().toLowerCase()}@wnam`), { locationHint: "wnam" }).drop(!!b.abort) });
+  if (b.old) return c.json({ ok: true, closed: await c.env.SNAP.get(c.env.SNAP.idFromName(W.isAdmin(c.env, b.who!) ? "owner@wnam" : `live:${b.who!.trim().toLowerCase()}@wnam`), { locationHint: "wnam" }).drop(!!b.abort) });
+  if (W.isAdmin(c.env, b.who!)) {
+    const [a, s] = await Promise.all([live.liveOf(c.env, b.who!).drop(!!b.abort), snap(c.env).drop(!!b.abort)]);
+    return c.json({ ok: true, closed: (Number(a) || 0) + (Number(s) || 0) });
+  }
   return c.json({ ok: true, closed: await live.liveOf(c.env, b.who!).drop(!!b.abort) });
 });
 app.post("/api/admin/owner-engine/device", async c => {
@@ -2267,7 +2256,7 @@ app.post("/api/engine/open", async c => {
   } catch (e) { return engErr(c, e); }
 });
 app.get("/api/engine/windows", async c => {
-  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401); if (!isOwner(c.env, s.user.email)) return c.json({ error: "no" }, 403);
+  const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401); if (!W.isAdmin(c.env, s.user.email)) return c.json({ error: "no" }, 403);
   return c.json(await ownerWindows(c.env));
 });
 app.post("/api/admin/engine-rules", async c => {
@@ -2375,7 +2364,7 @@ mountDevBoard(app as never, {
 
 app.post("/api/dev/ch", async c => {
   if (c.req.header("x-hb") !== "1" || !["same-origin", "none", undefined].includes(c.req.header("sec-fetch-site"))) return c.json({ error: "no" }, 403);
-  const sd = await signedIn(c); if (!sd) return c.json({ error: "로그인" }, 401); if (!isOwner(c.env, sd.user.email)) return c.json({ error: "no" }, 403);
+  const sd = await signedIn(c); if (!sd) return c.json({ error: "로그인" }, 401); if (!W.isAdmin(c.env, sd.user.email)) return c.json({ error: "no" }, 403);
   const to = c.req.query("to") === "test" ? "test" : "owner";
   return c.json({ ch: to }, 200, { "set-cookie": `bx-ch=${to}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${to === "test" ? 3600 : 0}` });
 });
@@ -2472,17 +2461,6 @@ function filesShadow(c: Context<{ Bindings: Env }>, path: string, headers: Recor
 }
 const fromR2 = (out: Headers) => out.set("x-boarder-src", "r2");   // 확인용(완료 기준: 응답 머리로 R2 에서 온 것)
 
-function shadowUnified(c: Context<{ Bindings: Env }>, body: string, who: string) {
-  if (!ownerShadow.due()) return;
-  c.executionCtx.waitUntil((async () => {
-    if (!(await ledger.f7On(c.env.DB, "shadow_unified"))) return;
-    const me = W.canon(c.env); if (!me) return;
-    const t0 = Date.now(), d1 = await memberBoard.data(c.env.DB, me, null, await memberBoard.load(c.env.DB, me, true)), ms = Date.now() - t0;
-    const d = ownerShadow.windowsDiff(JSON.parse(body), d1);
-    if (d.at.length) capture(c.env, c.executionCtx, "unify_shadow_diff", who, { ...d, at: d.at.join(","), ms_d1: ms });
-    else if (Math.random() < 0.1) capture(c.env, c.executionCtx, "unify_shadow_ok", who, { n_snap: d.n_snap, n_d1: d.n_d1, ms_d1: ms });   // 차이 0 이 이어지는지(10% 표본)
-  })().catch(e => capture(c.env, c.executionCtx, "unify_shadow_diff", who, { at: "error " + String((e as Error)?.name || "") })));   // 오류 글은 안 실음
-}
 // 스냅숏이 마지막으로 「맞음」을 받은 뒤 지난 ms
 const snapAge = (x: { at: number; checked?: number }) => Date.now() - Math.max(x.at, x.checked || 0);
 async function ledgerAges(env: Env) {
@@ -2562,25 +2540,6 @@ async function ownSnapRead(c: Context<{ Bindings: Env }>, url: URL): Promise<Res
   if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === sn.etag) return new Response(null, { status: 304, headers: h });
   return new Response(sn.body, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
 }
-async function ownMisc(c: Context<{ Bindings: Env }>, url: URL): Promise<Response | null> {
-  const p = url.pathname, j = (o: unknown) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "snap" } });
-  if (p === "/api/history") {
-    if (!(await ledger.f7On(c.env.DB, "read_log"))) return null;
-    const h = await snap(c.env).get("history"); if (!h) return null; const r = j(historySince(JSON.parse(h.body), url.searchParams.get("since"))); r.headers.set("x-snap-age", String(snapAge(h))); return r;
-  }
-  if (!["/emoji.json", "/api/push/key", "/api/drafts", "/api/chats"].includes(p) || !(await ledger.f7On(c.env.DB, "read_misc"))) return null;
-  if (p === "/emoji.json") {
-    const e = await snap(c.env).get("emoji"); if (!e) return null;
-    if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === e.etag) return new Response(null, { status: 304, headers: { etag: e.etag } });
-    return new Response(e.body, { headers: { "content-type": "application/json; charset=utf-8", etag: e.etag, "x-f7": "snap" } });
-  }
-  if (p === "/api/drafts") { const d = await OS.get(c.env.DB, "drafts").catch(() => null); if (d) return j(d.v); }
-  const cf = await snap(c.env).get("cfg"); if (!cf) return null;
-  const v = JSON.parse(cf!.body) as { push_key?: string; drafts?: unknown; chats?: unknown };
-  if (p === "/api/chats") return Array.isArray(v.chats) && !cookieOf(c, "bx_w") ? j({ chats: v.chats }) : null;
-  if (p === "/api/push/key") return v.push_key ? j({ key: v.push_key }) : null;
-  return j(v.drafts || {});
-}
 // 첫 화면 큰 덩어리 캐시(bxs.ts): 틀은 ETag 마다 한 번 덩어리를 빼 둠(isolate 메모리) · 뺀 덩어리는 R2 bxs/ 에도(다른 isolate · 틀이 바뀐 사이에 온 요청이 받게)
 const bxStore = new bxs.Store(), bxSaved = new Set<string>();
 const bxPut = (sha: string, b: bxs.Block) => bxStore.set(sha, b);
@@ -2632,13 +2591,6 @@ app.get("/bxs/:f", async c => {
   if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === h.etag) return new Response(null, { status: 304, headers: h });
   return new Response(b.body, { headers: h });
 });
-async function ownPage(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }) {
-  const [pg, dt] = await Promise.all([readPage(env), snap(env).get("data")]);
-  if (!pg || !dt) return null;
-  const html = (await tplHtml(env, ctx, pg))
-    .replace("__BX_DATA__", () => dt.body.replace(/<\//g, "<\\/")).replace('"__BX_DTAG__"', () => JSON.stringify(dt.etag));
-  return { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-snap-age": String(Math.max(snapAge(pg), snapAge(dt))) } as Record<string, string>, body: new TextEncoder().encode(html) };
-}
 async function memberPage(c: Context<{ Bindings: Env }>, me: string, name: string | null | undefined, bot: Bot, ea: boolean | "x" | "personal" = false, chans: string[] = ["primary"]) {   // chans = 채널 목록(회원 Primary 하나, 켠 주인은 주인 채널 표)
   const pg = await readPage(c.env); if (!pg) return null;   // 틀(코드만, 주인 데이터 없음 — page-template.py)이 아직 없으면 503 한 줄
   await memberBoard.fresh(c.env, me, c.executionCtx).catch(e => console.error("묶기", e));
@@ -2668,7 +2620,7 @@ function prepareChatRead(c: Context<{ Bindings: Env }>, email: string, body: unk
   // 별도 동작·스레드·첨부는 읽기 전에 끝나거나 쓰기를 할 수 있으므로 기존 순서를 유지.
   if (Object.keys(b).some(k => !["rid", "text", "channel", "pane"].includes(k)) || !String(b.text || "").trim()) return;
   const read: ChatRead = {}; CHAT_READ.set(c.req.raw, read);
-  if (!isOwner(c.env, email)) {
+  if (!W.isAdmin(c.env, email)) {
     read.front = readChatFront(c.env.DB, email.trim().toLowerCase());
   } else if (chOf(c) === "owner" && c.req.header("x-hb") === "1") {
     read.cfg = (async () => await ledger.f7On(c.env.DB, ownerChat.FLAG) ? ownerRead.cfgOf(() => snap(c.env).get("cfg")).catch(() => null) : null)();
@@ -2788,7 +2740,7 @@ app.all("*", async c => {
   if ((c.req.method === "GET" || c.req.method === "HEAD") && /^\/m\/[^/]+\/?$/i.test(url.pathname) && await ledger.f7On(c.env.DB, uid.GEN_FLAG).catch(() => false)) {
     let to = uid.m36Path(url.pathname);
     if (!to) { const s = await signedIn(c).catch(() => null), id = /^\/m\/([0-9.-]{1,24})(?:-[^/]*)?\/?$/i.exec(url.pathname)?.[1];
-      if (s && id && isOwner(c.env, s.user.email)) { const f = await ownerRead.aliasRow(c.env.DB, id).catch(() => null); if (f) to = uid.chatPath(f.chan, f.ts, f.m); } }
+      if (s && id && W.isAdmin(c.env, s.user.email)) { const f = await ownerRead.aliasRow(c.env.DB, id).catch(() => null); if (f) to = uid.chatPath(f.chan, f.ts, f.m); } }
     if (to && APP_PATH.test(to.split("?")[0])) { const q = new URLSearchParams(url.search); q.delete("thread"); const rest = q.toString(); return c.redirect(to + (rest ? (to.includes("?") ? "&" : "?") + rest : ""), 301); }
   }
   if ((c.req.method === "GET" || c.req.method === "HEAD") && APP_PATH.test(url.pathname)) url = new URL("/", url);   // 보더 화면 경로 = 같은 보드(주소창은 그대로 — ?thread= 같은 물음 글은 화면이 읽음)
@@ -2863,11 +2815,11 @@ app.all("*", async c => {
     for (const [k, v] of Object.entries(NOFRAME)) h.set(k, v);
     return new Response(page.body, { status: 200, headers: h });
   }
-  const bw = await boardWho(c.env, s.user.email), ownU = bw !== null && isOwner(c.env, s.user.email);
-  const ownKeep = ownU && (url.pathname.startsWith("/art/") || (url.pathname.startsWith("/api/push/") && url.pathname !== "/api/push/prefs") || url.pathname === "/sw.js" || /^\/api\/(arts$|artnotes\/|artowner\/|artnote$|artfolder$|artstar$|artthumb$|voice\/)/.test(url.pathname)
+  const bw = await boardWho(c.env, s.user.email), ownU = W.isAdmin(c.env, s.user.email);
+  const ownKeep = ownU && (url.pathname.startsWith("/art/") || (url.pathname.startsWith("/api/push/") && url.pathname !== "/api/push/prefs") || url.pathname === "/sw.js" || /^\/api\/(arts$|artnotes\/|artowner\/|artnote$|artfolder$|artstar$|artthumb$)/.test(url.pathname)
     || (c.req.method === "POST" && OWN_CHAT_POST.has(url.pathname))   // 대화 · 카드 쓰기도 주인 길(아래 OWN_CHAT_POST) — 읽기는 아래 회원 길 안에서 owner-read
     || (c.req.method === "GET" && /^\/api\/answer\//.test(url.pathname)));
-  if (bw !== null && !ownKeep) {
+  if (!ownKeep) {
     if (/^\/(assets|icons)\//.test(url.pathname)) return c.env.ASSETS.fetch(c.req.raw);
     const eaP = url.pathname === "/ea" && c.req.method === "GET" && W.isAdmin(c.env, bw);
     if (url.pathname === "/ea" && c.req.method === "GET" && !eaP) return c.redirect("/es" + url.search, 302);
@@ -2924,7 +2876,7 @@ app.all("*", async c => {
         if (sl) return sl;
         const r = await memberBoard.get(c.env.DB, me, await myBot(c.env, me), url, () => snap(c.env).get("emoji"), c.req.header("if-none-match"),
           async () => (await c.env.DB.prepare("SELECT name FROM \"user\" WHERE email = ?").bind(s.user.email).first<{ name: string }>())?.name, c.executionCtx,
-          () => live.liveOf(c.env, me, true).tags().then(x => JSON.stringify([(x as { boot?: string }).boot ?? "", x.t.data ?? "", x.t.chat ?? ""])), memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || url.origin));
+          () => live.liveOf(c.env, me).tags().then(x => JSON.stringify([(x as { boot?: string }).boot ?? "", x.t.data ?? "", x.t.chat ?? ""])), memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || url.origin));
         if (r) return r;
       }
       if (c.req.method === "POST" && (/^\/api\/upload(?:\/(?:init|part|complete|abort|preview))?$/.test(url.pathname) || url.pathname === "/api/voice/stt")) {   // 파일 제어 JSON·녹음은 회원 쓰기와 같은 문
@@ -2937,7 +2889,7 @@ app.all("*", async c => {
         if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ ok: false, error: "bad json" }, 400);
         const mainName = (await myBot(c.env, me).catch(() => null))?.name || "Primary";
         const [st, o] = url.pathname === "/api/voice/rtc/start" ? await memberVoice.start(c.env as never, me, b, mainName) : url.pathname === "/api/voice/rtc/stop" ? await memberVoice.stop(c.env as never, me, b)
-          : url.pathname === "/api/voice/rtc/note" ? await memberVoice.note(c.env as never, me, b) : await memberVoice.end(c.env.DB, me, b);
+          : url.pathname === "/api/voice/rtc/note" ? await memberVoice.note(c.env as never, me, b, ownU ? (art, board) => files.boardText(c.env, art, board) : undefined) : await memberVoice.end(c.env.DB, me, b);
         return c.json(o, st as 200);
       }
       if (c.req.method === "POST" && url.pathname === "/api/feed/threads") {   // 피드 묶음(읽기만 — 바뀜 알림을 안 냄): 스레드 50개를 질의 2개로(member-board feedThreads)
@@ -2965,22 +2917,15 @@ app.all("*", async c => {
     if (docNav(c, url)) return c.redirect("/nf", 302);
     return c.json({ error: "no" }, 403);
   }
-  // 비서(/es, 주인): / 와 같은 길(첫 화면 · 틀 · 캐시 지우기)로 — 받는 path 만 「/」, 틀에 BX_EA 를 더 얹음
-  const ea = (url.pathname === "/es" || url.pathname === "/ea" || url.pathname === "/feed") && (c.req.method === "GET" || c.req.method === "HEAD") ? (url.pathname === "/ea" ? "personal" as const : url.pathname === "/feed" ? "x" as const : true) : false;   // /x = 피드 화면   // /ea = 퍼스널 비서
-  if (ea) url.pathname = "/";
   if (url.pathname === "/api/events" || url.pathname === "/api/push/stream") return c.json({ error: "다리 밖" }, 503);
   if (chOf(c) === "owner" && (url.pathname.startsWith("/api/push/") || url.pathname === "/sw.js") && await ledger.f7On(c.env.DB, "write_push")) return pushRoute(c, url, ownU ? bw! : undefined);
   const ee = await hosted.route?.(c, url, chOf(c), { req: PASS_REQ, res: PASS_RES }, (k, ms) => seg(c.req.raw, k, ms));
   if (ee) return ee;
   if (!["GET", "HEAD", "POST"].includes(c.req.method)) return c.json({ error: "안 되는 방법" }, 405);
-  {
-    const me = s.user.email.toLowerCase();
-    if (c.req.method === "POST" && (/^\/api\/upload(?:\/(?:init|part|complete|abort|preview))?$/.test(url.pathname) || url.pathname === "/api/voice/stt")) {
-      if (!sameSite(c)) return c.json({ ok: false, error: "forbidden" }, 403);
-      return url.pathname.startsWith("/api/upload") ? memberFiles.upload(c as never, me) : memberFiles.stt(c as never, me);
-    }
-    const fm = c.req.method === "GET" || c.req.method === "HEAD" ? /^\/api\/file\/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$/.exec(url.pathname) : null;
-    if (fm) return memberFiles.fileGet(c as never, me, fm[1], url.searchParams.has("dl"), url.searchParams.has("thumb"));
+  // 푸시 공개 키(/api/push/key, ownKeep): write_push 가 꺼져 pushRoute 가 안 받았으면 cfg 사본의 키(read_misc) — 키가 비거나 cfg 가 없으면 다리. 다리 되돌림과 같이 지울 것
+  if (c.req.method === "GET" && chOf(c) === "owner" && url.pathname === "/api/push/key" && await ledger.f7On(c.env.DB, "read_misc")) {
+    const key = await snap(c.env).get("cfg").then(cf => cf ? (JSON.parse(cf.body) as { push_key?: string }).push_key : undefined).catch(() => undefined);
+    if (key) return new Response(JSON.stringify({ key }), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-f7": "snap" } });
   }
   // 파일 붙은 글: 회원과 같이 서명 링크 줄(「📎 이름: 링크」)을 글 끝에 붙여 다리로(창이 링크로 받아 감)
   let sent: Uint8Array | undefined, ours: string[] = [];   // ours = 아래에서 Worker 가 붙인 첨부 줄(비밀 판정에서 뺌)
@@ -3015,18 +2960,6 @@ app.all("*", async c => {
       }
     }
   }
-  const sk = c.req.method === "GET" && !url.search && chOf(c) === "owner" ? ({ "/api/data": "data", "/api/topics": "topics", "/api/chats": "chats" } as Record<string, string>)[url.pathname] : undefined;
-  if (sk && !(sk === "chats" && cookieOf(c, "bx_w"))) {
-    const ts = Date.now(), sn = await snap(c.env).get(sk); seg(c.req.raw, "snap", Date.now() - ts);
-    hit(c.req.raw, "snap", !!sn && snapAge(sn) < 15_000);   // 「새 스냅숏」 비율은 예전 뜻 그대로 잼(낡아도 답은 스냅숏)
-    if (sn) {
-      if (sk === "data") shadowUnified(c, sn.body, s.user.email);   // 그림자 대조(스위치 shadow_unified) — 답은 그대로 스냅숏
-      const h = { etag: sn.etag, "cache-control": "private, no-cache", "x-content-type-options": "nosniff", "x-snap-age": String(snapAge(sn)) };
-      if ((c.req.header("if-none-match") || "").replace(/^W\//, "") === sn.etag) return new Response(null, { status: 304, headers: h });
-      return new Response(sn.body, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
-    }
-  }
-  if (c.req.method === "GET" && chOf(c) === "owner") { const m = await ownMisc(c, url).catch(() => null); if (m) return m; }
   if (c.req.method === "POST" && chOf(c) === "owner" && (url.pathname === "/api/draft" || url.pathname === "/api/nodepri")) {
     if (c.req.header("x-hb") !== "1") return c.json({ ok: false, error: "forbidden" }, 403);   // 다른 사이트 폼 막기(보드와 같은 문)
     const raw = new Uint8Array(await c.req.arrayBuffer());
@@ -3096,28 +3029,21 @@ app.all("*", async c => {
     }
   }
   const rd = c.req.method === "GET" && chOf(c) === "owner" ? ownerRead.route(url.pathname + url.search) : null;
-  const flag = (n: string) => rd?.kind === "inbox" ? ledger.f7Peek(c.env.DB, n, peekWait(c)) : ledger.f7On(c.env.DB, n);
-  if (rd?.kind === "inbox") { const sr = await inboxSnap(c, rd, ownerMails(c.env, s.user.email)).catch(() => null); if (sr) return sr; }
-  const shadowRd = !!rd && await flag("shadow_" + rd.group);
-  if (rd && (rd.kind === "alias" || await flag("read_" + rd.group))) {
-    const st = rd.kind === "inbox";
-    const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;
-    const ag = await ledgerAges(c.env).catch(() => null);
+  if (rd?.kind === "artnotes" && await ledger.f7On(c.env.DB, "read_" + rd.group)) {
+    const ag = await ledgerAges(c.env).catch(() => null);   // cfg 는 여기서 한 번만 읽어 respond 에 넘김(DO 왕복 하나 덜)
     const stuck = !ag || ag.syncAge > 60_000; hit(c.req.raw, "ledger", !stuck);
-    const res = stuck ? null : await ownerRead.respond(rdb, ag ? async () => ag.cfg : () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), st, ownerMails(c.env, s.user.email), memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || url.origin));
+    const res = stuck ? null : await ownerRead.respond(c.env.DB, ag ? async () => ag.cfg : () => snap(c.env).get("cfg"), rd, c.req.header("if-none-match"), false, ownerMails(c.env, s.user.email), memberFiles.maskedFileReader(c.env, c.env.PUBLIC_URL || url.origin));
     if (res) { if (ag) for (const [k, v] of Object.entries(ag.h)) res.headers.set(k, v); return res; }
   }
   const headers: Record<string, string> = {};
   for (const h of PASS_REQ) { const v = c.req.header(h) || (h === "if-none-match" ? c.req.header("x-bx-inm") : undefined); if (v) headers[h] = v; }   // x-bx-inm: 맡기기가 뗀 원래 ETag
   const shell = /^\/art\/([A-Za-z0-9]{16,40})\/$/.exec(url.pathname);
   headers["accept-encoding"] = "gzip";
-  if (shadowRd) delete headers["if-none-match"];   // 그림자 대조는 다리 몸통이 있어야 함(304 는 아래에서 Worker 가)
   const body = c.req.method === "POST" ? (sent ?? new Uint8Array(await c.req.arrayBuffer())) : undefined;
   if (body && body.length > 25 * 1024 * 1024) return c.json({ ok: false, error: "25MB 까지 올릴 수 있어요" }, 413);
-  const own = url.pathname === "/" && c.req.method !== "POST" && chOf(c) === "owner" && await ledger.f7On(c.env.DB, "read_page") ? await ownPage(c.env, c.executionCtx).catch(() => null) : null;
-  const fr = !own && (c.req.method === "GET" || c.req.method === "HEAD") ? await filesFirst(c, url.pathname + url.search, headers) : null;
+  const fr = (c.req.method === "GET" || c.req.method === "HEAD") ? await filesFirst(c, url.pathname + url.search, headers) : null;
   let r; const t0 = Date.now();
-  try { r = own ?? fr ?? await boardCall(c.env, chOf(c), { method: c.req.method === "HEAD" ? "GET" : c.req.method, path: url.pathname + url.search, headers, ...(body !== undefined ? { body } : {}) }); }
+  try { r = fr ?? await boardCall(c.env, chOf(c), { method: c.req.method === "HEAD" ? "GET" : c.req.method, path: url.pathname + url.search, headers, ...(body !== undefined ? { body } : {}) }); }
   catch (e) {
     const reqId = (c.req.header("x-request-id") || "").slice(0, 40);   // 화면 오류 기록(boarder_error)의 rid 와 같은 값 — 위 api_error 로그와 같음
     let rid = ""; if (body && body.byteLength <= 64 * 1024) try { rid = String((JSON.parse(new TextDecoder().decode(body)) as { rid?: unknown }).rid || "").slice(0, 64); } catch {}   // 글 rid(chatPost errLog) — 큰 업로드는 안 읽음
@@ -3128,16 +3054,8 @@ app.all("*", async c => {
   }
   const noWrite = url.pathname === "/api/clientlog" || (url.pathname === "/api/chat" && !!body && body.byteLength < 4096 && (() => { try { return !!(JSON.parse(new TextDecoder().decode(body)) as { seen?: unknown }).seen; } catch { return false; } })());
   if (c.req.method === "POST" && r.status < 400 && !noWrite) REC.get(c.req.raw)?.cookies.push("bx_w=1; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=20");
-  if (shadowRd && rd && !fr && !own && r.body instanceof Uint8Array) {   // 그림자: 304 대신 몸통을 받아 대조하고, 화면에는 보드처럼 같은 ETag 면 빈 304
-    const bridged = { ...r, body: r.body }, inm = c.req.header("if-none-match") || c.req.header("x-bx-inm"), bms = Date.now() - t0;
-    c.executionCtx.waitUntil(ownerRead.shadow(c.env.DB, () => snap(c.env).get("cfg"), rd, bridged).then(d => {
-      if (d?.diff) capture(c.env, c.executionCtx, "f7_shadow_diff", s.user.email, { route: rd.kind, group: rd.group, at: d.diff, n_bridge: d.n_bridge, n_d1: d.n_d1, ms_d1: d.ms });
-      else if (d && Math.random() < 0.05) capture(c.env, c.executionCtx, "f7_shadow_ok", s.user.email, { route: rd.kind, group: rd.group, n_bridge: d.n_bridge, ms_d1: d.ms, ms_bridge: bms });   // 차이 0 이 이어지는지 · 빠르기(5% 표본)
-    }).catch(e => capture(c.env, c.executionCtx, "f7_shadow_diff", s.user.email, { route: rd.kind, group: rd.group, at: "error " + String((e as Error)?.name || "") })));   // 오류 글은 안 실음(JSON 오류는 몸통 조각을 담음)
-    if (r.status === 200 && inm && r.headers.etag === inm.replace(/^W\//, "")) { bridgeSeg(c.req.raw, Date.now() - t0, r.headers); return new Response(null, { status: 304, headers: { etag: inm, "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
-  }
-  if (!fr && !own) bridgeSeg(c.req.raw, Date.now() - t0, r.headers);
-  if (!fr && !own && c.req.method === "GET") filesShadow(c, url.pathname + url.search, headers, r, s.user.email);
+  if (!fr) bridgeSeg(c.req.raw, Date.now() - t0, r.headers);
+  if (!fr && c.req.method === "GET") filesShadow(c, url.pathname + url.search, headers, r, s.user.email);
   const out = new Headers();
   for (const h of PASS_RES) if (r.headers[h]) out.set(h, r.headers[h]);
   out.set("x-content-type-options", "nosniff");
@@ -3147,11 +3065,6 @@ app.all("*", async c => {
   if (/^\/(art|_blob)\//.test(url.pathname) && !canvasShell)
     out.set("content-security-policy", "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads");   // 다리 왕복(릴레이 · 보드 포함) — 느릴 때 어디서인지
   const unzip = () => { if (r.headers["content-encoding"] !== "gzip") return r.body as unknown as BodyInit; out.delete("content-encoding"); return new Response(r.body as unknown as BodyInit).body!.pipeThrough(new DecompressionStream("gzip")); };
-  if (url.pathname === "/" && (r.headers["content-type"] || "").includes("text/html")) {
-    if (!cookieOf(c, "bx_cc1")) { out.set("clear-site-data", '"cache"'); REC.get(c.req.raw)?.cookies.push("bx_cc1=1; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=31536000"); }
-    out.set("content-security-policy", "frame-ancestors 'self'"); out.set("x-frame-options", "SAMEORIGIN");
-    return boardShell(c, new Response(unzip(), { status: r.status, headers: out }), s.user.email, "", await ledger.f7On(c.env.DB, "write_queue"), ea);
-  }
   if (shell && r.status === 200 && (r.headers["content-type"] || "").includes("text/html") && artView.viewable(c.req.method, c.req.header("sec-fetch-dest"), url.search))
     c.executionCtx.waitUntil(artView.record(c.env.DB, todoOwner(c.env, s.user.email), shell[1]).catch(e => console.error("열람 기록", e)));
   if (canvasShell && r.status === 200 && (r.headers["content-type"] || "").includes("text/html")) {
@@ -3215,7 +3128,7 @@ app.post("/api/admin/sales-digest", async c => {
 });
 const memberCardPush = async (env: Env, me: string, card: PushCard) => {
   try {
-    if (me.toLowerCase() === W.canon(env) && W.unifiedAnyIn(await ledger.f7All(env.DB), env)) { if (await ledger.f7On(env.DB, "write_push")) await routeOwnerCard(env.DB, me.toLowerCase(), card, pusher(env)); return; }
+    if (me.toLowerCase() === W.canon(env)) { if (await ledger.f7On(env.DB, "write_push")) await routeOwnerCard(env.DB, me.toLowerCase(), card, pusher(env)); return; }
     if (await ledger.f7On(env.DB, "member_push")) { const pu = memberPusher(env, me); if (pu) await routeCard(env.DB, me, card, pu); }
   }
   catch (e) { console.log(JSON.stringify({ ev: "member_push", error: String(e).slice(0, 200) })); }

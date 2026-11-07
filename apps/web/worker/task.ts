@@ -1,7 +1,7 @@
 import { filterArgs } from "./mcp/log-filter";
 
 export type TaskState = "open" | "blocked" | "done";
-export type Ref = { chan?: string; ts?: string; input?: number; url?: string };
+export type Ref = { chan?: string; ts?: string; thread?: string; input?: number; url?: string };
 export type Session = { id: string; pane?: string; at: number };
 export type Task = {
   no: number; title: string; status: string; state: TaskState; unblock: string | null; agent: string; body: string;
@@ -56,10 +56,11 @@ export function stateOf(s: string): TaskState {
 }
 function ref(v: unknown): Ref {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new TaskError("원 글 꼴이 틀려요");
-  const o = v as Record<string, unknown>; only(o, ["chan", "ts", "input", "url"]);
+  const o = v as Record<string, unknown>; only(o, ["chan", "ts", "thread", "input", "url"]);
   const r: Ref = {};
   if (o.chan !== undefined) r.chan = line(o.chan, "원 글 채널", 40);
   if (o.ts !== undefined) { if (typeof o.ts !== "string" || !/^\d{10}\.\d{6}$/.test(o.ts)) throw new TaskError("원 글 ts 꼴이 틀려요"); r.ts = o.ts; }
+  if (o.thread !== undefined) { if (typeof o.thread !== "string" || !/^t_[\w-]{1,60}$/.test(o.thread)) throw new TaskError("에이전트 채널 스레드 꼴이 틀려요"); r.thread = o.thread; }
   if (o.input !== undefined) { if (!Number.isSafeInteger(o.input) || (o.input as number) < 1) throw new TaskError("Owner 글 번호가 틀려요"); r.input = o.input as number; }
   if (o.url !== undefined) { const u = line(o.url, "원 글 주소", 300); if (!/^https:\/\//.test(u)) throw new TaskError("원 글 주소는 https 예요"); r.url = u; }
   if (!Object.keys(r).length) throw new TaskError("원 글이 비었어요");
@@ -224,6 +225,32 @@ async function setOnce(db: D1Database, owner: string, n: number, s: SetIn, now: 
   return await lateFree(db, owner, t, m.who, now);
 }
 
+export const headNo = (text: string) => { const m = /^\s*#([1-9]\d{0,8})\b/.exec(String(text || "")); return m ? +m[1] : null; };
+export async function strictOn(db: D1Database, owner: string) {
+  const r = await db.prepare("SELECT json_extract(data, '$.task_strict') s FROM node_setting WHERE owner = ? AND json_valid(data)").bind(owner).first<{ s: number | null }>().catch(() => null);
+  return r?.s === 1;
+}
+export async function setStrict(db: D1Database, owner: string, on: boolean, now = Date.now()) {
+  if (on) await db.prepare("INSERT INTO node_setting (owner, data, updated_at) VALUES (?1, json_object('task_strict', 1), ?2) ON CONFLICT(owner) DO UPDATE SET data = json_set(CASE WHEN json_valid(data) AND json_type(data) = 'object' THEN data ELSE '{}' END, '$.task_strict', 1), updated_at = ?2").bind(owner, now).run();
+  else await db.prepare("UPDATE node_setting SET data = json_remove(data, '$.task_strict'), updated_at = ? WHERE owner = ? AND json_valid(data)").bind(now, owner).run();
+  return on;
+}
+/** 넘기는 글의 첫머리 #N 이 열린 할 일이면 그 번호, 아니면 null. 켠 주인은 없거나 끝난 번호를 TaskError 로 막음 */
+export async function handoffNo(db: D1Database, owner: string, text: string): Promise<number | null> {
+  const n = headNo(text);
+  const live = await db.prepare("SELECT state FROM task WHERE owner = ? AND no = ?").bind(owner, n ?? 0).first<{ state: string }>().then(r => !!r && r.state !== "done").catch(() => null);
+  if (live === null) return null;
+  if (live) return n;
+  if (await strictOn(db, owner)) throw new TaskError(n === null ? "할 일 번호가 없어요 — 있는 일이면 글 첫머리에 #31 처럼, 새 일이면 task new" : `할 일 #${n} 이 없거나 끝났어요 — 있는 일이면 글 첫머리에 #31 처럼, 새 일이면 task new`);
+  return null;
+}
+/** 넘긴 뒤 그 할 일의 맡은 이 · 원 글(에이전트 채널 스레드)을 남김. 실패해도 넘김은 그대로 */
+export async function handoffRecord(db: D1Database, owner: string, no: number | null, h: { agent: string; chan?: string; thread?: string; who: string }, now = Date.now()) {
+  if (no === null) return;
+  try { await set(db, owner, no, { agent: h.agent, who: h.who, ...(h.thread ? { ref: { ...(h.chan ? { chan: h.chan } : {}), thread: h.thread } } : {}) }, now); }
+  catch (e) { console.error("할 일 넘김 기록", e); }
+}
+
 /** 트리 화면용: live 할 일(본문 · 세션 뺌) */
 export async function forTree(db: D1Database, owner: string) {
   return (await list(db, owner)).map(({ body: _b, sessions: _s, ...t }) => t);
@@ -241,7 +268,10 @@ export async function op(db: D1Database, owner: string, b: unknown, now = Date.n
         return [200, { ok: true, task: await create(db, owner, x as NewIn, now) }];
       case "set": only(x, ["op", "no", "title", "status", "unblock", "agent", "body", "add", "check", "uncheck", "ref", "session", "who"]);
         return [200, { ok: true, task: await set(db, owner, x.no, x as SetIn, now) }];
-      default: throw new TaskError("op 는 list · get · new · set 이에요");
+      case "strict": only(x, ["op", "on"]);
+        if (x.on !== undefined && typeof x.on !== "boolean") throw new TaskError("on 은 true · false 예요");
+        return [200, { ok: true, strict: x.on === undefined ? await strictOn(db, owner) : await setStrict(db, owner, x.on, now) }];
+      default: throw new TaskError("op 는 list · get · new · set · strict 예요");
     }
   } catch (e) {
     if (e instanceof TaskError) return [e.status, { ok: false, error: e.message }];

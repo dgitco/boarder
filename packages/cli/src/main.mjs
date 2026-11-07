@@ -104,7 +104,7 @@ function parse(rest) {
     const a = rest[i];
     if (!a.startsWith('--')) { pos.push(a); continue; }
     const k = a.slice(2);
-    if (['link', 'bg', 'no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay', 'force', 'dropped', 'all', 'none'].includes(k)) { flags[k] = true; continue; }
+    if (['link', 'bg', 'no-enter', 'yes', 'no-browser', 'device-auth', 'me', 'help', 'version', 'once', 'print', 'no-watch', 'setup', 'follow', 'no-gh', 'no-engine', 'no-service', 'sdk', 'allow-remote', 'report', 'engine', 'stop', 'dry-run', 'urgent', 'backlog', 'write', 'no-wait', 'open', 'no-mask-ids', 'no-mask-pay', 'force', 'dropped', 'all', 'none'].includes(k)) { flags[k] = true; continue; }
     const v = rest[++i];
     if (['choice', 'evidence', 'fold', 'alias', 'part'].includes(k)) (flags[k] ||= []).push(v); else flags[k] = v;
   }

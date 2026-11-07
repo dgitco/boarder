@@ -765,9 +765,7 @@ export async function respond(db: D1Database, get: () => Promise<{ body: string;
   if (o.status === 200) { const { read_at: _v, ...same } = o.body as R; h.etag = await etagOf(JSON.stringify(same)); if (inm && inm.replace(/^W\//, "") === h.etag) return new Response(null, { status: 304, headers: { etag: h.etag, "cache-control": "no-store", "x-f7": "d1" } }); }
   return new Response(b, { status: o.status, headers: h });
 }
-
-// ── 그림자 대조: 다리 답(정본)과 D1 답이 같은지 — 다르면 첫 다른 키 경로 · 길이만(글 내용은 안 실음) ──
-const VOLATILE: Record<string, string[]> = { channel: ["read_at"] };   // 부를 때마다 바뀌는 칸
+// 그림자 대조: 첫 다른 키 경로 · 길이만(글 내용은 안 실음) — 모아 보기 사본 대조(index.ts inboxSnap)가 씀
 export function firstDiff(a: unknown, b: unknown, path = ""): string | null {
   if (a === b) return null;
   if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) < 1e-9 ? null : path || "$";
@@ -781,15 +779,4 @@ export function firstDiff(a: unknown, b: unknown, path = ""): string | null {
     return null;
   }
   return path || "$";
-}
-export async function shadow(db: D1Database, get: () => Promise<{ body: string; etag: string } | null>, rt: Route, bridged: { status: number; headers: Record<string, string>; body: Uint8Array }) {
-  if (bridged.status !== 200) return null;
-  let raw = bridged.body;
-  if (bridged.headers["content-encoding"] === "gzip") raw = new Uint8Array(await new Response(new Response(raw as unknown as BodyInit).body!.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
-  const py = JSON.parse(new TextDecoder().decode(raw));
-  const t0 = Date.now(), o = await build(db, await cfgOf(get), rt), ms = Date.now() - t0;   // ms = D1 답 만드는 시간(cfg DO + D1 왕복) — 다리(0.3–0.5초)와 견줌
-  if (!o) return { diff: "cfg 없음", n_bridge: raw.length, n_d1: 0, ms };
-  for (const k of VOLATILE[rt.kind] || []) { delete py?.[k]; delete (o.body as R)?.[k]; }
-  const d = o.status !== 200 ? "status" : firstDiff(py, o.body);
-  return d ? { diff: d, n_bridge: raw.length, n_d1: JSON.stringify(o.body).length, ms } : { diff: null, n_bridge: raw.length, n_d1: 0, ms };
 }

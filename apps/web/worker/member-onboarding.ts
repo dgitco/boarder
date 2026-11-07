@@ -1,3 +1,4 @@
+import { subMissing } from "./sub-state";
 type Db = D1Database;
 export type Step = { key: string; title: string; done: boolean; detail: string; cmd?: string; to?: string; pick?: { target: string; title: string; on: boolean }[] };
 type Dir = { tool: string; where: string; state: string };
@@ -25,10 +26,14 @@ export async function onboarding(db: Db, me: string, o: { server: string; push: 
   const pushN = o.ownerSubs ?? Number((push.results[0] as { n: number })?.n || 0);
   const host = o.server.replace(/\/+$/, "");
   const where = (x: Dir & { device: string }) => `${TOOL[x.tool] || x.tool}${x.where ? ` (${x.where})` : ""} — ${x.device}`;
+  const sub = await subMissing(db, me).catch(() => ({ missing: false, provider: null }));   // 구독 미연결(sub-state.ts) — 화면 Primary 안내와 같은 판정
   const steps: Step[] = [
     { key: "devices", title: "기기", done: devices.length > 0,
       detail: devices.length ? `기기 ${devices.length}대 · 엔진 켜짐 ${engines}대` : "아직 기기가 없어요 — 쓰는 컴퓨터에 보더를 깔아요",
       cmd: devices.length && !engines ? "boarder enable engine" : `curl -fsSL ${host}/install.sh | sh && boarder setup --email ${me}` },
+    { key: "subscription", title: "구독 연결", done: engines > 0 && !sub.missing,
+      detail: sub.missing ? "아직 구독 계정이 연동되지 않았어요 — 설정 › 기기 › 엔진에서 ChatGPT 나 Claude 「로그인」을 눌러요" : engines ? "메인 봇이 내 구독으로 답해요" : "엔진을 켠 뒤 내 구독(ChatGPT · Claude)으로 로그인해요",
+      to: "#settings/devices" },
     { key: "report", title: "AI 도구", done: on.length > 0 && !stale.length,
       detail: !dirs.length ? "기기가 아직 AI 도구 상태를 올리지 않았어요" : `보고 켜짐 ${on.length}곳${stale.length ? ` · 옛 경로 ${stale.length}곳` : ""}${off.length ? ` · 꺼짐 ${off.length}곳` : ""}${stale.length ? ` — ${stale.slice(0, 3).map(where).join(", ")}` : off.length ? ` — ${off.slice(0, 3).map(where).join(", ")}` : ""}`,
       cmd: "boarder enable report --yes" },

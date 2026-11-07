@@ -97,13 +97,13 @@ test("API: 회원이 내 노드 순서를 저장 → 판의 열 · 부서 그룹
   assert.ok(!db0.task_side && !("role_seats" in db0), "자리표 없는 사람은 부서 칸 없음");
 });
 
-test("API 경계: 남의 노드가 섞이면 404 · 아무것도 안 씀 / 주인 · 로그인 없음 · 다른 사이트 403 / 틀린 몸 400", async () => {
+test("API 경계: 남의 노드가 섞이면 404(주인에게 회원 노드도) · 아무것도 안 씀 / 로그인 없음 · 다른 사이트 403 / 틀린 몸 400", async () => {
   const s = setup();
   assert.equal((await s.call({ panes: [P("tk_d0"), P("tk_b0")] }, await s.human())).status, 404);
   assert.deepEqual(s.orderOf(A), [], "A 에 안 씀");
   assert.deepEqual(s.orderOf(B), ["tk_b0"], "B 에 안 씀");
   assert.equal((await s.call({ panes: [P("tk_b0"), P("tk_d0")] }, await s.human(B))).status, 404, "B 가 A 노드를 못 넣음");
-  assert.equal((await s.call({ panes: [P("tk_d0"), P("tk_d1")] }, await s.human(OWNER))).status, 403, "주인 아님(회원만)");
+  assert.equal((await s.call({ panes: [P("tk_d0"), P("tk_d1")] }, await s.human(OWNER))).status, 404, "주인은 canon 제 보드 — 회원 A 의 노드는 남의 것(404)");
   assert.equal((await s.call({ panes: [P("tk_d0"), P("tk_d1")] }, { "x-hb": "1", "sec-fetch-site": "same-origin" })).status, 403, "로그인 없음");
   assert.equal((await s.call({ panes: [P("tk_d0"), P("tk_d1")] }, { ...(await s.human()), "sec-fetch-site": "cross-site" })).status, 403, "다른 사이트");
   assert.equal((await s.call({ panes: [P("tk_d0")] }, await s.human())).status, 400);

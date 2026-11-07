@@ -71,7 +71,7 @@ test("보통 글: 대화 표에 바로 쓰고 posted 로 답 — 실행기 · �
   const r = await post({ rid: "rid-plain-0001", channel: "dgit", text: "**굵게** 해 줘\n- 하나" });
   assert.equal(r.status, 200);
   assert.equal(r.headers.get("x-f7"), "chat-d1");
-  assert.equal(r.headers.get("set-cookie")?.includes("bx_w") ?? false, false, "D1 먼저 쓴 글은 쓴 뒤 20초 쿠키를 남기지 않음");
+  assert.equal(r.headers.get("set-cookie")?.includes("bx_w=1; Max-Age=20") ?? false, true, "주인도 회원과 같이 앞단 bx_w(맡긴 GET 응답 건너뛰기 — owner_unified 늘 켬)");
   const j = await r.json() as any;
   assert.equal(j.state, "ok"); assert.match(j.posted, /^\d{10}\.\d{6}$/); assert.equal(j.root, j.posted);
   const m = db.prepare("SELECT * FROM wl_talk_msg WHERE id = ?").get(j.posted) as any;

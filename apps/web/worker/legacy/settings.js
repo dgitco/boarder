@@ -423,7 +423,7 @@
           el.querySelector('.bxs-sech span').textContent = `도구 · ${tools.length}개 중 ${tools.length - off.size}개 켬`;
           flush(); return;
         }
-        if (t.closest('[data-refresh]')){ const b = t.closest('[data-refresh]'); if (b.disabled) return; b.disabled = true; b.innerHTML = spin; const r = await api('POST', `api/connections/${encodeURIComponent(id)}/refresh`); toast(`도구 ${r.tools}개를 다시 읽었어요`); return render(); }
+        if (t.closest('[data-refresh]')){ const b = t.closest('[data-refresh]'); if (b.disabled) return; b.disabled = true; b.innerHTML = spin; try { const r = await api('POST', `api/connections/${encodeURIComponent(id)}/refresh`); toast(`도구 ${r.tools}개를 다시 읽었어요`); } catch (err) { toast(err.message); } return render(); }
         if (t.closest('[data-ren]')) return rename(c);
         if (t.closest('[data-rekey]')) return rekey(el, c);
         if (t.closest('[data-rkgo]')){

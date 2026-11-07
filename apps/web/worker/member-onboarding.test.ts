@@ -62,27 +62,28 @@ async function setup() {
 }
 const step = (j: any, k: string) => j.steps.find((x: any) => x.key === k);
 
-test("점검표 계약: 단계 일곱(차례 그대로) · 단계마다 key · title · done · detail", async () => {
+test("점검표 계약: 단계 여덟(차례 그대로 — 구독 연결은 기기 다음) · 단계마다 key · title · done · detail", async () => {
   const s = await setup();
   const r = await s.call("GET", "/api/me/onboarding", undefined, await s.human());
   assert.equal(r.status, 200, r.text);
-  assert.deepEqual(r.j.steps.map((x: any) => x.key), ["devices", "report", "windows", "connectors", "slack", "primary", "push"]);
+  assert.deepEqual(r.j.steps.map((x: any) => x.key), ["devices", "subscription", "report", "windows", "connectors", "slack", "primary", "push"]);
   for (const x of r.j.steps) { assert.equal(typeof x.title, "string"); assert.equal(typeof x.done, "boolean"); assert.equal(typeof x.detail, "string"); }
-  assert.equal(r.j.total, 7); assert.equal(r.j.done, r.j.steps.filter((x: any) => x.done).length);
+  assert.equal(r.j.total, 8); assert.equal(r.j.done, r.j.steps.filter((x: any) => x.done).length);
   assert.match(step(r.j, "devices").detail, /기기 1대 · 엔진 켜짐 1대/);
   const rep = step(r.j, "report");
   assert.equal(rep.done, false, "옛 경로 폴더가 있으면 끝 아님"); assert.match(rep.detail, /보고 켜짐 4곳 · 옛 경로 1곳 · 꺼짐 1곳/); assert.match(rep.detail, /~\/\.claude-accounts\/c/);
   assert.equal(r.j.steps.some((x: any) => /bxd_|xoxb-|v1\./.test(JSON.stringify(x))), false, "토큰 · 봉한 값 없음");
 });
 
-test("권한 경계: 그 회원 것만 셈 · 기본 창 후보도 내 창만 · 주인 · 로그인 없음은 403", async () => {
+test("권한 경계: 그 회원 것만 셈 · 기본 창 후보도 내 창만 · 로그인 없음은 403 · 주인은 canon 제 점검표(주인 · 회원 한 길)", async () => {
   const s = await setup();
   const a = (await s.call("GET", "/api/me/onboarding", undefined, await s.human())).j;
   assert.equal(step(a, "connectors").done, false, "남의 연결은 안 셈");
   assert.deepEqual(step(a, "primary").pick.map((w: any) => w.target), ["window:mbp:ew_lead"]);
   const b = (await s.call("GET", "/api/me/onboarding", undefined, await s.human(B))).j;
   assert.match(step(b, "devices").detail, /기기 2대 · 엔진 켜짐 0대/); assert.equal(step(b, "connectors").done, true);
-  assert.equal((await s.call("GET", "/api/me/onboarding", undefined, await s.human(OWNER))).status, 403);
+  const o = await s.call("GET", "/api/me/onboarding", undefined, await s.human(OWNER));
+  assert.equal(o.status, 200, "주인도 회원 길(canon)"); assert.notDeepEqual(o.j, a, "회원 것이 섞이지 않음");
   assert.equal((await s.call("GET", "/api/me/onboarding")).status, 403);
 });
 

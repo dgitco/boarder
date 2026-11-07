@@ -111,13 +111,13 @@ test("스위치 끔 = 예전: 주인이 허용한 새 기기는 watch(허용한 
   assert.equal((await s.call("POST", "/api/admin/owner-prep/migrate", { action: "run", dryRun: false }, s.adm)).status, 409, "꺼진 채 run 은 거절");
 });
 
-test("스위치 켬: 새 주인 기기는 full · owner canon — 창 토큰 · 음성은 그대로 거절, 허락은 승인 링크로 · 허락 전 화면 스크립트 403", async () => {
+test("스위치 켬: 새 주인 기기는 full · owner canon — 창 토큰 · 음성도 열림(주인 · 회원 한 길), 허락은 승인 링크로 · 허락 전 화면 스크립트 403", async () => {
   const s = await setup(); await s.flag(true);
   const t = await s.newDevice(OWNER2, "2"); assert.equal(t.status, 200, t.text); assert.equal(t.j.scope, "full"); assert.equal(t.j.email, CANON);
   const tok = t.j.token, id = t.j.device_id;
   assert.deepEqual(s.row("SELECT owner, scope FROM device WHERE id = ?", id), { owner: CANON, scope: "full" });
-  assert.equal((await s.call("POST", "/api/device/window", { key: "w:1" }, s.dev(tok))).status, 401, "창 토큰 주인 거절은 화면 전환 때");
-  assert.equal((await s.call("POST", "/api/device/voice", {}, s.dev(tok))).status, 401);
+  assert.equal((await s.call("POST", "/api/device/window", { key: "w:1" }, s.dev(tok))).status, 200, "창 토큰 열림(canon 보드 — owner_unified 늘 켬)");
+  assert.notEqual((await s.call("POST", "/api/device/voice", {}, s.dev(tok))).status, 401);
   const g = await s.get(tok); assert.equal(g.status, 200, g.text); assert.equal(g.j.unified, true); assert.equal(g.j.allowed, false);
   assert.ok(["prefs", "primary_window", "avatar", "bot_name", "unit"].every(k => k in g.j.values), "회원 칸 전부");
   assert.equal((await s.set("prefs", { park_h: 3 }, tok)).status, 403, "허락 전");
@@ -162,7 +162,8 @@ test("스위치 켬: 주인 설정 읽기 · 쓰기가 canon 회원 줄 — 노�
   // 화면 아바타 고르기(/api/me/bot, 「@owner」 줄) → 정본(canon 줄)도 같게
   s.env.RESULTS = { head: async () => ({ httpMetadata: { contentType: "image/png" } }) };
   const B = "a".repeat(32), mb = await s.call("POST", "/api/me/bot", { seed: "fox", hue: 9, name: "새이름", icon: B, fav: B }, await ownerHuman()); assert.equal(mb.status, 200, mb.text);
-  assert.equal((await s.call("GET", "/api/me/avatar", undefined, await ownerHuman())).j.avatar.seed, "fox");
+  assert.equal((await s.call("GET", "/api/me/avatar", undefined, await ownerHuman())).j.avatar.seed, "dog", "주인 /api/me/bot 은 메인 봇 줄(canon, 회원 길) — 내 얼굴은 그대로");
+  assert.equal(s.row("SELECT seed FROM member_bot WHERE owner = ?", CANON).seed, "fox");
   assert.equal(s.row("SELECT name FROM member_bot WHERE owner = ?", CANON).name, "새이름", "이름 줄도");
   const bn = await s.set("bot_name", "CLI이름", DEV2); assert.equal(bn.status, 200, bn.text);
   assert.equal(s.row("SELECT name FROM member_bot WHERE owner = '@owner'").name, "CLI이름", "CLI 이름도 화면 줄에 거울");
@@ -203,7 +204,7 @@ test("옮기기: dryRun(기본) · 실행 · 되돌리기 — 계획과 실행�
   assert.equal(s.row("SELECT count(*) n FROM mig_owner_prep").n, live.length, "옛 값 줄");
   // 옮긴 기기가 바로 회원 길로 설정을 씀(허락 줄도 canon 으로 옮겨짐)
   const w = await s.set("prefs", { park_h: 4 }, DEVW); assert.equal(w.status, 200, w.text);
-  assert.equal((await s.call("POST", "/api/device/window", { key: "w:1" }, s.dev(DEVW))).status, 401, "창 토큰은 그대로 거절");
+  assert.equal((await s.call("POST", "/api/device/window", { key: "w:1" }, s.dev(DEVW))).status, 200, "옮긴 기기도 창 토큰 열림(canon 보드)");
   const again = await s.call("POST", "/api/admin/owner-prep/migrate", { action: "run", dryRun: false }, s.adm);
   assert.equal(again.j.done, 0, "두 번째는 할 일 없음"); assert.equal(s.row("SELECT count(*) n FROM mig_owner_prep").n, live.length);
   const bdry = await s.call("POST", "/api/admin/owner-prep/migrate", { action: "back" }, s.adm); assert.equal(bdry.j.dryRun, true); assert.equal(bdry.j.steps.length, live.length);
