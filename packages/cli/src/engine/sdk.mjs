@@ -11,7 +11,7 @@ import { accountFolder, accountNames, findCli, isLoggedIn } from './login.mjs';
 export const PROVIDERS = ['claude', 'codex'];
 const PKG = { claude: '@anthropic-ai/claude-agent-sdk', codex: '@openai/codex-sdk' };
 // 공급망: 버전 고정(윈도우 · 서버 시험에서 설치돼 동작한 판). 올릴 때는 시험을 다시 돌린 뒤 packages/cli/package.json 과 같이 바꿈
-export const PINNED = { claude: '0.3.317', codex: '0.166.0' };
+export const PINNED = { claude: '0.3.319', codex: '0.167.0' };
 const SPEC = p => `${PKG[p]}@${PINNED[p]}`;
 const NO_CONVO = /No conversation found with session ID/i;
 const LIMIT = /(usage limit|limit reached|rate.?limit|quota|resets? (at|in) \d)/i;

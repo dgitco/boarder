@@ -5,7 +5,7 @@ export const HS_KEY = "harness_state";
 export const PROM_WID = "hp:";
 export const SYNC_DONE = "promises.md 에서 닫힘";   // 이 길이 닫은 표시(파일에서 빠짐) — 창이 닫은 것과 가름
 export const fileNo = (wid: unknown) => { const m = /^hp:(\d{1,9})$/.exec(String(wid ?? "")); return m ? Number(m[1]) : null; };
-const AREAS: [string, string][] = [["primary", "프라이머리"], ["company", "회사"], ["personal", "퍼스널"], ["dgit", "DGit"], ["shop", "가게"]];
+const AREAS: [string, string][] = [["primary", "비서실장"], ["company", "회사"], ["personal", "퍼스널"], ["dgit", "DGit"], ["shop", "가게"]];
 const AREA_KO = new Set([...AREAS.map(a => a[0]), "shopco"]);
 const DC_HOLD = "확인 필요(내 차례 그대로)";   // done_check.HOLD 머리(snapshot.py)
 const PANE = /^%\d{1,7}$/;

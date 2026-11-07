@@ -35,6 +35,32 @@ test('status: Claude 설정 폴더마다 한 줄 — 기본 · CLAUDE_CONFIG_DIR
   });
 });
 
+test('status: Claude HTTP·Codex 원격 MCP는 옛 CLI 경로로 오판하지 않고 설정·인증값을 보존', async () => {
+  await world(async ({ cli, H }) => {
+    const cp = path.join(H, '.claude.json'), tp = path.join(H, '.codex', 'config.toml');
+    fs.writeFileSync(cp, JSON.stringify({ mcpServers: { boarder: { type: 'http', url: 'https://boarder.example/mcp?key=made-up-private-value', headers: { Authorization: 'made-up-private-value' } } } }));
+    fs.writeFileSync(tp, '[mcp_servers.boarder]\nurl = "https://boarder.example/mcp?key=made-up-private-value"\n[mcp_servers.boarder.http_headers]\nAuthorization = "made-up-private-value"\n');
+    const before = [cp, tp].map(p => fs.readFileSync(p, 'utf8'));
+    const r = await cli(['status']);
+    assert.match(r.out, /Claude Code \(~\/\.claude\): reports to Boarder/);
+    assert.match(r.out, /Codex: reports to Boarder/);
+    assert.doesNotMatch(r.out + r.err, /made-up-private-value/);
+    assert.deepEqual([cp, tp].map(p => fs.readFileSync(p, 'utf8')), before);
+    assert.match(r.out, /~\/\.claude-accounts\/a\): Boarder points to an old CLI path/, '낡은 stdio 경로는 계속 경고');
+  });
+});
+
+test('status: 잘못된 원격 MCP URL은 정상으로 표시하거나 원문을 출력하지 않음', async () => {
+  await world(async ({ cli, H }) => {
+    for (const url of ['not-a-url-made-up-private-value', 'file:///made-up-private-value', '']) {
+      fs.writeFileSync(path.join(H, '.claude.json'), JSON.stringify({ mcpServers: { boarder: { type: 'http', url } } }));
+      const r = await cli(['status']);
+      assert.match(r.out, /Claude Code \(~\/\.claude\): Boarder points to an old CLI path \(remote MCP\)/);
+      assert.doesNotMatch(r.out + r.err, /made-up-private-value/);
+    }
+  });
+});
+
 test('enable report: 폴더 전부에 MCP · 훅 · 스킬, 옛 경로 칸은 지금 CLI 로, 다른 설정은 그대로', async () => {
   await world(async ({ cli, H, env3 }) => {
     const r = await cli(['enable', 'report', '--yes']);

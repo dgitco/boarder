@@ -85,22 +85,30 @@ export function pick(all, only, skip) {
 }
 
 const TOML_HEAD = /^\[mcp_servers\.boarder\][ \t]*\r?$/m;
-/** 그 자리에 든 Boarder MCP 칸(없으면 null) — { command, args } */
+/** 그 자리에 든 Boarder MCP 칸(없으면 null). 인증 헤더는 읽어 돌려주지 않는다. */
 export function entryOf(t) {
   try {
     if (t.tool === 'codex') {
       const s = readFileSync(t.files.toml, 'utf8'); if (!TOML_HEAD.test(s)) return null;
       const sec = s.slice(s.search(TOML_HEAD)).split(/\r?\n(?=[ \t]*\[)/)[0];
       const cmd = /^command\s*=\s*("(?:[^"\\]|\\.)*")/m.exec(sec)?.[1], args = /^args\s*=\s*(\[.*\])/m.exec(sec)?.[1];
-      return { command: cmd ? JSON.parse(cmd) : '', args: args ? JSON.parse(args) : [] };
+      const url = /^url\s*=\s*("(?:[^"\\]|\\.)*")/m.exec(sec)?.[1];
+      return { command: cmd ? JSON.parse(cmd) : '', args: args ? JSON.parse(args) : [], ...(url ? { url: JSON.parse(url) } : {}) };
     }
     const e = readJson(t.files.mcp)?.mcpServers?.boarder;
-    return e ? { command: e.command || '', args: Array.isArray(e.args) ? e.args : [] } : null;
+    return e ? { command: e.command || '', args: Array.isArray(e.args) ? e.args : [], ...(typeof e.url === 'string' ? { url: e.url } : {}) } : null;
   } catch { return null; }
 }
 /** off · on · stale(옛 CLI 경로 — 다른 boarder.mjs 나 없어진 node 를 가리킴) */
 export function state(t, bin, node) {
   const e = entryOf(t); if (!e) return { state: 'off' };
+  if (e.url !== undefined) {
+    try {
+      const url = new URL(e.url);
+      if (url.protocol === 'https:' || url.protocol === 'http:') return { state: 'on' };
+    } catch {}
+    return { state: 'stale', was: 'remote MCP' };   // URL에 인증값이 들어 있어도 상태 출력에 노출하지 않는다.
+  }
   const cliPath = e.args.find(a => /boarder(\.mjs)?$/.test(String(a))) || e.command;
   if (e.args.includes(bin) && (e.command === node || existsSync(e.command))) return { state: 'on' };
   return { state: 'stale', was: cliPath };

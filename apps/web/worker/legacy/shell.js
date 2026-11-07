@@ -168,7 +168,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   fetch('api/me/side', {cache: 'no-store'}).then(r => r.ok ? r.json() : null).then(j => { if (j && Array.isArray(j.side) && JSON.stringify(j.side) !== JSON.stringify(SB.order || null)){ SB.order = j.side; saveSB(); if (on()) lists(); } if (j && Array.isArray(j.pins) && JSON.stringify(j.pins) !== JSON.stringify(SB.pins || [])){ SB.pins = j.pins; saveSB(); if (on()) lists(); } if (j && Array.isArray(j.hide) && JSON.stringify(j.hide) !== JSON.stringify(SB.hide || [])){ SB.hide = j.hide; saveSB(); if (on()) lists(); } }).catch(() => {});   // 다른 기기에서 바꾼 순서
   // 끌기: 칸 머리(접기 단추)를 누른 채 6px 넘게 움직이면 끌기 — 놓은 자리 위아래로 칸을 옮김. 덜 움직이면 그대로 접기
   document.addEventListener('pointerdown', e => {
-    const h = e.button === 0 && e.target.closest?.('.bx-sbsc .bx-sec[data-fold]:not(.bx-sub)'); if (!h) return;
+    const h = e.button === 0 && e.target.closest?.('.bx-sbsc .bx-sec[data-fold]:not(.bx-sub):not([data-fold="main"])'); if (!h) return;
     const box = h.closest('.bx-sbsc'), k0 = h.dataset.fold, y0 = e.clientY, x0 = e.clientX; let on = false, mark = null, to = null;
     const heads = () => [...box.querySelectorAll('.bx-sec[data-fold]')].filter(x => ['ib', 'nd', 'ch', 'rc', 'ss', 'xc'].includes(x.dataset.fold));
     const move = ev => {
@@ -200,7 +200,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const RS = (typeof D === 'object' && Array.isArray(D?.role_seats)) ? D.role_seats : null;
     const MA2 = RS ? MA.filter(a => byPane[a.lead]?.tkdept && RS.includes(a.seat_name || AREA_NAME[a.key] || a.lead_name || a.name)) : MA;
     const pg = !ans.hidden && !!cur?.page && cur.p;
-    const chP = CH.map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('');
+    const chP = CH.filter(k => k !== 'primary').map(k => it('chan:' + k, blob(AREA_NAME[k], 20), esc(AREA_NAME[k]), by(k) ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === k)).join('');
     const RW = !mainOnly() && !RS ? (typeof panes !== 'undefined' ? panes : []).filter(p => p && p.rolewin && p.kind === 'lead' && !p.tk && !MA2.some(a => a.lead === p.pane)) : [], RWP = new Set(RW.map(p => p.pane));
     const ch = chP + MA2.map(a => it('chan:' + a.key, blob(AREA_NAME[a.key] || a.lead_name || a.name, 20), esc(AREA_NAME[a.key] || a.lead_name || a.name), rowPanes().has(a.lead) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === a.lead)).join('')
       + RW.map(p => it('node:' + p.pane, blob(nameOf(p), 20), esc(nameOf(p)), rowPanes().has(p.pane) ? '<i class="ud" aria-label="내 차례"></i>' : '', pg === p.pane)).join('');
@@ -232,18 +232,21 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     const pins = (SB.pins || []).map(p => `<button type="button" class="bx-it" data-sidepin="${esc(p.id)}" title="${esc(p.title || p.id)}">${I.canvas}<span>${esc(p.title || p.id)}</span></button>`).join('');
     const hid = new Set(Array.isArray(SB.hide) ? SB.hide : []), top1 = (k, icon, label) => hid.has(k) ? '' : it(k, icon, label, '', top === k);
     const head = top1('node', I.node, '조직도') + top1('canvas', I.canvas, '캔버스') + top1('feed', I.feed, '피드') + (window.BXStatus?.side?.(it, top) || '') + pins;
-    const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = TS ? (tks ? sec('nd', '태스크', tks) : '') : nd ? sec('nd', '채널', nd) : '', ags = sec('ch', '에이전트', ch);
-    const part = {ib: sec('ib', '모아 보기', ib), nd: DG !== null ? '' : chs, ch: DG !== null ? `<div class="bx-dgs">${DG}</div>` : ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
+    const mainCh = sec('main', '채널', it('chan:primary', I.hash, '#메인', by('primary') ? '<i class="ud" aria-label="읽지 않음"></i>' : '', chan === 'primary'));
+    const primaryAgent = it('chan:primary', blob(AREA_NAME.primary, 20), esc(AREA_NAME.primary), '', chan === 'primary');
+    const agentChannels = '';
+    const agentsFirst = window.HB_MEMBER?.unit === 'agent', chs = TS ? (tks ? sec('nd', '태스크', tks) : '') : nd ? sec('nd', '채널', nd) : '', ags = ch ? sec('ch', '에이전트', ch) : '';
+    const part = {ib: sec('ib', '모아 보기', ib) + mainCh, nd: DG !== null ? '' : chs, ch: DG !== null ? `<div class="bx-dgs">${DG}</div>` : ags, rc: rc ? sec('rc', '최근 캔버스', rc) : '', ss};
     const body = '<div class="bx-sbsc">' + head + sideOrder(agentsFirst).map(k => part[k] || '').join('') + '</div>';
     const foot = `<div class="bx-foot"><button type="button" class="bx-me" data-me aria-haspopup="true" aria-expanded="false">${meAv()}<span>${esc(window.HB_MEMBER?.name || ME()?.name || 'Owner')}</span></button></div>`;
     const fb = `<button type="button" class="bx-colb" data-go="find" aria-label="찾기" title="찾기 ⌘K">${I.search}</button>`;
     const keep = [sb, dr].map(x => x.querySelector('.bx-sbsc')?.scrollTop || 0);
-    const agOn = !!S.ag || (chatMode() && !ibChat()), aTop = agOn ? null : top;
+    const agOn = !!S.ag && S.ag !== 'x', aTop = agOn ? null : top;
     const fl = (k, icon, label, extra) => hid.has(k) ? '' : it(k, icon, label, extra || '', aTop === k);
     const sbA = '<div class="bx-sbsc bx-sba">' + fl('feed', aTop === 'feed' ? IA.houseOn : IA.house, '피드')
       + (hid.has('feed') ? '' : `<button type="button" class="bx-it" data-go="feed" data-xnew>${IA.pen}<span>새 글</span></button>`) + it('find', IA.search, '찾기')
-      + '<i class="bx-gap" aria-hidden="true"></i>' + ib + '<i class="bx-gap" aria-hidden="true"></i>'
-      + it('agents', IA.bot, '에이전트', '', agOn) + fl('node', aTop === 'node' ? IA.nodeOn : IA.node, '조직도') + fl('canvas', I.canvas, '캔버스')
+      + '<i class="bx-gap" aria-hidden="true"></i>' + ib + mainCh + '<i class="bx-gap" aria-hidden="true"></i>'
+      + agentChannels + it('agents', IA.bot, '에이전트', '', agOn) + fl('node', aTop === 'node' ? IA.nodeOn : IA.node, '조직도') + fl('canvas', I.canvas, '캔버스')
       + (window.BXStatus?.side?.(it, aTop) || '') + pins + '</div>';
     const org = (() => {
       if (mainOnly() || DG !== null || typeof windowsOf !== 'function' || typeof subsOf !== 'function' || !(typeof D === 'object' && Array.isArray(D?.roster))) return null;
@@ -257,7 +260,7 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
       const col = k => sortA(windowsOf(k)).map(p => walk(p, 1)).join('');
       return head('primary', (D.areas || []).map(a => a.key).filter(k => k !== 'primary' && AREA_NAME[k]).map(k => head(k, col(k))).join('') + col('primary'));
     })();
-    if (S.ag) agDraw({a: DG !== null ? `<div class="bx-dgs">${DG}</div>` : org ? `<div class="bx-dgs bx-org">${org}</div>` : ch, c: (DG !== null ? '' : TS ? tks : nd) + ss, x: xc});
+    if (S.ag) agDraw({a: (!org ? primaryAgent : '') + (DG !== null ? `<div class="bx-dgs">${DG}</div>` : org ? `<div class="bx-dgs bx-org">${org}</div>` : ch), c: (DG !== null ? '' : TS ? tks : nd) + ss});
     const sbH = !newOn() ? `<div class="top">${logo}<span class="tr">${fb}<button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + body + foot
       : `<div class="top">${logo}<span class="tr"><button type="button" class="bx-colb" data-sbcol aria-label="${SB.col ? '사이드바 펴기' : '사이드바 접기'}" title="${SB.col ? '펴기' : '접기'}">${I.panel}</button></span></div>` + sbA + foot;
     const drH = `<div class="top">${logo}<span class="tr">${fb}</span></div>` + body + foot;
@@ -350,11 +353,11 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
     sync();
   }
   function ibClose(){ if (!S.ib) return; ibM?.destroy(); ibM = null; S.ib = null; ibox.hidden = true; }
-  const AGT = {a: ['에이전트', IA.bot, '에이전트가 없어요'], c: ['채널', IA.hash, '열린 채널이 없어요'], x: ['A2A', IA.a2a, '다른 보더와 잇는 대화가 아직 없어요']}, AGH = {a: '', c: 'channels', x: 'a2a'};
+  const AGT = {a: ['에이전트', IA.bot, '에이전트가 없어요'], c: ['채널', IA.hash, '열린 채널이 없어요']}, AGH = {a: '', c: 'channels'};
   const agHash = t => '#agents' + (AGH[t] ? '/' + AGH[t] : '');
   function agDraw(part){
     const t = S.ag, body = part[t] || '';
-    const h = `<div class="bx-agp-h"><h1>에이전트</h1></div><div class="bx-agseg" role="tablist" aria-label="에이전트 보기">${Object.entries(AGT).map(([k, [l, ic]]) => `<button type="button" role="tab" data-agtab="${k}" aria-selected="${k === t}">${ic}<span>${l}</span></button>`).join('')}</div>`
+    const h = `<div class="bx-agp-h"><h1>${t === 'x' ? '에이전트 채널' : '에이전트'}</h1></div><div class="bx-agseg" role="tablist" aria-label="에이전트 보기">${Object.entries(AGT).map(([k, [l, ic]]) => `<button type="button" role="tab" data-agtab="${k}" aria-selected="${k === t}">${ic}<span>${l}</span></button>`).join('')}</div>`
       + `<div class="bx-agl" role="tabpanel">${body || (window.HBEmpty ? window.HBEmpty({ic: AGT[t][1], t: AGT[t][2], p: ''}) : `<p class="bx-agp-e">${AGT[t][2]}</p>`)}</div>`;
     if (agDraw.html === h && agBox.firstChild) return; agDraw.html = h;
     const k = window.HBKeepAv?.(agBox); agBox.innerHTML = h; k?.();
@@ -398,7 +401,8 @@ window.bxPushOff = async () => { if (!window.HB_MEMBER || !('serviceWorker' in n
   // ── 누르기
   function go(g){
     closeDr(); S.ret = null;
-    if (g === 'agents') return agOpen(S.ag || 'a');
+    if (g === 'agent-channels') return agOpen('x');
+    if (g === 'agents') return agOpen('a');
     if (g === 'find') return findOpen();   // 찾기는 덮개 — 에이전트 화면은 그대로
     agClose();
     if (g.startsWith('pg:')){ ibClose(); if (!ans.hidden) closeAns(); window.BXFeed?.off?.(); return window.BXStatus?.open?.(g.slice(3)); }   // 상태 페이지(status.js) — 본 칸에 그 페이지

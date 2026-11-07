@@ -50,12 +50,12 @@ test("놓을 때 숨김이면 끌기 전 폭으로 되돌리고 접음(펴면 �
   assert.match(shell, /if \(R\.classList\.contains\('bx-colpv'\)\)\{ R\.classList\.remove\('bx-colpv'\); sbwSet\(w0 === 264 \? 0 : w0\); return setCol\(true\); \}/);
 });
 
-test("피드 화면 PC 사이드바만 안 A 목록(섹션 머리 없음), 다른 화면 · 폰 서랍은 예전 목록", () => {
+test("PC 목록과 휴대폰 서랍은 모아 보기 뒤 메인 채널·에이전트 채널 메뉴를 공유", () => {
   assert.match(shell, /const sbH = !newOn\(\) \? `<div class="top">\$\{logo\}<span class="tr">\$\{fb\}<button[^`]*` \+ body \+ foot\n\s*: `<div class="top">\$\{logo\}<span class="tr"><button type="button" class="bx-colb" data-sbcol[^`]*` \+ sbA \+ foot;/, "피드(또는 새 사이드바를 켠 사람)면 안 A(sbA), 아니면 예전 목록(body)");
   assert.match(shell, /const drH = `<div class="top">\$\{logo\}<span class="tr">\$\{fb\}<\/span><\/div>` \+ body \+ foot;/);
   const sbA = shell.match(/const sbA = [\s\S]*?\+ '<\/div>';/)![0];
   assert.doesNotMatch(sbA, /sec\(/, "PC 목록에 섹션 머리 없음");
-  const order = ["'피드'", "새 글", "'찾기'", "+ ib +", "'에이전트'", "'조직도'", "'캔버스'"].map(s => sbA.indexOf(s));
+  const order = ["'피드'", "새 글", "'찾기'", "+ ib +", "+ mainCh +", "+ agentChannels +", "'에이전트'", "'조직도'", "'캔버스'"].map(s => sbA.indexOf(s));
   assert.ok(order.every(i => i >= 0), "줄이 다 있음");
   assert.deepEqual([...order].sort((a, b) => a - b), order, "피드 → 새 글 → 찾기 → 모아 보기 → 에이전트 → 노드 → 캔버스");
 });

@@ -13,7 +13,7 @@ function load(fail: () => boolean, slow = false) {
   let inflight = 0, maxInflight = 0;
   const ctx: any = {
     LU: (n: string) => `<svg data-lu="${n}"></svg>`, LOADING: "<SPIN>", ERR: "일시적인 오류가 발생했어요",
-    window: {}, document: { hidden: false }, CS: { thr: { "1.1": { messages: [{ ts: "1.1" }], err: "503" } }, ch: {}, th: { k: "primary", ts: "1.1" }, at: "primary" },
+    window: { addEventListener() {} }, document: { hidden: false, addEventListener() {} }, CS: { thr: { "1.1": { messages: [{ ts: "1.1" }], err: "503" } }, ch: {}, th: { k: "primary", ts: "1.1" }, at: "primary" },
     toast: (m: string) => toasts.push(m), setTimeout: (fn: () => void, ms = 0) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {}, setInterval: () => 0,
     isIbCh: () => false, chatOn: () => true, viewChat: () => { ctx.readErr("th:1.1", true); }, render: () => {}, cur: null, ans: { hidden: true }, sending: false,
     loadTh: async (_k: string, ts: string) => { ctx.rtSweep(); inflight++; maxInflight = Math.max(maxInflight, inflight);

@@ -85,7 +85,7 @@ const SNAP = () => {
   const H = HSTATE();
   return {
     generated: "2026-11-05 12:00",
-    areas: [{ key: "primary", name: "프라이머리", lead: "%15" }, { key: "company", name: "회사", lead: "%179" }, { key: "personal", name: "퍼스널", lead: null }, { key: "dgit", name: "DGit", lead: null }, { key: "shop", name: "가게", lead: null }],
+    areas: [{ key: "primary", name: "비서실장", lead: "%15" }, { key: "company", name: "회사", lead: "%179" }, { key: "personal", name: "퍼스널", lead: null }, { key: "dgit", name: "DGit", lead: null }, { key: "shop", name: "가게", lead: null }],
     agents: [{ key: "qa", name: "QA 채널", lead: null }],
     panes: [
       { win: "1 총괄", role: "리드", pane: "%15", state: "뒤 작업 중", kind: "primary", ...H.panes["%15"], last: l(8), blocked: null, recent: rec(8), hist: hist(8), topics: [], pri: "", owner: false, watch: "" },

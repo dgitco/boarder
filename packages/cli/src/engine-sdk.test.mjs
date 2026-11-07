@@ -295,7 +295,7 @@ test('SDK 자동 설치: npm install --prefix 로 깔고, 깔린 곳에서 impor
   assert.equal((await S.installSdks({ exec, npm: null })).ok, false);
   const ok = await S.installSdks({ exec, npm: fakeNpm });
   assert.equal(ok.ok, true); assert.ok(cmd.includes('--prefix') && cmd.includes(S.sdkDir()));
-  assert.ok(cmd.includes('--ignore-scripts') && cmd.includes('@anthropic-ai/claude-agent-sdk@0.3.317') && cmd.includes('@openai/codex-sdk@0.166.0'));   // 버전 고정 · 설치 스크립트 안 돌림
+  assert.ok(cmd.includes('--ignore-scripts') && cmd.includes('@anthropic-ai/claude-agent-sdk@0.3.319') && cmd.includes('@openai/codex-sdk@0.167.0'));   // 버전 고정 · 설치 스크립트 안 돌림
   assert.deepEqual(S.PINNED, { claude: JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url))).optionalDependencies['@anthropic-ai/claude-agent-sdk'], codex: JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url))).optionalDependencies['@openai/codex-sdk'] });
   assert.equal((await S.loadSdk('claude')).query(), 'L');
   assert.equal(typeof (await S.loadSdk('codex')).Codex, 'function');

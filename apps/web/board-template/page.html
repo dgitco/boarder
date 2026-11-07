@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "c17c81c9f019";
+window.HB_VER = "671725f7e7c4";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -1665,7 +1665,7 @@ body.kb .ccomp{padding-bottom:16px}
 .chip .cn small{font-size:11.5px;color:var(--muted)}
 
 
-.msg .bd a.mtok,a.mtok{display:inline-flex;align-items:center;gap:3px;max-width:100%;vertical-align:bottom;padding:0 5px 0 3px;border-radius:5px;background:var(--accent-soft);color:var(--accent);font-weight:500;text-decoration:none}
+.msg .bd a.mtok,a.mtok{display:inline-flex;align-items:center;gap:3px;max-width:100%;vertical-align:bottom;padding:0 5px 0 3px;border-radius:5px;background:var(--accent-soft);color:var(--accent);font-weight:500;text-decoration:none;text-indent:0}   
 .msg .bd a.mtok:hover,a.mtok:hover{text-decoration:none;background:color-mix(in srgb,var(--accent) 16%,var(--accent-soft))}
 a.mtok i{display:inline-grid;place-items:center;flex:none;width:1em;height:1em;font-style:normal}
 a.mtok i svg{width:1em;height:1em}
@@ -2466,6 +2466,7 @@ window.jo = (w, p) => {
     dispatchEvent(new CustomEvent("hb-net", { detail: k }));
   };
   const ping = async () => {
+    if (window.hbReadPaused?.()) return;
     if (Date.now() - pingAt < 1500) return;
     pingAt = Date.now();
     try {
@@ -2507,6 +2508,12 @@ window.jo = (w, p) => {
   window.fetch = async (input, init) => {
     const u = typeof input === "string" ? input : String(input?.url || input || ""), m = String(init?.method || input?.method || "GET").toUpperCase();
     if (!/(^|\/)api\//.test(u) || /api\/(events|push\/stream|clientlog)/.test(u)) return f0(input, init);
+    const once = init?.hbAuthProbe === true;
+    if (once) {
+      const { hbAuthProbe, ...rest } = init;
+      init = rest;
+    }
+    if ((m === "GET" || m === "HEAD") && window.hbReadPaused?.() && !once) return new Response('{"error":"로그인"}', { status: 401 });
     const id = rid(), path = u.replace(/^.*?(\/?api\/)/, "/api/").split("?")[0].slice(0, 100);
     if (typeof input === "string") {
       const h = new Headers(init?.headers || {});
@@ -2518,6 +2525,7 @@ window.jo = (w, p) => {
       try {
         r = await f0(input, init);
       } catch (e) {
+        if (once) throw e;
         if (navigator.onLine === false && !init?.signal?.aborted) netSet("net");
         if (!(m === "GET" || m === "HEAD") || n >= 3 || init?.signal?.aborted) {
           if (!init?.signal?.aborted) {
@@ -2533,15 +2541,15 @@ window.jo = (w, p) => {
         continue;
       }
       const rd = m === "GET" || m === "HEAD";
-      if (rd && srvDown(r)) {
+      if (!once && rd && srvDown(r)) {
         srvFail++;
         coolUntil = Date.now() + Math.min(3e4, 2e3 * 2 ** (srvFail - 1)) * (0.75 + Math.random() * 0.5);
       } else if (r.status < 500) srvFail = 0;
-      if ((r.status === 502 || r.status === 503) && n < (rd && srvFail > 2 ? 1 : 3) && !init?.signal?.aborted && (m === "GET" || m === "HEAD" || r.headers.get("x-retry-safe") === "1")) {
+      if (!once && (r.status === 502 || r.status === 503) && n < (rd && srvFail > 2 ? 1 : 3) && !init?.signal?.aborted && (m === "GET" || m === "HEAD" || r.headers.get("x-retry-safe") === "1")) {
         await wait(rd ? Math.max(1e3 * (n + 1), coolUntil - Date.now()) : 1e3 * (n + 1));
         continue;
       }
-      if (m === "GET" || m === "HEAD") {
+      if (!once && (m === "GET" || m === "HEAD")) {
         const dn = srvDown(r) && CORE.test(path);
         if (dn) pingPath = u;
         if (dn || u === pingPath || !netK || netK === "net") netSet(dn ? "srv" : "");
@@ -3461,7 +3469,7 @@ const WORD_KO = {
   flags: "플래그"
 };
 const human = (t) => /[가-힣]/.test(t) && !/[a-z]{3,}-[a-z]/i.test(t) ? t : String(t).split(/[-_\s]+/).filter(Boolean).map((w) => WORD_KO[w.toLowerCase()] || w).join(" ");
-const AREA_KO = { primary: nodeTree() ? BOTN : "프라이머리 창", unsorted: "분류 안 됨", company: "회사", personal: "퍼스널", dgit: "DGit", shop: "가게" };
+const AREA_KO = { primary: BOTN, unsorted: "분류 안 됨", company: "회사", personal: "퍼스널", dgit: "DGit", shop: "가게" };
 let MHEAD = /* @__PURE__ */ new Set();
 const AREA4 = ["company", "personal", "dgit", "shop"];
 let AREAS = nodeTree() ? [] : [...AREA4];
@@ -4176,6 +4184,10 @@ document.addEventListener("click", (e) => {
   });
 })();
 const noNodes = () => !MHEAD.size && !["primary", ...AREAS, "unsorted"].some((k) => windowsOf(k).length || waitList(byPane[leadPane(k)]?.pane).vis.length);
+function orgLeadPanes(area) {
+  const registered = (D.roster || []).filter((r) => r.role === "agent" && r.area === area);
+  return [byPane[leadPane(area)], ...registered.map((r) => panes.find((p) => p.area === area && p.agent === r.key))].filter((p, i, a) => p && a.findIndex((x) => x?.pane === p.pane) === i);
+}
 function viewTree() {
   if (LIVE && Date.now() - TK.at > 3e4) taskPull();
   const prim = byPane[leadPane("primary")];
@@ -4187,11 +4199,13 @@ function viewTree() {
     const ks = kidList(w), sub = tree(subsOf(w.lead.pane), d + 1, seen);
     return `<li>${node(w.lead)}${ks.length ? `<ul class="kids">${ks.map((h) => `<li>${node(h)}</li>`).join("")}</ul>` : ""}${sub}</li>`;
   }).join("")}</ul>` : "";
-  const sl = $("#v-tree .areas")?.scrollLeft || viewTree.ax || 0;
+  const sl = $("#v-tree .baseareas")?.scrollLeft || viewTree.ax || 0;
   viewTree.ax = 0;
   const peers = undefined || "";
   const tidy2 = !!(nodeTree() && D.tree_tidy), seatK = seatKeys();
   const scA = "";
+  const groups = [];
+  const grouped = new Set(groups.map((o) => o.share_area));
   const shownA = scA ? AREAS.filter((k) => k === scA) : tidy2 ? AREAS.filter((k) => seatK.has(k)) : AREAS, xA = !scA && tidy2 ? AREAS.filter((k) => !seatK.has(k)) : [];
   const unQ = tidy2 ? big.filter((b) => b.park && b.area === "unsorted") : [], unN = tidy2 ? deepOf("unsorted").length + unQ.length : 0;
   const xN = xA.reduce((n, k) => n + 1 + deepOf(k).length + bigOf(leadPane(k)).length, 0) + unN, xOpen = opened.has("xcols");
@@ -4203,14 +4217,24 @@ function viewTree() {
   const xCols = xN ? `<div class="xcols"><button type="button" class="lfold xfold" data-x="xcols" aria-expanded="${xOpen}">${xOpen ? "그 밖의 창 접기" : `그 밖의 창 ${xN}`}</button>${xOpen ? `<div class="areas xareas">${xA.map(colOf).join("")}${unCol}</div>` : ""}</div>` : "";
   const grpName = window.HBGroupName?.() || "부서";
   const grp = tidy2 && shownA.length ? `<div class="mprim mgrp"><div class="node grp" aria-label="${esc(grpName)} · 부서 ${shownA.length}"><span class="n"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h3.4l1.6 1.6h6A1.5 1.5 0 0 1 17 8.1v6.4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>${esc(grpName)}</span><span class="s"><span>부서 ${shownA.length}</span></span></div></div><div class="drop"></div>` : "";
-  const mtree = !!(nodeTree() && (shownA.length || tidy2)), primCol = `${node(prim)}${tree(windowsOf("primary"))}${hang(prim.pane)}`;
+  const orgSections = groups.map((o) => {
+    const heads = orgLeadPanes(o.share_area), headIds = new Set(heads.map((p) => p.pane));
+    const cols = heads.map((p) => {
+      const children = p.pane === leadPane(o.share_area) ? windowsOf(o.share_area).filter((w) => !headIds.has(w.lead.pane)) : subsOf(p.pane);
+      const helpers = p.kind === "lead" ? kidList(winOf(p)) : [];
+      return `<div class="col">${node(p)}${helpers.length ? `<ul class="kids">${helpers.map((h) => `<li>${node(h)}</li>`).join("")}</ul>` : ""}${tree(children)}${hang(p.pane)}</div>`;
+    }).join("");
+    return `<section class="orgsection" data-orgtree="${esc(o.id)}"><div class="mprim mgrp"><div class="node grp" aria-label="${esc(o.name)}"><span class="n">${esc(o.name)}</span><span class="s"><span>리드 ${heads.length}</span></span></div></div><div class="drop"></div><div class="areas orgareas" data-cols="${heads.length}">${cols}</div></section>`;
+  }).join("");
+  const flatA = shownA.filter((k) => !grouped.has(k));
+  const mtree = !!(groups.length || nodeTree() && (shownA.length || tidy2)), primCol = groups.length && scA ? node(prim) : `${node(prim)}${tree(windowsOf("primary"))}${hang(prim.pane)}`;
   const keepAv = window.HBKeepAv($("#v-tree"));
   $("#v-tree").innerHTML = `<div class="canvas${peers ? " orgs" : ""}${peers && !AREAS.length ? " solo" : ""}"><div class="tree">
     <div class="rootwrap">${meNode()}</div><div class="drop"></div>${mtree ? `
     <div class="mprim">${primCol}</div><div class="drop"></div>${grp}` : ""}
-    <div class="areas">${mtree || scA ? "" : `<div class="col">${primCol}</div>`}${shownA.map(colOf).join("")}</div>${xCols}</div>${peers}${noNodes() && !peers ? emptyHTML({ ic: "node", t: "아직 에이전트가 없어요", p: "기기에서 AI 창에 일을 맡기면 그 에이전트가 여기 떠요.", fill: true }) : ""}</div>`;
+    ${orgSections}<div class="areas baseareas">${mtree || scA ? "" : `<div class="col">${primCol}</div>`}${flatA.map(colOf).join("")}</div>${xCols}</div>${peers}${noNodes() && !peers ? emptyHTML({ ic: "node", t: "아직 에이전트가 없어요", p: "기기에서 AI 창에 일을 맡기면 그 에이전트가 여기 떠요.", fill: true }) : ""}</div>`;
   keepAv();
-  const ar = $("#v-tree .areas");
+  const ar = $("#v-tree .baseareas");
   if (ar && sl) ar.scrollLeft = sl;
   const spread = (el, n) => {
     if (!el || !n) return;
@@ -4224,7 +4248,8 @@ function viewTree() {
       el.style.margin = "0 auto";
     }
   };
-  if (ar && mtree) spread(ar, shownA.length);
+  $("#v-tree").querySelectorAll(".orgareas").forEach((el) => spread(el, Number(el.dataset.cols)));
+  if (ar && mtree && !ar.classList.contains("orgareas")) spread(ar, flatA.length);
   else if (ar && shownA.length > AREA4.length) spread(ar, 1 + shownA.length);
   spread($("#v-tree .xareas"), xA.length + (unCol ? 1 : 0));
   hvSync();
@@ -4290,7 +4315,7 @@ function viewLaneList() {
     const idle = all.filter((x) => x.st.k === "idle");
     body = act.map(row).join("") + (idle.length ? `<button class="lfold" data-x="lidle">${opened.has("lidle") ? "쉬는 창 접기" : `쉬는 창 ${idle.length}개`}</button>${opened.has("lidle") ? idle.map(row).join("") : ""}` : "");
   } else {
-    body = ["primary", ...AREAS, ...D.tree_tidy && (D.areas || []).some((a) => a.key === "unsorted") ? ["unsorted"] : []].map((k) => `<div class="agrp"><h3>${esc(k === "primary" ? nodeTree() ? BOTN : "primary · 프라이머리 창" : AREA_KO[k])}</h3>${all.filter((x) => x.p.area === k).sort((a, b) => order[a.st.k] - order[b.st.k] || b.st.m - a.st.m).map(row).join("")}</div>`).join("");
+    body = ["primary", ...AREAS, ...D.tree_tidy && (D.areas || []).some((a) => a.key === "unsorted") ? ["unsorted"] : []].map((k) => `<div class="agrp"><h3>${esc(k === "primary" ? BOTN : AREA_KO[k])}</h3>${all.filter((x) => x.p.area === k).sort((a, b) => order[a.st.k] - order[b.st.k] || b.st.m - a.st.m).map(row).join("")}</div>`).join("");
   }
   const chips = big.map((b) => `<button class="chip" ${parkHit(b)}>${CLOCK}${esc(b.title)} <b>${esc(AREA_KO[b.area] || "")}</b></button>`).join("");
   $("#v-lanes").innerHTML = `<div class="lbar"><span class="seg">${[["wait", "오래 기다린 순"], ["area", "영역별"]].map(([k, t]) => `<button data-lsort="${k}" aria-pressed="${laneSort === k}">${t}</button>`).join("")}</span>
@@ -4574,7 +4599,7 @@ function render() {
     if (caret && ans.contains(document.getElementById(caret.id))) caretBack(caret);
   }
 }
-const hdrRenameKind = () => !cur ? "" : nodeTree() ? isNodeCh(cur.chan) ? "node" : cur.chan === "primary" ? "bot" : "" : cur.chan in AREA_NAME && /^[a-z][a-z0-9_]{1,30}$/.test(cur.chan) ? "agent" : "";
+const hdrRenameKind = () => !cur || cur.chan === "primary" ? "" : nodeTree() ? isNodeCh(cur.chan) ? "node" : cur.chan === "primary" ? "bot" : "" : cur.chan in AREA_NAME && /^[a-z][a-z0-9_]{1,30}$/.test(cur.chan) ? "agent" : "";
 const hmenuItems = (p) => (undefined || "") + (hdrRenameKind() ? '<button type="button" role="menuitem" data-hrename><span>이름 변경</span></button>' : "");
 function hrenameOpen() {
   document.querySelector("#ans .hren")?.remove();
@@ -4679,9 +4704,9 @@ function renderNow() {
   const keepBox = tab === "chat" && cur.chatFor === p.pane ? $("#mchatbox") : null, keepAct = keepBox?.contains(document.activeElement) ? document.activeElement.id : null;
   const keepScroll = keepBox ? ["cfeed", "cthfeed"].map((id) => [id, keepBox.querySelector("#" + id)?.scrollTop]) : [];
   const body = `<div class="mchat2" id="mchatbox"></div>`;
-  const ttl = tab === "chat" && isGptCh(cur.chan) ? gptTitle(cur.chan) : tab === "chat" && isSessCh(cur.chan) ? sessName(cur.chan) : tab === "chat" && isNodeCh(cur.chan) ? cur.chan.slice(2) : tab === "chat" && isIbCh(cur.chan) ? cur.chan === "i:unread" && window.HBInbox?.isBoth?.() ? "전체" : { "i:unread": "읽지 않음", "i:saved": "저장", "i:drafts": "초안", "i:turn": "결정 · 할 일" }[cur.chan] : tab === "chat" && isXCh(cur.chan) ? "↔ " + (undefined || "") : tab === "chat" && AGENT_CH.some((a) => a.key === cur.chan) ? AREA_NAME[cur.chan] : nameOf(p);
-  const hav = tab === "chat" && !isIbCh(cur.chan) && !isXCh(cur.chan) && !isGptCh(cur.chan) && !isSessCh(cur.chan) ? `<span class="hav" aria-hidden="true">${isNodeCh(cur.chan) ? nodeIc(p, 28) : blobP(p, 28, ttl)}</span>` : "";
-  const head = `${cur.back ? `<button class="aback${cur.fromPage ? " npb" : ""}" data-alist aria-label="${cur.fromPage ? "노드로" : TURN + " 목록으로"}">${cur.fromPage ? "‹ 노드" : "‹ 목록"}</button>` : ""}${tabs}<div class="who">${hav}<div class="n">${esc(ttl)}${isIbCh(cur.chan) || isXCh(cur.chan) || isGptCh(cur.chan) ? "" : waitChip(p)}</div>${tab === "chat" && isIbCh(cur.chan) ? window.HBInbox?.feedHead?.(cur.chan) || "" : ""}</div>`;
+  const ttl = tab === "chat" && cur.chan === "primary" ? "#메인" : tab === "chat" && isGptCh(cur.chan) ? gptTitle(cur.chan) : tab === "chat" && isSessCh(cur.chan) ? sessName(cur.chan) : tab === "chat" && isNodeCh(cur.chan) ? cur.chan.slice(2) : tab === "chat" && isIbCh(cur.chan) ? cur.chan === "i:unread" && window.HBInbox?.isBoth?.() ? "전체" : { "i:unread": "읽지 않음", "i:saved": "저장", "i:drafts": "초안", "i:turn": "결정 · 할 일" }[cur.chan] : tab === "chat" && isXCh(cur.chan) ? "↔ " + (undefined || "") : tab === "chat" && AGENT_CH.some((a) => a.key === cur.chan) ? AREA_NAME[cur.chan] : nameOf(p);
+  const hav = tab === "chat" && !isIbCh(cur.chan) && !isXCh(cur.chan) && !isGptCh(cur.chan) && !isSessCh(cur.chan) ? `<span class="hav" aria-hidden="true">${cur.chan === "primary" ? ICON.hash : isNodeCh(cur.chan) ? nodeIc(p, 28) : blobP(p, 28, ttl)}</span>` : "";
+  const head = `${cur.back ? `<button class="aback${cur.fromPage ? " npb" : ""}" data-alist aria-label="${cur.fromPage ? "노드로" : TURN + " 목록으로"}">${cur.fromPage ? "‹ 노드" : "‹ 목록"}</button>` : ""}${tabs}<div class="who">${hav}<div class="n">${esc(ttl)}${cur.chan === "primary" || isIbCh(cur.chan) || isXCh(cur.chan) || isGptCh(cur.chan) ? "" : waitChip(p)}</div>${tab === "chat" && isIbCh(cur.chan) ? window.HBInbox?.feedHead?.(cur.chan) || "" : ""}</div>`;
   ans.innerHTML = `<div class="ah">${head}
       ${LIVE && tab === "chat" && !p.parked && !p.standing && !isIbCh(cur.chan) ? `<details class="hmore"><summary aria-label="더 보기" title="더 보기"><svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.75" cy="10" r="1.4" fill="currentColor"/><circle cx="10" cy="10" r="1.4" fill="currentColor"/><circle cx="15.25" cy="10" r="1.4" fill="currentColor"/></svg></summary><div class="hmenu" role="menu"><button type="button" role="menuitem" class="hmcall" data-vcall="${p.pane}" aria-label="${esc(jo(nameOf(p), "와/과"))} 전화">${ICON.phone}<span>전화</span></button>${hmenuItems(p)}</div></details>` : ""}<button class="xbtn" id="x" aria-label="닫기">${ICON.x}</button></div>
     ${tab === "chat" && isNodeCh(cur.chan) ? nodeBox(p) + `<div class="nthr" data-nthr hidden></div>` + (setTimeout(nthrFill, 0), "") + todoBox(cur.chan.slice(2)) : ""}
@@ -5370,6 +5395,7 @@ const enterSends = (e) => e.key === "Enter" && !e.shiftKey && !e.isComposing && 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let rfRun = null, rfNext = null;
 function refresh() {
+  if (rtc().auth) return Promise.resolve();
   if (!rfRun) return rfRun = refresh0().finally(() => {
     rfRun = null;
   });
@@ -6593,16 +6619,21 @@ const ownerName = (o) => o && byPane[o] ? nameOf(byPane[o]) : /^%\d+$/.test(o ||
 const topicById = (id) => CS.T.topics.find((t) => t.id === id);
 const ETC = {};
 const GETMETA = /* @__PURE__ */ new WeakMap();
-async function getJSON(u, again, ms) {
+async function getJSON(u, again, ms, authProbe = false) {
+  if (rtc().auth && !authProbe) throw Object.assign(new Error("로그인"), { status: 401 });
   const c = again ? null : ETC[u], ac = ms && window.AbortController ? new AbortController() : null, tm = ac && setTimeout(() => ac.abort(), ms);
   let r;
   try {
-    r = await fetch(u, { cache: "no-store", headers: c ? { "If-None-Match": c.tag } : {}, ...ac ? { signal: ac.signal } : {} });
+    r = await fetch(u, { cache: "no-store", headers: c ? { "If-None-Match": c.tag } : {}, ...ac ? { signal: ac.signal } : {}, ...authProbe ? { hbAuthProbe: true } : {} });
   } catch (e) {
     clearTimeout(tm);
     throw ac?.signal.aborted ? Object.assign(new Error("시간 초과"), { timeout: true }) : e;
   }
   const meta = () => ({ status: r.status, rid: r.hbRid || r.headers.get("x-request-id") || "" });
+  if (r.status === 401) {
+    clearTimeout(tm);
+    throw Object.assign(new Error("로그인"), meta());
+  }
   if (r.status === 304) {
     if (c) {
       GETMETA.set(c.j, { path: "/" + u.split("?")[0], status: 304, rid: r.hbRid || r.headers.get("x-request-id") || "" });
@@ -7024,8 +7055,9 @@ async function loadOlder(k) {
   CS.oldBusy[k] = false;
   if (chatOn() && CS.at === k) viewChat(true);
 }
-async function loadTh(k, ts, valid = () => true) {
+async function loadTh(k, ts, valid = () => true, authProbe = false) {
   rtSweep();
+  if (rtc().auth && !authProbe) return;
   if (!LIVE) {
     const t = CS.T.threads.find((x) => x.ts === ts);
     CS.thr[ts] = (D.chat?.threads || {})[ts] || { messages: t ? [{ ts, who: t.who, name: t.name, text: t.text, buttons: [], reactions: [] }, ...t.replies ? [{ ...t.last, buttons: [], reactions: [] }] : []] : [], owner: t?.owner };
@@ -7035,20 +7067,27 @@ async function loadTh(k, ts, valid = () => true) {
     let j;
     for (let i = 0; ; i++) {
       try {
-        j = await getJSON(`api/chat/${k}/${ts}`, false, 12e3);
+        j = await getJSON(`api/chat/${k}/${ts}`, authProbe, 12e3, authProbe);
         break;
       } catch (e) {
         if (!valid()) return;
-        if (i >= 2 || e.status === 404 || e.status === 403) throw e;
+        if (authProbe || i >= 2 || e.status === 401 || e.status === 404 || e.status === 403) throw e;
         await sleep(700 * (i + 1));
       }
     }
     if (!valid()) return;
     rxFix(j);
     CS.thr[ts] = j;
+    if (authProbe) rtc().auth = null;
     if (j.home && CS.th?.ts === ts && CS.at === k && !isNodeCh(k)) homeGo(j.home, k, ts);
   } catch (e) {
     if (!valid()) return;
+    if (e.status === 401) {
+      const s = rtc();
+      s.auth = { k, ts };
+      clearTimeout(s.t);
+      s.t = 0;
+    } else if (authProbe && (e.status === 403 || e.status === 404)) rtc().auth = null;
     CS.thr[ts] = e.status === 404 || e.status === 403 ? { messages: [] } : { ...CS.thr[ts] || { messages: [] }, err: e.message, errStatus: e.status };
   }
 }
@@ -8232,8 +8271,9 @@ const errOnce = (k) => {
   });
 };
 function rtc() {
-  return rtc.s ||= { n: /* @__PURE__ */ new Map(), t: 0, due: 0, busy: false };
+  return rtc.s ||= { n: /* @__PURE__ */ new Map(), t: 0, due: 0, busy: false, auth: null, authRun: false, authAt: 0 };
 }
+window.hbReadPaused = () => !!rtc().auth;
 function rtSweep() {
   const s = rtc();
   for (const k of s.n.keys()) {
@@ -8246,7 +8286,7 @@ const errKeys = () => [...Object.entries(CS.thr).filter(([, v]) => v?.err).map((
 const rtGiveUp = (k) => (rtc().n.get(k) || 0) >= RT_GAP.length - 1;
 function autoRetry() {
   const s = rtc();
-  if (s.busy || window.HB_NET) return;
+  if (s.busy || s.auth || window.HB_NET) return;
   const ks = errKeys();
   if (!ks.length) return;
   const gap = RT_GAP[Math.min(Math.min(...ks.map((k) => s.n.get(k) || 0)), RT_GAP.length - 1)];
@@ -8255,7 +8295,7 @@ function autoRetry() {
   s.due = Date.now() + gap;
   s.t = setTimeout(async () => {
     s.t = 0;
-    if (window.HB_NET) return;
+    if (s.auth || window.HB_NET) return;
     if (document.hidden) return autoRetry();
     s.busy = true;
     try {
@@ -8270,10 +8310,11 @@ const readErr = (k, has, what = "글을") => {
   if (window.HB_NET) return "";
   errOnce(k || "read");
   autoRetry();
-  if (!rtGiveUp(k)) return has ? "" : LOADING;
+  if (!rtc().auth && !rtGiveUp(k)) return has ? "" : LOADING;
   return `<div class="empty rderr" role="status"><span>${what} 불러오지 못했어요</span>${RETRY}</div>`;
 };
 async function retryReads(auto) {
+  if (rtc().auth) return auto === false ? retryAuthReads() : void 0;
   const bad = Object.entries(CS.thr).filter(([, t]) => t?.err).map(([ts]) => ts), chBad = Object.entries(CS.ch).filter(([, c]) => c?.err).map(([k]) => k);
   if (!bad.length && !chBad.length) {
     rtSweep();
@@ -8288,11 +8329,28 @@ async function retryReads(auto) {
   if (chatOn()) viewChat(true);
   else if (cur && !ans.hidden && !sending) render();
 }
+async function retryAuthReads() {
+  const s = rtc(), auth = s.auth;
+  if (!auth || s.authRun || document.hidden || Date.now() - s.authAt < 1e3) return;
+  s.authRun = true;
+  s.authAt = Date.now();
+  try {
+    await loadTh(auth.k, auth.ts, () => true, true);
+  } finally {
+    s.authRun = false;
+  }
+  if (chatOn()) viewChat(true);
+  autoRetry();
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) retryAuthReads();
+});
+window.addEventListener("focus", retryAuthReads);
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-chretry]")) {
     e.preventDefault();
     e.stopPropagation();
-    retryReads();
+    retryReads(false);
   }
 }, true);
 const NET_IC = {
@@ -8588,10 +8646,10 @@ function chanHTML() {
   const k = CS.at, c = CS.ch[k] || { messages: [], loading: true };
   const ms = chWin(k, c.messages), hid = c.messages.length - ms.length;
   const feed = c.messages.length ? (CS.oldBusy[k] || hid ? '<div class="oldspin" role="status" aria-label="옛 글 불러오는 중"><i class="g g-spin"></i></div>' : "") + ms.map((m) => msgHTML(m, k, false)).join("") : c.loading ? LOADING : c.err ? readErr("ch:" + k) : emptyHTML({ ic: "chat", t: "아직 글이 없어요", p: "아래 칸에 첫 글을 쓰면 여기서 이어져요.", sk: "msg" });
-  return `<div class="cmain"><div class="chd"><span class="t">${isSessCh(k) ? esc(sessName(k)) + " · 세션" : isNodeCh(k) ? esc(k.slice(2)) : isXCh(k) ? "↔ " + esc(undefined || "") : k === "primary" && mainOn() ? "# 메인" : "# " + k}</span><span class="d">${esc(k === "primary" && mainOn() ? `다섯 채널 글을 한 줄기로 · 새 글은 ${PRI()}${josa(PRI(), "이", "가")} 받아요` : k === "primary" ? `${PRI()}${josa(PRI(), "과", "와")} 영역 리드 · Slack 원문` : CH_DESC[k] || "")}</span>${c.stale_min ? `<span class="stale" title="Slack 을 못 읽어 마지막으로 읽은 글을 보여요">수집 멈춤 ${c.stale_min}분</span>` : c.err && c.messages.length ? `<span class="stale" title="${esc(c.err)}">수집 멈춤 · 화면은 마지막으로 받은 글</span>` : ""}${isNodeCh(k) ? "" : huddle({ ch: k })}</div>
+  return `<div class="cmain"><div class="chd"><span class="t">${isSessCh(k) ? esc(sessName(k)) + " · 세션" : isNodeCh(k) ? esc(k.slice(2)) : isXCh(k) ? "↔ " + esc(undefined || "") : k === "primary" ? "#메인" : "# " + k}</span><span class="d">${esc(k === "primary" && mainOn() ? `다섯 채널 글을 한 줄기로 · 새 글은 ${PRI()}${josa(PRI(), "이", "가")} 받아요` : k === "primary" ? `${PRI()}${josa(PRI(), "과", "와")} 영역 리드 · Slack 원문` : CH_DESC[k] || "")}</span>${c.stale_min ? `<span class="stale" title="Slack 을 못 읽어 마지막으로 읽은 글을 보여요">수집 멈춤 ${c.stale_min}분</span>` : c.err && c.messages.length ? `<span class="stale" title="${esc(c.err)}">수집 멈춤 · 화면은 마지막으로 받은 글</span>` : ""}${isNodeCh(k) ? "" : huddle({ ch: k })}</div>
     ${isNodeCh(k) ? `<div class="nbanner" role="status">${nodeBanner(k.slice(2))}</div>` : ""}
     ${fwrap("cfeed", "", feed + pendFor("new:" + CS.at))}
-    ${isSessCh(k) ? comp("cnew", `${sessName(k)}에 쓰기`, "Enter 보내기 · 이 세션 입력칸에 들어가요") : comp("cnew", isNodeCh(k) ? `${k.slice(2)}에 쓰기` : isXCh(k) ? `${undefined || ""}에 쓰기 · @리드 로 일 맡기기` : AGENT_CH.some((a) => a.key === k) ? `${AREA_NAME[k]}에 쓰기` : `#${k}에 쓰기`, k === "primary" ? `Enter 보내기 · ${PRI()}${josa(PRI(), "이", "가")} 받아요(낱말이 분명하면 그 영역 리드)` : isXCh(k) ? "Enter 보내기 · 이 채널 사람에게 보여요" : `Enter 보내기 · ${esc(jo(AREA_NAME[k], "이/가"))} 받아요 · Slack #${k}에도`)}</div>`;
+    ${isSessCh(k) ? comp("cnew", `${sessName(k)}에 쓰기`, "Enter 보내기 · 이 세션 입력칸에 들어가요") : comp("cnew", k === "primary" ? "#메인에 쓰기" : isNodeCh(k) ? `${k.slice(2)}에 쓰기` : isXCh(k) ? `${undefined || ""}에 쓰기 · @리드 로 일 맡기기` : AGENT_CH.some((a) => a.key === k) ? `${AREA_NAME[k]}에 쓰기` : `#${k}에 쓰기`, k === "primary" ? `Enter 보내기 · ${PRI()}${josa(PRI(), "이", "가")} 받아요(낱말이 분명하면 그 영역 리드)` : isXCh(k) ? "Enter 보내기 · 이 채널 사람에게 보여요" : `Enter 보내기 · ${esc(jo(AREA_NAME[k], "이/가"))} 받아요 · Slack #${k}에도`)}</div>`;
 }
 function thHTML() {
   if (!CS.th || thInline()) return "";
