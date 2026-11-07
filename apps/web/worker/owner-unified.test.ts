@@ -32,6 +32,7 @@ const live = await import("./live.ts");
 const { _resetVaultCache } = await import("./vault/index.ts");
 const { Engine } = await import("./engine.ts");
 const MB = await import("./member-board.ts");
+const { hosted } = await import("./hosted.ts");
 (app as any).onError((e: unknown) => { console.error("시험 500:", e); return new Response("{}", { status: 500 }); });
 
 const MIG = new URL("../migrations/", import.meta.url);
@@ -1009,4 +1010,107 @@ test("관리 live/drop: 주인 메일이면 화면 칸(live:<canon>)과 스냅�
     await t.req("POST", "/api/admin/live/drop", { who: MEMBER }, t.adm);
     assert.deepEqual(dropped.length, 1); assert.ok(dropped[0].startsWith(`live:${MEMBER}`) && dropped[0].endsWith(":false"), dropped.join(" "));
   } finally { t.env.SNAP = env0; }
+});
+
+test("지정한 서버 기기의 canon tmux 창 받은편지함만 주인 장부 · 역할은 회원 길 유지", async () => {
+  const prev = hosted.exec;
+  hosted.exec = { on: async () => false, call: async () => { throw new Error("안 씀"); }, tool: async () => { throw new Error("안 씀"); } };
+  try {
+    const t = await setup(), T = Date.now();
+    t.db.prepare("UPDATE device SET machine = ? WHERE id = 'devOF'").run("a".repeat(32));
+    t.db.prepare("INSERT INTO device(id, owner, name, tools, token_hash, created_at, last_at, scope, machine) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run("harness", OWNER, "서버", "", "tmux-harness", T, T, "harness", "a".repeat(32));
+    assert.equal((await t.req("POST", "/api/admin/owner-inbox/device", { device_id: "devOF" }, t.adm)).status, 200);
+    const w = await t.req("POST", "/api/device/window", { key: "owner-host:tmux:3750", name: "작업" }, { authorization: `Bearer ${OFULL}` });
+    assert.equal(w.status, 200, w.text); const h = { authorization: `Bearer ${w.j.token}` }; t.reset();
+    for (const [name, args] of [["inbox_status", { text: "주인 상태" }], ["inbox_log", { kind: "progress", text: "주인 진행" }], ["inbox_ask", { question: "주인 물음", choices: ["가", "나"] }]] as const) {
+      const r = await t.req("POST", "/api/agent/" + name, args, h); assert.equal(r.status, 200, name + r.text);
+    }
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), ["tool:inbox_status", "tool:inbox_log", "tool:inbox_ask"]);
+    assert.ok(t.agents.slice(-3).every(x => x === "boarder@device:devOF:owner-host:tmux:3750"));
+    assert.equal((t.db.prepare("SELECT count(*) n FROM board_log WHERE owner = ?").get(OWNER) as any).n, 0);
+    assert.equal((t.db.prepare("SELECT count(*) n FROM board_card WHERE owner = ?").get(OWNER) as any).n, 0);
+    assert.equal((await t.req("POST", "/api/admin/tools/role_list", { enabled: true }, t.adm)).status, 200);
+    t.reset(); const roles = await t.req("POST", "/api/agent/role_list", {}, h); assert.equal(roles.status, 200, roles.text);
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), [], "역할 도구는 회원 길 그대로");
+    // 표시용 machine이 없어도 관리자가 지정한 기기 신원은 그대로다.
+    t.db.prepare("UPDATE device SET machine = NULL WHERE id = 'devOF'").run();
+    t.reset(); assert.equal((await t.req("POST", "/api/agent/inbox_status", { text: "서버 표시값 없음" }, h)).status, 200);
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), ["tool:inbox_status"]);
+    assert.equal((await t.req("POST", "/api/admin/owner-inbox/device", { device_id: null }, t.adm)).status, 200);
+    t.reset(); assert.equal((await t.req("POST", "/api/agent/inbox_status", { text: "설정 지운 상태" }, h)).status, 200);
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), []);
+    assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(OWNER, "설정 지운 상태"));
+    assert.equal((await t.req("POST", "/api/admin/owner-inbox/device", { device_id: "devOF" }, t.adm)).status, 200);
+    t.db.prepare("UPDATE device SET machine = ? WHERE id IN ('harness','devM')").run("a".repeat(32));
+    const member = await t.req("POST", "/api/device/window", { key: "owner-host:tmux:3750", name: "회원 창" }, { authorization: `Bearer ${MDEV}` });
+    t.reset(); assert.equal((await t.req("POST", "/api/agent/inbox_status", { text: "회원 사칭 막음" }, { authorization: `Bearer ${member.j.token}` })).status, 200);
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), []);
+    assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(MEMBER, "회원 사칭 막음"));
+    t.db.prepare("UPDATE device SET scope = 'watch' WHERE id = 'devOF'").run();
+    assert.equal((await t.req("POST", "/api/agent/inbox_status", { text: "권한 낮춘 기기" }, h)).status, 200);
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), []);
+    assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(OWNER, "권한 낮춘 기기"));
+    t.db.prepare("UPDATE device SET scope = 'full' WHERE id = 'devOF'").run();
+    // 회전으로 폐기된 토큰과 폐기된 기기 모두 새 쓰기를 못 한다.
+    const rotated = await t.req("POST", "/api/device/window", { key: "owner-host:tmux:3750", name: "작업" }, { authorization: `Bearer ${OFULL}` });
+    assert.equal(rotated.status, 200); t.reset();
+    assert.equal((await t.req("POST", "/api/agent/inbox_log", { kind: "progress", text: "폐기 토큰" }, h)).status, 401);
+    t.db.prepare("UPDATE device SET revoked_at = ? WHERE id = 'devOF'").run(Date.now());
+    assert.equal((await t.req("POST", "/api/agent/inbox_ask", { question: "폐기 기기", choices: ["가", "나"] }, { authorization: `Bearer ${rotated.j.token}` })).status, 401);
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), []);
+  } finally { hosted.exec = prev; }
+});
+
+test("신뢰 경계: 다른 기기가 서버 machine 머리와 tmux 키를 위조해도 회원 표에만 씀", async () => {
+  const prev = hosted.exec;
+  hosted.exec = { on: async () => false, call: async () => {}, tool: async () => {} };
+  try {
+    const t = await setup(), T = Date.now(), server = "a".repeat(32);
+    t.db.prepare("UPDATE device SET machine = ? WHERE id = 'devOF'").run("b".repeat(32));
+    t.db.prepare("INSERT INTO device(id,owner,name,tools,token_hash,created_at,last_at,scope,machine) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run("server", OWNER, "서버", "", "server-full-hash", T, T, "full", server);
+    t.db.prepare("INSERT INTO device(id,owner,name,tools,token_hash,created_at,last_at,scope,machine) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run("harness", OWNER, "서버 엔진", "", "server-harness-hash", T, T, "harness", server);
+    t.db.prepare("INSERT INTO owner_inbox_device(id,device_id) VALUES (1,'server')").run();
+    const issue = (headers: Record<string, string>) => t.req("POST", "/api/device/window", { key: "owner-host:tmux:3750", name: "다른 컴퓨터" }, { authorization: `Bearer ${OFULL}`, ...headers });
+    const first = await issue({}); assert.equal(first.status, 200);
+    t.reset(); assert.equal((await t.req("POST", "/api/agent/inbox_status", { text: "위조 전" }, { authorization: `Bearer ${first.j.token}` })).status, 200);
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), []);
+    const forged = await issue({ "x-boarder-machine": server }); assert.equal(forged.status, 200);
+    assert.equal((t.db.prepare("SELECT machine FROM device WHERE id = 'devOF'").get() as any).machine, server, "표시값은 위조되었음");
+    t.reset();
+    for (const [name, args] of [["inbox_status", { text: "위조 상태" }], ["inbox_log", { kind: "progress", text: "위조 진행" }], ["inbox_ask", { question: "위조 물음", choices: ["가", "나"] }]] as const) {
+      const r = await t.req("POST", "/api/agent/" + name, args, { authorization: `Bearer ${forged.j.token}` }); assert.equal(r.status, 200, r.text);
+    }
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), [], "다른 기기는 서버 장부를 호출하지 않음");
+    for (const text of ["위조 상태", "위조 진행"]) assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(OWNER, text));
+    assert.equal((t.db.prepare("SELECT count(*) n FROM board_card WHERE owner = ?").get(OWNER) as any).n, 1);
+    t.db.prepare("DELETE FROM owner_inbox_device").run(); t.reset();
+    assert.equal((await t.req("POST", "/api/agent/inbox_status", { text: "설정 없음" }, { authorization: `Bearer ${forged.j.token}` })).status, 200);
+    assert.deepEqual(t.bridge.filter(x => x !== "tool:flag"), []);
+    assert.ok(t.db.prepare("SELECT 1 FROM board_log WHERE owner = ? AND text = ?").get(OWNER, "설정 없음"));
+  } finally { hosted.exec = prev; }
+});
+
+test("신뢰 경계: 서버 받은편지함 기기 지정은 관리 토큰만 · 산 주인 full 기기만", async () => {
+  const t = await setup(), path = "/api/admin/owner-inbox/device", body = { device_id: "devOF" };
+  const w = await t.req("POST", "/api/device/window", { key: "owner-host:tmux:3750", name: "작업" }, { authorization: `Bearer ${OFULL}` });
+  for (const h of [{}, await t.human(OWNER), { authorization: `Bearer ${OFULL}` }, { authorization: `Bearer ${w.j.token}` }, { authorization: "Bearer relay-made-up" }]) {
+    assert.equal((await t.req("POST", path, body, h)).status, 403);
+    assert.equal((await t.req("POST", path, { device_id: null }, h)).status, 403);
+  }
+  for (const bad of [{}, null, [], { device_id: "" }, { device_id: 1 }, { device_id: "devOF\n" }, { device_id: "devOF", machine: "a".repeat(32) }])
+    assert.equal((await t.req("POST", path, bad, t.adm)).status, 400);
+  for (const id of ["missing", "devM"]) assert.equal((await t.req("POST", path, { device_id: id }, t.adm)).status, 400);
+  assert.equal((await t.req("POST", path, body, t.adm)).status, 200);
+  for (const scope of ["watch", "ownercli", "harness"]) {
+    t.db.prepare("UPDATE device SET scope = ? WHERE id = 'devOF'").run(scope);
+    assert.equal((await t.req("POST", path, body, t.adm)).status, 400);
+  }
+  t.db.prepare("UPDATE device SET scope = 'full', revoked_at = ? WHERE id = 'devOF'").run(Date.now());
+  assert.equal((await t.req("POST", path, body, t.adm)).status, 400);
+  assert.equal((t.db.prepare("SELECT device_id FROM owner_inbox_device").get() as any).device_id, "devOF", "거절할 때 기존 지정은 보존");
+  assert.equal((await t.req("POST", path, { device_id: null }, t.adm)).status, 200);
+  assert.equal(t.db.prepare("SELECT 1 FROM owner_inbox_device").get(), undefined);
 });

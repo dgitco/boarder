@@ -1,6 +1,6 @@
 <!doctype html><html lang="ko" class="live"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-180.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="보드"><meta name="apple-mobile-web-app-status-bar-style" content="default"><script>
 window.HB_LIVE = true;
-window.HB_VER = "c619a6e79043";
+window.HB_VER = "9e7da4b0016e";
 window.HB_DTAG = "__BX_DTAG__";
 </script><script>
 (() => {
@@ -6284,7 +6284,8 @@ function hvItems(p) {
     s = tlPlain(s).replace(/:[a-z0-9_+'-]+:/g, "").trim();
     return s.length > 40 ? s.slice(0, 39).trim() + "…" : s;
   };
-  return topicsOf(p).filter((t) => t && TS_RE.test(t.ts || "") && t.ch).slice().sort((a, b) => (+b.last || +b.ts) - (+a.last || +a.ts)).slice(0, 8).map((t) => {
+  const linked = topicsOf(p), refs = linked.length ? linked : (CS.T.threads || []).filter((t) => t.owner === p.pane).map((t) => ({ ch: t.channel, ts: t.ts, last: t.last?.ts || t.ts }));
+  return refs.filter((t) => t && TS_RE.test(t.ts || "") && t.ch).slice().sort((a, b) => (+b.last || +b.ts) - (+a.last || +a.ts)).slice(0, 8).map((t) => {
     const x = thr.get(t.ts), m = x?.text ? x : tkMsg({ c: t.ch, t: t.ts }), last = +(x?.last?.ts || t.last || t.ts), a = agoTs(last);
     return { ch: t.ch, ts: t.ts, title: m && (cut(m.text) || m.name) || "요청", sub: [x?.needs ? TURN : "", a ? `마지막 ${a} 전` : ""].filter(Boolean).join(" · ") };
   });

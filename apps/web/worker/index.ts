@@ -699,8 +699,11 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
   const agent = `boarder@${who.host}:${who.pane}`;
   if (hosted.privateLogDb) c.env = { ...c.env, DB: hosted.privateLogDb(c.env.DB, W.canonKey(c.env, who.owner || W.canon(c.env))) };
   const own = who.owner;
+  const inboxDevice = hosted.exec && own && W.isAdmin(c.env, own) && who.device_id && /^[\w.-]{1,30}:tmux:\d{1,7}$/.test(who.pane) ?
+    await c.env.DB.prepare("SELECT d.owner FROM owner_inbox_device s JOIN device d ON d.id = s.device_id WHERE s.id = 1 AND d.id = ? AND d.scope = 'full' AND d.revoked_at IS NULL").bind(who.device_id).first<{ owner: string }>() : null;
+  const ownerInbox = !!(inboxDevice && W.isAdmin(c.env, inboxDevice.owner));
   REC.get(c.req.raw) && (REC.get(c.req.raw)!.who = who.owner || agent);
-  if (!who.owner) { const rec = REC.get(c.req.raw); if (rec) rec.dev = W.canon(c.env); }   // 쓰기 뒤 canon 화면 칸에 알림(미들웨어 lw) — PostHog who 는 그대로 에이전트
+  if (!who.owner || ownerInbox) { const rec = REC.get(c.req.raw); if (rec) rec.dev = W.canon(c.env); }   // 쓰기 뒤 canon 화면 칸에 알림(미들웨어 lw) — PostHog who 는 그대로 에이전트
   if (who.owner) c.executionCtx.waitUntil(c.env.DB.prepare("UPDATE device SET last_at = ? WHERE id = (SELECT device_id FROM agent_token WHERE hash = ?)").bind(Date.now(), who.hash).run().catch(() => {}));
   const reg = await registry(c.env.DB, t => flag(t, "boarder@worker"), c.env.CF_VERSION_METADATA);
   const owner = who.hash.slice(0, 32);
@@ -714,7 +717,7 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
       // 단일 읽기의 quiet와 JSON-RPC 배열의 기본 알림을 모두 보존한다.
       rec.quiet = otherTool ? initialQuiet.value : true;
     },
-    agent, publicUrl: c.env.PUBLIC_URL, view: view(reg, who.tools ?? "*"),
+    agent, ownerInbox, publicUrl: c.env.PUBLIC_URL, view: view(reg, who.tools ?? "*"),
     via: new URL(c.req.url).pathname === "/mcp" ? "mcp" as const : "rest" as const, testCh: c.req.header("x-boarder-channel") === "test",
     flag: (t: string) => c.executionCtx.waitUntil((boardTool(c.env, ch, "flag", { text: t }, "boarder@worker") as Promise<unknown>).catch(() => {})),
     op: async (name: string, args: Record<string, unknown>) => { const t = Date.now(); try { return await boardTool(c.env, ch, name, args, agent); } finally { seg(c.req.raw, "tool", Date.now() - t); } },
@@ -2015,6 +2018,19 @@ app.get("/emoji/i/:file", async c => {
 
 const admin = (c: Context<{ Bindings: Env }>) => !!c.env.ADMIN_TOKEN && sameToken((c.req.header("authorization") || "").replace(/^Bearer\s+/i, ""), c.env.ADMIN_TOKEN);
 hosted.admin?.(app, { admin, invite });
+app.post("/api/admin/owner-inbox/device", async c => {
+  if (!admin(c)) return c.json({ error: "no" }, 403);
+  const b = z.object({ device_id: z.string().min(1).max(80).regex(/^[A-Za-z0-9_-]+$/).nullable() }).strict().safeParse(await c.req.json().catch(() => null));
+  if (!b.success) return c.json({ error: "device_id = 기기 id 또는 null" }, 400);
+  const id = b.data.device_id;
+  if (id === null) await c.env.DB.prepare("DELETE FROM owner_inbox_device WHERE id = 1").run();
+  else {
+    const d = await c.env.DB.prepare("SELECT owner, scope FROM device WHERE id = ? AND revoked_at IS NULL").bind(id).first<{ owner: string; scope: string }>();
+    if (!d || d.scope !== "full" || !W.isAdmin(c.env, d.owner)) return c.json({ error: "산 주인 full 기기만 지정할 수 있어요" }, 400);
+    await c.env.DB.prepare("INSERT INTO owner_inbox_device(id, device_id) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET device_id = excluded.device_id").bind(id).run();
+  }
+  return c.json({ ok: true, device_id: id }, 200, { "cache-control": "no-store" });
+});
 app.post("/api/admin/agent-tokens", async c => {
   if (!admin(c)) return c.json({ error: "no" }, 403);
   const { pane, win, host } = await c.req.json<{ pane?: string; win?: string; host?: string }>().catch(() => ({} as any));

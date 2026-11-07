@@ -16,6 +16,7 @@ export type Ctx = {
   publicUrl: string;
   view: View;
   store?: (text: string) => Promise<string>;
+  ownerInbox?: boolean;
   local?: (name: string, args: Record<string, any>) => Promise<unknown>;
   flag?: (text: string) => void;
   win?: string;
@@ -243,6 +244,7 @@ export const maskWrites = <T extends Record<string, any>>(name: string, a: T): T
 const CHANNEL_TOOLS = new Set(["channel", "send", "tell", "peers", "inbox"]);
 export const isChannelTool = (name: string) => CHANNEL_TOOLS.has(name);
 export async function run(ctx: Ctx, name: string, raw: Record<string, unknown>): Promise<unknown> {
+  if (ctx.ownerInbox && name.startsWith("inbox_")) ctx = { ...ctx, local: undefined };
   let n = 0, a: Record<string, any>;
   try {
     const schema = schemaOf(name); if (!schema) throw new Error(`없는 도구: ${name}`);
