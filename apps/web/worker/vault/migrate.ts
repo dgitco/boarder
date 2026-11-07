@@ -3,7 +3,7 @@ import { engineOf, flagOwner } from "../engine";
 import { dekOwner, RB, ridCell } from "../queue";
 import { hosted } from "../hosted";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
-import { escapeField, openBlob, openField, sealBlob, sealField, unescapeField, type VaultEnv } from "./index";
+import { escapeField, openBlob, openField, sealBlob, sealField, unescapeField, type FieldRef, type VaultEnv } from "./index";
 
 export type MEnv = VaultEnv & { RESULTS: R2Bucket; ENGINE?: unknown; SNAP?: unknown; ALLOW_EMAILS?: string; BETTER_AUTH_SECRET?: string };
 export type Scope = string;   // scopes() 에 든 이름
@@ -27,7 +27,7 @@ const res = (scope: Scope, dryRun?: boolean): Result => ({ scope, done: 0, skipp
 // whoSql = 사람별 옮기기(owner)의 WHERE 조각(값 하나 바인드) — 기본 "owner = ?". who = 바인드 값이 여럿이거나 바꿔야 할 때(whoSql 대신)
 // codec = vault(DEK) 가 아닌 다른 봉투 — 꼴 · 봉하기 · 열기를 그 표가 정함(봉투 스위치와 상관없음, envelopeScope = false)
 export type Codec = { form: (v: unknown) => keyof Counts; seal: (env: MEnv, pt: string) => Promise<string>; open: (env: MEnv, v: string) => Promise<string> };
-export type D1ScopeSpec = { key: string; cols: string[]; kind: "secret" | "text"; owner: (r: R) => string; pk: (r: R) => string | null; whoSql?: string; who?: (env: MEnv, who: string) => { sql: string; args: unknown[] }; genPk?: { col: string; make: () => string }; codec?: Codec };
+export type D1ScopeSpec = { key: string; cols: string[]; kind: "secret" | "text"; owner: (r: R) => string; pk: (r: R) => string | null; whoSql?: string; who?: (env: MEnv, who: string) => { sql: string; args: unknown[] }; genPk?: { col: string; make: () => string }; codec?: Codec; fields?: (env: MEnv, row: R) => Promise<{ sealField(ref: FieldRef, value: string): Promise<string>; openField(ref: FieldRef, value: string): Promise<string> }> };
 
 // better-auth 토큰(account.accessToken · refreshToken, auth.ts encryptOAuthTokens): better-auth 와 같은 꼴 — BETTER_AUTH_SECRET(글월)로 symmetricEncrypt = 짝수 길이 hex.
 // 꼴 가리기도 better-auth 의 isLikelyEncrypted 와 같게("$ba$" 또는 짝수 hex = 봉함 — 그렇게 보이는 평문은 better-auth 도 풀려다 실패하므로 안 건드림 · back 에서도 안 씀)
@@ -87,10 +87,11 @@ async function d1Move(env: MEnv, scope: string, to: "v2" | "old", page: number, 
   const S = T[scope], out = res(scope, dryRun), C = S.codec;
   const fm = C ? C.form : form;
   // 열기 · 봉하기: codec 표는 그 봉투, 나머지는 vault
-  const open = (owner: string, ref: { tbl: string; pk: string; col: string }, v: string) => (C ? C.open(env, v) : openField(env, owner, ref, v) as Promise<string>);
   for await (const rs of rows(env, scope, page, who)) for (const r of rs) {
     const key = `${scope}:${r[S.key]}`;
     try {
+      const fields = await S.fields?.(env, r);
+      const open = (owner: string, ref: FieldRef, v: string) => C ? C.open(env, v) : fields ? fields.openField(ref, v) : openField(env, owner, ref, v) as Promise<string>;
       const owner = S.owner(r), sets: [string, string, string][] = [];   // [칸, 옛 값, 새 값]
       const G = S.genPk;   // 비어 있으면 채울 pk 칸(있는 표만)
       let gen = G ? r[G.col] as string | null : null;
@@ -109,13 +110,13 @@ async function d1Move(env: MEnv, scope: string, to: "v2" | "old", page: number, 
           if (fm(neu) !== (to === "v2" ? "v2" : "plain")) throw new Error(`${c}: ${to === "v2" ? "봉한 꼴이 아님" : "연 평문이 봉한 꼴로 보임(읽는 쪽이 풀려 함)"} — 안 씀`);
           sets.push([c, r[c], neu]); want[c] = pt;
         } else if (to === "v2") {
-          const pt = f === "v1" ? (await openField(env, owner, ref, r[c])) as string : unescapeField(String(r[c]));   // v1 은 안의 JSON 글월 그대로, 감싼 평문은 뗀 값
-          const sealed = (await sealField(env, owner, ref, pt)) as string;
+          const pt = f === "v1" ? (await open(owner, ref, r[c])) as string : unescapeField(String(r[c]));   // v1 은 안의 JSON 글월 그대로, 감싼 평문은 뗀 값
+          const sealed = (fields ? await fields.sealField(ref, pt) : await sealField(env, owner, ref, pt)) as string;
           // 봉하지 않은 값(그사이 스위치가 꺼짐 등)은 쓰지 않음 — v1 비밀 자리에 평문 JSON 이 들어가면 다시 읽기 비교도 통과해 버림
           if (!sealed.startsWith("v2.")) throw new Error(`${c}: 봉하지 않은 값(스위치 꺼짐?) — 안 씀`);
           sets.push([c, r[c], sealed]); want[c] = pt;
         } else {
-          const pt = (await openField(env, owner, ref, r[c])) as string;
+          const pt = (await open(owner, ref, r[c])) as string;
           sets.push([c, r[c], S.kind === "secret" ? await v1seal(env.CONNECTOR_KEY, JSON.parse(pt)) : escapeField(pt)]); want[c] = pt;   // 평문이 봉한 꼴이면 감싸 둠
         }
       }

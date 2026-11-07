@@ -1,6 +1,6 @@
 import { CODE_TOOLS, SEARCH, DESCRIBE, EXECUTE, EXECUTE_WRITE, INSTRUCTIONS, MAX_CALLS, MAX_CODE, MAX_OUTPUT, formatScript, type ToolApi } from "./codemode";
 import { quickjsSandbox } from "./quickjs";
-import { run, search, describe, onlyReads, type Ctx } from "./tools";
+import { run, search, describe, onlyReads, isChannelTool, type Ctx } from "./tools";
 import { shape } from "./registry";
 import { isConnectorTool, searchLines, describeTool, runTool } from "../connectors/mcp";
 import { offerConnect } from "../connectors/connect-card";
@@ -41,6 +41,7 @@ export const REVOKED_MSG = "401 열쇠가 끊겼어요 — 이 창 · 기기를 
 async function execute(ctx: Ctx, args: any, write: boolean) {
   let calls = 0, recheck = false;
   const one = async (name: string, a: Record<string, unknown>) => {
+    if (!isChannelTool(name)) ctx.boardWrite?.(true);
     if (++calls > MAX_CALLS) throw new Error(`도구 부르기는 ${MAX_CALLS} 번까지`);
     if (recheck && write && (isConnectorTool(name) || !onlyReads(name)) && ctx.alive && !(await ctx.alive())) throw new Error(REVOKED_MSG);
     if (isConnectorTool(name)) {
@@ -77,6 +78,7 @@ async function call(ctx: Ctx, name: string, args: any) {
 }
 
 async function handle(ctx: Ctx, m: Rpc) {
+  if (m.method !== "tools/call" || ![EXECUTE, EXECUTE_WRITE].includes(String(m.params?.name || ""))) ctx.boardWrite?.(true);
   switch (m.method) {
     case "initialize": return ok(m.id, { protocolVersion: m.params?.protocolVersion || PROTOCOL, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "boarder", version: "0.1.0" }, instructions: INSTRUCTIONS });
     case "ping": return ok(m.id, {});

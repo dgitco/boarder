@@ -7,6 +7,7 @@ import { filterArgs } from "./log-filter";
 import type { Hosted } from "../hosted";
 
 export type Ctx = {
+  boardWrite?: (notify: boolean) => void;                     // 채널 밖 호출이 섞이면 요청의 기존 알림 판정을 유지
   via?: "mcp" | "rest";                                      // 들어온 길(피드백 기록용)
   testCh?: boolean;                                          // X-Boarder-Channel: test
   agent: string;
@@ -239,6 +240,8 @@ const WRITES = new Set(["inbox_ask", "inbox_log", "inbox_close", "inbox_say", "i
 const NO_MASK = new Set(["cwd", "node", "thread", "thread_id", "card_id", "replaced_by", "promise_id", "role_id", "task", "device"]);
 export const WRITE_TOOLS: ReadonlySet<string> = WRITES;
 export const maskWrites = <T extends Record<string, any>>(name: string, a: T): T => (WRITES.has(name) ? filterArgs(a, NO_MASK).args : a);
+const CHANNEL_TOOLS = new Set(["channel", "send", "tell", "peers", "inbox"]);
+export const isChannelTool = (name: string) => CHANNEL_TOOLS.has(name);
 export async function run(ctx: Ctx, name: string, raw: Record<string, unknown>): Promise<unknown> {
   let n = 0, a: Record<string, any>;
   try {
@@ -261,6 +264,7 @@ export async function run(ctx: Ctx, name: string, raw: Record<string, unknown>):
     // 공통 관문은 아직 도구를 실행하지 않았다. 실행 뒤 오류에는 이 표시를 붙이지 않는다.
     throw Object.assign(e instanceof Error ? e : new Error(String(e)), { sent: false });
   }
+  ctx.boardWrite?.(!isChannelTool(name));
   const out = await raw_(ctx, name, a);
   return shape(name, n && out && typeof out === "object" ? { ...out, redacted: n } : out, ctx.view.mask(name));
 }

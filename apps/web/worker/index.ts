@@ -693,7 +693,16 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
   if (who.owner) c.executionCtx.waitUntil(c.env.DB.prepare("UPDATE device SET last_at = ? WHERE id = (SELECT device_id FROM agent_token WHERE hash = ?)").bind(Date.now(), who.hash).run().catch(() => {}));
   const reg = await registry(c.env.DB, t => flag(t, "boarder@worker"), c.env.CF_VERSION_METADATA);
   const owner = who.hash.slice(0, 32);
+  let otherTool = false;
+  let initialQuiet: { value?: boolean } | undefined;
   return {
+    boardWrite: (notify: boolean) => {
+      const rec = REC.get(c.req.raw); if (!rec) return;
+      initialQuiet ??= { value: rec.quiet };
+      otherTool ||= notify;
+      // 단일 읽기의 quiet와 JSON-RPC 배열의 기본 알림을 모두 보존한다.
+      rec.quiet = otherTool ? initialQuiet.value : true;
+    },
     agent, publicUrl: c.env.PUBLIC_URL, view: view(reg, who.tools ?? "*"),
     via: new URL(c.req.url).pathname === "/mcp" ? "mcp" as const : "rest" as const, testCh: c.req.header("x-boarder-channel") === "test",
     flag: (t: string) => c.executionCtx.waitUntil((boardTool(c.env, ch, "flag", { text: t }, "boarder@worker") as Promise<unknown>).catch(() => {})),
