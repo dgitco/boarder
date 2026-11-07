@@ -173,7 +173,8 @@ function shareWait<T>(p: Promise<T>, own: () => Promise<T>, ms: number): Promise
 }
 // ver(owner_ver 번호)를 주면 같은 번호를 읽은 뒤 시작한 읽기끼리만 나눔 — 그 판은 그 번호보다 새것이라 번호 열쇠로 Cache API 에 넣어도 낡지 않음
 export function loadRead(db: D1Database, me: string, ctx?: Ctx | null, ver?: number): ReturnType<typeof load> {
-  if (!ctx) return load(db, me);
+  // 권한이 요청마다 달라지는 원문은 다른 요청의 본문 판을 재사용하지 않는다.
+  if (!ctx || (db as unknown as Record<symbol, unknown>)[Symbol.for("boarder.read.isolated")]) return load(db, me);
   const k = ver === undefined ? me : `${me}#${ver}`, now = Date.now(), hit = readShare.get(k);
   const start = () => {
     if (readShare.size > 500) readShare.clear();

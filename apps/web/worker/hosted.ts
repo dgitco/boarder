@@ -36,6 +36,10 @@ export type Hosted = {
   route?(c: Context<any>, url: URL, ch: string, pass: { req: string[]; res: string[] }, seg: (name: string, ms: number) => void): Promise<Response | null>;
   /** 봉투 옮기기(vault/migrate.ts)에 더할 호스팅 전용 D1 표(이름 → 칸 · 줄 키 · DEK 주인) — 없으면 그 scope 가 없음 */
   vaultScopes?: Record<string, D1ScopeSpec>;
+  /** 할 일의 선택적 호스팅 권한. null이면 기존 개인 길 그대로. */
+  readScope?(env: any, viewer: string): Promise<{ db: D1Database; restricted: boolean; ownerDenied: boolean }>;
+  privateLogDb?(db: D1Database, viewer: string): D1Database;
+  task?(env: any, viewer: string, owner: string, body: unknown, tree: boolean, wait: (p: Promise<unknown>) => void): Promise<[number, Record<string, unknown>] | null>;
 };
 
 const mods = import.meta.glob<{ default: Hosted }>("./ee/index.ts", { eager: true });

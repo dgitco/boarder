@@ -124,6 +124,16 @@ const app = new Hono<{ Bindings: Env }>();
 // Telemetry is read-only: skip feature lookups, write invalidation, live bumps and self-measurement.
 app.post("/api/clientlog/metrics", c => uiMetric(c.req.raw, c.env, async () => (await signedIn(c))?.user.email || null));
 app.use("*", async (c, next) => { memberBoard.setHarnessKey(W.canon(c.env)); try { const on = await ledger.f7AllPeek(c.env.DB, p => c.executionCtx.waitUntil(p)); W.setCanonOn(on.has("owner_key_canon")); } catch {} return next(); });
+// 호스팅 자료 문지기는 모든 내용 라우트·응답 캐시보다 앞에서 설치한다.
+const LOG_READ = new WeakMap<object, { restricted: boolean; ownerDenied: boolean }>();
+app.use("*", async (c, next) => {
+  if (!hosted.readScope || !c.req.header("cookie")) return next();
+  const me = (await signedIn(c))?.user.email; if (!me) return next();
+  const scope = await hosted.readScope(c.env, me); c.env = { ...c.env, DB: scope.db }; LOG_READ.set(c, scope);
+  if (scope.ownerDenied && (/^\/api\/(?:search|data|topics|history|chats)$/.test(c.req.path) || /^\/api\/board\/(?:data|topics|history|inbox|chats)$/.test(c.req.path)))
+    return c.json({ ok: false, error: "조직을 나가서 이 화면은 잠시 막혔어요" }, 404, { "cache-control": "no-store" });
+  return next();
+});
 const MC_PATHS = /^\/api\/(data|inbox|topics|chats|chat\/[^/]+(\/\d{9,11}\.\d{6})?)$/, MC_TTL = 10, MC_RATE = new Map<string, { at: number; n: number }>();
 app.use("*", async (c, next) => {
   const u = new URL(c.req.url), ck = c.req.header("cookie") || "";
@@ -136,7 +146,7 @@ app.use("*", async (c, next) => {
       try { c.res.headers.append("set-cookie", v); } catch { const r0 = c.res, r = new Response(r0.body, { status: r0.status, statusText: r0.statusText, headers: new Headers(r0.headers), ...((r0 as any).encodeBody ? { encodeBody: (r0 as any).encodeBody } : {}) }); r.headers.append("set-cookie", v); c.res = r; } }
     return;
   }
-  if (!MC_PATHS.test(u.pathname) || /(^|;\s*)bx_w=/.test(ck)) return next();
+  if (LOG_READ.get(c)?.restricted || !MC_PATHS.test(u.pathname) || /(^|;\s*)bx_w=/.test(ck)) return next();
   const who = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ck)))].slice(0, 12).map(b => b.toString(16).padStart(2, "0")).join("");
   const now = Date.now(), r = MC_RATE.get(who);
   if (!r || now - r.at > 60_000) { if (MC_RATE.size > 5000) MC_RATE.clear(); MC_RATE.set(who, { at: now, n: 1 }); } else if (++r.n > 300) return c.json({ ok: false, error: "잠시 뒤 다시" }, 429, { "retry-after": "5", "cache-control": "no-store" });
@@ -394,7 +404,7 @@ async function gunzipCapped(body: ReadableStream<Uint8Array>, cap: number) {
 app.put("/api/relay/snap/:key", async c => {
   const tok = (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "");
   if (!c.env.RELAY_TOKEN || !sameToken(tok, c.env.RELAY_TOKEN)) return c.json({ error: "no" }, 403);
-  const key = c.req.param("key"); if (!KEYS.has(key)) return c.json({ error: "모르는 칸" }, 400);
+  const key = c.req.param("key"); if (LOG_READ.get(c)?.ownerDenied && !["cfg", "page", "emoji"].includes(key)) return c.json({ ok: false, error: "조직을 나가서 이 화면은 잠시 막혔어요" }, 404, { "cache-control": "no-store" }); if (!KEYS.has(key)) return c.json({ error: "모르는 칸" }, 400);
   const t0 = Date.now();
   let body: string;
   try { body = c.req.header("content-encoding") === "gzip" ? await gunzipCapped(c.req.raw.body!, 4_000_000) : await c.req.text(); }
@@ -434,7 +444,7 @@ app.patch("/api/relay/snap/:key", async c => {
 app.put("/api/relay/snap/:key/touch", async c => {
   const tok = (c.req.header("authorization") || "").replace(/^Bearer\s+/i, "");
   if (!c.env.RELAY_TOKEN || !sameToken(tok, c.env.RELAY_TOKEN)) return c.json({ error: "no" }, 403);
-  const key = c.req.param("key"); if (!KEYS.has(key)) return c.json({ error: "모르는 칸" }, 400);
+  const key = c.req.param("key"); if (LOG_READ.get(c)?.ownerDenied && !["cfg", "page", "emoji"].includes(key)) return c.json({ ok: false, error: "조직을 나가서 이 화면은 잠시 막혔어요" }, 404, { "cache-control": "no-store" }); if (!KEYS.has(key)) return c.json({ error: "모르는 칸" }, 400);
   return (await snap(c.env).touch(key, await snapLazy(c))) ? c.json({ ok: true }) : c.json({ error: "없음 — 다시 올려요" }, 404);
 });
 const relayOk = (c: Context<{ Bindings: Env }>) => { const tok = (c.req.header("authorization") || "").replace(/^Bearer\s+/i, ""); return !!c.env.RELAY_TOKEN && sameToken(tok, c.env.RELAY_TOKEN); };
@@ -601,7 +611,7 @@ app.post("/api/relay/push/tick", async c => relayOk(c) ? c.json({ sent: await pu
 // 웹 ← 스냅숏(로그인, ETag 같으면 304)
 app.get("/api/board/:key", async c => {
   const sb = await signedIn(c); if (!sb) return c.json({ error: "로그인" }, 401); if (!W.isAdmin(c.env, sb.user.email)) return c.json({ error: "no" }, 403);
-  const key = c.req.param("key"); if (!KEYS.has(key)) return c.json({ error: "모르는 칸" }, 400);
+  const key = c.req.param("key"); if (LOG_READ.get(c)?.ownerDenied && !["cfg", "page", "emoji"].includes(key)) return c.json({ ok: false, error: "조직을 나가서 이 화면은 잠시 막혔어요" }, 404, { "cache-control": "no-store" }); if (!KEYS.has(key)) return c.json({ error: "모르는 칸" }, 400);
   const r = await snap(c.env).get(key);
   if (!r) return c.json({ error: "아직 없음" }, 404);
   const h = { etag: r.etag, "cache-control": "private, no-cache", "x-snap-at": String(r.at) };
@@ -687,6 +697,7 @@ async function agentCtx(c: Context<{ Bindings: Env }>) {
     return "mismatch" as const;
   }
   const agent = `boarder@${who.host}:${who.pane}`;
+  if (hosted.privateLogDb) c.env = { ...c.env, DB: hosted.privateLogDb(c.env.DB, W.canonKey(c.env, who.owner || W.canon(c.env))) };
   const own = who.owner;
   REC.get(c.req.raw) && (REC.get(c.req.raw)!.who = who.owner || agent);
   if (!who.owner) { const rec = REC.get(c.req.raw); if (rec) rec.dev = W.canon(c.env); }   // 쓰기 뒤 canon 화면 칸에 알림(미들웨어 lw) — PostHog who 는 그대로 에이전트
@@ -843,8 +854,10 @@ async function cliDeviceOrOwnerWatch(c: Context<{ Bindings: Env }>) {
 async function boardDevice(c: Context<{ Bindings: Env }>) {
   const on = await ledger.f7On(c.env.DB, "owner_device");
   const d = await deviceOf(c, { harness: on }); if (!d) return null;
-  if (W.isAdmin(c.env, d.owner)) return on && d.scope === "harness" ? d : null;
-  return d.scope === "full" && await member(c.env, d.owner) ? d : null;
+  const ok = W.isAdmin(c.env, d.owner) ? on && d.scope === "harness" : d.scope === "full" && await member(c.env, d.owner);
+  if (!ok) return null;
+  if (hosted.privateLogDb) c.env = { ...c.env, DB: hosted.privateLogDb(c.env.DB, W.canonKey(c.env, d.owner)) };
+  return d;
 }
 // 설정 · 커넥터 · 비밀이 쓰는 줄 열쇠: 주인 = "" , 회원 = 메일(커넥터 who() 와 같음). 기기 목록은 주인 메일 넷 모두
 const cliKey = (env: Env, email: string) => W.dataKey(env, email);
@@ -1063,7 +1076,7 @@ app.post("/api/device/task", async c => {
   if (+(c.req.header("content-length") || 0) > 64_000) return c.json({ ok: false, error: "너무 커요" }, 413);
   const me = todoOwner(c.env, d.owner), b = await c.req.json().catch(() => null);
   try {
-    const [st, o] = await taskDb.op(c.env.DB, me, b);
+    const [st, o] = await hosted.task?.(c.env, me, me, b, false, p => c.executionCtx.waitUntil(p)) ?? await taskDb.op(c.env.DB, me, b);
     if (st === 200 && b && typeof b === "object" && ((b as { op?: unknown }).op === "new" || (b as { op?: unknown }).op === "set")) { quiet(c.req.raw); c.executionCtx.waitUntil(live.bump(c.env, me, { task: "~" + Date.now() })); }
     else quiet(c.req.raw);
     return c.json(o, st as 200, { "cache-control": "no-store" });
@@ -1071,7 +1084,10 @@ app.post("/api/device/task", async c => {
 });
 app.get("/api/me/task", async c => {
   const s = await signedIn(c); if (!s) return c.json({ error: "로그인" }, 401);
-  try { return c.json({ ok: true, tasks: await taskDb.forTree(c.env.DB, todoOwner(c.env, s.user.email)) }, 200, { "cache-control": "no-store" }); }
+  try {
+    const me = todoOwner(c.env, s.user.email), r = await hosted.task?.(c.env, me, me, { op: "list" }, true, p => c.executionCtx.waitUntil(p));
+    return c.json(r?.[1] ?? { ok: true, tasks: await taskDb.forTree(c.env.DB, me) }, (r?.[0] ?? 200) as 200, { "cache-control": "no-store" });
+  }
   catch (e) { console.error("할 일 정본 읽기", e); return c.json({ ok: true, tasks: [] }, 200, { "cache-control": "no-store" }); }   // 표가 아직 없는 D1(마이그레이션 전)이면 빈 목록 — 트리는 지금 화면 그대로
 });
 app.get("/api/todos", async c => {
@@ -2518,7 +2534,7 @@ async function inboxSnap(c: Context<{ Bindings: Env }>, rd: ownerRead.Route, own
   return new Response(sn.body, { headers: { ...h, "content-type": "application/json; charset=utf-8" } });
 }
 async function ownerD1(c: Context<{ Bindings: Env }>, rd: ownerRead.Route, owners: string[]) {
-  const sr = await inboxSnap(c, rd, owners).catch(() => null); if (sr) return sr;
+  const sr = LOG_READ.get(c)?.restricted ? null : await inboxSnap(c, rd, owners).catch(() => null); if (sr) return sr;
   const ag = await ledgerAges(c.env).catch(() => null);
   const rdb = rd.kind === "frequent" ? c.env.DB.withSession("first-unconstrained") as unknown as D1Database : c.env.DB;   // 주인 길과 같음(자주 쓰는 반응만 복제본)
   const get = ag ? async () => ag.cfg : () => snap(c.env).get("cfg");
@@ -3052,6 +3068,8 @@ app.all("*", async c => {
   headers["accept-encoding"] = "gzip";
   const body = c.req.method === "POST" ? (sent ?? new Uint8Array(await c.req.arrayBuffer())) : undefined;
   if (body && body.length > 25 * 1024 * 1024) return c.json({ ok: false, error: "25MB 까지 올릴 수 있어요" }, 413);
+  if (LOG_READ.get(c)?.ownerDenied && url.pathname.startsWith("/api/"))
+    return c.json({ ok: false, error: "조직을 나가서 이 화면은 잠시 막혔어요" }, 404, { "cache-control": "no-store" });   // 필터 없는 Bridge/실행기로 읽기 우회 금지
   const fr = (c.req.method === "GET" || c.req.method === "HEAD") ? await filesFirst(c, url.pathname + url.search, headers) : null;
   let r; const t0 = Date.now();
   try { r = fr ?? await boardCall(c.env, chOf(c), { method: c.req.method === "HEAD" ? "GET" : c.req.method, path: url.pathname + url.search, headers, ...(body !== undefined ? { body } : {}) }); }

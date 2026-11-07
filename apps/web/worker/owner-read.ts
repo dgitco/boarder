@@ -404,6 +404,7 @@ let nidx: { at: number; tag: string; v: Idx } | null = null;
 let cfgTag = "";
 
 async function nodeIndex(db: D1Database, cfg: Cfg, now: number, cache: boolean): Promise<Idx> {
+  if ((db as unknown as Record<symbol, unknown>)[Symbol.for("boarder.read.isolated")]) cache = false;
   const tag = cfgTag;
   if (cache && nidx && nidx.tag === tag && Date.now() / 1000 - nidx.at < 60) return nidx.v;
   const since = now - 21 * 86400;

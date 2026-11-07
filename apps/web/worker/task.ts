@@ -3,18 +3,35 @@ import { filterArgs } from "./mcp/log-filter";
 export type TaskState = "open" | "blocked" | "done";
 export type Ref = { chan?: string; ts?: string; thread?: string; input?: number; url?: string };
 export type Session = { id: string; pane?: string; at: number };
+export type TaskScope = {
+  actor?: string;
+  where(table: "task" | "task_log"): { sql: string; args: (string | number)[] };
+  open(owner: string, no: number, col: string, value: string): Promise<string>;
+  seal(owner: string, no: number, col: string, value: string): Promise<string>;
+  identify?(owner: string, no: number): string | undefined;
+};
+const guard = (scope: TaskScope | undefined, table: "task" | "task_log") => scope?.where(table) ?? { sql: "1", args: [] };
+const TEXT_COLS = ["title", "status", "body", "refs"] as const;
+async function openRow(r: Row, scope?: TaskScope): Promise<Row> {
+  if (!scope) return r;
+  const copy = { ...r };
+  for (const col of TEXT_COLS) copy[col] = await scope.open(r.owner, r.no, col, r[col]);
+  const resource = scope.identify?.(r.owner, r.no);
+  return resource ? { ...copy, resource } : copy;
+}
 export type Task = {
+  resource?: string;
   no: number; title: string; status: string; state: TaskState; unblock: string | null; agent: string; body: string;
   refs: Ref[]; sessions: Session[]; created_at: number; updated_at: number; done_at: number | null;
 };
-type Row = Omit<Task, "refs" | "sessions"> & { refs: string; sessions: string; rev: number };
+type Row = Omit<Task, "refs" | "sessions"> & { owner: string; refs: string; sessions: string; rev: number };
 
 export class TaskError extends Error { status = 400; }
 export class TaskMissing extends TaskError { status = 404; }
 export class TaskBusy extends TaskError { status = 409; }
 
 const CTRL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, CTRL_KEEP_NL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
-const COLS = "no, title, status, state, unblock, agent, body, refs, sessions, created_at, updated_at, done_at, rev";
+const COLS = "owner, no, title, status, state, unblock, agent, body, refs, sessions, created_at, updated_at, done_at, rev";
 const DONE_KEEP = 50, LIVE_MAX = 300, LOG_KEEP = 30, SESS_KEEP = 20, REFS_MAX = 20;
 const BOX = /^(\s*[-*]\s+)\[( |x|X)\](.*)$/;
 
@@ -27,7 +44,7 @@ const line = (v: unknown, what: string, max: number, min = 1) => {
 export const title = (v: unknown) => line(v, "이름", 40);
 export const status = (v: unknown) => line(v, "상태", 200);
 const agent = (v: unknown) => line(v, "맡은 에이전트", 60, 0);
-const who = (v: unknown) => v === undefined || v === null || v === "" ? "에이전트" : line(v, "누가", 60);
+const who = (v: unknown, max = 60) => v === undefined || v === null || v === "" ? "에이전트" : line(v, "누가", max);
 function body(v: unknown) {
   if (typeof v !== "string") throw new TaskError("본문을 글로 주세요");
   const s = v.replace(/\r\n?/g, "\n").replace(CTRL_KEEP_NL, "").trimEnd();
@@ -74,21 +91,23 @@ function session(v: unknown, now: number): Session {
   return { id: o.id, ...(o.pane ? { pane: o.pane as string } : {}), at: now };
 }
 const json = <T,>(s: string, d: T): T => { try { return JSON.parse(s) as T; } catch { return d; } };
-const out = ({ rev: _r, ...r }: Row): Task => ({ ...r, refs: json<Ref[]>(r.refs, []), sessions: json<Session[]>(r.sessions, []) });
+const out = ({ rev: _r, owner: _owner, ...r }: Row): Task => ({ ...r, refs: json<Ref[]>(r.refs, []), sessions: json<Session[]>(r.sessions, []) });
 const newRev = () => 1 + Math.floor(Math.random() * 2 ** 52);
 
-async function getRow(db: D1Database, owner: string, no: number): Promise<Row> {
-  const r = await db.prepare(`SELECT ${COLS} FROM task WHERE owner = ? AND no = ?`).bind(owner, no).first<Row>();
+async function getRow(db: D1Database, owner: string, no: number, scope?: TaskScope): Promise<Row> {
+  const g = guard(scope, "task");
+  const r = await db.prepare(`SELECT ${COLS} FROM task WHERE owner = ? AND no = ? AND ${g.sql}`).bind(owner, no, ...g.args).first<Row>();
   if (!r) throw new TaskMissing(`#${no} 할 일이 없어요`);
-  return r;
+  return openRow(r, scope);
 }
-async function unblockOf(db: D1Database, owner: string, v: unknown, self: number | null): Promise<string> {
+async function unblockOf(db: D1Database, owner: string, v: unknown, self: number | null, scope?: TaskScope): Promise<string> {
   const s = typeof v === "string" ? v.trim().replace(/^#(\d+)$/, "task:$1") : "";
   const m = /^(owner|other)$|^usage:([a-z])$|^task:(\d{1,9})$|^watch:(\d{1,9})$/.exec(s);
   if (!m) throw new TaskError("무엇이 풀면 다시 열지(unblock): owner · usage:<계정> · task:<번호> · watch:<감시 번호> · other");
   if (m[3]) {
     const n = +m[3]; if (n === self) throw new TaskError("자기 자신에 막힐 수 없어요");
-    const r = await db.prepare("SELECT state FROM task WHERE owner = ? AND no = ?").bind(owner, n).first<{ state: string }>();
+    const g = guard(scope, "task");
+    const r = await db.prepare(`SELECT state FROM task WHERE owner = ? AND no = ?${scope ? ` AND ${g.sql}` : ""}`).bind(owner, n, ...g.args).first<{ state: string }>();
     if (!r) throw new TaskMissing(`#${n} 할 일이 없어요`);
     if (r.state === "done") throw new TaskError(`#${n} 은 이미 끝났어요`);
   }
@@ -108,31 +127,31 @@ function tick(b: string, i: unknown, on: boolean): [string, string] {
 }
 
 export type ListOpt = { state?: unknown; agent?: unknown };
-export async function list(db: D1Database, owner: string, o: ListOpt = {}): Promise<Task[]> {
+export async function list(db: D1Database, owner: string | null, o: ListOpt = {}, scope?: TaskScope): Promise<Task[]> {
   const st = o.state === undefined ? "live" : o.state;
   if (!["live", "open", "blocked", "done", "all"].includes(st as string)) throw new TaskError("state 는 live · open · blocked · done · all 이에요");
   const ag = o.agent === undefined || o.agent === "" ? null : agent(o.agent);
-  const where = ["owner = ?"], args: unknown[] = [owner];
+  const g = guard(scope, "task"), where = [g.sql, owner === null ? (scope ? "1" : "0") : "owner = ?"], args: unknown[] = [...g.args, ...(owner === null ? [] : [owner])];
   if (ag) { where.push("agent = ?"); args.push(ag); }
-  const q = (cond: string, order: string, lim: number) => db.prepare(`SELECT ${COLS} FROM task WHERE ${where.join(" AND ")} AND ${cond} ORDER BY ${order} LIMIT ${lim}`).bind(...args).all<Row>().then(r => r.results.map(out));
+  const q = (cond: string, order: string, lim: number) => db.prepare(`SELECT ${COLS} FROM task WHERE ${where.join(" AND ")} AND ${cond} ORDER BY ${order} LIMIT ${lim}`).bind(...args).all<Row>().then(r => Promise.all(r.results.map(async x => out(await openRow(x, scope)))));
   const live = st === "live" || st === "all" ? await q("state != 'done'", "updated_at DESC, no DESC", LIVE_MAX)
     : st === "open" || st === "blocked" ? await q(`state = '${st}'`, "updated_at DESC, no DESC", LIVE_MAX) : [];
   const done = st === "done" || st === "all" ? await q("state = 'done'", "done_at DESC, no DESC", DONE_KEEP) : [];
   return [...live, ...done];
 }
-export async function get(db: D1Database, owner: string, no: unknown) {
-  const n = noOf(no), t = out(await getRow(db, owner, n));
-  const log = (await db.prepare("SELECT at, who, what FROM task_log WHERE owner = ? AND no = ? ORDER BY at DESC, id DESC LIMIT ?").bind(owner, n, LOG_KEEP).all<{ at: number; who: string; what: string }>()).results;
-  return { task: t, log };
+export async function get(db: D1Database, owner: string, no: unknown, scope?: TaskScope) {
+  const n = noOf(no), t = out(await getRow(db, owner, n, scope)), g = guard(scope, "task_log");
+  const log = (await db.prepare(`SELECT at, who, what FROM task_log WHERE owner = ? AND no = ? AND ${g.sql} ORDER BY at DESC, id DESC LIMIT ?`).bind(owner, n, ...g.args, LOG_KEEP).all<{ at: number; who: string; what: string }>()).results;
+  return { task: t, log: scope ? await Promise.all(log.map(async r => ({ ...r, what: await scope.open(owner, n, `log:${r.at}:${r.who}`, r.what) }))) : log };
 }
 
 export type NewIn = { title: unknown; body?: unknown; agent?: unknown; status?: unknown; unblock?: unknown; refs?: unknown; who?: unknown };
-export async function create(db: D1Database, owner: string, a: NewIn, now = Date.now()): Promise<Task> {
+export async function create(db: D1Database, owner: string, a: NewIn, now = Date.now(), scope?: TaskScope): Promise<Task> {
   const m = masked({ title: title(a.title), body: a.body === undefined ? "" : body(a.body), status: a.status === undefined ? "진행" : status(a.status),
-    agent: a.agent === undefined ? "" : agent(a.agent), who: who(a.who) });
+    agent: a.agent === undefined ? "" : agent(a.agent), who: who(scope?.actor ?? a.who, scope?.actor ? 254 : 60) });
   const st = stateOf(m.status);
   if (st === "done") throw new TaskError("새 할 일을 끝으로 만들 수 없어요");
-  const ub = st === "blocked" ? await unblockOf(db, owner, a.unblock, null) : a.unblock === undefined ? null : (() => { throw new TaskError("unblock 은 막힌(blocked by …) 할 일에만 적어요"); })();
+  const ub = st === "blocked" ? await unblockOf(db, owner, a.unblock, null, scope) : a.unblock === undefined ? null : (() => { throw new TaskError("unblock 은 막힌(blocked by …) 할 일에만 적어요"); })();
   if (a.refs !== undefined && (!Array.isArray(a.refs) || a.refs.length > REFS_MAX)) throw new TaskError(`원 글은 ${REFS_MAX}개까지 목록으로 주세요`);
   const refs = ((a.refs as unknown[] | undefined) || []).map(r => masked(ref(r)));
   const seq = "(SELECT last FROM task_seq WHERE owner = ?)";
@@ -144,37 +163,40 @@ export async function create(db: D1Database, owner: string, a: NewIn, now = Date
     db.prepare(`SELECT ${COLS} FROM task WHERE owner = ? AND no = ${seq}`).bind(owner, owner),
   ]);
   const t = (rs[3].results as Row[])[0];
-  return out(await lateFree(db, owner, t, m.who, now));
+  return out(await lateFree(db, owner, t, m.who, now, scope));
 }
 
 /** 막힘을 task:M 으로 적었는데 그 사이 M 이 끝났으면(M 의 끝 처리가 우리 쓰기보다 먼저 돎) 바로 풂 — 끝 처리는 그때 막힌 것만 풀어 주므로 */
-async function lateFree(db: D1Database, owner: string, t: Row, by: string, now: number): Promise<Row> {
+async function lateFree(db: D1Database, owner: string, t: Row, by: string, now: number, scope?: TaskScope): Promise<Row> {
   const m = t.state === "blocked" && /^task:(\d+)$/.exec(t.unblock || ""); if (!m) return t;
-  const dep = await db.prepare("SELECT state FROM task WHERE owner = ? AND no = ?").bind(owner, +m[1]).first<{ state: string }>();
+  const a = guard(scope, "task");
+  const dep = await db.prepare(`SELECT state FROM task WHERE owner = ? AND no = ?${scope ? ` AND ${a.sql}` : ""}`).bind(owner, +m[1], ...a.args).first<{ state: string }>();
   if (dep?.state !== "done") return t;
-  const tok = newRev(), g = "owner = ? AND no = ? AND state = 'blocked' AND unblock = ? AND rev = ?";
+  const tok = newRev(), g = `owner = ? AND no = ? AND state = 'blocked' AND unblock = ? AND rev = ? AND ${a.sql}`;
   const rs = await db.batch([
-    db.prepare(`INSERT INTO task_log (owner, no, at, who, what) SELECT owner, no, ?, ?, ? FROM task WHERE ${g}`).bind(now, by, `풀림: #${m[1]} 끝`, owner, t.no, t.unblock, t.rev),
-    db.prepare(`UPDATE task SET status = ?, state = 'open', unblock = NULL, updated_at = ?, rev = ? WHERE ${g}`).bind(`진행 — #${m[1]} 끝나 풀림`, now, tok, owner, t.no, t.unblock, t.rev),
-    db.prepare(`SELECT ${COLS} FROM task WHERE owner = ? AND no = ?`).bind(owner, t.no),
+    db.prepare(`INSERT INTO task_log (owner, no, at, who, what) SELECT owner, no, ?, ?, ? FROM task WHERE ${g}`).bind(now, by, scope ? await scope.seal(owner, t.no, `log:${now}:${by}`, `풀림: #${m[1]} 끝`) : `풀림: #${m[1]} 끝`, owner, t.no, t.unblock, t.rev, ...a.args),
+    db.prepare(`UPDATE task SET status = ?, state = 'open', unblock = NULL, updated_at = ?, rev = ? WHERE ${g}`).bind(scope ? await scope.seal(owner, t.no, "status", `진행 — #${m[1]} 끝나 풀림`) : `진행 — #${m[1]} 끝나 풀림`, now, tok, owner, t.no, t.unblock, t.rev, ...a.args),
+    db.prepare(`SELECT ${COLS} FROM task WHERE owner = ? AND no = ? AND ${a.sql}`).bind(owner, t.no, ...a.args),
   ]);
-  return (rs[2].results as Row[])[0];
+  const row = (rs[2].results as Row[])[0];
+  if (!row) throw new TaskMissing(`#${t.no} 할 일이 없어요`);
+  return openRow(row, scope);
 }
 
 export type SetIn = { title?: unknown; status?: unknown; unblock?: unknown; agent?: unknown; body?: unknown; add?: unknown; check?: unknown; uncheck?: unknown; ref?: unknown; session?: unknown; who?: unknown };
 /** 보낸 칸만 바꿈 · 바뀐 칸마다 기록 한 줄. 읽은 판(rev)일 때만 써지고, 그 사이 남이 고쳤으면 다시 읽어 다시 적용(체크 한 줄이 사라지지 않게) */
-export async function set(db: D1Database, owner: string, no: unknown, s: SetIn, now = Date.now()): Promise<Task> {
+export async function set(db: D1Database, owner: string, no: unknown, s: SetIn, now = Date.now(), scope?: TaskScope): Promise<Task> {
   const n = noOf(no);
-  for (let i = 0; i < 5; i++) { const t = await setOnce(db, owner, n, s, now); if (t) return out(t); }
+  for (let i = 0; i < 5; i++) { const t = await setOnce(db, owner, n, s, now, scope); if (t) return out(t); }
   throw new TaskBusy(`#${n} 이 동시에 여러 번 바뀌고 있어요 — 잠시 뒤 다시 해 주세요`);
 }
-async function setOnce(db: D1Database, owner: string, n: number, s: SetIn, now: number): Promise<Row | null> {
-  const o = await getRow(db, owner, n);
+async function setOnce(db: D1Database, owner: string, n: number, s: SetIn, now: number, scope?: TaskScope): Promise<Row | null> {
+  const o = await getRow(db, owner, n, scope);
   const f: Record<string, unknown> = {}, log: string[] = [];
   const m = masked({
     ...(s.title !== undefined ? { title: title(s.title) } : {}), ...(s.status !== undefined ? { status: status(s.status) } : {}),
     ...(s.body !== undefined ? { body: body(s.body) } : {}), ...(s.add !== undefined ? { add: line(s.add, "더할 한 줄", 200) } : {}),
-    ...(s.agent !== undefined ? { agent: agent(s.agent) } : {}), who: who(s.who),
+    ...(s.agent !== undefined ? { agent: agent(s.agent) } : {}), who: who(scope?.actor ?? s.who, scope?.actor ? 254 : 60),
   }) as { title?: string; status?: string; body?: string; add?: string; agent?: string; who: string };
   if (m.title !== undefined && m.title !== o.title) { f.title = m.title; log.push(`이름: ${short(o.title)} → ${short(m.title)}`); }
   let st = o.state as TaskState;
@@ -183,7 +205,7 @@ async function setOnce(db: D1Database, owner: string, n: number, s: SetIn, now: 
     if (st === "done") { if (o.state !== "done") f.done_at = now; } else f.done_at = null;
   }
   if (st === "blocked") {
-    if (s.unblock !== undefined) { const u = await unblockOf(db, owner, s.unblock, n); if (u !== o.unblock) { f.unblock = u; log.push(`풀림 조건: ${u}`); } }
+    if (s.unblock !== undefined) { const u = await unblockOf(db, owner, s.unblock, n, scope); if (u !== o.unblock) { f.unblock = u; log.push(`풀림 조건: ${u}`); } }
     else if (o.state !== "blocked" || !o.unblock) throw new TaskError("막힘에는 무엇이 풀면 다시 열지(unblock)를 같이 적어요");
   } else {
     if (s.unblock !== undefined) throw new TaskError("unblock 은 막힌(blocked by …) 할 일에만 적어요");
@@ -210,19 +232,30 @@ async function setOnce(db: D1Database, owner: string, n: number, s: SetIn, now: 
   }
   if (!Object.keys(f).length) return o;   // 같은 값이면 그대로(다시 불러도 기록이 안 쌓임)
   const tok = newRev(); f.updated_at = now; f.rev = tok;
-  const ks = Object.keys(f), mine = "(SELECT rev FROM task WHERE owner = ? AND no = ?) = ?";   // 이 batch 의 UPDATE 가 써졌을 때만 뒤 문장이 돎
-  const st2: D1PreparedStatement[] = [db.prepare(`UPDATE task SET ${ks.map(k => `${k} = ?`).join(", ")} WHERE owner = ? AND no = ? AND rev = ?`).bind(...ks.map(k => f[k]), owner, n, o.rev)];
-  for (const w of log) st2.push(db.prepare(`INSERT INTO task_log (owner, no, at, who, what) SELECT ?, ?, ?, ?, ? WHERE ${mine}`).bind(owner, n, now, m.who, w, owner, n, tok));
-  if (f.state === "done") {   // #n 에 막혀 있던 할 일을 같은 트랜잭션 안 한 문장으로 풂(목록을 미리 읽지 않음 — 그 사이 바뀐 후행을 되살리지 않게)
+  if (scope) for (const col of TEXT_COLS) if (typeof f[col] === "string") f[col] = await scope.seal(owner, n, col, f[col] as string);
+  const a = guard(scope, "task"), ks = Object.keys(f), mine = "(SELECT rev FROM task WHERE owner = ? AND no = ?) = ?";   // 이 batch 의 UPDATE 가 써졌을 때만 뒤 문장이 돎
+  const st2: D1PreparedStatement[] = [db.prepare(`UPDATE task SET ${ks.map(k => `${k} = ?`).join(", ")} WHERE owner = ? AND no = ? AND rev = ? AND ${a.sql}`).bind(...ks.map(k => f[k]), owner, n, o.rev, ...a.args)];
+  for (const w of log) st2.push(db.prepare(`INSERT INTO task_log (owner, no, at, who, what) SELECT ?, ?, ?, ?, ? WHERE ${mine}`).bind(owner, n, now, m.who, scope ? await scope.seal(owner, n, `log:${now}:${m.who}`, w) : w, owner, n, tok));
+  if (f.state === "done" && !scope) {   // #n 에 막혀 있던 할 일을 같은 트랜잭션 안 한 문장으로 풂(목록을 미리 읽지 않음 — 그 사이 바뀐 후행을 되살리지 않게)
     const g = `owner = ? AND state = 'blocked' AND unblock = ? AND ${mine}`;
     st2.push(
       db.prepare(`INSERT INTO task_log (owner, no, at, who, what) SELECT owner, no, ?, ?, ? FROM task WHERE ${g}`).bind(now, m.who, `풀림: #${n} 끝`, owner, `task:${n}`, owner, n, tok),
       db.prepare(`UPDATE task SET status = ?, state = 'open', unblock = NULL, updated_at = ?, rev = 1 + abs(random() % 4503599627370496) WHERE ${g}`).bind(`진행 — #${n} 끝나 풀림`, now, owner, `task:${n}`, owner, n, tok));
   }
-  st2.push(db.prepare(`SELECT ${COLS} FROM task WHERE owner = ? AND no = ?`).bind(owner, n));
+  if (f.state === "done" && scope) {
+    const deps = (await db.prepare(`SELECT ${COLS} FROM task WHERE owner = ? AND state = 'blocked' AND unblock = ? AND ${a.sql}`).bind(owner, `task:${n}`, ...a.args).all<Row>()).results;
+    for (const d of deps) {
+      const dg = `owner = ? AND no = ? AND rev = ? AND state = 'blocked' AND unblock = ? AND ${mine} AND ${a.sql}`;
+      const args = [owner, d.no, d.rev, `task:${n}`, owner, n, tok, ...a.args];
+      st2.push(db.prepare(`INSERT INTO task_log(owner,no,at,who,what) SELECT owner,no,?,?,? FROM task WHERE ${dg}`).bind(now, m.who, await scope.seal(owner, d.no, `log:${now}:${m.who}`, `풀림: #${n} 끝`), ...args));
+      st2.push(db.prepare(`UPDATE task SET status = ?, state = 'open', unblock = NULL, updated_at = ?, rev = ? WHERE ${dg}`).bind(await scope.seal(owner, d.no, "status", `진행 — #${n} 끝나 풀림`), now, newRev(), ...args));
+    }
+  }
+  st2.push(db.prepare(`SELECT ${COLS} FROM task WHERE owner = ? AND no = ? AND ${a.sql}`).bind(owner, n, ...a.args));
   const rs = await db.batch(st2), t = (rs[rs.length - 1].results as Row[])[0];
+  if (!t) throw new TaskMissing(`#${n} 할 일이 없어요`);
   if (t.rev !== tok) return null;   // 그 사이 남이 고침 — 다시 읽어 다시 적용
-  return await lateFree(db, owner, t, m.who, now);
+  return await lateFree(db, owner, await openRow(t, scope), m.who, now, scope);
 }
 
 export const headNo = (text: string) => { const m = /^\s*#([1-9]\d{0,8})\b/.exec(String(text || "")); return m ? +m[1] : null; };
@@ -236,38 +269,39 @@ export async function setStrict(db: D1Database, owner: string, on: boolean, now 
   return on;
 }
 /** 넘기는 글의 첫머리 #N 이 열린 할 일이면 그 번호, 아니면 null. 켠 주인은 없거나 끝난 번호를 TaskError 로 막음 */
-export async function handoffNo(db: D1Database, owner: string, text: string): Promise<number | null> {
+export async function handoffNo(db: D1Database, owner: string, text: string, scope?: TaskScope): Promise<number | null> {
   const n = headNo(text);
-  const live = await db.prepare("SELECT state FROM task WHERE owner = ? AND no = ?").bind(owner, n ?? 0).first<{ state: string }>().then(r => !!r && r.state !== "done").catch(() => null);
+  const guard = scope?.where("task");
+  const live = await db.prepare(`SELECT state FROM task WHERE owner = ? AND no = ?${guard ? " AND " + guard.sql : ""}`).bind(owner, n ?? 0, ...(guard?.args || [])).first<{ state: string }>().then(r => !!r && r.state !== "done").catch(() => null);
   if (live === null) return null;
   if (live) return n;
   if (await strictOn(db, owner)) throw new TaskError(n === null ? "할 일 번호가 없어요 — 있는 일이면 글 첫머리에 #31 처럼, 새 일이면 task new" : `할 일 #${n} 이 없거나 끝났어요 — 있는 일이면 글 첫머리에 #31 처럼, 새 일이면 task new`);
   return null;
 }
 /** 넘긴 뒤 그 할 일의 맡은 이 · 원 글(에이전트 채널 스레드)을 남김. 실패해도 넘김은 그대로 */
-export async function handoffRecord(db: D1Database, owner: string, no: number | null, h: { agent: string; chan?: string; thread?: string; who: string }, now = Date.now()) {
+export async function handoffRecord(db: D1Database, owner: string, no: number | null, h: { agent: string; chan?: string; thread?: string; who: string }, now = Date.now(), scope?: TaskScope) {
   if (no === null) return;
-  try { await set(db, owner, no, { agent: h.agent, who: h.who, ...(h.thread ? { ref: { ...(h.chan ? { chan: h.chan } : {}), thread: h.thread } } : {}) }, now); }
+  try { await set(db, owner, no, { agent: h.agent, who: h.who, ...(h.thread ? { ref: { ...(h.chan ? { chan: h.chan } : {}), thread: h.thread } } : {}) }, now, scope); }
   catch (e) { console.error("할 일 넘김 기록", e); }
 }
 
 /** 트리 화면용: live 할 일(본문 · 세션 뺌) */
-export async function forTree(db: D1Database, owner: string) {
-  return (await list(db, owner)).map(({ body: _b, sessions: _s, ...t }) => t);
+export async function forTree(db: D1Database, owner: string, scope?: TaskScope) {
+  return (await list(db, owner, {}, scope)).map(({ body: _b, sessions: _s, ...t }) => t);
 }
 
 /** 기기 요청 하나 {op, …} → [상태, 답] */
-export async function op(db: D1Database, owner: string, b: unknown, now = Date.now()): Promise<[number, Record<string, unknown>]> {
+export async function op(db: D1Database, owner: string, b: unknown, now = Date.now(), scope?: TaskScope): Promise<[number, Record<string, unknown>]> {
   try {
     if (!b || typeof b !== "object" || Array.isArray(b)) throw new TaskError("꼴이 틀려요");
     const x = b as Record<string, unknown>;
     switch (x.op) {
-      case "list": only(x, ["op", "state", "agent"]); return [200, { ok: true, tasks: await list(db, owner, { state: x.state, agent: x.agent }) }];
-      case "get": only(x, ["op", "no"]); return [200, { ok: true, ...(await get(db, owner, x.no)) }];
+      case "list": only(x, ["op", "state", "agent"]); return [200, { ok: true, tasks: await list(db, owner, { state: x.state, agent: x.agent }, scope) }];
+      case "get": only(x, ["op", "no"]); return [200, { ok: true, ...(await get(db, owner, x.no, scope)) }];
       case "new": only(x, ["op", "title", "body", "agent", "status", "unblock", "refs", "who"]);
-        return [200, { ok: true, task: await create(db, owner, x as NewIn, now) }];
+        return [200, { ok: true, task: await create(db, owner, x as NewIn, now, scope) }];
       case "set": only(x, ["op", "no", "title", "status", "unblock", "agent", "body", "add", "check", "uncheck", "ref", "session", "who"]);
-        return [200, { ok: true, task: await set(db, owner, x.no, x as SetIn, now) }];
+        return [200, { ok: true, task: await set(db, owner, x.no, x as SetIn, now, scope) }];
       case "strict": only(x, ["op", "on"]);
         if (x.on !== undefined && typeof x.on !== "boolean") throw new TaskError("on 은 true · false 예요");
         return [200, { ok: true, strict: x.on === undefined ? await strictOn(db, owner) : await setStrict(db, owner, x.on, now) }];
