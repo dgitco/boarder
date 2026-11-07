@@ -27,9 +27,9 @@ export class RoleEditDenied extends Error {
   status = 403 as const; hint = NOT_ALLOWED_HINT;
   constructor() { super(`not_allowed — ${NOT_ALLOWED_HINT}`); }
 }
-/** /api/agent/:tool 의 도구 오류 답: 허락 없음은 403 { error: "not_allowed", hint }, 나머지는 예전대로 400 */
-export const toolError = (e: unknown): [Record<string, string>, 400 | 403] =>
-  e instanceof RoleEditDenied ? [{ error: "not_allowed", hint: e.hint }, 403] : [{ error: e instanceof Error ? e.message : String(e) }, 400];
+/** 도구 오류: 허락 없음은 403, 나머지는 400. tell 의 쓰기 전 거절 표시(sent:false)는 보존한다. */
+export const toolError = (e: unknown): [Record<string, string | boolean>, 400 | 403] =>
+  e instanceof RoleEditDenied ? [{ error: "not_allowed", hint: e.hint }, 403] : [{ error: e instanceof Error ? e.message : String(e), ...(e instanceof Error && (e as Error & { sent?: boolean }).sent === false ? { sent: false } : {}) }, 400];
 
 // 창이 마지막으로 지시 전문을 받은 시각(engine_window.handle 의 role_at — 칸을 새로 만들지 않음). engine.ts reopen 이 이 값보다 역할이 새로울 때만 지시를 붙임
 const markRoleAt = (db: D1Database, owner: string, id: string, at: number | null) => db.prepare(at === null

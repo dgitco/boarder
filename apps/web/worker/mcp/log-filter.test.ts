@@ -100,6 +100,32 @@ async function capture<T>(fn: () => Promise<T>): Promise<{ out: T | Error; logs:
   finally { Object.assign(console, orig); }
 }
 
+test("공통 관문 거절은 도구 종류와 상관없이 sent:false, raw 실행 오류는 표시 없음", async () => {
+  const { toolError } = await import("../role-edit.ts");
+  const saved: Record<string, any>[] = [];
+  const samples = [
+    { name: "없는도구", args: {} },
+    { name: "inbox_status", args: { text: "정상" }, why: "꺼진 도구" },
+    { name: "inbox_status", args: { text: "가".repeat(100) } },
+    { name: "inbox_log", args: { kind: "reply", text: "답" }, member: true },
+    { name: "inbox_say", args: { thread_id: "1793000000.000001", text: FAKE.pem } },
+  ];
+  for (const sample of samples) {
+    const ctx = ctxWith(saved);
+    if (sample.why) ctx.view.why = () => sample.why;
+    if (sample.member) delete ctx.local;
+    const result = await capture(() => run(ctx, sample.name, sample.args));
+    assert.ok(result.out instanceof Error, sample.name);
+    assert.equal(toolError(result.out)[0].sent, false, sample.name);
+    assert.deepEqual(saved, []);
+  }
+  const ctx = ctxWith(saved);
+  ctx.local = async () => { throw new Error("도구 실행 뒤 오류"); };
+  const result = await capture(() => run(ctx, "inbox_status", { text: "정상" }));
+  assert.ok(result.out instanceof Error);
+  assert.equal(toolError(result.out)[0].sent, undefined);
+});
+
 test("run: inbox_log · inbox_status 는 가려서 저장 · 개수만 돌려줌 · 기록에 원문 0", async () => {
   const saved: Record<string, any>[] = [];
   const a = await capture(() => run(ctxWith(saved), "inbox_log", { kind: "progress", text: `배포 ${FAKE.github} 끝` }));

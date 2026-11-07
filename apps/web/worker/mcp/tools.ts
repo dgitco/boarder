@@ -240,20 +240,26 @@ const NO_MASK = new Set(["cwd", "node", "thread", "thread_id", "card_id", "repla
 export const WRITE_TOOLS: ReadonlySet<string> = WRITES;
 export const maskWrites = <T extends Record<string, any>>(name: string, a: T): T => (WRITES.has(name) ? filterArgs(a, NO_MASK).args : a);
 export async function run(ctx: Ctx, name: string, raw: Record<string, unknown>): Promise<unknown> {
-  const schema = schemaOf(name); if (!schema) throw new Error(`없는 도구: ${name}`);
-  const no = ctx.view.why(name); if (no) throw new Error(no);
-  const r = schema.safeParse(raw ?? {});
-  if (!r.success) throw new Error(`입력이 맞지 않음: ${r.error.issues.map(i => `${i.path.join(".")} ${i.message}`).join("; ")}`);
-  // 쓰기 도구는 저장 · 전송 전에 서버 거르개(log-filter.ts) — PEM · JWT · .env 통째는 거절, 그 밖 비밀 · 주민 · 계좌 · 카드 꼴은 「[가림]」.
-  //   거른 뒤 칸 · 종류 · 길이를 다시 검사(가림이 글을 늘릴 수 있음). 기록에는 개수 · 까닭 낱말만 — 원문 없음
-  let n = 0, a = r.data as Record<string, any>;
-  if ((MEMBER_ONLY.has(name) || (name === "inbox_log" && a.kind === "reply")) && !ctx.local) throw new Error("회원 보드 전용 도구예요");
-  if (WRITES.has(name)) {
-    let f: ReturnType<typeof filterArgs<Record<string, any>>>;
-    try { f = filterArgs(a, NO_MASK); } catch (e) { console.log(JSON.stringify({ ev: "write_reject", tool: name, why: (e as { why?: string }).why ?? "?" })); throw e; }
-    if (!schema.safeParse(f.args).success) throw new Error("가린 뒤 꼴이 맞지 않아 저장하지 않았어요 — 값을 빼고 다시 보내 주세요");
-    a = f.args; n = f.redacted;
-    if (n) console.log(JSON.stringify({ ev: "write_redact", tool: name, n }));
+  let n = 0, a: Record<string, any>;
+  try {
+    const schema = schemaOf(name); if (!schema) throw new Error(`없는 도구: ${name}`);
+    const no = ctx.view.why(name); if (no) throw new Error(no);
+    const r = schema.safeParse(raw ?? {});
+    if (!r.success) throw new Error(`입력이 맞지 않음: ${r.error.issues.map(i => `${i.path.join(".")} ${i.message}`).join("; ")}`);
+    // 쓰기 도구는 저장 · 전송 전에 서버 거르개(log-filter.ts) — PEM · JWT · .env 통째는 거절, 그 밖 비밀 · 주민 · 계좌 · 카드 꼴은 「[가림]」.
+    //   거른 뒤 칸 · 종류 · 길이를 다시 검사(가림이 글을 늘릴 수 있음). 기록에는 개수 · 까닭 낱말만 — 원문 없음
+    a = r.data as Record<string, any>;
+    if ((MEMBER_ONLY.has(name) || (name === "inbox_log" && a.kind === "reply")) && !ctx.local) throw new Error("회원 보드 전용 도구예요");
+    if (WRITES.has(name)) {
+      let f: ReturnType<typeof filterArgs<Record<string, any>>>;
+      try { f = filterArgs(a, NO_MASK); } catch (e) { console.log(JSON.stringify({ ev: "write_reject", tool: name, why: (e as { why?: string }).why ?? "?" })); throw e; }
+      if (!schema.safeParse(f.args).success) throw new Error("가린 뒤 꼴이 맞지 않아 저장하지 않았어요 — 값을 빼고 다시 보내 주세요");
+      a = f.args; n = f.redacted;
+      if (n) console.log(JSON.stringify({ ev: "write_redact", tool: name, n }));
+    }
+  } catch (e) {
+    // 공통 관문은 아직 도구를 실행하지 않았다. 실행 뒤 오류에는 이 표시를 붙이지 않는다.
+    throw Object.assign(e instanceof Error ? e : new Error(String(e)), { sent: false });
   }
   const out = await raw_(ctx, name, a);
   return shape(name, n && out && typeof out === "object" ? { ...out, redacted: n } : out, ctx.view.mask(name));
